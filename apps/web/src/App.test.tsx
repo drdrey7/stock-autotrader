@@ -40,19 +40,19 @@ describe("public application", () => {
     expect(screen.getAllByText("NVDA").length).toBeGreaterThan(0);
   });
 
-  it("combines scanner market-cap and earnings-proximity filters", () => {
+  it("combines scanner signal and minimum-score filters", () => {
     render(
       <MemoryRouter initialEntries={["/scanner"]}>
         <App />
       </MemoryRouter>,
     );
-    fireEvent.change(screen.getByLabelText("Earnings"), {
-      target: { value: "7" },
+    fireEvent.change(screen.getByLabelText("Signal"), {
+      target: { value: "Watch" },
     });
     expect(screen.getAllByText("AMD").length).toBeGreaterThan(0);
     expect(screen.queryByText("NVDA")).not.toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Market cap"), {
-      target: { value: "future" },
+    fireEvent.change(screen.getByLabelText("Min score"), {
+      target: { value: "85" },
     });
     expect(
       screen.getByText("No candidates match these filters"),

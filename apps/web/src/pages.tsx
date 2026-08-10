@@ -95,7 +95,7 @@ function LandingPreview() {
         </div>
         <div>
           <span>Setups today</span>
-          <strong>{scan.candidates}</strong>
+          <strong>{scan.setups}</strong>
         </div>
         <div>
           <span>Strategies</span>
@@ -394,30 +394,16 @@ export function DashboardPage() {
           <span>Latest scan</span>
           <strong>{formatDate(status.latestScan)}</strong>
         </div>
-        <div>
-          <span>Next scan</span>
-          <strong>{formatDate(status.nextScan)}</strong>
-        </div>
         <Badge tone="demo">Demo Data</Badge>
       </div>
       <div className="metrics-grid">
         <MetricCard
-          label="Universe"
+          label="Stocks scanned"
           value={scan.universe.toLocaleString()}
-          detail="Stocks scanned"
+          detail="Universe"
         />
         <MetricCard
-          label="Passed filters"
-          value={scan.passedFilters.toLocaleString()}
-          detail="Core universe"
-        />
-        <MetricCard
-          label="Candidates"
-          value={scan.candidates}
-          detail="For strategy review"
-        />
-        <MetricCard
-          label="Strong setups"
+          label="Setups today"
           value={scan.setups}
           detail="Across active strategies"
           accent
@@ -426,7 +412,7 @@ export function DashboardPage() {
       <div className="dashboard-grid">
         <section className="panel panel-large">
           <SectionHeading
-            title="Latest decisions"
+            title="Top Setups"
             action={<Link to="/scanner">Full scanner</Link>}
           />
           <CandidateList candidates={candidates.slice(0, 4)} />
@@ -540,10 +526,7 @@ export function ScannerPage() {
   const demoData = useData();
   const [strategy, setStrategy] = useState("all"),
     [signal, setSignal] = useState("all"),
-    [sector, setSector] = useState("all"),
     [minScore, setMinScore] = useState(0),
-    [marketCap, setMarketCap] = useState("all"),
-    [earningsProximity, setEarningsProximity] = useState("all"),
     [sort, setSort] = useState("score");
   const rows = useMemo(
     () =>
@@ -552,15 +535,6 @@ export function ScannerPage() {
           (c) =>
             (strategy === "all" || c.strategyId === strategy) &&
             (signal === "all" || c.status === signal) &&
-            (sector === "all" || c.sector === sector) &&
-            (marketCap === "all" ||
-              (marketCap === "core"
-                ? c.marketCap >= 1_000_000_000
-                : c.marketCap >= 500_000_000 && c.marketCap < 1_000_000_000)) &&
-            (earningsProximity === "all" ||
-              (c.earningsProximityDays !== null &&
-                Math.abs(c.earningsProximityDays) <=
-                  Number(earningsProximity))) &&
             c.quantScore >= minScore,
         )
         .sort((a, b) =>
@@ -568,16 +542,7 @@ export function ScannerPage() {
             ? a.symbol.localeCompare(b.symbol)
             : b.quantScore - a.quantScore,
         ),
-    [
-      demoData.candidates,
-      strategy,
-      signal,
-      sector,
-      minScore,
-      marketCap,
-      earningsProximity,
-      sort,
-    ],
+    [demoData.candidates, strategy, signal, minScore, sort],
   );
   return (
     <>
@@ -613,15 +578,6 @@ export function ScannerPage() {
           </select>
         </label>
         <label>
-          Sector
-          <select value={sector} onChange={(e) => setSector(e.target.value)}>
-            <option value="all">All</option>
-            {[...new Set(demoData.candidates.map((c) => c.sector))].map((s) => (
-              <option key={s}>{s}</option>
-            ))}
-          </select>
-        </label>
-        <label>
           Min score
           <select
             value={minScore}
@@ -631,28 +587,6 @@ export function ScannerPage() {
             <option value="60">60+</option>
             <option value="75">75+</option>
             <option value="85">85+</option>
-          </select>
-        </label>
-        <label>
-          Market cap
-          <select
-            value={marketCap}
-            onChange={(e) => setMarketCap(e.target.value)}
-          >
-            <option value="all">Any</option>
-            <option value="core">$1B+</option>
-            <option value="future">$500M–$1B</option>
-          </select>
-        </label>
-        <label>
-          Earnings
-          <select
-            value={earningsProximity}
-            onChange={(e) => setEarningsProximity(e.target.value)}
-          >
-            <option value="all">Any proximity</option>
-            <option value="7">Within 7 days</option>
-            <option value="30">Within 30 days</option>
           </select>
         </label>
         <label>
@@ -667,15 +601,10 @@ export function ScannerPage() {
         <div className="responsive-table scanner-table">
           <div className="table-row table-head">
             <span>Stock</span>
-            <span>Price</span>
             <span>Score</span>
             <span>Strategy</span>
+            <span>Model signal</span>
             <span>Trend</span>
-            <span>Momentum</span>
-            <span>Rel. strength</span>
-            <span>Volume</span>
-            <span>Earnings</span>
-            <span>Status</span>
             <span>Updated</span>
           </div>
           {rows.map((c) => (
@@ -688,19 +617,14 @@ export function ScannerPage() {
                 <strong>{c.symbol}</strong>
                 <small>{c.company}</small>
               </span>
-              <span data-label="Price">{formatMoney(c.price)}</span>
               <span data-label="Score">
                 <strong>{c.quantScore}</strong>/100
               </span>
               <span data-label="Strategy">{c.strategy}</span>
-              <span data-label="Trend">{c.trend}</span>
-              <span data-label="Momentum">{c.momentum}</span>
-              <span data-label="Rel. strength">{c.relativeStrength}</span>
-              <span data-label="Volume">{c.relativeVolume.toFixed(2)}x</span>
-              <span data-label="Earnings">{c.earningsDate ?? "—"}</span>
-              <span data-label="Status">
+              <span data-label="Model signal">
                 <SignalBadge status={c.status} />
               </span>
+              <span data-label="Trend">{c.trend}</span>
               <span data-label="Updated">{formatDate(c.updatedAt)}</span>
             </Link>
           ))}
@@ -713,10 +637,7 @@ export function ScannerPage() {
               onClick={() => {
                 setStrategy("all");
                 setSignal("all");
-                setSector("all");
                 setMinScore(0);
-                setMarketCap("all");
-                setEarningsProximity("all");
               }}
             >
               Clear filters
