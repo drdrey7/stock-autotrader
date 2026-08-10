@@ -35,9 +35,17 @@ const dashboardPayload = z.object({
     openPositions: z.number().int().nonnegative(),
     openRiskPct: z.number().nonnegative(),
     grossExposurePct: z.number().nonnegative(),
-    maxPositions: z.number().int().positive(),
-    maxOpenRiskPct: z.number().positive(),
-    maxGrossExposurePct: z.number().positive(),
+    riskPolicy: z.object({
+      riskPerTradePct: z.number().positive(),
+      maxPositions: z.number().int().positive(),
+      maxOpenRiskPct: z.number().positive(),
+      maxSinglePositionPct: z.number().positive(),
+      maxSectorExposurePct: z.number().positive(),
+      maxGrossExposurePct: z.number().positive(),
+      leverage: z.string(),
+      averagingDown: z.boolean(),
+      martingale: z.boolean(),
+    }),
   }),
   strategies: z.array(
     z.object({

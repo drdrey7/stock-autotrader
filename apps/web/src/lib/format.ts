@@ -16,3 +16,6 @@ export const formatDate = (value: string | null) =>
         timeZoneName: "short",
       }).format(new Date(value))
     : "Unavailable";
+
+export const dashboardCtaLabel = (demo: boolean) =>
+  demo ? "View Dashboard" : "View Live Dashboard";

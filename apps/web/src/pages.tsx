@@ -29,7 +29,7 @@ import {
   SectionHeading,
   SignalBadge,
 } from "./components";
-import { formatDate, formatMoney } from "./lib/format";
+import { dashboardCtaLabel, formatDate, formatMoney } from "./lib/format";
 
 const features = [
   [
@@ -163,7 +163,7 @@ export function LandingPage() {
           <a href="#about">About</a>
         </nav>
         <Link className="button button-small" to="/dashboard">
-          View Live Dashboard
+          {dashboardCtaLabel(demoData.demo)}
         </Link>
       </header>
       <main>
@@ -186,7 +186,7 @@ export function LandingPage() {
             </p>
             <div className="hero-actions">
               <Link className="button" to="/dashboard">
-                View Live Dashboard <ArrowRight size={17} />
+                {dashboardCtaLabel(demoData.demo)} <ArrowRight size={17} />
               </Link>
               <a className="button button-secondary" href="#method">
                 How It Works
@@ -1266,6 +1266,18 @@ export function ResearchDetailPage() {
 export function PortfolioPage() {
   const demoData = useData();
   const { portfolio, positions } = demoData;
+  const policy = portfolio.riskPolicy;
+  const policyRows: [string, string][] = [
+    ["Risk / trade", `${policy.riskPerTradePct}%`],
+    ["Max positions", String(policy.maxPositions)],
+    ["Max open risk", `${policy.maxOpenRiskPct}%`],
+    ["Max single position", `${policy.maxSinglePositionPct}%`],
+    ["Max sector exposure", `${policy.maxSectorExposurePct}%`],
+    ["Max gross exposure", `${policy.maxGrossExposurePct}%`],
+    ["Leverage", policy.leverage],
+    ["Averaging down", policy.averagingDown ? "Enabled" : "Disabled"],
+    ["Martingale", policy.martingale ? "Enabled" : "Disabled"],
+  ];
   return (
     <>
       <PageTitle
@@ -1296,20 +1308,20 @@ export function PortfolioPage() {
           <span>
             Open positions
             <strong>
-              {portfolio.openPositions} / {portfolio.maxPositions}
+              {portfolio.openPositions} / {policy.maxPositions}
             </strong>
           </span>
           <span>
             Open risk
             <strong>
-              {portfolio.openRiskPct}% / {portfolio.maxOpenRiskPct}%
+              {portfolio.openRiskPct}% / {policy.maxOpenRiskPct}%
             </strong>
           </span>
           <span>
             Gross exposure
             <strong>
               {portfolio.grossExposurePct.toFixed(1)}% /{" "}
-              {portfolio.maxGrossExposurePct}%
+              {policy.maxGrossExposurePct}%
             </strong>
           </span>
         </div>
@@ -1370,19 +1382,10 @@ export function PortfolioPage() {
           text="Hard limits are deterministic and cannot be changed by AI."
         />
         <div className="risk-grid">
-          {[
-            ["Risk / trade", "0.5%"],
-            ["Max positions", "4"],
-            ["Max open risk", "2%"],
-            ["Max single position", "30%"],
-            ["Max sector exposure", "40%"],
-            ["Leverage", "None"],
-            ["Averaging down", "Disabled"],
-            ["Martingale", "Disabled"],
-          ].map(([a, b]) => (
-            <span key={a}>
-              {a}
-              <strong>{b}</strong>
+          {policyRows.map(([label, value]) => (
+            <span key={label}>
+              {label}
+              <strong>{value}</strong>
             </span>
           ))}
         </div>

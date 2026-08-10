@@ -2,13 +2,14 @@ name: Deploy
 
 on:
   push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: deploy-${{ github.ref }}
+  group: deploy-prod
   cancel-in-progress: true
 
 jobs:

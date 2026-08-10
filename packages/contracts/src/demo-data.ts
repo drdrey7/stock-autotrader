@@ -87,9 +87,17 @@ export const demoData: DashboardData = {
     openPositions: 2,
     openRiskPct: 0.45,
     grossExposurePct: 10.7,
-    maxPositions: 4,
-    maxOpenRiskPct: 2,
-    maxGrossExposurePct: 100,
+    riskPolicy: {
+      riskPerTradePct: 0.5,
+      maxPositions: 4,
+      maxOpenRiskPct: 2,
+      maxSinglePositionPct: 30,
+      maxSectorExposurePct: 40,
+      maxGrossExposurePct: 100,
+      leverage: "None",
+      averagingDown: false,
+      martingale: false,
+    },
   },
   strategies: [
     {

@@ -121,9 +121,17 @@ export interface DashboardData {
     openPositions: number;
     openRiskPct: number;
     grossExposurePct: number;
-    maxPositions: number;
-    maxOpenRiskPct: number;
-    maxGrossExposurePct: number;
+    riskPolicy: {
+      riskPerTradePct: number;
+      maxPositions: number;
+      maxOpenRiskPct: number;
+      maxSinglePositionPct: number;
+      maxSectorExposurePct: number;
+      maxGrossExposurePct: number;
+      leverage: string;
+      averagingDown: boolean;
+      martingale: boolean;
+    };
   };
   strategies: StrategySummary[];
   candidates: Candidate[];
