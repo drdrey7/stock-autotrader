@@ -7,5 +7,6 @@
 set -euo pipefail
 
 BRANCH="${1:?usage: preview-worker-name.sh <branch>}"
-BRANCH_SLUG="$(echo "${BRANCH}" | tr '/' '-' | tr '[:upper:]' '[:lower:]')"
+# Cloudflare worker names allow only [a-zA-Z0-9-]; map anything else (/, ., etc.) to '-'.
+BRANCH_SLUG="$(printf '%s' "${BRANCH}" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9-' '-')"
 echo "stock-autotrader-preview-${BRANCH_SLUG}"

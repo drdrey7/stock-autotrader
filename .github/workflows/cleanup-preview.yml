@@ -19,10 +19,10 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          WORKER="$(bash .github/scripts/preview-worker-name.sh "${GITHUB_HEAD_REF}")"
+          WORKER="$(bash "${GITHUB_WORKSPACE}/.github/scripts/preview-worker-name.sh" "${GITHUB_HEAD_REF}")"
           echo "Deleting preview worker: ${WORKER}"
           # Safety guard: the production worker must never be a cleanup target.
-          if [ "${WORKER}" = "stock-autotrader-web" ] || [ "${WORKER}" != "stock-autotrader-preview-"* ]; then
+          if [[ "${WORKER}" == "stock-autotrader-web" ]] || [[ "${WORKER}" != "stock-autotrader-preview-"* ]]; then
             echo "Refusing to delete non-preview worker" >&2
             exit 1
           fi
