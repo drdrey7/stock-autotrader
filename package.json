@@ -1,0 +1,14 @@
+{
+  "name": "stock-autotrader",
+  "version": "5.1.0",
+  "private": true,
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev": "npm run dev -w @stock-autotrader/web",
+    "build": "npm run build -w @stock-autotrader/contracts && npm run build -w @stock-autotrader/web",
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present"
+  },
+  "engines": { "node": ">=20" }
+}

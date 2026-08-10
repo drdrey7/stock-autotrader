@@ -1,0 +1,37 @@
+name: Cleanup Preview
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Delete preview worker for merged/closed PR
+        working-directory: apps/web
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          WORKER="$(bash "${GITHUB_WORKSPACE}/.github/scripts/preview-worker-name.sh" "${GITHUB_HEAD_REF}")"
+          echo "Deleting preview worker: ${WORKER}"
+          # Safety guard: the production worker must never be a cleanup target.
+          if [[ "${WORKER}" == "stock-autotrader-web" ]] || [[ "${WORKER}" != "stock-autotrader-preview-"* ]]; then
+            echo "Refusing to delete non-preview worker" >&2
+            exit 1
+          fi
+          HTTP_CODE="$(curl -s -o /dev/null -w '%{http_code}' -X DELETE \
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/${WORKER}" \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}")"
+          echo "Delete ${WORKER}: HTTP ${HTTP_CODE}"
+          # 200 = deleted, 404 = already gone (fail safely, don't error)
+          if [ "${HTTP_CODE}" != "200" ] && [ "${HTTP_CODE}" != "404" ]; then
+            echo "Unexpected status deleting preview worker" >&2
+            exit 1
+          fi
