@@ -41,8 +41,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PREVIEW_URL: ${{ steps.preview.outputs.url }}
         run: |
-          PR_NUMBER="$(gh pr view --json number -q .number 2>/dev/null || echo '')"
-          if [ -n "$PR_NUMBER" ]; then
+          PR_NUMBER="$(gh api "repos/${GITHUB_REPOSITORY}/pulls?head=${GITHUB_REPOSITORY_OWNER}:${GITHUB_REF_NAME}&state=open" --jq '.[0].number' 2>/dev/null || echo '')"
+          if [ -n "$PR_NUMBER" ] && [ "$PR_NUMBER" != "null" ]; then
             ID="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments?per_page=100" --jq '[.[] | select(.user.login == "github-actions[bot]" and (.body | contains("Preview live"))) | .id][0]' 2>/dev/null || echo '')"
             if [ -n "$ID" ] && [ "$ID" != "null" ]; then
               gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${ID}" -f body="🚀 **Preview live**: ${PREVIEW_URL}" > /dev/null
