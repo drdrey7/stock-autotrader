@@ -1,0 +1,4 @@
+export const formatMoney = (value: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: value > 999 ? 0 : 2 }).format(value);
+
+export const formatDate = (value: string) => new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "America/New_York", timeZoneName: "short" }).format(new Date(value));
+
