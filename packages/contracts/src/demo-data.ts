@@ -372,6 +372,7 @@ export const demoData: DashboardData = {
       strategy: "Trend Breakout",
       hasPosition: false,
       tracked: true,
+      updatedAt: "2026-08-10T20:15:00Z",
     },
     {
       symbol: "TSLA",
@@ -384,6 +385,7 @@ export const demoData: DashboardData = {
       strategy: null,
       hasPosition: false,
       tracked: true,
+      updatedAt: "2026-08-10T20:15:00Z",
     },
     {
       symbol: "MSFT",
@@ -396,6 +398,7 @@ export const demoData: DashboardData = {
       strategy: "Trend Breakout",
       hasPosition: false,
       tracked: true,
+      updatedAt: "2026-08-10T20:15:00Z",
     },
     {
       symbol: "AAPL",
@@ -408,6 +411,7 @@ export const demoData: DashboardData = {
       strategy: null,
       hasPosition: false,
       tracked: false,
+      updatedAt: "2026-08-10T20:15:00Z",
     },
     {
       symbol: "NVDA",
@@ -420,6 +424,7 @@ export const demoData: DashboardData = {
       strategy: "Trend Breakout",
       hasPosition: true,
       tracked: true,
+      updatedAt: "2026-08-10T20:15:00Z",
     },
     {
       symbol: "CRM",
@@ -432,6 +437,7 @@ export const demoData: DashboardData = {
       strategy: "Post Earnings",
       hasPosition: false,
       tracked: true,
+      updatedAt: "2026-08-10T20:15:00Z",
     },
     {
       symbol: "AMD",
@@ -444,6 +450,7 @@ export const demoData: DashboardData = {
       strategy: "Post Earnings",
       hasPosition: true,
       tracked: true,
+      updatedAt: "2026-08-10T20:15:00Z",
     },
     {
       symbol: "PLTR",
@@ -456,6 +463,7 @@ export const demoData: DashboardData = {
       strategy: null,
       hasPosition: false,
       tracked: false,
+      updatedAt: "2026-08-10T20:15:00Z",
     },
   ],
   positions: [

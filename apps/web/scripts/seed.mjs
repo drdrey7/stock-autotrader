@@ -53,7 +53,8 @@ const ins = (table, cols, rows) => {
   );
 };
 
-// Reset (idempotent)
+// Reset (idempotent) — also reset AUTOINCREMENT counters so re-runs keep
+// deterministic ids (scans.id=1, scan_candidates.id=1..n) and FK references.
 lines.push(
   "DELETE FROM decision_reasons;",
   "DELETE FROM scan_candidates;",
@@ -65,6 +66,7 @@ lines.push(
   "DELETE FROM bot_events;",
   "DELETE FROM research;",
   "DELETE FROM app_meta;",
+  "DELETE FROM sqlite_sequence;",
 );
 
 // app_meta (portfolio + status extras + risk policy)
@@ -152,7 +154,8 @@ ins(
   demoData.earnings.map((e) => [
     q(e.symbol), q(e.company), q(e.date), q(e.timing), q(e.eventSignal),
     e.engineRelevant ? "1" : "0", e.signal ? q(e.signal) : "NULL", e.strategy ? q(e.strategy) : "NULL",
-    e.hasPosition ? "1" : "0", e.tracked ? "1" : "0", q(e.updatedAt),
+    e.hasPosition ? "1" : "0", e.tracked ? "1" : "0",
+    q(e.updatedAt ?? "2026-08-10T20:15:00Z"),
   ]),
 );
 

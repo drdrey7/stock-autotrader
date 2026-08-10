@@ -121,6 +121,7 @@ export const dashboardPayload = z.object({
       strategy: z.string().nullable(),
       hasPosition: z.boolean(),
       tracked: z.boolean(),
+      updatedAt: z.string(),
     }),
   ),
   positions: z.array(
