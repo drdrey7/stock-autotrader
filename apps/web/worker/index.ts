@@ -1,0 +1,285 @@
+import type { DashboardData, StrategySummary, Candidate } from "@stock-autotrader/contracts";
+
+/**
+ * Stock Autotrader public read-only API (PR #2).
+ * Serves sanitized public data from D1. No mutations, no admin, no broker routes.
+ * Non-API requests fall through to Workers Assets (the SPA).
+ */
+
+export interface Env {
+  DB: D1Database;
+  ASSETS: Fetcher;
+}
+
+const json = (data: unknown, status = 200) =>
+  new Response(JSON.stringify(data), {
+    status,
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "public, max-age=60",
+      "access-control-allow-origin": "*",
+      "access-control-allow-methods": "GET, HEAD, OPTIONS",
+      "access-control-allow-headers": "Content-Type, Accept",
+    },
+  });
+
+const int = (v: unknown): number => Number(v) || 0;
+const num = (v: unknown): number => (v === null || v === undefined ? 0 : Number(v));
+const str = (v: unknown): string | null => (v === null || v === undefined ? null : String(v));
+const bool = (v: unknown): boolean => Number(v) === 1;
+
+const parseJson = (v: unknown, fallback: unknown) => {
+  if (v === null || v === undefined) return fallback;
+  try {
+    return JSON.parse(String(v));
+  } catch {
+    return fallback;
+  }
+};
+
+interface ScanRow {
+  id: number;
+  scanned_at: string;
+  universe: number;
+  passed_filters: number;
+  candidates: number;
+  setups: number;
+  watch: number;
+}
+
+async function buildDashboard(env: Env): Promise<DashboardData> {
+  const meta = await env.DB.prepare("SELECT key, value FROM app_meta").all();
+  const metaMap = new Map<string, string>((meta.results as { key: string; value: string }[]).map((r) => [r.key, r.value]));
+
+  const [scanRes, strategiesRes, candidatesRes, earningsRes, positionsRes, eventsRes, researchRes] = await Promise.all([
+    env.DB.prepare("SELECT * FROM scans ORDER BY id DESC LIMIT 1").first(),
+    env.DB.prepare("SELECT * FROM strategies ORDER BY id").all(),
+    env.DB.prepare("SELECT * FROM scan_candidates ORDER BY id").all(),
+    env.DB.prepare("SELECT * FROM earnings ORDER BY date").all(),
+    env.DB.prepare("SELECT * FROM shadow_positions ORDER BY id").all(),
+    env.DB.prepare("SELECT * FROM bot_events ORDER BY id").all(),
+    env.DB.prepare("SELECT * FROM research ORDER BY id").all(),
+  ]);
+  const scan = (scanRes ?? null) as ScanRow | null;
+
+  const candidateRows = (candidatesRes.results as Record<string, unknown>[]).map((r) => Number(r.id));
+  let reasons: Record<string, unknown>[] = [];
+  if (candidateRows.length > 0) {
+    const placeholders = candidateRows.map(() => "?").join(",");
+    reasons = (
+      await env.DB.prepare(`SELECT * FROM decision_reasons WHERE candidate_id IN (${placeholders})`).bind(...candidateRows).all()
+    ).results as Record<string, unknown>[];
+  }
+  const reasonsByCandidate = new Map<number, Record<string, unknown>[]>();
+  for (const r of reasons) {
+    const cid = Number(r.candidate_id);
+    if (!reasonsByCandidate.has(cid)) reasonsByCandidate.set(cid, []);
+    reasonsByCandidate.get(cid)!.push(r);
+  }
+
+  const strategies: StrategySummary[] = (strategiesRes.results as Record<string, unknown>[]).map((s) => ({
+    id: String(s.id),
+    name: String(s.name),
+    version: String(s.version),
+    description: str(s.description) ?? "",
+    state: String(s.status) as StrategySummary["state"],
+    enabled: true,
+    universe: str(s.universe) ?? "",
+    holdingPeriod: str(s.typical_holding_period) ?? "",
+    signalsToday: int(s.signals_today),
+    openPositions: int(s.open_shadow_positions),
+    parameters: parseJson(s.metadata, {}),
+  }));
+
+  const candidates: Candidate[] = (candidatesRes.results as Record<string, unknown>[]).map((c) => ({
+    symbol: String(c.symbol),
+    company: str(c.company) ?? "",
+    sector: str(c.sector) ?? "",
+    marketCap: int(c.market_cap),
+    price: num(c.price),
+    quantScore: int(c.quant_score),
+    strategyId: String(c.strategy_id),
+    strategyVersion: String(c.strategy_version),
+    strategy: String(c.strategy),
+    trend: (str(c.trend) ?? "") as Candidate["trend"],
+    momentum: num(c.momentum),
+    relativeStrength: num(c.relative_strength),
+    relativeVolume: num(c.relative_volume),
+    breakout: str(c.breakout),
+    earningsDate: str(c.earnings_date),
+    earningsProximityDays: c.earnings_proximity_days === null ? null : int(c.earnings_proximity_days),
+    status: String(c.status) as Candidate["status"],
+    direction: String(c.direction) as Candidate["direction"],
+    riskFlags: parseJson(c.risk_flags, []) as string[],
+    updatedAt: String(c.updated_at),
+    reasons: (reasonsByCandidate.get(Number(c.id)) ?? []).map((r) => ({
+      id: String(r.reason_code),
+      outcome: String(r.outcome) as "pass" | "reject" | "info",
+      code: String(r.reason_code),
+      label: String(r.reason_label),
+      observed: str(r.observed) ?? undefined,
+      threshold: str(r.threshold) ?? undefined,
+    })),
+  }));
+
+  const earnings = (earningsRes.results as Record<string, unknown>[]).map((e) => ({
+    symbol: String(e.symbol),
+    company: String(e.company),
+    date: String(e.date),
+    timing: String(e.timing) as "BMO" | "AMC" | "TBD",
+    eventSignal: String(e.event_signal) as "Confirmed" | "Pending" | "Risk Window",
+    engineRelevant: bool(e.engine_relevant),
+    signal: (str(e.signal) ?? null) as Candidate["status"] | null,
+    strategy: str(e.strategy),
+    hasPosition: bool(e.has_position),
+    tracked: bool(e.tracked),
+    updatedAt: String(e.updated_at),
+  }));
+
+  const positions = (positionsRes.results as Record<string, unknown>[]).map((p) => ({
+    symbol: String(p.symbol),
+    strategy: String(p.strategy),
+    entryPrice: num(p.entry_price),
+    currentPrice: num(p.current_price),
+    stopPrice: num(p.stop_price),
+    quantity: int(p.quantity),
+    riskAmount: num(p.risk_amount),
+    unrealizedPnl: num(p.unrealized_pnl),
+    returnPct: num(p.return_pct),
+    rMultiple: num(p.r_multiple),
+    openedAt: String(p.opened_at),
+  }));
+
+  const events = (eventsRes.results as Record<string, unknown>[]).map((e) => ({
+    id: String(e.event_id),
+    type: String(e.event_type),
+    message: String(e.message),
+    severity: String(e.severity) as "success" | "warning" | "info",
+    symbol: str(e.symbol) ?? undefined,
+    strategyId: str(e.strategy_id) ?? undefined,
+    createdAt: String(e.created_at),
+  }));
+
+  const research = (researchRes.results as Record<string, unknown>[]).map((r) => ({
+    id: String(r.id),
+    strategyId: String(r.strategy_id),
+    strategy: String(r.strategy),
+    stage: String(r.stage) as "Research" | "Validation" | "Out-of-Sample" | "Shadow" | "Live",
+    period: String(r.period),
+    status: String(r.status) as "Demo" | "Pending" | "Complete",
+    metrics: parseJson(r.metrics, {}),
+  }));
+
+  const portfolio = {
+    initialCapital: num(metaMap.get("initialCapital") ?? 10000),
+    equity: num(metaMap.get("equity") ?? 0),
+    returnPct: num(metaMap.get("returnPct") ?? 0),
+    cash: num(metaMap.get("cash") ?? 0),
+    invested: num(metaMap.get("invested") ?? 0),
+    openPositions: int(metaMap.get("openPositions") ?? 0),
+    openRiskPct: num(metaMap.get("openRiskPct") ?? 0),
+    grossExposurePct: num(metaMap.get("grossExposurePct") ?? 0),
+    riskPolicy: parseJson(metaMap.get("riskPolicy"), {}),
+  };
+
+  return {
+    demo: false,
+    status: {
+      engine: (metaMap.get("engine") as DashboardData["status"]["engine"]) ?? "online",
+      latestScan: scan ? scan.scanned_at : null,
+      nextScan: str(metaMap.get("nextScan")),
+      lastDataUpdate: str(metaMap.get("lastDataUpdate")),
+      apiHealth: (metaMap.get("apiHealth") as DashboardData["status"]["apiHealth"]) ?? "healthy",
+    },
+    scan: {
+      universe: scan ? int(scan.universe) : 0,
+      passedFilters: scan ? int(scan.passed_filters) : 0,
+      candidates: scan ? int(scan.candidates) : 0,
+      setups: scan ? int(scan.setups) : 0,
+      watch: scan ? int(scan.watch) : 0,
+    },
+    portfolio,
+    strategies,
+    candidates,
+    events,
+    earnings,
+    positions,
+    research,
+  };
+}
+
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    if (request.method !== "GET" && request.method !== "HEAD" && request.method !== "OPTIONS") {
+      return json({ error: "Method not allowed" }, 405);
+    }
+    const { pathname } = new URL(request.url);
+
+    if (pathname === "/healthz") {
+      return json({ ok: true, time: new Date().toISOString() });
+    }
+    if (pathname === "/api/status" || pathname === "/api/dashboard") {
+      try {
+        return json(await buildDashboard(env));
+      } catch (err) {
+        console.error("dashboard error", err);
+        return json({ error: "Internal error" }, 500);
+      }
+    }
+    const stockMatch = pathname.match(/^\/api\/stocks\/([A-Za-z0-9.-]+)$/);
+    if (stockMatch) {
+      const symbol = stockMatch[1]?.toUpperCase();
+      if (!symbol) return json({ error: "Not found" }, 404);
+      try {
+        const payload = await buildDashboard(env);
+        const stock = payload.candidates.find((c) => c.symbol === symbol);
+        if (!stock) return json({ error: "Not found" }, 404);
+        return json({
+          symbol: stock.symbol,
+          company: stock.company,
+          sector: stock.sector,
+          marketCap: stock.marketCap,
+          price: stock.price,
+          quantScore: stock.quantScore,
+          strategyId: stock.strategyId,
+          strategyVersion: stock.strategyVersion,
+          strategy: stock.strategy,
+          status: stock.status,
+          direction: stock.direction,
+          earningsDate: stock.earningsDate,
+          earningsProximityDays: stock.earningsProximityDays,
+          reasons: stock.reasons,
+        });
+      } catch {
+        return json({ error: "Internal error" }, 500);
+      }
+    }
+    if (pathname === "/api/earnings") {
+      try {
+        const payload = await buildDashboard(env);
+        return json(payload.earnings);
+      } catch {
+        return json({ error: "Internal error" }, 500);
+      }
+    }
+    if (pathname === "/api/portfolio/shadow") {
+      try {
+        const payload = await buildDashboard(env);
+        return json({ portfolio: payload.portfolio, positions: payload.positions });
+      } catch {
+        return json({ error: "Internal error" }, 500);
+      }
+    }
+    if (pathname === "/api/strategies") {
+      try {
+        const payload = await buildDashboard(env);
+        return json(payload.strategies);
+      } catch {
+        return json({ error: "Internal error" }, 500);
+      }
+    }
+
+    if (pathname.startsWith("/api/")) return json({ error: "Not found" }, 404);
+    return env.ASSETS.fetch(request);
+  },
+};

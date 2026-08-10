@@ -23,7 +23,10 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run build
+      - name: Build (API mode — reads from D1 via the public API)
+        run: npm run build
+        env:
+          VITE_DEMO_MODE: "false"
       - name: Deploy preview (feature branches)
         if: github.ref != 'refs/heads/main'
         id: preview
