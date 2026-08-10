@@ -42,9 +42,16 @@ def relative_strength(close: pd.Series, benchmark_close: pd.Series, sessions: in
 
 
 def swing_points(frame: pd.DataFrame, radius: int = 2) -> tuple[pd.Series, pd.Series]:
+    if radius < 1:
+        raise ValueError("Swing-point radius must be at least one bar")
     window = radius * 2 + 1
-    swing_high = frame["high"].eq(frame["high"].rolling(window, center=True).max())
-    swing_low = frame["low"].eq(frame["low"].rolling(window, center=True).min())
+    # A centred window identifies the pivot itself, but the pivot is not knowable
+    # until `radius` later bars have closed. Publish the flag on that confirmation
+    # bar so every feature at time t uses data available at or before t.
+    pivot_high = frame["high"].eq(frame["high"].rolling(window, center=True).max())
+    pivot_low = frame["low"].eq(frame["low"].rolling(window, center=True).min())
+    swing_high = pivot_high.shift(radius, fill_value=False)
+    swing_low = pivot_low.shift(radius, fill_value=False)
     return swing_high.fillna(False), swing_low.fillna(False)
 
 

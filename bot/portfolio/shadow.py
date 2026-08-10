@@ -1,7 +1,8 @@
 from datetime import datetime
+from math import isfinite
 from uuid import uuid4
 
-from pydantic import BaseModel
+from pydantic import AwareDatetime, BaseModel
 
 from bot.config import RiskConfig
 from bot.risk import PositionSizer, RiskPolicyError
@@ -18,7 +19,7 @@ class ShadowPosition(BaseModel):
     stop_price: float
     quantity: int
     initial_risk: float
-    opened_at: datetime
+    opened_at: AwareDatetime
     unrealized_pnl: float = 0
     r_multiple: float = 0
 
@@ -51,6 +52,9 @@ class ShadowPortfolio:
         stop_price: float,
         opened_at: datetime,
     ) -> ShadowPosition:
+        symbol = symbol.strip().upper()
+        sector = sector.strip()
+        sector_key = sector.casefold()
         if symbol in self.positions:
             raise RiskPolicyError("Averaging down and duplicate positions are disabled")
         if len(self.positions) >= self.config.max_positions:
@@ -58,8 +62,11 @@ class ShadowPortfolio:
         sized = self.sizer.size(self.equity, entry_price, stop_price)
         if self.open_risk + sized.initial_risk > self.equity * self.config.max_open_risk_pct:
             raise RiskPolicyError("Maximum open risk exceeded")
+        gross_exposure = sum(p.quantity * p.current_price for p in self.positions.values())
+        if gross_exposure + sized.notional > self.equity * self.config.max_gross_exposure_pct:
+            raise RiskPolicyError("Maximum gross exposure exceeded")
         sector_exposure = sum(
-            p.quantity * p.current_price for p in self.positions.values() if p.sector == sector
+            p.quantity * p.current_price for p in self.positions.values() if p.sector.casefold() == sector_key
         )
         if sector_exposure + sized.notional > self.equity * self.config.max_sector_exposure_pct:
             raise RiskPolicyError("Maximum sector exposure exceeded")
@@ -83,14 +90,18 @@ class ShadowPortfolio:
         return position
 
     def mark(self, symbol: str, price: float) -> ShadowPosition:
-        position = self.positions[symbol]
+        if not isfinite(price) or price <= 0:
+            raise RiskPolicyError("Mark price must be finite and positive")
+        position = self.positions[symbol.strip().upper()]
         position.current_price = price
         position.unrealized_pnl = (price - position.entry_price) * position.quantity
         position.r_multiple = position.unrealized_pnl / position.initial_risk
         return position
 
     def close_position(self, symbol: str, exit_price: float) -> float:
-        position = self.positions.pop(symbol)
+        if not isfinite(exit_price) or exit_price <= 0:
+            raise RiskPolicyError("Exit price must be finite and positive")
+        position = self.positions.pop(symbol.strip().upper())
         proceeds = position.quantity * exit_price
         pnl = (exit_price - position.entry_price) * position.quantity
         self.cash += proceeds

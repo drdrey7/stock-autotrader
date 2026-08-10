@@ -118,7 +118,7 @@ CREATE TABLE earnings (
   symbol TEXT NOT NULL REFERENCES stocks(symbol),
   event_date TEXT NOT NULL,
   timing TEXT NOT NULL DEFAULT 'TBD' CHECK (timing IN ('BMO','AMC','TBD')),
-  fiscal_period TEXT,
+  fiscal_period TEXT NOT NULL DEFAULT '',
   eps_actual REAL,
   eps_estimate REAL,
   revenue_actual REAL,
@@ -257,4 +257,3 @@ CREATE INDEX idx_positions_portfolio_status ON shadow_positions(portfolio_id, st
 CREATE INDEX idx_trades_portfolio_entry ON shadow_trades(portfolio_id, entry_at DESC);
 CREATE INDEX idx_backtests_strategy_stage ON backtests(strategy_id, strategy_version, stage);
 CREATE INDEX idx_events_time ON bot_events(occurred_at DESC);
-

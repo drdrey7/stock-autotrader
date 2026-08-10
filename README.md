@@ -122,7 +122,7 @@ Copy `.env.example` to `.env` only on a trusted machine and keep permission `600
 1. Authenticate interactively with the intended Cloudflare account.
 2. Inspect existing D1 databases, Workers, routes and Tunnels.
 3. Create or confirm a dedicated D1 database.
-4. Replace the explicit `REPLACE_WITH_D1_DATABASE_ID` marker in `apps/api/wrangler.jsonc` with the real confirmed ID; never commit an unreviewed account-specific change.
+4. Replace the explicit D1 and origin markers in the `env.production` block with confirmed values; keep the top-level local environment in demo mode.
 5. Generate binding types and validate locally.
 6. List and apply migrations only to the confirmed database.
 7. Dry-run both deployments before setting routes/custom domains.
@@ -132,8 +132,8 @@ npx wrangler whoami
 npx wrangler d1 list
 npm run cf:types
 npm run db:migrate:local -w @stock-autotrader/api
-npx wrangler deploy --dry-run --config apps/api/wrangler.jsonc
-npm run build -w @stock-autotrader/web
+npx wrangler deploy --dry-run --env production --config apps/api/wrangler.jsonc
+VITE_API_BASE_URL=https://REPLACE_WITH_PUBLIC_API_ORIGIN VITE_DEMO_MODE=false npm run build -w @stock-autotrader/web
 npx wrangler deploy --dry-run --config apps/web/wrangler.jsonc
 ```
 
@@ -178,4 +178,3 @@ Do not configure the VPS from this repository session. The inspection-first inst
 ## Disclaimer
 
 Stock Autotrader provides model-generated research for educational and informational purposes. Strong Setup, Watch, No Setup, Bullish, Neutral and Bearish are model labels, not personalised investment advice. Backtests, demo data and shadow portfolios are hypothetical and do not guarantee future results.
-

@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from math import floor
+from math import floor, isfinite
 
 from bot.config import RiskConfig
 
@@ -21,6 +21,8 @@ class PositionSizer:
         self.config = config or RiskConfig()
 
     def size(self, equity: float, entry_price: float, stop_price: float) -> PositionSize:
+        if not all(isfinite(value) for value in (equity, entry_price, stop_price)):
+            raise RiskPolicyError("Equity and prices must be finite")
         if equity <= 0 or entry_price <= 0 or stop_price <= 0:
             raise RiskPolicyError("Equity and prices must be positive")
         per_share_risk = entry_price - stop_price

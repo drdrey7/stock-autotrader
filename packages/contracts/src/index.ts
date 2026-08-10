@@ -19,6 +19,7 @@ export interface Candidate {
   price: number;
   quantScore: number;
   strategyId: string;
+  strategyVersion: string;
   strategy: string;
   trend: TrendStrength;
   momentum: number;
@@ -37,7 +38,7 @@ export interface StrategySummary {
   name: string;
   version: string;
   description: string;
-  state: "Research" | "Validation" | "Shadow" | "Live";
+  state: "Research" | "Validation" | "Out-of-Sample" | "Shadow" | "Live";
   enabled: boolean;
   universe: string;
   holdingPeriod: string;
@@ -93,13 +94,28 @@ export interface DashboardData {
   demo: boolean;
   status: {
     engine: "online" | "offline" | "delayed";
-    latestScan: string;
-    nextScan: string;
-    lastDataUpdate: string;
+    latestScan: string | null;
+    nextScan: string | null;
+    lastDataUpdate: string | null;
     apiHealth: "healthy" | "degraded";
   };
-  scan: { universe: number; passedFilters: number; candidates: number; setups: number };
-  portfolio: { initialCapital: number; equity: number; returnPct: number; openPositions: number; openRiskPct: number };
+  scan: {
+    universe: number;
+    passedFilters: number;
+    candidates: number;
+    setups: number;
+  };
+  portfolio: {
+    initialCapital: number;
+    equity: number;
+    returnPct: number;
+    openPositions: number;
+    openRiskPct: number;
+    grossExposurePct: number;
+    maxPositions: number;
+    maxOpenRiskPct: number;
+    maxGrossExposurePct: number;
+  };
   strategies: StrategySummary[];
   candidates: Candidate[];
   events: BotEvent[];
@@ -128,6 +144,5 @@ export const API_PATHS = {
   shadowPortfolio: "/api/portfolio/shadow",
   shadowTrades: "/api/trades/shadow",
   earnings: "/api/earnings",
-  activity: "/api/activity"
+  activity: "/api/activity",
 } as const;
-

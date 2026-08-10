@@ -107,25 +107,28 @@ npx wrangler whoami
 npx wrangler d1 list
 ```
 
-Then either reuse an intentionally dedicated D1 database or create one after approval. Replace `REPLACE_WITH_D1_DATABASE_ID` in a deployment-specific `apps/api/wrangler.jsonc` change or managed config; never invent an ID. Preview migrations locally, then apply remotely only to the confirmed database:
+Then either reuse an intentionally dedicated D1 database or create one after approval. In the `env.production` block, replace both `REPLACE_WITH_D1_DATABASE_ID` occurrences with the confirmed database ID and `REPLACE_WITH_PUBLIC_WEB_ORIGIN` with the exact HTTPS web origin. Replace `REPLACE_WITH_PUBLIC_API_HOST` in `apps/web/public/_headers` with the confirmed API hostname (hostname only, no path). Keep the top-level environment in demo mode for safe local development. Never invent an ID or domain. Preview migrations locally, then target the production environment explicitly:
 
 ```bash
 npm ci
 npm run cf:types
 npm run db:migrate:local -w @stock-autotrader/api
-npx wrangler d1 migrations list stock-autotrader-public --remote --config apps/api/wrangler.jsonc
-npx wrangler d1 migrations apply stock-autotrader-public --remote --config apps/api/wrangler.jsonc
+npx wrangler d1 migrations list stock-autotrader-public --remote --env production --config apps/api/wrangler.jsonc
+npx wrangler d1 migrations apply stock-autotrader-public --remote --env production --config apps/api/wrangler.jsonc
 ```
 
 Create a private authenticated ingest Worker/service binding or reuse the existing secure Cloudflare integration. The ingest contract must validate a short-lived or rotatable token, schema, payload size, timestamp freshness and allowed fields. It publishes only public data to D1. Do not expose the engine API or MCP endpoints through a public route.
 
-Deploy only after dry runs and explicit domain confirmation:
+Build the public web app with an explicit API origin and demo mode disabled. These are public build-time settings, not secrets. Deploy only after dry runs, inspecting the built asset, and explicit domain confirmation:
 
 ```bash
-npm run build
-npx wrangler deploy --dry-run --config apps/api/wrangler.jsonc
+VITE_API_BASE_URL=https://REPLACE_WITH_PUBLIC_API_ORIGIN VITE_DEMO_MODE=false npm run build -w @stock-autotrader/web
+npm run build -w @stock-autotrader/api
+npx wrangler deploy --dry-run --env production --config apps/api/wrangler.jsonc
 npx wrangler deploy --dry-run --config apps/web/wrangler.jsonc
 ```
+
+Before the real deploy, verify that the production Worker dry-run reports `DEMO_MODE=false`, the intended D1 binding and the exact allowed web origin. Verify the web bundle contains the intended public API origin, copies `_headers`, contains no unresolved `REPLACE_WITH_` marker, and does not display `Demo Data`. Then run the same two deploy commands without `--dry-run`; do not deploy from the top-level API environment.
 
 ## 6. Provider and MCP adapters
 
@@ -182,4 +185,3 @@ npx wrangler deployments list --config apps/api/wrangler.jsonc
 ```
 
 For application rollback, redeploy the previously known-good Git commit/image or use Cloudflare deployment rollback. Do not `git reset --hard`, delete volumes or reverse a D1 migration blindly. D1 schema changes require a tested forward-fix migration or a verified restore plan. Stop new schedules first, allow/terminate the current scan safely, switch the application version, smoke test, then re-enable schedules.
-

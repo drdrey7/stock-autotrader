@@ -1,7 +1,6 @@
-from datetime import datetime
 from enum import StrEnum
 
-from pydantic import AnyHttpUrl, BaseModel, Field
+from pydantic import AnyHttpUrl, AwareDatetime, BaseModel, Field
 
 
 class EventStatus(StrEnum):
@@ -19,7 +18,7 @@ class RiskLevel(StrEnum):
 class Source(BaseModel):
     title: str
     url: AnyHttpUrl
-    published_at: datetime | None = None
+    published_at: AwareDatetime | None = None
 
 
 class AiEventAssessment(BaseModel):

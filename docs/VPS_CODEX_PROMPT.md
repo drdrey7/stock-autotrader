@@ -15,7 +15,7 @@ Mandatory rules:
 3. Do not assume the VPS is empty. Preserve and reuse existing configuration when safe. Do not stop, overwrite, delete or reconfigure unrelated services. Do not use force push, `git reset --hard`, broad recursive deletion or destructive database commands.
 4. Clone to a dedicated path only if no checkout exists. If it exists, inspect status/remotes/diff before fetch/pull. Never put a GitHub token in a URL or command history.
 5. Create a local `.env` from `.env.example`, permission `600`, and verify Git ignores it. Store secrets in the existing VPS secret manager when available. Never commit, echo or log secrets.
-6. Inspect the existing Cloudflare account/integration first. Reuse a suitable dedicated D1/Tunnel/service binding only when confirmed. Never invent account/database IDs. Use Wrangler secrets for Cloudflare secrets. Keep the public frontend/API read-only.
+6. Inspect the existing Cloudflare account/integration first. Reuse a suitable dedicated D1/Tunnel/service binding only when confirmed. Never invent account/database IDs. Use Wrangler secrets for Cloudflare secrets. Configure the explicit `env.production` markers, deploy the API only with `--env production`, and build the web with `VITE_DEMO_MODE=false` plus the confirmed API origin. Verify neither production component remains in demo mode. Keep the public frontend/API read-only.
 7. Implement provider adapters behind the existing contracts for market data, earnings, TradingView MCP, Firecrawl and OpenAI. AI receives only candidates already filtered by the quant engine and may not size positions or override hard risk. Store structured public rationale/sources only, never chain-of-thought.
 8. Run local tests, lint, typecheck, build, D1 local migration and Docker config/build before deployment. Fix failures without weakening checks.
 9. Configure permanent components using the VPS's established service pattern: internal engine health API, isolated scan worker, non-overlapping scheduler and authenticated public-data publisher. Do not expose MCPs, engine API, filesystem or private ports publicly.
@@ -41,4 +41,3 @@ At the end report:
 Do not claim completion if any test is red or if the full scan has not been proven. Explain the exact blocker instead.
 
 ---
-

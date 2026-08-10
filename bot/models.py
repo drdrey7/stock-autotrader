@@ -2,7 +2,7 @@ from datetime import UTC, date, datetime
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import AwareDatetime, BaseModel, Field, model_validator
 
 
 def utc_now() -> datetime:
@@ -44,7 +44,7 @@ class SecuritySnapshot(BaseModel):
     market_cap: float
     price: float
     median_dollar_volume_20d: float
-    data_as_of: datetime = Field(default_factory=utc_now)
+    data_as_of: AwareDatetime = Field(default_factory=utc_now)
 
 
 class EarningsSnapshot(BaseModel):
@@ -54,7 +54,7 @@ class EarningsSnapshot(BaseModel):
     price_reaction_pct: float | None = None
     relative_volume: float | None = None
     guidance_status: str | None = None
-    available_at: datetime
+    available_at: AwareDatetime
 
 
 class StrategyContext(BaseModel):
@@ -62,7 +62,13 @@ class StrategyContext(BaseModel):
     features: dict[str, float | bool | None]
     market_regime_positive: bool
     earnings: EarningsSnapshot | None = None
-    as_of: datetime
+    as_of: AwareDatetime
+
+    @model_validator(mode="after")
+    def earnings_must_match_symbol(self) -> "StrategyContext":
+        if self.earnings and self.earnings.symbol.strip().upper() != self.symbol.strip().upper():
+            raise ValueError("Earnings symbol must match strategy context symbol")
+        return self
 
 
 class StrategyDecision(BaseModel):
@@ -73,6 +79,6 @@ class StrategyDecision(BaseModel):
     direction: Direction
     quant_score: float = Field(ge=0, le=100)
     reasons: list[DecisionReason]
-    stop_price: float | None = None
-    generated_at: datetime = Field(default_factory=utc_now)
+    stop_price: float | None = Field(default=None, gt=0)
+    generated_at: AwareDatetime = Field(default_factory=utc_now)
     metadata: dict[str, Any] = Field(default_factory=dict)

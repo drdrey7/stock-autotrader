@@ -1,8 +1,7 @@
-from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import AwareDatetime, BaseModel, Field
 
 from bot.models import utc_now
 
@@ -30,7 +29,7 @@ class BotEvent(BaseModel):
     symbol: str | None = None
     strategy_id: str | None = None
     public_metadata: dict[str, Any] = Field(default_factory=dict)
-    occurred_at: datetime = Field(default_factory=utc_now)
+    occurred_at: AwareDatetime = Field(default_factory=utc_now)
 
 
 class EventSink:

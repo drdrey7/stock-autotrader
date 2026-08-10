@@ -1,4 +1,5 @@
 from datetime import timedelta
+from math import isfinite
 from typing import Any
 
 from bot.models import (
@@ -29,16 +30,15 @@ class PostEarningsV1(Strategy):
         return bool(
             event
             and event.available_at <= context.as_of
-            and context.as_of.date() <= event.event_date + timedelta(days=5)
+            and event.event_date <= context.as_of.date() <= event.event_date + timedelta(days=5)
         )
 
     def calculate_stop(self, context: StrategyContext) -> float | None:
         close, atr14 = context.features.get("close"), context.features.get("atr14")
-        return (
-            round(float(close) - 2.5 * float(atr14), 4)
-            if isinstance(close, (int, float)) and isinstance(atr14, (int, float))
-            else None
-        )
+        if not isinstance(close, (int, float)) or not isinstance(atr14, (int, float)):
+            return None
+        stop = round(float(close) - 2.5 * float(atr14), 4)
+        return stop if isfinite(stop) and stop > 0 else None
 
     def generate_signal(self, context: StrategyContext) -> StrategyDecision:
         event = context.earnings
@@ -48,6 +48,13 @@ class PostEarningsV1(Strategy):
                 bool(event and event.available_at <= context.as_of),
                 "EVENT_TIMESTAMP",
                 "Event information available at signal time",
+            ),
+            (
+                bool(
+                    event and event.event_date <= context.as_of.date() <= event.event_date + timedelta(days=5)
+                ),
+                "EVENT_WINDOW",
+                "Signal date within five days after earnings",
             ),
             (
                 bool(event and (event.price_reaction_pct or 0) >= 0.03),
@@ -63,6 +70,11 @@ class PostEarningsV1(Strategy):
                 feature_number(context, "rs_spy", -1) > 0,
                 "RELATIVE_STRENGTH",
                 "Relative strength vs SPY positive",
+            ),
+            (
+                self.calculate_stop(context) is not None,
+                "STOP_VALID",
+                "Volatility stop is finite and above zero",
             ),
         ]
         reasons = [

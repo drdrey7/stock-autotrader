@@ -7,19 +7,36 @@
   "vars": {
     "ENVIRONMENT": "development",
     "DEMO_MODE": "true",
-    "ALLOWED_ORIGIN": "http://localhost:5173"
+    "ALLOWED_ORIGIN": "http://localhost:5173",
   },
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "stock-autotrader-public",
       "database_id": "REPLACE_WITH_D1_DATABASE_ID",
-      "migrations_dir": "../../database/migrations"
-    }
+      "migrations_dir": "../../database/migrations",
+    },
   ],
   "observability": {
     "enabled": true,
-    "head_sampling_rate": 1
-  }
+    "head_sampling_rate": 1,
+  },
+  "env": {
+    "production": {
+      "name": "stock-autotrader-public-api-production",
+      "vars": {
+        "ENVIRONMENT": "production",
+        "DEMO_MODE": "false",
+        "ALLOWED_ORIGIN": "REPLACE_WITH_PUBLIC_WEB_ORIGIN",
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "stock-autotrader-public",
+          "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+          "migrations_dir": "../../database/migrations",
+        },
+      ],
+    },
+  },
 }
-

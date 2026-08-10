@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from math import isfinite
 from typing import Any
 
 from bot.models import StrategyContext, StrategyDecision
@@ -7,7 +8,11 @@ from bot.models import StrategyContext, StrategyDecision
 
 def feature_number(context: StrategyContext, key: str, default: float) -> float:
     value = context.features.get(key)
-    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else default
+    return (
+        float(value)
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and isfinite(value)
+        else default
+    )
 
 
 @dataclass(frozen=True)

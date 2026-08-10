@@ -1,3 +1,4 @@
+from math import isfinite
 from typing import Any
 
 from bot.models import (
@@ -33,7 +34,8 @@ class TrendBreakoutV1(Strategy):
         close, atr14 = context.features.get("close"), context.features.get("atr14")
         if not isinstance(close, (int, float)) or not isinstance(atr14, (int, float)):
             return None
-        return round(float(close) - 2 * float(atr14), 4)
+        stop = round(float(close) - 2 * float(atr14), 4)
+        return stop if isfinite(stop) and stop > 0 else None
 
     def generate_signal(self, context: StrategyContext) -> StrategyDecision:
         f = context.features
@@ -45,6 +47,7 @@ class TrendBreakoutV1(Strategy):
         rs_qqq = feature_number(context, "rs_qqq", -1)
         relative_volume = feature_number(context, "relative_volume", 0)
         atr_pct = feature_number(context, "atr_pct", 1)
+        stop_price = self.calculate_stop(context)
         checks = [
             (
                 context.market_regime_positive,
@@ -88,6 +91,13 @@ class TrendBreakoutV1(Strategy):
                 f"{atr_pct:.2%}",
                 "1%-8%",
             ),
+            (
+                stop_price is not None,
+                "STOP_VALID",
+                "Volatility stop is finite and above zero",
+                str(stop_price),
+                "> 0",
+            ),
         ]
         reasons = [
             DecisionReason(
@@ -115,7 +125,7 @@ class TrendBreakoutV1(Strategy):
             direction=Direction.BULLISH if passed >= 4 else Direction.NEUTRAL,
             quant_score=round(100 * passed / len(checks), 2),
             reasons=reasons,
-            stop_price=self.calculate_stop(context),
+            stop_price=stop_price,
         )
 
     def exit_signal(self, context: StrategyContext, position: dict[str, Any]) -> bool:

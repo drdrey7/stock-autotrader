@@ -1,7 +1,8 @@
 import numpy as np
 import pandas as pd
+import pandas.testing as pdt
 
-from bot.features import calculate_features
+from bot.features import calculate_features, swing_points
 
 
 def test_calculates_required_features_without_lookahead(ohlcv: pd.DataFrame) -> None:
@@ -47,3 +48,22 @@ def test_rejects_unsorted_or_incomplete_data(ohlcv: pd.DataFrame) -> None:
         assert "volume" in str(error)
     else:
         raise AssertionError("Incomplete data must fail closed")
+
+
+def test_swing_points_are_published_only_when_confirmed(ohlcv: pd.DataFrame) -> None:
+    radius = 2
+    frame = ohlcv.iloc[:9].copy()
+    frame["high"] = [1.0, 2.0, 5.0, 3.0, 2.0, 4.0, 3.0, 2.0, 1.0]
+    frame["low"] = [0.5, 1.0, 2.0, 1.5, 0.25, 2.0, 1.5, 1.0, 0.5]
+    prefix = frame.iloc[:7]
+    prefix_high, prefix_low = swing_points(prefix, radius)
+    full_high, full_low = swing_points(frame, radius)
+
+    # Appending future bars cannot rewrite already published feature values.
+    pdt.assert_series_equal(prefix_high, full_high.loc[prefix.index])
+    pdt.assert_series_equal(prefix_low, full_low.loc[prefix.index])
+
+    pivot_index = frame.index[2]
+    confirmation_index = frame.index[4]
+    assert not full_high.loc[pivot_index]
+    assert full_high.loc[confirmation_index]
