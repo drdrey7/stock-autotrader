@@ -1,0 +1,55 @@
+name: stock-autotrader
+services:
+  web:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.web
+    ports: ["127.0.0.1:8080:8080"]
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_started
+
+  api:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.api
+    ports: ["127.0.0.1:8787:8787"]
+    restart: unless-stopped
+
+  engine-api:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.worker
+    command: ["uvicorn", "bot.service:app", "--host", "0.0.0.0", "--port", "8000"]
+    expose: ["8000"]
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    volumes: ["engine-data:/data"]
+
+  worker:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.worker
+    command: ["stock-engine", "smoke"]
+    profiles: ["jobs"]
+    env_file:
+      - path: .env
+        required: false
+    volumes: ["engine-data:/data"]
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.worker
+    command: ["python", "-m", "bot.scheduler", "describe"]
+    profiles: ["handoff"]
+    env_file:
+      - path: .env
+        required: false
+    volumes: ["engine-data:/data"]
+
+volumes:
+  engine-data:
