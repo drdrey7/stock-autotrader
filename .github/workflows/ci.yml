@@ -33,3 +33,5 @@ jobs:
       - name: Validate seed against local D1
         working-directory: apps/web
         run: node scripts/seed.mjs --local
+      - name: Test publisher client (Python)
+        run: npm run test -w @stock-autotrader/publisher

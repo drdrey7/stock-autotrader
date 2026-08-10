@@ -1,0 +1,9 @@
+{
+  "name": "@stock-autotrader/publisher",
+  "version": "5.1.0",
+  "private": true,
+  "description": "Publisher client (VPS → Cloudflare ingest). Python stdlib only.",
+  "scripts": {
+    "test": "python3 -m unittest discover -s tests -v"
+  }
+}
