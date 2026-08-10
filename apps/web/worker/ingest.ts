@@ -193,11 +193,19 @@ function buildStatements(event: IngestEvent): [string, unknown[]][] {
     case "SIGNAL_REJECTED": {
       const c = event.payload;
       stmts.push(
+        // Remove any previous candidate + its reasons for this symbol/strategy (FK-safe).
+        ["DELETE FROM decision_reasons WHERE candidate_id IN (SELECT id FROM scan_candidates WHERE symbol = ? AND strategy_id = ?)", [c.symbol, c.strategyId]],
         ["DELETE FROM scan_candidates WHERE symbol = ? AND strategy_id = ?", [c.symbol, c.strategyId]],
         ["INSERT INTO scan_candidates (scan_id, symbol, company, sector, market_cap, price, quant_score, strategy_id, strategy, strategy_version, trend, momentum, relative_strength, relative_volume, breakout, earnings_date, earnings_proximity_days, status, direction, risk_flags, updated_at) SELECT (SELECT MAX(id) FROM scans), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?",
           [c.symbol, c.company, c.sector ?? null, c.marketCap ?? null, c.price ?? null, c.quantScore, c.strategyId, c.strategy, c.strategyVersion, c.trend, c.momentum ?? null, c.relativeStrength ?? null, c.relativeVolume ?? null, c.breakout ?? null, c.earningsDate ?? null, c.earningsProximityDays ?? null, c.status, c.direction, JSON.stringify(c.riskFlags), c.updatedAt]],
-        insertBotEvent(event.type, `${c.symbol} ${c.status === "Rejected" ? "rejected" : "signal updated"}`, c.symbol),
       );
+      for (const r of c.reasons) {
+        stmts.push(
+          ["INSERT INTO decision_reasons (candidate_id, reason_code, reason_label, outcome, observed, threshold) SELECT id, ?, ?, ?, ?, ? FROM scan_candidates WHERE symbol = ? AND strategy_id = ? ORDER BY id DESC LIMIT 1",
+            [r.code, r.label, r.outcome, r.observed ?? null, r.threshold ?? null, c.symbol, c.strategyId]],
+        );
+      }
+      stmts.push(insertBotEvent(event.type, `${c.symbol} ${c.status === "Rejected" ? "rejected" : "signal updated"}`, c.symbol));
       break;
     }
     case "SHADOW_POSITION_OPENED": {
@@ -230,7 +238,7 @@ function buildStatements(event: IngestEvent): [string, unknown[]][] {
       const items = event.payload.items;
       for (const e of items) {
         stmts.push(
-          ["INSERT INTO earnings (symbol, company, date, timing, event_signal, engine_relevant, signal, strategy, has_position, tracked, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET event_signal = excluded.event_signal, engine_relevant = excluded.engine_relevant, signal = excluded.signal, tracked = excluded.tracked, updated_at = excluded.updated_at",
+          ["INSERT INTO earnings (symbol, company, date, timing, event_signal, engine_relevant, signal, strategy, has_position, tracked, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (symbol, date) DO UPDATE SET event_signal = excluded.event_signal, engine_relevant = excluded.engine_relevant, signal = excluded.signal, tracked = excluded.tracked, updated_at = excluded.updated_at",
             [e.symbol, e.company, e.date, e.timing, e.eventSignal, e.engineRelevant ? 1 : 0, e.signal, e.strategy, e.hasPosition ? 1 : 0, e.tracked ? 1 : 0, e.updatedAt]],
         );
       }
