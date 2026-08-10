@@ -29,8 +29,8 @@ export function Rationale({ reasons }: { reasons: DecisionReason[] }) {
 }
 
 const navItems = [
-  ["/dashboard", "Overview", Home], ["/scanner", "Scanner", Search], ["/strategies", "Strategies", Target],
-  ["/research", "Research", FlaskConical], ["/portfolio", "Portfolio", Wallet], ["/earnings", "Earnings", CalendarDays],
+  ["/dashboard", "Overview", Home], ["/signals", "Signals", Search], ["/strategies", "Strategies", Target],
+  ["/earnings", "Earnings", CalendarDays], ["/portfolio", "Portfolio", Wallet], ["/research", "Research", FlaskConical],
   ["/activity", "Activity", Activity], ["/status", "Status", Gauge]
 ] as const;
 
@@ -53,5 +53,5 @@ export function AppShell() {
 }
 
 export function PublicFooter() {
-  return <footer className="footer"><div className="footer-grid"><div><Link to="/" className="brand"><span className="brand-mark"><BarChart3 size={19} /></span><span>Stock Autotrader<small>Data. Analysis. Opportunity.</small></span></Link></div><div><strong>Product</strong><Link to="/dashboard">Dashboard</Link><Link to="/scanner">Scanner</Link><Link to="/strategies">Strategies</Link></div><div><strong>Research</strong><Link to="/methodology">Methodology</Link><Link to="/research">Backtests</Link><Link to="/status">System Status</Link></div><div><strong>Legal</strong><Link to="/disclaimer">Disclaimer</Link><span>Model-generated signals</span><span>Simulated performance</span></div></div><div className="footer-bottom"><span>© 2026 Stock Autotrader</span><span>Research only. Not investment advice.</span></div></footer>;
+  return <footer className="footer"><div className="footer-grid"><div><Link to="/" className="brand"><span className="brand-mark"><BarChart3 size={19} /></span><span>Stock Autotrader<small>Data. Analysis. Opportunity.</small></span></Link></div><div><strong>Product</strong><Link to="/dashboard">Overview</Link><Link to="/signals">Signals</Link><Link to="/strategies">Strategies</Link></div><div><strong>Research</strong><Link to="/methodology">Methodology</Link><Link to="/research">Research</Link><Link to="/status">System Status</Link></div><div><strong>Legal</strong><Link to="/disclaimer">Disclaimer</Link><span>Model-generated signals</span><span>Simulated performance</span></div></div><div className="footer-bottom"><span>© 2026 Stock Autotrader</span><span>Research only. Not investment advice.</span></div></footer>;
 }

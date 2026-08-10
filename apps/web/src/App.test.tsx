@@ -28,35 +28,74 @@ describe("public application", () => {
     expect(screen.getAllByText("Demo Data").length).toBeGreaterThan(0);
   });
 
-  it("renders scanner candidates through the dynamic app route", () => {
+  it("renders signals candidates through the dynamic app route", () => {
     render(
-      <MemoryRouter initialEntries={["/scanner"]}>
+      <MemoryRouter initialEntries={["/signals"]}>
         <App />
       </MemoryRouter>,
     );
     expect(
-      screen.getByRole("heading", { name: "Market scanner" }),
+      screen.getByRole("heading", { name: "Market signals" }),
     ).toBeInTheDocument();
     expect(screen.getAllByText("NVDA").length).toBeGreaterThan(0);
+    expect(screen.getByText("Strong Setups")).toBeInTheDocument();
+    expect(screen.getAllByText("Watch").length).toBeGreaterThan(0);
+    expect(screen.getByText("Relevant Rejections")).toBeInTheDocument();
   });
 
-  it("combines scanner signal and minimum-score filters", () => {
+  it("redirects the legacy scanner route to signals", () => {
     render(
       <MemoryRouter initialEntries={["/scanner"]}>
         <App />
       </MemoryRouter>,
     );
-    fireEvent.change(screen.getByLabelText("Signal"), {
-      target: { value: "Watch" },
-    });
-    expect(screen.getAllByText("AMD").length).toBeGreaterThan(0);
-    expect(screen.queryByText("NVDA")).not.toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Min score"), {
-      target: { value: "85" },
-    });
     expect(
-      screen.getByText("No candidates match these filters"),
+      screen.getByRole("heading", { name: "Market signals" }),
     ).toBeInTheDocument();
+  });
+
+  it("splits signals into strong, watch and relevant rejections", () => {
+    render(
+      <MemoryRouter initialEntries={["/signals"]}>
+        <App />
+      </MemoryRouter>,
+    );
+    const strongSection = screen
+      .getByText("Strong Setups")
+      .closest("section");
+    expect(strongSection).not.toBeNull();
+    expect(strongSection?.textContent).toContain("NVDA");
+    expect(strongSection?.textContent).toContain("MSFT");
+    const rejectedSection = screen
+      .getByText("Relevant Rejections")
+      .closest("section");
+    expect(rejectedSection?.textContent).toContain("TSLA");
+  });
+
+  it("renders the shadow portfolio with $10,000 simulated capital", () => {
+    render(
+      <MemoryRouter initialEntries={["/portfolio"]}>
+        <App />
+      </MemoryRouter>,
+    );
+    expect(
+      screen.getByRole("heading", { name: "Shadow Portfolio" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("$10,000")).toBeInTheDocument();
+    expect(screen.getByText("Simulated")).toBeInTheDocument();
+    expect(screen.getByText("+3.07%")).toBeInTheDocument();
+  });
+
+  it("switches earnings calendar tabs and filters", () => {
+    render(
+      <MemoryRouter initialEntries={["/earnings"]}>
+        <App />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText("META")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Tomorrow" }));
+    expect(screen.getByText("TSLA")).toBeInTheDocument();
+    expect(screen.queryByText("META")).not.toBeInTheDocument();
   });
 
   it.each(["/stocks/UNKNOWN", "/strategies/unknown", "/research/unknown"])(

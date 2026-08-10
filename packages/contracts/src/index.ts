@@ -25,10 +25,12 @@ export interface Candidate {
   momentum: number;
   relativeStrength: number;
   relativeVolume: number;
+  breakout: string | null;
   earningsDate: string | null;
   earningsProximityDays: number | null;
   status: SignalStatus;
   direction: Direction;
+  riskFlags: string[];
   updatedAt: string;
   reasons: DecisionReason[];
 }
@@ -63,7 +65,10 @@ export interface EarningsEvent {
   date: string;
   timing: "BMO" | "AMC" | "TBD";
   eventSignal: "Confirmed" | "Pending" | "Risk Window";
-  strategies: string[];
+  engineRelevant: boolean;
+  signal: SignalStatus | null;
+  strategy: string | null;
+  hasPosition: boolean;
   tracked: boolean;
 }
 
@@ -76,6 +81,7 @@ export interface ShadowPosition {
   quantity: number;
   riskAmount: number;
   unrealizedPnl: number;
+  returnPct: number;
   rMultiple: number;
   openedAt: string;
 }
@@ -104,11 +110,14 @@ export interface DashboardData {
     passedFilters: number;
     candidates: number;
     setups: number;
+    watch: number;
   };
   portfolio: {
     initialCapital: number;
     equity: number;
     returnPct: number;
+    cash: number;
+    invested: number;
     openPositions: number;
     openRiskPct: number;
     grossExposurePct: number;

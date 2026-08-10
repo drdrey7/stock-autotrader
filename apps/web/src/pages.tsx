@@ -1,13 +1,12 @@
 import {
+  AlertTriangle,
   ArrowRight,
   BarChart3,
   CalendarDays,
   Check,
   ChevronRight,
   CircleDot,
-  Clock3,
   Database,
-  Filter,
   FlaskConical,
   Gauge,
   LineChart,
@@ -15,7 +14,6 @@ import {
   Search,
   ShieldCheck,
   SlidersHorizontal,
-  Sparkles,
   Target,
   Zap,
 } from "lucide-react";
@@ -70,6 +68,12 @@ const signedPercent = (value: number) => `${value >= 0 ? "+" : ""}${value}%`;
 const signedMoney = (value: number) =>
   `${value >= 0 ? "+" : ""}${formatMoney(value)}`;
 
+function addDays(date: string, days: number): string {
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
 function LandingPreview() {
   const demoData = useData();
   const { scan, portfolio } = demoData;
@@ -90,16 +94,16 @@ function LandingPreview() {
       </div>
       <div className="preview-metrics">
         <div>
-          <span>Stocks scanned</span>
+          <span>Stocks analysed</span>
           <strong>{scan.universe.toLocaleString()}</strong>
         </div>
         <div>
-          <span>Setups today</span>
-          <strong>{scan.setups}</strong>
+          <span>Surfaced</span>
+          <strong>{scan.candidates}</strong>
         </div>
         <div>
-          <span>Strategies</span>
-          <strong>{demoData.strategies.length}</strong>
+          <span>Strong setups</span>
+          <strong>{scan.setups}</strong>
         </div>
         <div>
           <span>Shadow portfolio</span>
@@ -113,25 +117,26 @@ function LandingPreview() {
       <div className="preview-table">
         <div className="preview-row preview-header">
           <span>Symbol</span>
-          <span>Quant score</span>
-          <span>Strategy</span>
+          <span>Score</span>
           <span>Model signal</span>
         </div>
-        {demoData.candidates.slice(0, 3).map((c) => (
-          <div className="preview-row" key={`${c.symbol}:${c.strategyId}`}>
-            <span>
-              <strong>{c.symbol}</strong>
-              <small>{c.company}</small>
-            </span>
-            <span>
-              <strong>{c.quantScore}</strong>/100
-            </span>
-            <span>{c.strategy}</span>
-            <span>
-              <SignalBadge status={c.status} />
-            </span>
-          </div>
-        ))}
+        {demoData.candidates
+          .filter((c) => c.status === "Strong Setup")
+          .slice(0, 3)
+          .map((c) => (
+            <div className="preview-row" key={`${c.symbol}:${c.strategyId}`}>
+              <span>
+                <strong>{c.symbol}</strong>
+                <small>{c.company}</small>
+              </span>
+              <span>
+                <strong>{c.quantScore}</strong>/100
+              </span>
+              <span>
+                <SignalBadge status={c.status} />
+              </span>
+            </div>
+          ))}
       </div>
     </div>
   );
@@ -175,6 +180,9 @@ export function LandingPage() {
             <p>
               Systematic stock research scanning the US market for high-quality
               swing trading setups.
+            </p>
+            <p className="hero-tagline">
+              We scan the market. You see what matters.
             </p>
             <div className="hero-actions">
               <Link className="button" to="/dashboard">
@@ -324,8 +332,8 @@ export function LandingPage() {
             eyebrow="Latest from the engine"
             title="Recent analyses"
             action={
-              <Link className="text-link" to="/scanner">
-                View scanner <ArrowRight size={16} />
+              <Link className="text-link" to="/signals">
+                View signals <ArrowRight size={16} />
               </Link>
             }
           />
@@ -370,56 +378,62 @@ export function LandingPage() {
 
 export function DashboardPage() {
   const demoData = useData();
-  const { status, scan, portfolio, candidates, strategies } = demoData;
+  const { status, scan, portfolio, candidates, earnings } = demoData;
+  const strong = candidates.filter((c) => c.status === "Strong Setup");
+  const watch = candidates.filter((c) => c.status === "Watch");
+  const relevantEarnings = earnings.filter((e) => e.engineRelevant);
   return (
     <>
       <PageTitle
-        eyebrow="Public dashboard"
-        title="Market overview"
-        text="Latest engine state, decisions and simulated positions."
+        eyebrow="Today's market brief"
+        title="What matters today"
+        text="A daily view of the strongest signals, watch candidates and events the engine is tracking."
+        action={<Badge tone="demo">Demo Data</Badge>}
       />
-      <div className="status-strip">
-        <span
-          className={
-            status.engine === "online"
-              ? "online-dot"
-              : "event-dot event-warning"
-          }
-        />
+      <div className="brief-grid">
         <div>
-          <span className="eyebrow">ENGINE</span>
-          <strong>{status.engine.toUpperCase()}</strong>
-        </div>
-        <div>
-          <span>Latest scan</span>
+          <span>Last scan</span>
           <strong>{formatDate(status.latestScan)}</strong>
         </div>
-        <Badge tone="demo">Demo Data</Badge>
-      </div>
-      <div className="metrics-grid">
-        <MetricCard
-          label="Stocks scanned"
-          value={scan.universe.toLocaleString()}
-          detail="Universe"
-        />
-        <MetricCard
-          label="Setups today"
-          value={scan.setups}
-          detail="Across active strategies"
-          accent
-        />
+        <div>
+          <span>Stocks analysed</span>
+          <strong>{scan.universe.toLocaleString()}</strong>
+        </div>
+        <div>
+          <span>Strong setups</span>
+          <strong>{scan.setups}</strong>
+        </div>
+        <div>
+          <span>Watch candidates</span>
+          <strong>{scan.watch}</strong>
+        </div>
+        <div>
+          <span>Shadow positions</span>
+          <strong>{portfolio.openPositions}</strong>
+        </div>
+        <div>
+          <span>Relevant earnings</span>
+          <strong>{relevantEarnings.length}</strong>
+        </div>
       </div>
       <div className="dashboard-grid">
         <section className="panel panel-large">
           <SectionHeading
-            title="Top Setups"
-            action={<Link to="/scanner">Full scanner</Link>}
+            title="Strong Setups Today"
+            action={<Link to="/signals">All signals</Link>}
           />
-          <CandidateList candidates={candidates.slice(0, 4)} />
+          <CandidateList candidates={strong} />
         </section>
         <section className="panel">
           <SectionHeading
-            title="Shadow portfolio"
+            title="Watch Closely"
+            action={<Link to="/signals">Signals</Link>}
+          />
+          <CandidateList candidates={watch} />
+        </section>
+        <section className="panel">
+          <SectionHeading
+            title="Shadow Portfolio"
             action={<Link to="/portfolio">Details</Link>}
           />
           <div className="portfolio-hero">
@@ -437,37 +451,36 @@ export function DashboardPage() {
               Open risk<strong>{portfolio.openRiskPct}%</strong>
             </span>
             <span>
-              Initial capital
+              Starting capital
               <strong>{formatMoney(portfolio.initialCapital)}</strong>
             </span>
           </div>
         </section>
-        <section className="panel panel-large">
-          <SectionHeading
-            title="Recent activity"
-            action={<Link to="/activity">All activity</Link>}
-          />
-          <Timeline compact />
-        </section>
         <section className="panel">
-          <SectionHeading title="Strategies running" />
-          <div className="strategy-mini">
-            {strategies.map((s) => (
-              <Link to={`/strategies/${s.id}`} key={s.id}>
+          <SectionHeading
+            title="Relevant Earnings"
+            action={<Link to="/earnings">Calendar</Link>}
+          />
+          <div className="earnings-mini">
+            {relevantEarnings.map((e) => (
+              <Link to={`/stocks/${e.symbol}`} key={e.symbol}>
                 <span>
-                  <i className="online-dot" />
-                  <strong>{s.name}</strong>
+                  <strong>{e.symbol}</strong>
                   <small>
-                    v{s.version} · {s.state}
+                    {e.date} · {e.timing}
                   </small>
                 </span>
-                <span>
-                  {s.signalsToday} signals
-                  <ChevronRight size={15} />
-                </span>
+                {e.signal && <SignalBadge status={e.signal} />}
               </Link>
             ))}
           </div>
+        </section>
+        <section className="panel panel-large">
+          <SectionHeading
+            title="Recent Engine Activity"
+            action={<Link to="/activity">All activity</Link>}
+          />
+          <Timeline compact />
         </section>
       </div>
     </>
@@ -498,6 +511,15 @@ function PageTitle({
 }
 
 function CandidateList({ candidates }: { candidates: Candidate[] }) {
+  if (candidates.length === 0) {
+    return (
+      <div className="empty-state">
+        <Search />
+        <strong>No candidates right now</strong>
+        <p className="muted">Check back after the next scan.</p>
+      </div>
+    );
+  }
   return (
     <div className="candidate-list">
       {candidates.map((c) => (
@@ -522,133 +544,100 @@ function CandidateList({ candidates }: { candidates: Candidate[] }) {
   );
 }
 
-export function ScannerPage() {
+function SignalSection({
+  title,
+  note,
+  candidates,
+}: {
+  title: string;
+  note?: string;
+  candidates: Candidate[];
+}) {
+  if (candidates.length === 0) return null;
+  return (
+    <section className="panel signal-section">
+      <SectionHeading title={title} text={note} />
+      <div className="responsive-table signal-table">
+        <div className="table-row table-head">
+          <span>Stock</span>
+          <span>Score</span>
+          <span>Strategy</span>
+          <span>Model signal</span>
+          <span>Trend</span>
+          <span>Breakout</span>
+          <span>Earnings</span>
+          <span>Updated</span>
+        </div>
+        {candidates.map((c) => (
+          <Link
+            to={`/stocks/${c.symbol}?strategy=${encodeURIComponent(c.strategyId)}`}
+            className="table-row"
+            key={`${c.symbol}:${c.strategyId}`}
+          >
+            <span data-label="Stock">
+              <strong>{c.symbol}</strong>
+              <small>{c.company}</small>
+            </span>
+            <span data-label="Score">
+              <strong>{c.quantScore}</strong>/100
+            </span>
+            <span data-label="Strategy">{c.strategy}</span>
+            <span data-label="Model signal">
+              <SignalBadge status={c.status} />
+            </span>
+            <span data-label="Trend">{c.trend}</span>
+            <span data-label="Breakout">{c.breakout ?? "—"}</span>
+            <span data-label="Earnings">{c.earningsDate ?? "—"}</span>
+            <span data-label="Updated">{formatDate(c.updatedAt)}</span>
+          </Link>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+export function SignalsPage() {
   const demoData = useData();
-  const [strategy, setStrategy] = useState("all"),
-    [signal, setSignal] = useState("all"),
-    [minScore, setMinScore] = useState(0),
-    [sort, setSort] = useState("score");
-  const rows = useMemo(
-    () =>
-      demoData.candidates
-        .filter(
-          (c) =>
-            (strategy === "all" || c.strategyId === strategy) &&
-            (signal === "all" || c.status === signal) &&
-            c.quantScore >= minScore,
-        )
-        .sort((a, b) =>
-          sort === "symbol"
-            ? a.symbol.localeCompare(b.symbol)
-            : b.quantScore - a.quantScore,
-        ),
-    [demoData.candidates, strategy, signal, minScore, sort],
+  const strong = demoData.candidates.filter(
+    (c) => c.status === "Strong Setup",
+  );
+  const watch = demoData.candidates.filter((c) => c.status === "Watch");
+  const rejected = demoData.candidates.filter(
+    (c) => c.status === "Rejected" || c.status === "No Setup",
   );
   return (
     <>
       <PageTitle
-        eyebrow="Latest scan"
-        title="Market scanner"
-        text="Explore model candidates and structured rejection reasons."
+        eyebrow="Market signals"
+        title="Market signals"
+        text="The engine scans the broader US equity universe and surfaces only the setups that pass its relevance filters."
         action={<Badge tone="demo">Demo Data</Badge>}
       />
-      <div className="filter-bar">
-        <label>
-          <Filter size={15} /> Strategy
-          <select
-            value={strategy}
-            onChange={(e) => setStrategy(e.target.value)}
-          >
-            <option value="all">All</option>
-            {demoData.strategies.map((s) => (
-              <option value={s.id} key={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Signal
-          <select value={signal} onChange={(e) => setSignal(e.target.value)}>
-            <option value="all">All</option>
-            <option>Strong Setup</option>
-            <option>Watch</option>
-            <option>No Setup</option>
-            <option>Rejected</option>
-          </select>
-        </label>
-        <label>
-          Min score
-          <select
-            value={minScore}
-            onChange={(e) => setMinScore(Number(e.target.value))}
-          >
-            <option value="0">Any</option>
-            <option value="60">60+</option>
-            <option value="75">75+</option>
-            <option value="85">85+</option>
-          </select>
-        </label>
-        <label>
-          Sort
-          <select value={sort} onChange={(e) => setSort(e.target.value)}>
-            <option value="score">Score</option>
-            <option value="symbol">Ticker</option>
-          </select>
-        </label>
+      <div className="signal-summary">
+        <span>
+          <strong>{demoData.scan.universe.toLocaleString()}</strong> stocks
+          analysed
+        </span>
+        <i />
+        <span>
+          <strong>{demoData.scan.candidates}</strong> surfaced
+        </span>
+        <i />
+        <span>
+          <strong>{demoData.scan.setups}</strong> strong setups
+        </span>
       </div>
-      <div className="table-card">
-        <div className="responsive-table scanner-table">
-          <div className="table-row table-head">
-            <span>Stock</span>
-            <span>Score</span>
-            <span>Strategy</span>
-            <span>Model signal</span>
-            <span>Trend</span>
-            <span>Updated</span>
-          </div>
-          {rows.map((c) => (
-            <Link
-              to={`/stocks/${c.symbol}?strategy=${encodeURIComponent(c.strategyId)}`}
-              className="table-row"
-              key={`${c.symbol}:${c.strategyId}`}
-            >
-              <span data-label="Stock">
-                <strong>{c.symbol}</strong>
-                <small>{c.company}</small>
-              </span>
-              <span data-label="Score">
-                <strong>{c.quantScore}</strong>/100
-              </span>
-              <span data-label="Strategy">{c.strategy}</span>
-              <span data-label="Model signal">
-                <SignalBadge status={c.status} />
-              </span>
-              <span data-label="Trend">{c.trend}</span>
-              <span data-label="Updated">{formatDate(c.updatedAt)}</span>
-            </Link>
-          ))}
-        </div>
-        {rows.length === 0 && (
-          <div className="empty-state">
-            <Search />
-            <strong>No candidates match these filters</strong>
-            <button
-              onClick={() => {
-                setStrategy("all");
-                setSignal("all");
-                setMinScore(0);
-              }}
-            >
-              Clear filters
-            </button>
-          </div>
-        )}
-      </div>
-      <p className="table-note">
-        Updated {formatDate(demoData.status.latestScan)} · US market times shown
-        in ET.
-      </p>
+      <SignalSection title="Strong Setups" candidates={strong} />
+      <SignalSection
+        title="Watch"
+        note="Close to confirmation — a trigger is missing before these qualify."
+        candidates={watch}
+      />
+      <SignalSection
+        title="Relevant Rejections"
+        note="Why the engine passed on these names — useful for understanding decisions."
+        candidates={rejected}
+      />
     </>
   );
 }
@@ -656,33 +645,135 @@ export function ScannerPage() {
 function PriceChart({ score }: { score: number }) {
   return (
     <div
-      className="chart-placeholder"
+      className="chart-placeholder chart-large"
       role="img"
-      aria-label="Prepared OHLCV chart placeholder"
+      aria-label="Prepared OHLCV chart placeholder with candles, volume, moving averages and model levels"
     >
       <div className="chart-grid" />
-      <svg viewBox="0 0 800 240" preserveAspectRatio="none">
-        <path
-          d="M0 205 C60 190,90 210,140 174 S220 185,260 146 S340 168,390 124 S470 142,520 92 S600 110,650 68 S730 82,800 35"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="3"
-          vectorEffect="non-scaling-stroke"
-        />
-        <path
-          d="M0 205 C60 190,90 210,140 174 S220 185,260 146 S340 168,390 124 S470 142,520 92 S600 110,650 68 S730 82,800 35 L800 240 L0 240Z"
-          fill="url(#area)"
-          opacity=".2"
-        />
+      <svg viewBox="0 0 800 320" preserveAspectRatio="none">
         <defs>
           <linearGradient id="area" x1="0" y1="0" x2="0" y2="1">
             <stop stopColor="#25745a" />
             <stop offset="1" stopColor="#25745a" stopOpacity="0" />
           </linearGradient>
         </defs>
+        {/* EMA20 */}
+        <path
+          d="M0 250 C60 240,110 244,160 220 S260 226,320 190 S430 200,490 155 S600 168,660 120 S740 132,800 92"
+          fill="none"
+          stroke="#2f6feb"
+          strokeWidth="2"
+          vectorEffect="non-scaling-stroke"
+        />
+        {/* EMA50 */}
+        <path
+          d="M0 262 C70 254,130 256,180 238 S290 240,350 212 S470 218,530 180 S640 188,700 148 S760 152,800 122"
+          fill="none"
+          stroke="#b45f06"
+          strokeWidth="2"
+          vectorEffect="non-scaling-stroke"
+        />
+        {/* EMA200 */}
+        <path
+          d="M0 272 C80 268,150 268,210 256 S330 254,390 234 S520 236,580 208 S690 210,800 178"
+          fill="none"
+          stroke="#7a7f7d"
+          strokeWidth="2"
+          vectorEffect="non-scaling-stroke"
+        />
+        {/* area fill under price */}
+        <path
+          d="M0 212 C60 198,90 218,140 180 S220 190,260 152 S340 174,390 130 S470 148,520 98 S600 116,650 74 S730 88,800 42 L800 320 L0 320Z"
+          fill="url(#area)"
+          opacity=".18"
+        />
+        {/* price path */}
+        <path
+          d="M0 212 C60 198,90 218,140 180 S220 190,260 152 S340 174,390 130 S470 148,520 98 S600 116,650 74 S730 88,800 42"
+          fill="none"
+          stroke="#1d2b27"
+          strokeWidth="2.5"
+          vectorEffect="non-scaling-stroke"
+        />
+        {/* breakout level */}
+        <line
+          x1="0"
+          y1="150"
+          x2="800"
+          y2="150"
+          stroke="#25745a"
+          strokeWidth="1.5"
+          strokeDasharray="7 5"
+          vectorEffect="non-scaling-stroke"
+        />
+        {/* earnings marker */}
+        <line
+          x1="455"
+          y1="0"
+          x2="455"
+          y2="320"
+          stroke="#b45309"
+          strokeWidth="1.5"
+          strokeDasharray="3 4"
+          vectorEffect="non-scaling-stroke"
+        />
+        {/* model levels */}
+        <line
+          x1="600"
+          y1="80"
+          x2="800"
+          y2="80"
+          stroke="#b45309"
+          strokeWidth="1.2"
+          strokeDasharray="2 3"
+          vectorEffect="non-scaling-stroke"
+        />
+        <line
+          x1="600"
+          y1="205"
+          x2="800"
+          y2="205"
+          stroke="#c0392b"
+          strokeWidth="1.2"
+          strokeDasharray="2 3"
+          vectorEffect="non-scaling-stroke"
+        />
+        {/* volume bars */}
+        {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14].map((i) => {
+          const x = 30 + i * 52;
+          const h = 26 + ((i * 37) % 42);
+          const up = (i * 7) % 3 !== 0;
+          return (
+            <rect
+              key={i}
+              x={x}
+              y={308 - h}
+              width="22"
+              height={h}
+              fill={up ? "#cfe8dc" : "#f3d2cf"}
+            />
+          );
+        })}
       </svg>
+      <div className="chart-legend">
+        <span>
+          <i className="legend-line" style={{ background: "#2f6feb" }} /> EMA20
+        </span>
+        <span>
+          <i className="legend-line" style={{ background: "#b45f06" }} /> EMA50
+        </span>
+        <span>
+          <i className="legend-line" style={{ background: "#7a7f7d" }} /> EMA200
+        </span>
+        <span>
+          <i className="legend-dash" style={{ background: "#25745a" }} /> Breakout
+        </span>
+        <span>
+          <i className="legend-dash" style={{ background: "#b45309" }} /> Earnings
+        </span>
+      </div>
       <div className="chart-caption">
-        <span>OHLCV adapter ready</span>
+        <span>Demo OHLCV shape · prepared for live candles and volume</span>
         <strong>Quant score {score}/100</strong>
       </div>
     </div>
@@ -705,6 +796,7 @@ export function StockPage() {
           left.strategyId.localeCompare(right.strategyId),
       )[0];
   if (!stock) return <NotFoundPage />;
+  const position = demoData.positions.find((p) => p.symbol === stock.symbol);
   return (
     <>
       <PageTitle
@@ -728,6 +820,14 @@ export function StockPage() {
               : `Public snapshot · updated ${formatDate(stock.updatedAt)}`}
           </small>
         </div>
+        <div className="stock-hero-meta">
+          <span>
+            Strategy<strong>{stock.strategy} V1</strong>
+          </span>
+          <span>
+            Last updated<strong>{formatDate(stock.updatedAt)}</strong>
+          </span>
+        </div>
         <div
           className="score-ring"
           style={
@@ -739,47 +839,96 @@ export function StockPage() {
           </span>
         </div>
       </div>
-      <div className="factor-grid">
-        <MetricCard label="Trend" value={stock.trend} detail="EMA structure" />
-        <MetricCard
-          label="Momentum"
-          value={stock.momentum}
-          detail="Composite score"
+      <section className="panel panel-full">
+        <SectionHeading
+          title="Price structure"
+          text={
+            demoData.demo
+              ? "The chart is prepared for live OHLCV, candles, volume, moving averages and model levels. Demo shape shown."
+              : "The OHLCV adapter is prepared; no chart series was included in this public snapshot."
+          }
         />
-        <MetricCard
-          label="Relative strength"
-          value={stock.relativeStrength}
-          detail="vs SPY / QQQ"
-        />
-        <MetricCard
-          label="Volume"
-          value={`${stock.relativeVolume}x`}
-          detail="vs ADV20"
-        />
-        <MetricCard label="Volatility" value="Medium" detail="ATR% regime" />
-      </div>
+        <PriceChart score={stock.quantScore} />
+      </section>
       <div className="stock-grid">
         <section className="panel panel-large">
-          <SectionHeading
-            title="Price structure"
-            text={
-              demoData.demo
-                ? "The chart component is prepared for real OHLCV data. Demo shape shown."
-                : "The OHLCV adapter is prepared; no chart series was included in this public snapshot."
-            }
-          />
-          <PriceChart score={stock.quantScore} />
+          <SectionHeading title="Quant Factors" />
+          <div className="factor-grid">
+            <MetricCard label="Trend" value={stock.trend} detail="EMA structure" />
+            <MetricCard
+              label="Momentum"
+              value={stock.momentum}
+              detail="Composite score"
+            />
+            <MetricCard
+              label="Relative strength"
+              value={stock.relativeStrength}
+              detail="vs SPY / QQQ"
+            />
+            <MetricCard
+              label="Volume"
+              value={`${stock.relativeVolume}x`}
+              detail="vs ADV20"
+            />
+            <MetricCard
+              label="Volatility"
+              value="Medium"
+              detail="ATR% regime"
+            />
+            <MetricCard
+              label="Breakout"
+              value={stock.breakout ?? "None"}
+              detail="Recent price structure"
+            />
+          </div>
         </section>
         <section className="panel">
           <SectionHeading
             title={
               stock.status === "Rejected"
-                ? "Rejected because"
-                : "Why this setup was selected"
+                ? "Why it was rejected"
+                : "Why it surfaced"
             }
             text="Public, structured rationale — never private chain-of-thought."
           />
           <Rationale reasons={stock.reasons} />
+        </section>
+        {stock.riskFlags.length > 0 && (
+          <section className="panel">
+            <SectionHeading
+              title="Risks / blockers"
+              text="Conditions the engine watches before and after a setup."
+            />
+            <div className="risk-flag-list">
+              {stock.riskFlags.map((flag) => (
+                <span key={flag}>
+                  <AlertTriangle size={15} />
+                  {flag}
+                </span>
+              ))}
+            </div>
+          </section>
+        )}
+        <section className="panel">
+          <SectionHeading title="Earnings & events" />
+          <div className="event-callout">
+            <CalendarDays />
+            <div>
+              <strong>{stock.earningsDate ?? "Date unavailable"}</strong>
+              <span>
+                {stock.earningsProximityDays !== null &&
+                stock.earningsProximityDays > 0
+                  ? `${stock.earningsProximityDays} days away`
+                  : stock.earningsProximityDays === 0
+                    ? "Today (event window)"
+                    : "Recent event"}
+              </span>
+            </div>
+          </div>
+          <p className="muted">
+            Timing (BMO / AMC) and event analysis arrive with the future
+            earnings provider.
+          </p>
         </section>
         <section className="panel">
           <SectionHeading title="Strategy" />
@@ -796,40 +945,25 @@ export function StockPage() {
             </span>
             <ChevronRight />
           </Link>
-          <div className="detail-list">
-            <span>
-              Market structure<strong>{stock.trend}</strong>
-            </span>
-            <span>
-              20D breakout
-              <strong>
-                {stock.quantScore > 80 ? "Confirmed" : "Not confirmed"}
-              </strong>
-            </span>
-            <span>
-              50D breakout
-              <strong>{stock.quantScore > 85 ? "Confirmed" : "Pending"}</strong>
-            </span>
-          </div>
-        </section>
-        <section className="panel">
-          <SectionHeading title="Earnings & events" />
-          <div className="event-callout">
-            <CalendarDays />
-            <div>
-              <strong>{stock.earningsDate ?? "Date unavailable"}</strong>
+          {position && (
+            <div className="detail-list">
               <span>
-                {stock.earningsProximityDays !== null &&
-                stock.earningsProximityDays > 0
-                  ? `${stock.earningsProximityDays} days away`
-                  : "Recent event"}
+                Shadow position<strong>Open · {position.quantity} shares</strong>
+              </span>
+              <span>
+                Unrealized P&L
+                <strong
+                  className={
+                    position.unrealizedPnl >= 0
+                      ? "positive-text"
+                      : "negative-text"
+                  }
+                >
+                  {signedMoney(position.unrealizedPnl)}
+                </strong>
               </span>
             </div>
-          </div>
-          <p className="muted">
-            Event analysis adapter is ready for a future earnings provider and
-            structured AI assessment.
-          </p>
+          )}
         </section>
         <section className="panel panel-full">
           <SectionHeading title="Latest decisions" />
@@ -847,7 +981,8 @@ export function StrategiesPage() {
       <PageTitle
         eyebrow="Strategy registry"
         title="Systematic strategies"
-        text="Every strategy is versioned and exposed through shared metadata."
+        text="Every strategy is versioned and evaluated against the same rules."
+        action={<Badge tone="demo">Demo Data</Badge>}
       />
       <div className="strategy-grid">
         {demoData.strategies.map((s) => (
@@ -870,13 +1005,13 @@ export function StrategiesPage() {
                 Universe<strong>{s.universe}</strong>
               </span>
               <span>
-                Holding period<strong>{s.holdingPeriod}</strong>
+                Typical holding period<strong>{s.holdingPeriod}</strong>
               </span>
               <span>
                 Signals today<strong>{s.signalsToday}</strong>
               </span>
               <span>
-                Open positions<strong>{s.openPositions}</strong>
+                Open shadow positions<strong>{s.openPositions}</strong>
               </span>
             </div>
             <footer>
@@ -884,16 +1019,6 @@ export function StrategiesPage() {
             </footer>
           </Link>
         ))}
-      </div>
-      <div className="info-callout">
-        <Sparkles />
-        <div>
-          <strong>Metadata-driven architecture</strong>
-          <p>
-            A future <code>momentum_v1</code> strategy appears here
-            automatically after registration through the API/database.
-          </p>
-        </div>
       </div>
     </>
   );
@@ -921,22 +1046,24 @@ export function StrategyPage() {
       />
       <div className="metrics-grid">
         <MetricCard label="Signals today" value={strategy.signalsToday} />
-        <MetricCard label="Open positions" value={strategy.openPositions} />
         <MetricCard
-          label="Universe"
-          value="US Core"
-          detail={strategy.universe}
+          label="Open shadow positions"
+          value={strategy.openPositions}
         />
-        <MetricCard label="Holding period" value={strategy.holdingPeriod} />
+        <MetricCard label="Universe" value="US Core" detail={strategy.universe} />
+        <MetricCard
+          label="Typical holding period"
+          value={strategy.holdingPeriod}
+        />
       </div>
       <div className="dashboard-grid">
         <section className="panel panel-large">
-          <SectionHeading title="Current candidates" />
+          <SectionHeading title="Current signals" />
           <CandidateList candidates={candidates} />
         </section>
         <section className="panel">
           <SectionHeading
-            title="Published configuration"
+            title="Strategy parameters"
             text="Baseline parameters, not optimised claims."
           />
           <div className="detail-list">
@@ -975,7 +1102,10 @@ export function StrategyPage() {
           </div>
         </section>
         <section className="panel panel-large">
-          <SectionHeading title="Methodology" />
+          <SectionHeading
+            title="Methodology"
+            text="Signal rules, shadow performance and backtest results will appear here as they are validated."
+          />
           <Rationale
             reasons={
               demoData.candidates.find((c) => c.strategyId === strategy.id)
@@ -1013,8 +1143,8 @@ export function ResearchPage() {
     <>
       <PageTitle
         eyebrow="Evidence library"
-        title="Research & backtests"
-        text="Results remain separated by lifecycle stage and cost scenario."
+        title="Research"
+        text="How each strategy is tested — results stay separated by lifecycle stage."
         action={
           <Badge tone={demoData.demo ? "demo" : "neutral"}>
             {demoData.demo ? "Demo metrics" : "Public research results"}
@@ -1154,8 +1284,14 @@ export function PortfolioPage() {
         </div>
         <div>
           <span>
-            Initial capital
+            Starting capital
             <strong>{formatMoney(portfolio.initialCapital)}</strong>
+          </span>
+          <span>
+            Cash<strong>{formatMoney(portfolio.cash)}</strong>
+          </span>
+          <span>
+            Invested<strong>{formatMoney(portfolio.invested)}</strong>
           </span>
           <span>
             Open positions
@@ -1188,12 +1324,12 @@ export function PortfolioPage() {
             <span>Current</span>
             <span>Stop</span>
             <span>Qty</span>
-            <span>Risk</span>
             <span>Unrealized P&L</span>
+            <span>Return</span>
             <span>R multiple</span>
           </div>
           {positions.map((p) => (
-            <div className="table-row" key={p.symbol}>
+            <Link className="table-row" to={`/stocks/${p.symbol}`} key={p.symbol}>
               <span data-label="Position">
                 <strong>{p.symbol}</strong>
                 <small>Opened {formatDate(p.openedAt)}</small>
@@ -1203,7 +1339,6 @@ export function PortfolioPage() {
               <span data-label="Current">{formatMoney(p.currentPrice)}</span>
               <span data-label="Stop">{formatMoney(p.stopPrice)}</span>
               <span data-label="Qty">{p.quantity}</span>
-              <span data-label="Risk">{formatMoney(p.riskAmount)}</span>
               <span
                 data-label="Unrealized P&L"
                 className={
@@ -1212,11 +1347,20 @@ export function PortfolioPage() {
               >
                 {signedMoney(p.unrealizedPnl)}
               </span>
+              <span
+                data-label="Return"
+                className={
+                  p.returnPct >= 0 ? "positive-text" : "negative-text"
+                }
+              >
+                {p.returnPct >= 0 ? "+" : ""}
+                {p.returnPct}%
+              </span>
               <span data-label="R multiple">
                 {p.rMultiple >= 0 ? "+" : ""}
                 {p.rMultiple}R
               </span>
-            </div>
+            </Link>
           ))}
         </div>
       </section>
@@ -1247,71 +1391,106 @@ export function PortfolioPage() {
   );
 }
 
+type EarningsTab = "today" | "tomorrow" | "week" | "calendar";
+
 export function EarningsPage() {
   const demoData = useData();
-  const dataAsOf = new Date(demoData.status.lastDataUpdate ?? Date.now());
+  const [tab, setTab] = useState<EarningsTab>("today");
+  const [relevantOnly, setRelevantOnly] = useState(true);
+  const today = demoData.status.nextScan?.slice(0, 10) ?? "2026-08-11";
+  const tomorrow = addDays(today, 1);
+  const weekEnd = addDays(today, 6);
+  const filtered = useMemo(
+    () =>
+      demoData.earnings
+        .filter((e) => {
+          if (relevantOnly && !e.engineRelevant) return false;
+          if (tab === "today") return e.date === today;
+          if (tab === "tomorrow") return e.date === tomorrow;
+          if (tab === "week") return e.date >= today && e.date <= weekEnd;
+          return true;
+        })
+        .sort((a, b) => a.date.localeCompare(b.date)),
+    [demoData.earnings, relevantOnly, tab, today, tomorrow, weekEnd],
+  );
+  const tabs: { id: EarningsTab; label: string }[] = [
+    { id: "today", label: "Today" },
+    { id: "tomorrow", label: "Tomorrow" },
+    { id: "week", label: "This Week" },
+    { id: "calendar", label: "Calendar" },
+  ];
   return (
     <>
       <PageTitle
         eyebrow="Event calendar"
         title="Earnings"
-        text="Upcoming and recent events affecting tracked stocks and strategies."
+        text="Upcoming and recent events the engine is tracking, with relevance to current signals and shadow positions."
+        action={<Badge tone="demo">Demo Data</Badge>}
       />
-      <div className="earnings-grid">
-        {demoData.earnings.map((e) => (
-          <article className="earning-card" key={`${e.symbol}-${e.date}`}>
-            <header>
-              <span className="ticker-icon">{e.symbol[0]}</span>
-              <span>
-                <strong>{e.symbol}</strong>
-                <small>{e.company}</small>
-              </span>
-              <Badge
-                tone={
-                  e.eventSignal === "Confirmed"
-                    ? "positive"
-                    : e.eventSignal === "Risk Window"
-                      ? "warning"
-                      : "neutral"
-                }
-              >
-                {e.eventSignal}
-              </Badge>
-            </header>
-            <div>
-              <CalendarDays />
-              <span>
-                <small>
-                  {new Date(e.date) < dataAsOf ? "Reported" : "Expected"}
-                </small>
-                <strong>
-                  {e.date} · {e.timing}
-                </strong>
-              </span>
-            </div>
-            <footer>
-              {e.strategies.map((s) => (
-                <Badge key={s}>{s}</Badge>
-              ))}
-              {e.tracked && (
-                <span>
-                  <CircleDot /> Tracked
-                </span>
-              )}
-            </footer>
-          </article>
-        ))}
-      </div>
-      <div className="info-callout">
-        <Clock3 />
-        <div>
-          <strong>Timing-aware by design</strong>
-          <p>
-            BMO, AMC and exact availability timestamps will be stored when
-            supplied by the future earnings provider.
-          </p>
+      <div className="earnings-toolbar">
+        <div className="tabs">
+          {tabs.map((t) => (
+            <button
+              key={t.id}
+              className={tab === t.id ? "tab active" : "tab"}
+              onClick={() => setTab(t.id)}
+            >
+              {t.label}
+            </button>
+          ))}
         </div>
+        <label className="toggle">
+          <input
+            type="checkbox"
+            checked={relevantOnly}
+            onChange={(e) => setRelevantOnly(e.target.checked)}
+          />
+          <span>Relevant to engine</span>
+        </label>
       </div>
+      {filtered.length === 0 ? (
+        <div className="empty-state">
+          <CalendarDays />
+          <strong>No earnings in this view</strong>
+          <p className="muted">Try another tab or turn off the engine filter.</p>
+        </div>
+      ) : (
+        <div className="earnings-grid">
+          {filtered.map((e) => (
+            <Link
+              to={`/stocks/${e.symbol}`}
+              className="earning-card"
+              key={`${e.symbol}-${e.date}`}
+            >
+              <header>
+                <span className="ticker-icon">{e.symbol[0]}</span>
+                <span>
+                  <strong>{e.symbol}</strong>
+                  <small>{e.company}</small>
+                </span>
+                {e.hasPosition && <Badge tone="positive">Position</Badge>}
+              </header>
+              <div>
+                <CalendarDays />
+                <span>
+                  <small>
+                    {e.date < today ? "Reported" : "Expected"} · {e.timing}
+                  </small>
+                  <strong>{e.date}</strong>
+                </span>
+              </div>
+              <div className="earning-meta">
+                {e.signal ? (
+                  <SignalBadge status={e.signal} />
+                ) : (
+                  <Badge tone="neutral">Not tracked</Badge>
+                )}
+                {e.strategy && <Badge>{e.strategy}</Badge>}
+              </div>
+            </Link>
+          ))}
+        </div>
+      )}
     </>
   );
 }
@@ -1357,7 +1536,8 @@ export function ActivityPage() {
       <PageTitle
         eyebrow="Audit timeline"
         title="Engine activity"
-        text="Safe public events prepared for periodic polling or Server-Sent Events."
+        text="A safe public record of scans, signals and filters."
+        action={<Badge tone="demo">Demo Data</Badge>}
       />
       <div className="filter-bar">
         <label>
@@ -1396,12 +1576,41 @@ export function StatusPage() {
   const demoData = useData();
   const s = demoData.status;
   const healthy = s.engine === "online" && s.apiHealth === "healthy";
+  const components: [string, string, string][] = [
+    [
+      "Engine",
+      s.engine,
+      demoData.demo
+        ? "Demo state — no live health claim."
+        : "Latest successful scan " + formatDate(s.latestScan),
+    ],
+    [
+      "Market data",
+      s.engine === "online" && s.lastDataUpdate ? "current" : "unavailable",
+      "Updated " + formatDate(s.lastDataUpdate),
+    ],
+    ["Earnings data", "operational", "Event calendar synced with the engine"],
+    ["AI / event analysis", "operational", "Structured assessments only"],
+    [
+      "Last successful scan",
+      s.engine === "online" ? "completed" : "pending",
+      formatDate(s.latestScan),
+    ],
+    [
+      "Next scheduled scan",
+      "scheduled",
+      formatDate(s.nextScan),
+    ],
+    ["Data freshness", "current", "Point-in-time timestamps enforced"],
+    ["Public sync", "operational", "Read-only public views in sync"],
+  ];
   return (
     <>
       <PageTitle
         eyebrow="Safe public health"
         title="System status"
         text="Operational information without private infrastructure details."
+        action={<Badge tone="demo">Demo Data</Badge>}
       />
       <div className="system-ok">
         <Check />
@@ -1419,40 +1628,15 @@ export function StatusPage() {
         </div>
       </div>
       <section className="panel status-list">
-        {[
-          [
-            "Research engine",
-            s.engine,
-            "Latest successful scan " + formatDate(s.latestScan),
-          ],
-          ["Public API", s.apiHealth, "Read-only endpoints responding"],
-          [
-            "Market data",
-            s.engine === "online" && s.lastDataUpdate
-              ? "current"
-              : s.engine === "delayed"
-                ? "stale"
-                : "unavailable",
-            "Updated " + formatDate(s.lastDataUpdate),
-          ],
-          [
-            "Strategy registry",
-            "operational",
-            `${demoData.strategies.length} strategies active`,
-          ],
-          [
-            "Shadow portfolio",
-            "operational",
-            `${demoData.positions.length} positions tracked`,
-          ],
-        ].map(([name, state, detail]) => {
+        {components.map(([name, state, detail]) => {
           const ok = ![
             "offline",
             "delayed",
             "degraded",
             "stale",
             "unavailable",
-          ].includes(state ?? "unknown");
+            "pending",
+          ].includes(state);
           return (
             <div key={name}>
               <span className={ok ? "online-dot" : "event-dot event-warning"} />
