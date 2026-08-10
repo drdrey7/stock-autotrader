@@ -10,7 +10,7 @@ const reason = z.object({
   observed: z.string().optional(),
   threshold: z.string().optional(),
 });
-const dashboardPayload = z.object({
+export const dashboardPayload = z.object({
   demo: z.boolean(),
   status: z.object({
     engine: z.enum(["online", "offline", "delayed"]),
@@ -121,6 +121,7 @@ const dashboardPayload = z.object({
       strategy: z.string().nullable(),
       hasPosition: z.boolean(),
       tracked: z.boolean(),
+      updatedAt: z.string(),
     }),
   ),
   positions: z.array(
@@ -165,8 +166,10 @@ const explicitDemo = import.meta.env.VITE_DEMO_MODE !== "false";
 export async function getDashboardData(
   signal?: AbortSignal,
 ): Promise<DashboardData> {
-  if (!apiBase || explicitDemo) return demoData;
-  const response = await fetch(`${apiBase}/api/dashboard`, {
+  if (explicitDemo) return demoData;
+  // Same-origin by default (worker serves both the SPA and /api/*); override with VITE_API_BASE_URL.
+  const url = apiBase ? `${apiBase}/api/dashboard` : "/api/dashboard";
+  const response = await fetch(url, {
     signal,
     headers: { Accept: "application/json" },
   });

@@ -27,3 +27,9 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      - name: Validate D1 migrations (local)
+        working-directory: apps/web
+        run: npx --yes wrangler@4 d1 migrations apply stock-autotrader-db --local
+      - name: Validate seed against local D1
+        working-directory: apps/web
+        run: node scripts/seed.mjs --local

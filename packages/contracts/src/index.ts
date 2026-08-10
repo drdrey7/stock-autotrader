@@ -70,6 +70,7 @@ export interface EarningsEvent {
   strategy: string | null;
   hasPosition: boolean;
   tracked: boolean;
+  updatedAt: string;
 }
 
 export interface ShadowPosition {
