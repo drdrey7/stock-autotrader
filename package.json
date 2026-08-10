@@ -5,13 +5,10 @@
   "workspaces": ["apps/*", "packages/*"],
   "scripts": {
     "dev": "npm run dev -w @stock-autotrader/web",
-    "dev:api": "npm run dev -w @stock-autotrader/api",
-    "build": "npm run build -w @stock-autotrader/contracts && npm run build -w @stock-autotrader/web && npm run build -w @stock-autotrader/api",
+    "build": "npm run build -w @stock-autotrader/contracts && npm run build -w @stock-autotrader/web",
     "lint": "npm run lint --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present",
-    "cf:types": "npm run cf:types -w @stock-autotrader/api",
-    "cf:check": "npm run cf:check -w @stock-autotrader/api"
+    "test": "npm run test --workspaces --if-present"
   },
   "engines": { "node": ">=20" }
 }

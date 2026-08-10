@@ -123,26 +123,3 @@ export interface DashboardData {
   positions: ShadowPosition[];
   research: ResearchResult[];
 }
-
-export interface AiEventAssessment {
-  symbol: string;
-  eventStatus: "CONFIRM" | "REVIEW" | "REJECT";
-  riskLevel: "LOW" | "MEDIUM" | "HIGH";
-  earningsRisk: boolean;
-  materialEvent: boolean;
-  summary: string;
-  sources: Array<{ title: string; url: string; publishedAt?: string }>;
-}
-
-export const API_PATHS = {
-  status: "/api/status",
-  latestScan: "/api/scans/latest",
-  candidates: "/api/candidates",
-  strategies: "/api/strategies",
-  research: "/api/research",
-  backtests: "/api/backtests",
-  shadowPortfolio: "/api/portfolio/shadow",
-  shadowTrades: "/api/trades/shadow",
-  earnings: "/api/earnings",
-  activity: "/api/activity",
-} as const;

@@ -1,5 +1,4 @@
 {
-  "$schema": "../api/node_modules/wrangler/config-schema.json",
   "name": "stock-autotrader-web",
   "compatibility_date": "2026-08-10",
   "compatibility_flags": ["nodejs_compat"],
