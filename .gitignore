@@ -11,3 +11,5 @@ coverage/
 .vscode/
 .wrangler
 .dev.vars
+__pycache__/
+*.pyc
