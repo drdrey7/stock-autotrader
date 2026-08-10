@@ -1,0 +1,17 @@
+.git
+.github
+node_modules
+**/node_modules
+**/dist
+.venv
+__pycache__
+.pytest_cache
+.env
+.env.*
+!.env.example
+.wrangler
+coverage
+reports
+data/raw
+data/cache
+
