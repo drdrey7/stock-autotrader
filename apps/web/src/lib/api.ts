@@ -10,15 +10,63 @@ const reason = z.object({
   observed: z.string().optional(),
   threshold: z.string().optional(),
 });
+const isoTimestampSchema = z.string().datetime({ offset: true });
+
+const marketDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}, "date must be a valid calendar date");
+
+const marketDataPayload = z.object({
+  provider: z.string(),
+  status: z.enum(["healthy", "degraded", "offline"]),
+  asOf: marketDateSchema.nullable(),
+  lastSuccessfulUpdate: isoTimestampSchema.nullable(),
+  universe: z.object({
+    total: z.number().int().nonnegative(),
+    eligible: z.number().int().nonnegative(),
+    excluded: z.number().int().nonnegative(),
+  }),
+  benchmarks: z.array(z.object({
+    symbol: z.string(),
+    date: marketDateSchema,
+    open: z.number().positive(),
+    high: z.number().positive(),
+    low: z.number().positive(),
+    close: z.number().positive(),
+    adjustedClose: z.number().positive(),
+    volume: z.number().int().positive(),
+  })),
+  warnings: z.array(z.string()),
+  updatedAt: isoTimestampSchema.nullable(),
+}).superRefine((snapshot, ctx) => {
+  if (snapshot.universe.total !== snapshot.universe.eligible + snapshot.universe.excluded) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["universe"], message: "universe counts must add up" });
+  }
+  if (snapshot.status === "healthy") {
+    const symbols = snapshot.benchmarks.map((bar) => bar.symbol);
+    if (!snapshot.asOf || !snapshot.lastSuccessfulUpdate || !snapshot.updatedAt) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["lastSuccessfulUpdate"], message: "healthy snapshots require freshness" });
+    }
+    if (symbols.length !== 2 || symbols[0] !== "SPY" || symbols[1] !== "QQQ") {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["benchmarks"], message: "healthy snapshots require SPY and QQQ" });
+    }
+    if (snapshot.warnings.length > 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["warnings"], message: "healthy snapshots cannot contain warnings" });
+    }
+  }
+});
+
 export const dashboardPayload = z.object({
   demo: z.boolean(),
   status: z.object({
     engine: z.enum(["online", "offline", "delayed"]),
-    latestScan: z.string().nullable(),
-    nextScan: z.string().nullable(),
-    lastDataUpdate: z.string().nullable(),
+    latestScan: isoTimestampSchema.nullable(),
+    nextScan: isoTimestampSchema.nullable(),
+    lastDataUpdate: isoTimestampSchema.nullable(),
     apiHealth: z.enum(["healthy", "degraded"]),
   }),
+  marketData: marketDataPayload,
   scan: z.object({
     universe: z.number().int().nonnegative(),
     passedFilters: z.number().int().nonnegative(),
@@ -87,12 +135,12 @@ export const dashboardPayload = z.object({
       relativeStrength: z.number(),
       relativeVolume: z.number().nonnegative(),
       breakout: z.string().nullable(),
-      earningsDate: z.string().nullable(),
+      earningsDate: marketDateSchema.nullable(),
       earningsProximityDays: z.number().nullable(),
       status: z.enum(["Strong Setup", "Watch", "No Setup", "Rejected"]),
       direction: z.enum(["Bullish", "Neutral", "Bearish"]),
       riskFlags: z.array(z.string()),
-      updatedAt: z.string(),
+      updatedAt: isoTimestampSchema,
       reasons: z.array(reason),
     }),
   ),
@@ -104,14 +152,14 @@ export const dashboardPayload = z.object({
       symbol: z.string().optional(),
       strategyId: z.string().optional(),
       severity: z.enum(["info", "success", "warning", "error"]),
-      createdAt: z.string(),
+      createdAt: isoTimestampSchema,
     }),
   ),
   earnings: z.array(
     z.object({
       symbol: z.string(),
       company: z.string(),
-      date: z.string(),
+      date: marketDateSchema,
       timing: z.enum(["BMO", "AMC", "TBD"]),
       eventSignal: z.enum(["Confirmed", "Pending", "Risk Window"]),
       engineRelevant: z.boolean(),
@@ -121,7 +169,7 @@ export const dashboardPayload = z.object({
       strategy: z.string().nullable(),
       hasPosition: z.boolean(),
       tracked: z.boolean(),
-      updatedAt: z.string(),
+      updatedAt: isoTimestampSchema,
     }),
   ),
   positions: z.array(
@@ -136,7 +184,7 @@ export const dashboardPayload = z.object({
       unrealizedPnl: z.number(),
       returnPct: z.number(),
       rMultiple: z.number(),
-      openedAt: z.string(),
+      openedAt: isoTimestampSchema,
     }),
   ),
   research: z.array(

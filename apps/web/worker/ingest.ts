@@ -20,6 +20,7 @@ const EVENT_TYPES = [
   "SHADOW_POSITION_UPDATED",
   "SHADOW_POSITION_CLOSED",
   "EARNINGS_UPDATED",
+  "MARKET_DATA_UPDATED",
   "SYSTEM_STATUS",
 ] as const;
 
@@ -31,6 +32,17 @@ const reasonSchema = z.object({
   threshold: z.string().max(200).optional(),
 });
 
+const directionSchema = z.enum(["Bullish", "Neutral", "Bearish"]).or(
+  z.literal("Long").transform(() => "Bullish" as const),
+);
+
+export const isoTimestampSchema = z.string().datetime({ offset: true });
+
+export const marketDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}, "date must be a valid calendar date");
+
 const candidateSchema = z.object({
   symbol: z.string().regex(/^[A-Za-z0-9.-]{1,12}$/),
   company: z.string().min(1).max(200),
@@ -41,22 +53,22 @@ const candidateSchema = z.object({
   strategyId: z.string().min(1).max(64),
   strategyVersion: z.string().min(1).max(32),
   strategy: z.string().min(1).max(64),
-  trend: z.string().max(32),
+  trend: z.enum(["Strong", "Positive", "Mixed", "Weak"]),
   momentum: z.number().optional().nullable(),
   relativeStrength: z.number().optional().nullable(),
   relativeVolume: z.number().optional().nullable(),
   breakout: z.string().max(64).optional().nullable(),
-  earningsDate: z.string().max(20).optional().nullable(),
+  earningsDate: marketDateSchema.optional().nullable(),
   earningsProximityDays: z.number().int().optional().nullable(),
   status: z.enum(["Strong Setup", "Watch", "No Setup", "Rejected"]),
-  direction: z.enum(["Long"]),
+  direction: directionSchema,
   riskFlags: z.array(z.string().max(200)).default([]),
-  updatedAt: z.string().max(40),
+  updatedAt: isoTimestampSchema,
   reasons: z.array(reasonSchema).default([]),
 });
 
 const scanCompletedSchema = z.object({
-  scannedAt: z.string().max(40),
+  scannedAt: isoTimestampSchema,
   universe: z.number().int().nonnegative(),
   passedFilters: z.number().int().nonnegative(),
   candidates: z.number().int().nonnegative(),
@@ -76,14 +88,14 @@ const positionSchema = z.object({
   unrealizedPnl: z.number(),
   returnPct: z.number(),
   rMultiple: z.number(),
-  openedAt: z.string().max(40),
-  updatedAt: z.string().max(40),
+  openedAt: isoTimestampSchema,
+  updatedAt: isoTimestampSchema,
 });
 
 const earningsSchema = z.object({
   symbol: z.string().regex(/^[A-Za-z0-9.-]{1,12}$/),
   company: z.string().min(1).max(200),
-  date: z.string().max(20),
+  date: marketDateSchema,
   timing: z.enum(["BMO", "AMC", "TBD"]),
   eventSignal: z.enum(["Confirmed", "Pending", "Risk Window"]),
   engineRelevant: z.boolean(),
@@ -91,30 +103,179 @@ const earningsSchema = z.object({
   strategy: z.string().max(64).nullable(),
   hasPosition: z.boolean(),
   tracked: z.boolean(),
-  updatedAt: z.string().max(40),
+  updatedAt: isoTimestampSchema,
+});
+
+const marketBarSchema = z.object({
+  symbol: z.string().regex(/^[A-Z0-9.-]{1,12}$/),
+  date: marketDateSchema,
+  open: z.number().positive(),
+  high: z.number().positive(),
+  low: z.number().positive(),
+  close: z.number().positive(),
+  adjustedClose: z.number().positive(),
+  volume: z.number().int().positive(),
+}).superRefine((bar, ctx) => {
+  if (bar.high < Math.max(bar.open, bar.close)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["high"], message: "high must cover open and close" });
+  }
+  if (bar.low > Math.min(bar.open, bar.close)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["low"], message: "low must cover open and close" });
+  }
+});
+
+const marketDataSchema = z.object({
+  provider: z.string().min(1).max(64),
+  status: z.enum(["healthy", "degraded", "offline"]),
+  asOf: marketDateSchema.nullable(),
+  lastSuccessfulUpdate: isoTimestampSchema.nullable(),
+  universe: z.object({
+    total: z.number().int().nonnegative(),
+    eligible: z.number().int().nonnegative(),
+    excluded: z.number().int().nonnegative(),
+  }),
+  benchmarks: z.array(marketBarSchema).max(10),
+  warnings: z.array(z.string().max(200)).max(20),
+  updatedAt: isoTimestampSchema.nullable(),
+}).superRefine((snapshot, ctx) => {
+  if (snapshot.universe.total !== snapshot.universe.eligible + snapshot.universe.excluded) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["universe"], message: "universe counts must add up" });
+  }
+  if (snapshot.status === "healthy") {
+    const symbols = snapshot.benchmarks.map((bar) => bar.symbol);
+    if (!snapshot.asOf || !snapshot.lastSuccessfulUpdate || !snapshot.updatedAt) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["lastSuccessfulUpdate"], message: "healthy snapshots require freshness" });
+    }
+    if (symbols.length !== 2 || symbols[0] !== "SPY" || symbols[1] !== "QQQ") {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["benchmarks"], message: "healthy snapshots require SPY and QQQ" });
+    }
+    if (snapshot.warnings.length > 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["warnings"], message: "healthy snapshots cannot contain warnings" });
+    }
+  }
 });
 
 const systemStatusSchema = z.object({
   engine: z.enum(["online", "offline", "delayed"]),
-  nextScan: z.string().max(40).nullable().optional(),
-  lastDataUpdate: z.string().max(40).nullable().optional(),
+  nextScan: isoTimestampSchema.nullable().optional(),
+  lastDataUpdate: isoTimestampSchema.nullable().optional(),
   apiHealth: z.enum(["healthy", "degraded"]),
 });
 
+const dashboardReasonSchema = reasonSchema.extend({
+  id: z.string().min(1).max(64),
+});
+
+const dashboardCandidateSchema = candidateSchema.extend({
+  sector: z.string(),
+  marketCap: z.number().nonnegative(),
+  price: z.number().nonnegative(),
+  earningsDate: marketDateSchema.nullable(),
+  updatedAt: isoTimestampSchema,
+  reasons: z.array(dashboardReasonSchema),
+});
+
+const dashboardReadSchema = z.object({
+  demo: z.boolean(),
+  status: z.object({
+    engine: z.enum(["online", "offline", "delayed"]),
+    latestScan: isoTimestampSchema.nullable(),
+    nextScan: isoTimestampSchema.nullable(),
+    lastDataUpdate: isoTimestampSchema.nullable(),
+    apiHealth: z.enum(["healthy", "degraded"]),
+  }),
+  marketData: marketDataSchema,
+  scan: z.object({
+    universe: z.number().int().nonnegative(),
+    passedFilters: z.number().int().nonnegative(),
+    candidates: z.number().int().nonnegative(),
+    setups: z.number().int().nonnegative(),
+    watch: z.number().int().nonnegative(),
+  }),
+  portfolio: z.object({
+    initialCapital: z.number().positive(),
+    equity: z.number().nonnegative(),
+    returnPct: z.number(),
+    cash: z.number().nonnegative(),
+    invested: z.number().nonnegative(),
+    openPositions: z.number().int().nonnegative(),
+    openRiskPct: z.number().nonnegative(),
+    grossExposurePct: z.number().nonnegative(),
+    riskPolicy: z.object({
+      riskPerTradePct: z.number().positive(),
+      maxPositions: z.number().int().positive(),
+      maxOpenRiskPct: z.number().positive(),
+      maxSinglePositionPct: z.number().positive(),
+      maxSectorExposurePct: z.number().positive(),
+      maxGrossExposurePct: z.number().positive(),
+      leverage: z.string(),
+      averagingDown: z.boolean(),
+      martingale: z.boolean(),
+    }),
+  }),
+  strategies: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    version: z.string(),
+    description: z.string(),
+    state: z.enum(["Research", "Validation", "Out-of-Sample", "Shadow", "Live"]),
+    enabled: z.boolean(),
+    universe: z.string(),
+    holdingPeriod: z.string(),
+    signalsToday: z.number(),
+    openPositions: z.number(),
+    parameters: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])),
+  })),
+  candidates: z.array(dashboardCandidateSchema),
+  events: z.array(z.object({
+    id: z.string(),
+    type: z.string(),
+    message: z.string(),
+    severity: z.enum(["info", "success", "warning", "error"]),
+    symbol: z.string().optional(),
+    strategyId: z.string().optional(),
+    createdAt: isoTimestampSchema,
+  })),
+  earnings: z.array(earningsSchema),
+  positions: z.array(z.object({
+    symbol: z.string(),
+    strategy: z.string(),
+    entryPrice: z.number(),
+    currentPrice: z.number(),
+    stopPrice: z.number(),
+    quantity: z.number().int(),
+    riskAmount: z.number(),
+    unrealizedPnl: z.number(),
+    returnPct: z.number(),
+    rMultiple: z.number(),
+    openedAt: isoTimestampSchema,
+  })),
+  research: z.array(z.object({
+    id: z.string(),
+    strategyId: z.string(),
+    strategy: z.string(),
+    stage: z.enum(["Research", "Validation", "Out-of-Sample", "Shadow", "Live"]),
+    period: z.string(),
+    status: z.enum(["Demo", "Pending", "Complete"]),
+    metrics: z.record(z.string(), z.number().nullable()),
+  })),
+});
+
 const eventSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("SCAN_STARTED"), event_id: z.string().min(8).max(80), timestamp: z.string().max(40), payload: z.object({ scheduledAt: z.string().max(40), universe: z.number().int().nonnegative() }) }),
-  z.object({ type: z.literal("SCAN_COMPLETED"), event_id: z.string().min(8).max(80), timestamp: z.string().max(40), payload: scanCompletedSchema }),
-  z.object({ type: z.enum(["SIGNAL_SURFACED", "SIGNAL_UPDATED", "SIGNAL_REJECTED"]), event_id: z.string().min(8).max(80), timestamp: z.string().max(40), payload: candidateSchema }),
-  z.object({ type: z.literal("SHADOW_POSITION_OPENED"), event_id: z.string().min(8).max(80), timestamp: z.string().max(40), payload: positionSchema }),
-  z.object({ type: z.literal("SHADOW_POSITION_UPDATED"), event_id: z.string().min(8).max(80), timestamp: z.string().max(40), payload: positionSchema }),
-  z.object({ type: z.literal("SHADOW_POSITION_CLOSED"), event_id: z.string().min(8).max(80), timestamp: z.string().max(40), payload: z.object({ symbol: z.string().regex(/^[A-Za-z0-9.-]{1,12}$/), strategy: z.string().min(1).max(64), closedAt: z.string().max(40), exitReason: z.string().max(200) }) }),
-  z.object({ type: z.literal("EARNINGS_UPDATED"), event_id: z.string().min(8).max(80), timestamp: z.string().max(40), payload: z.object({ items: z.array(earningsSchema).max(500) }) }),
-  z.object({ type: z.literal("SYSTEM_STATUS"), event_id: z.string().min(8).max(80), timestamp: z.string().max(40), payload: systemStatusSchema }),
+  z.object({ type: z.literal("SCAN_STARTED"), event_id: z.string().min(8).max(80), timestamp: isoTimestampSchema, payload: z.object({ scheduledAt: isoTimestampSchema, universe: z.number().int().nonnegative() }) }),
+  z.object({ type: z.literal("SCAN_COMPLETED"), event_id: z.string().min(8).max(80), timestamp: isoTimestampSchema, payload: scanCompletedSchema }),
+  z.object({ type: z.enum(["SIGNAL_SURFACED", "SIGNAL_UPDATED", "SIGNAL_REJECTED"]), event_id: z.string().min(8).max(80), timestamp: isoTimestampSchema, payload: candidateSchema }),
+  z.object({ type: z.literal("SHADOW_POSITION_OPENED"), event_id: z.string().min(8).max(80), timestamp: isoTimestampSchema, payload: positionSchema }),
+  z.object({ type: z.literal("SHADOW_POSITION_UPDATED"), event_id: z.string().min(8).max(80), timestamp: isoTimestampSchema, payload: positionSchema }),
+  z.object({ type: z.literal("SHADOW_POSITION_CLOSED"), event_id: z.string().min(8).max(80), timestamp: isoTimestampSchema, payload: z.object({ symbol: z.string().regex(/^[A-Za-z0-9.-]{1,12}$/), strategy: z.string().min(1).max(64), closedAt: isoTimestampSchema, exitReason: z.string().max(200) }) }),
+  z.object({ type: z.literal("EARNINGS_UPDATED"), event_id: z.string().min(8).max(80), timestamp: isoTimestampSchema, payload: z.object({ items: z.array(earningsSchema).max(500) }) }),
+  z.object({ type: z.literal("MARKET_DATA_UPDATED"), event_id: z.string().min(8).max(80), timestamp: isoTimestampSchema, payload: marketDataSchema }),
+  z.object({ type: z.literal("SYSTEM_STATUS"), event_id: z.string().min(8).max(80), timestamp: isoTimestampSchema, payload: systemStatusSchema }),
 ]);
 
 type IngestEvent = z.infer<typeof eventSchema>;
 
-export { eventSchema };
+export { eventSchema, marketDataSchema, dashboardReadSchema };
 export type { IngestEvent };
 
 const JSON_HEADERS = {
@@ -243,6 +404,14 @@ function buildStatements(event: IngestEvent): [string, unknown[]][] {
         );
       }
       stmts.push(insertBotEvent("EARNINGS_UPDATED", `Earnings updated: ${items.length} events`, null));
+      break;
+    }
+    case "MARKET_DATA_UPDATED": {
+      const snapshot = event.payload;
+      stmts.push(
+        ["INSERT INTO app_meta (key, value) VALUES ('marketData', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", [JSON.stringify(snapshot)]],
+        insertBotEvent("MARKET_DATA_UPDATED", `Market data ${snapshot.status}: ${snapshot.universe.eligible}/${snapshot.universe.total} eligible`, null),
+      );
       break;
     }
     case "SYSTEM_STATUS": {

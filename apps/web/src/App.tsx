@@ -6,6 +6,7 @@ import {
   DisclaimerPage,
   EarningsPage,
   LandingPage,
+  MarketDataPage,
   MethodologyPage,
   NotFoundPage,
   PortfolioPage,
@@ -35,6 +36,7 @@ export default function App() {
         <Route path="/research/:researchId" element={<ResearchDetailPage />} />
         <Route path="/portfolio" element={<PortfolioPage />} />
         <Route path="/earnings" element={<EarningsPage />} />
+        <Route path="/market-data" element={<MarketDataPage />} />
         <Route path="/activity" element={<ActivityPage />} />
         <Route path="/status" element={<StatusPage />} />
       </Route>

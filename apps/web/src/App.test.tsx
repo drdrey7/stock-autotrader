@@ -72,6 +72,43 @@ describe("public application", () => {
     expect(rejectedSection?.textContent).toContain("TSLA");
   });
 
+  it("renders the validated market-data snapshot", () => {
+    render(
+      <MemoryRouter initialEntries={["/market-data"]}>
+        <App />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole("heading", { name: "Market data" })).toBeInTheDocument();
+    expect(screen.getByText("SPY and QQQ")).toBeInTheDocument();
+    expect(screen.getByText("1,648")).toBeInTheDocument();
+    expect(screen.getAllByText("SPY").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("QQQ").length).toBeGreaterThan(0);
+  });
+  it("surfaces degraded market data in public system status", () => {
+    const degraded = {
+      ...demoData,
+      demo: false,
+      marketData: {
+        ...demoData.marketData,
+        status: "offline" as const,
+        benchmarks: [],
+        lastSuccessfulUpdate: null,
+        warnings: ["No validated market-data snapshot has been published."],
+      },
+    };
+    render(
+      <DataContext.Provider value={degraded}>
+        <MemoryRouter initialEntries={["/status"]}>
+          <App />
+        </MemoryRouter>
+      </DataContext.Provider>,
+    );
+    expect(screen.getByText("Public data is delayed or degraded")).toBeInTheDocument();
+    expect(screen.queryByText("Demo Data")).not.toBeInTheDocument();
+    expect(screen.getAllByText("unavailable").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("No validated market-data snapshot has been published.").length).toBeGreaterThan(0);
+  });
+
   it("renders the shadow portfolio with $10,000 simulated capital", () => {
     render(
       <MemoryRouter initialEntries={["/portfolio"]}>
@@ -86,6 +123,18 @@ describe("public application", () => {
     expect(screen.getByText("+3.07%")).toBeInTheDocument();
   });
 
+  it("labels non-demo data as public operational data", () => {
+    render(
+      <DataContext.Provider value={{ ...demoData, demo: false }}>
+        <MemoryRouter initialEntries={["/signals"]}>
+          <App />
+        </MemoryRouter>
+      </DataContext.Provider>,
+    );
+    expect(screen.getByText("operational")).toBeInTheDocument();
+    expect(screen.queryByText("Demo Data")).not.toBeInTheDocument();
+  });
+
   it("switches earnings calendar tabs and filters", () => {
     render(
       <MemoryRouter initialEntries={["/earnings"]}>
@@ -96,6 +145,25 @@ describe("public application", () => {
     fireEvent.click(screen.getByRole("button", { name: "Tomorrow" }));
     expect(screen.getByText("TSLA")).toBeInTheDocument();
     expect(screen.queryByText("META")).not.toBeInTheDocument();
+  });
+
+  it("does not link earnings without a matching stock candidate", () => {
+    const orphan = {
+      ...demoData.earnings[0]!,
+      symbol: "CRM",
+      date: "2026-08-11",
+    };
+    render(
+      <DataContext.Provider value={{ ...demoData, candidates: [], earnings: [orphan] }}>
+        <MemoryRouter initialEntries={["/earnings"]}>
+          <App />
+        </MemoryRouter>
+      </DataContext.Provider>,
+    );
+    const card = screen.getByText("CRM").closest(".earning-card");
+    expect(card).not.toBeNull();
+    expect(card?.tagName).toBe("DIV");
+    expect(card?.closest("a")).toBeNull();
   });
 
   it.each(["/stocks/UNKNOWN", "/strategies/unknown", "/research/unknown"])(

@@ -4,7 +4,8 @@ import unittest
 from unittest.mock import patch
 
 from bot.config import Settings
-from bot.publishing import _public_engine_status, publish_system_status
+from bot.market_data.models import MarketDataSnapshot, UniverseResult
+from bot.publishing import _public_engine_status, publish_market_data, publish_system_status
 
 
 class PublishingTests(unittest.TestCase):
@@ -15,6 +16,29 @@ class PublishingTests(unittest.TestCase):
     def test_healthy_runtime_maps_to_online(self):
         settings = Settings(bot_env="production", ingest_secret="real-value")
         self.assertEqual(_public_engine_status(settings), "online")
+
+    def test_market_data_publication_requires_ingest_acknowledgement(self):
+        fake_publisher = types.SimpleNamespace(
+            client=types.SimpleNamespace(
+                make_event=lambda event_type, payload: {"event_id": "market-data-event"},
+            )
+        )
+        settings = Settings(bot_env="production", ingest_secret="real-value")
+        snapshot = MarketDataSnapshot(
+            provider="test",
+            status="healthy",
+            as_of="2026-08-11",
+            last_successful_update="2026-08-11T12:00:00+00:00",
+            universe=UniverseResult(total=0, eligible=(), excluded_symbols=(), exclusions={}),
+            benchmarks=(),
+            warnings=(),
+            updated_at="2026-08-11T12:00:00+00:00",
+        )
+        with patch.dict(sys.modules, {"publisher": fake_publisher}), patch(
+            "bot.publishing.publish_events",
+            return_value={"applied": [], "skipped": [], "rejected": [{"event_id": "market-data-event"}]},
+        ), self.assertRaisesRegex(RuntimeError, "not acknowledged"):
+            publish_market_data(settings, snapshot)
 
     def test_status_omits_unknown_data_timestamp(self):
         captured = {}

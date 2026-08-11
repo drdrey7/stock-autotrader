@@ -17,6 +17,8 @@ from .alerts import format_alert
 from .config import get_settings
 from .health import health_report
 from .logging_setup import setup_logging
+from .market_data import CsvMarketDataProvider, MarketDataPipeline, UniverseConfig
+from .market_data.provider import DataValidationError
 from .state import StateStore
 
 
@@ -83,6 +85,38 @@ def _cmd_run(args) -> int:
     return 0
 
 
+def _cmd_market_data(args) -> int:
+    settings = get_settings()
+    if args.publish and not settings.ingest_secret:
+        print(json.dumps({"market_data": "error", "error": "INGEST_SECRET not configured for --publish"}))
+        return 2
+    try:
+        pipeline = MarketDataPipeline(
+            CsvMarketDataProvider(settings.market_data_dir),
+            universe_config=UniverseConfig(
+                min_price=settings.market_min_price,
+                min_avg_volume=settings.market_min_avg_volume,
+                min_market_cap=settings.market_min_market_cap,
+            ),
+            max_staleness_days=settings.market_max_staleness_days,
+            cache_path=None if args.no_cache else settings.market_data_cache,
+        )
+        snapshot = pipeline.run()
+    except (DataValidationError, FileNotFoundError, OSError, RuntimeError, ValueError) as exc:
+        print(json.dumps({"market_data": "error", "error": str(exc)}))
+        return 2
+    if args.publish:
+        from .publishing import publish_market_data
+
+        try:
+            publish_market_data(settings, snapshot)
+        except (OSError, RuntimeError) as exc:
+            print(json.dumps({"market_data": "error", "error": str(exc)}))
+            return 2
+    print(json.dumps(snapshot.public_dict(), indent=2))
+    return 0 if snapshot.status == "healthy" else 2
+
+
 def _cmd_alert(args) -> int:
     """Print the alert line to stdout — a Hermes cron (profile default)
     delivers it to the configured Telegram channel."""
@@ -98,11 +132,20 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("smoke", help="validate runtime (no side effects)")
     sub.add_parser("health", help="print health report")
     sub.add_parser("run", help="start scheduler (blocking)")
+    market_data = sub.add_parser("market-data", help="validate and cache market data")
+    market_data.add_argument("--publish", action="store_true", help="publish the snapshot to D1")
+    market_data.add_argument("--no-cache", action="store_true", help="do not write the local cache")
     alert = sub.add_parser("alert", help="print alert line to stdout (Hermes cron delivers)")
     alert.add_argument("message", help="alert text")
 
     args = parser.parse_args(argv)
-    handlers = {"smoke": _cmd_smoke, "health": _cmd_health, "run": _cmd_run, "alert": _cmd_alert}
+    handlers = {
+        "smoke": _cmd_smoke,
+        "health": _cmd_health,
+        "run": _cmd_run,
+        "market-data": _cmd_market_data,
+        "alert": _cmd_alert,
+    }
     return handlers[args.command](args)
 
 

@@ -1018,6 +1018,10 @@ p {
   grid-template-columns: 1.5fr 0.8fr 0.8fr 0.6fr 0.75fr 0.55fr 0.5fr 0.6fr;
   min-width: 840px;
 }
+.market-data-table .table-row {
+  grid-template-columns: 0.8fr 1.1fr repeat(5, 1fr);
+  min-width: 820px;
+}
 .empty-state {
   display: grid;
   justify-items: center;
@@ -1672,7 +1676,8 @@ p {
   display: grid;
   gap: 2px;
 }
-.earnings-mini > a {
+.earnings-mini > a,
+.earnings-mini > div {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1680,10 +1685,12 @@ p {
   padding: 11px 4px;
   border-bottom: 1px solid var(--line);
 }
-.earnings-mini > a:last-child {
+.earnings-mini > a:last-child,
+.earnings-mini > div:last-child {
   border-bottom: none;
 }
-.earnings-mini > a > span {
+.earnings-mini > a > span,
+.earnings-mini > div > span {
   display: grid;
   gap: 2px;
 }

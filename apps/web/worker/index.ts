@@ -1,5 +1,5 @@
-import type { DashboardData, StrategySummary, Candidate } from "@stock-autotrader/contracts";
-import { handleIngest } from "./ingest";
+import type { DashboardData, MarketDataSnapshot, StrategySummary, Candidate } from "@stock-autotrader/contracts";
+import { dashboardReadSchema, handleIngest, isoTimestampSchema, marketDataSchema } from "./ingest";
 
 /**
  * Stock Autotrader public read-only API (PR #2).
@@ -38,6 +38,59 @@ const parseJson = (v: unknown, fallback: unknown) => {
     return fallback;
   }
 };
+
+const emptyMarketData: MarketDataSnapshot = {
+  provider: "unavailable",
+  status: "offline",
+  asOf: null,
+  lastSuccessfulUpdate: null,
+  universe: { total: 0, eligible: 0, excluded: 0 },
+  benchmarks: [],
+  warnings: ["No validated market-data snapshot has been published."],
+  updatedAt: null,
+};
+
+const emptyDashboard: DashboardData = {
+  demo: false,
+  status: { engine: "offline", latestScan: null, nextScan: null, lastDataUpdate: null, apiHealth: "degraded" },
+  marketData: emptyMarketData,
+  scan: { universe: 0, passedFilters: 0, candidates: 0, setups: 0, watch: 0 },
+  portfolio: {
+    initialCapital: 10000,
+    equity: 0,
+    returnPct: 0,
+    cash: 0,
+    invested: 0,
+    openPositions: 0,
+    openRiskPct: 0,
+    grossExposurePct: 0,
+    riskPolicy: {
+      riskPerTradePct: 1,
+      maxPositions: 1,
+      maxOpenRiskPct: 1,
+      maxSinglePositionPct: 1,
+      maxSectorExposurePct: 1,
+      maxGrossExposurePct: 1,
+      leverage: "1x",
+      averagingDown: false,
+      martingale: false,
+    },
+  },
+  strategies: [],
+  candidates: [],
+  events: [],
+  earnings: [],
+  positions: [],
+  research: [],
+};
+
+const parseIsoTimestamp = (value: unknown): string | null => {
+  const candidate = str(value);
+  return candidate && isoTimestampSchema.safeParse(candidate).success ? candidate : null;
+};
+
+export const normalizeDirection = (value: unknown): Candidate["direction"] =>
+  value === "Long" ? "Bullish" : String(value) as Candidate["direction"];
 
 interface ScanRow {
   id: number;
@@ -112,7 +165,7 @@ async function buildDashboard(env: Env): Promise<DashboardData> {
     earningsDate: str(c.earnings_date),
     earningsProximityDays: c.earnings_proximity_days === null ? null : int(c.earnings_proximity_days),
     status: String(c.status) as Candidate["status"],
-    direction: String(c.direction) as Candidate["direction"],
+    direction: normalizeDirection(c.direction),
     riskFlags: parseJson(c.risk_flags, []) as string[],
     updatedAt: String(c.updated_at),
     reasons: (reasonsByCandidate.get(Number(c.id)) ?? []).map((r) => ({
@@ -185,23 +238,46 @@ async function buildDashboard(env: Env): Promise<DashboardData> {
     riskPolicy: parseJson(metaMap.get("riskPolicy"), {}),
   };
 
+  const rawMarketData = parseJson(metaMap.get("marketData"), null);
+  const parsedMarketData = marketDataSchema.safeParse(rawMarketData);
+  let marketData: MarketDataSnapshot = parsedMarketData.success ? parsedMarketData.data : emptyMarketData;
+  if (marketData.status === "healthy" && marketData.lastSuccessfulUpdate) {
+    const publishedAt = Date.parse(marketData.lastSuccessfulUpdate);
+    const ageMs = Date.now() - publishedAt;
+    if (!Number.isFinite(publishedAt) || ageMs < -5 * 60 * 1000 || ageMs > 26 * 60 * 60 * 1000) {
+      marketData = {
+        ...marketData,
+        status: "degraded",
+        warnings: [...marketData.warnings, "Last healthy market-data snapshot is stale or has an invalid timestamp."],
+      };
+    }
+  }
+
   // Stale-data detection: if the engine has not published in 26h (daily scans +
   // margin), surface it as delayed/degraded instead of pretending health.
-  const lastDataUpdate = str(metaMap.get("lastDataUpdate"));
+  const latestScan = parseIsoTimestamp(scan?.scanned_at);
+  const nextScan = parseIsoTimestamp(metaMap.get("nextScan"));
+  const rawLastDataUpdate = str(metaMap.get("lastDataUpdate"));
+  const lastDataUpdate = parseIsoTimestamp(rawLastDataUpdate);
   const lastUpdateMs = lastDataUpdate ? Date.parse(lastDataUpdate) : Number.NaN;
   const stale = !Number.isNaN(lastUpdateMs) && Date.now() - lastUpdateMs > 26 * 3600_000;
+  const malformedFreshness =
+    (scan !== null && latestScan === null) ||
+    (metaMap.has("nextScan") && nextScan === null) ||
+    (rawLastDataUpdate !== null && lastDataUpdate === null);
   const engine = (metaMap.get("engine") as DashboardData["status"]["engine"] | undefined) ?? "online";
   const apiHealth = (metaMap.get("apiHealth") as DashboardData["status"]["apiHealth"] | undefined) ?? "healthy";
 
-  return {
+  const dashboard = {
     demo: false,
     status: {
-      engine: stale ? "delayed" : engine,
-      latestScan: scan ? scan.scanned_at : null,
-      nextScan: str(metaMap.get("nextScan")),
+      engine: stale || malformedFreshness ? "delayed" : engine,
+      latestScan,
+      nextScan,
       lastDataUpdate,
-      apiHealth: stale ? "degraded" : apiHealth,
+      apiHealth: stale || malformedFreshness ? "degraded" : apiHealth,
     },
+    marketData,
     scan: {
       universe: scan ? int(scan.universe) : 0,
       passedFilters: scan ? int(scan.passed_filters) : 0,
@@ -217,6 +293,12 @@ async function buildDashboard(env: Env): Promise<DashboardData> {
     positions,
     research,
   };
+  const validated = dashboardReadSchema.safeParse(dashboard);
+  if (!validated.success) {
+    console.error("dashboard read-model validation failed", validated.error.issues.length);
+    return emptyDashboard;
+  }
+  return validated.data as DashboardData;
 }
 
 export default {
@@ -238,7 +320,15 @@ export default {
         return json(await buildDashboard(env));
       } catch (err) {
         console.error("dashboard error", err);
-        return json({ error: "Internal error" }, 500);
+        return json(emptyDashboard);
+      }
+    }
+    if (pathname === "/api/market-data") {
+      try {
+        return json((await buildDashboard(env)).marketData);
+      } catch (err) {
+        console.error("market data error", err);
+        return json(emptyMarketData);
       }
     }
     const stockMatch = pathname.match(/^\/api\/stocks\/([A-Za-z0-9.-]+)$/);

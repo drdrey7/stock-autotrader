@@ -62,6 +62,8 @@ class SchedulerTests(unittest.TestCase):
             self.assertIn("pre_market_scan", ids)
             self.assertIn("post_close_scan", ids)
             self.assertIn("data_refresh", ids)
+            from bot.jobs.market_data import market_data_job
+            self.assertIs(jobs[[j.id for j in jobs].index("data_refresh")].func, market_data_job)
             runs = next_runs(sched)
             self.assertEqual(len(runs), len(jobs))
             for r in runs:

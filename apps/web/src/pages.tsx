@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import type { Candidate } from "@stock-autotrader/contracts";
+import type { Candidate, DashboardData, EarningsEvent } from "@stock-autotrader/contracts";
 import { useData } from "./lib/data-context";
 import {
   Badge,
@@ -68,6 +68,12 @@ const signedPercent = (value: number) => `${value >= 0 ? "+" : ""}${value}%`;
 const signedMoney = (value: number) =>
   `${value >= 0 ? "+" : ""}${formatMoney(value)}`;
 
+function DataModeBadge({ data }: { data: DashboardData }) {
+  if (data.demo) return <Badge tone="demo">Demo Data</Badge>;
+  const healthy = data.status.apiHealth === "healthy" && data.marketData.status === "healthy";
+  return <Badge tone={healthy ? "positive" : "warning"}>{healthy ? "operational" : "degraded"}</Badge>;
+}
+
 function addDays(date: string, days: number): string {
   const d = new Date(`${date}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + days);
@@ -90,7 +96,7 @@ function LandingPreview() {
           />{" "}
           Engine {demoData.status.engine}
         </div>
-        <Badge tone="demo">Demo Data</Badge>
+        <DataModeBadge data={demoData} />
       </div>
       <div className="preview-metrics">
         <div>
@@ -382,13 +388,14 @@ export function DashboardPage() {
   const strong = candidates.filter((c) => c.status === "Strong Setup");
   const watch = candidates.filter((c) => c.status === "Watch");
   const relevantEarnings = earnings.filter((e) => e.engineRelevant);
+  const candidateSymbols = new Set(candidates.map((candidate) => candidate.symbol.toUpperCase()));
   return (
     <>
       <PageTitle
         eyebrow="Today's market brief"
         title="What matters today"
         text="A daily view of the strongest signals, watch candidates and events the engine is tracking."
-        action={<Badge tone="demo">Demo Data</Badge>}
+        action={<DataModeBadge data={demoData} />}
       />
       <div className="brief-grid">
         <div>
@@ -462,16 +469,12 @@ export function DashboardPage() {
             action={<Link to="/earnings">Calendar</Link>}
           />
           <div className="earnings-mini">
-            {relevantEarnings.map((e) => (
-              <Link to={`/stocks/${e.symbol}`} key={e.symbol}>
-                <span>
-                  <strong>{e.symbol}</strong>
-                  <small>
-                    {e.date} · {e.timing}
-                  </small>
-                </span>
-                {e.signal && <SignalBadge status={e.signal} />}
-              </Link>
+            {relevantEarnings.map((event) => (
+              <EarningsMiniItem
+                key={event.symbol}
+                event={event}
+                linkable={candidateSymbols.has(event.symbol.toUpperCase())}
+              />
             ))}
           </div>
         </section>
@@ -611,7 +614,7 @@ export function SignalsPage() {
         eyebrow="Market signals"
         title="Market signals"
         text="The engine scans the broader US equity universe and surfaces only the setups that pass its relevance filters."
-        action={<Badge tone="demo">Demo Data</Badge>}
+        action={<DataModeBadge data={demoData} />}
       />
       <div className="signal-summary">
         <span>
@@ -982,7 +985,7 @@ export function StrategiesPage() {
         eyebrow="Strategy registry"
         title="Systematic strategies"
         text="Every strategy is versioned and evaluated against the same rules."
-        action={<Badge tone="demo">Demo Data</Badge>}
+        action={<DataModeBadge data={demoData} />}
       />
       <div className="strategy-grid">
         {demoData.strategies.map((s) => (
@@ -1394,7 +1397,79 @@ export function PortfolioPage() {
   );
 }
 
+function EarningsMiniItem({
+  event,
+  linkable,
+}: {
+  event: EarningsEvent;
+  linkable: boolean;
+}) {
+  const content = (
+    <>
+      <span>
+        <strong>{event.symbol}</strong>
+        <small>
+          {event.date} · {event.timing}
+        </small>
+      </span>
+      {event.signal && <SignalBadge status={event.signal} />}
+    </>
+  );
+  return linkable ? (
+    <Link to={`/stocks/${event.symbol}`}>{content}</Link>
+  ) : (
+    <div className="earnings-mini-row">{content}</div>
+  );
+}
+
 type EarningsTab = "today" | "tomorrow" | "week" | "calendar";
+
+function EarningsCard({
+  event,
+  today,
+  linkable,
+}: {
+  event: EarningsEvent;
+  today: string;
+  linkable: boolean;
+}) {
+  const content = (
+    <>
+      <header>
+        <span className="ticker-icon">{event.symbol[0]}</span>
+        <span>
+          <strong>{event.symbol}</strong>
+          <small>{event.company}</small>
+        </span>
+        {event.hasPosition && <Badge tone="positive">Position</Badge>}
+      </header>
+      <div>
+        <CalendarDays />
+        <span>
+          <small>
+            {event.date < today ? "Reported" : "Expected"} · {event.timing}
+          </small>
+          <strong>{event.date}</strong>
+        </span>
+      </div>
+      <div className="earning-meta">
+        {event.signal ? (
+          <SignalBadge status={event.signal} />
+        ) : (
+          <Badge tone="neutral">Not tracked</Badge>
+        )}
+        {event.strategy && <Badge>{event.strategy}</Badge>}
+      </div>
+    </>
+  );
+  return linkable ? (
+    <Link to={`/stocks/${event.symbol}`} className="earning-card">
+      {content}
+    </Link>
+  ) : (
+    <div className="earning-card">{content}</div>
+  );
+}
 
 export function EarningsPage() {
   const demoData = useData();
@@ -1403,6 +1478,7 @@ export function EarningsPage() {
   const today = demoData.status.nextScan?.slice(0, 10) ?? "2026-08-11";
   const tomorrow = addDays(today, 1);
   const weekEnd = addDays(today, 6);
+  const candidateSymbols = new Set(demoData.candidates.map((candidate) => candidate.symbol.toUpperCase()));
   const filtered = useMemo(
     () =>
       demoData.earnings
@@ -1428,7 +1504,7 @@ export function EarningsPage() {
         eyebrow="Event calendar"
         title="Earnings"
         text="Upcoming and recent events the engine is tracking, with relevance to current signals and shadow positions."
-        action={<Badge tone="demo">Demo Data</Badge>}
+        action={<DataModeBadge data={demoData} />}
       />
       <div className="earnings-toolbar">
         <div className="tabs">
@@ -1459,38 +1535,13 @@ export function EarningsPage() {
         </div>
       ) : (
         <div className="earnings-grid">
-          {filtered.map((e) => (
-            <Link
-              to={`/stocks/${e.symbol}`}
-              className="earning-card"
-              key={`${e.symbol}-${e.date}`}
-            >
-              <header>
-                <span className="ticker-icon">{e.symbol[0]}</span>
-                <span>
-                  <strong>{e.symbol}</strong>
-                  <small>{e.company}</small>
-                </span>
-                {e.hasPosition && <Badge tone="positive">Position</Badge>}
-              </header>
-              <div>
-                <CalendarDays />
-                <span>
-                  <small>
-                    {e.date < today ? "Reported" : "Expected"} · {e.timing}
-                  </small>
-                  <strong>{e.date}</strong>
-                </span>
-              </div>
-              <div className="earning-meta">
-                {e.signal ? (
-                  <SignalBadge status={e.signal} />
-                ) : (
-                  <Badge tone="neutral">Not tracked</Badge>
-                )}
-                {e.strategy && <Badge>{e.strategy}</Badge>}
-              </div>
-            </Link>
+          {filtered.map((event) => (
+            <EarningsCard
+              key={`${event.symbol}-${event.date}`}
+              event={event}
+              today={today}
+              linkable={candidateSymbols.has(event.symbol.toUpperCase())}
+            />
           ))}
         </div>
       )}
@@ -1540,7 +1591,7 @@ export function ActivityPage() {
         eyebrow="Audit timeline"
         title="Engine activity"
         text="A safe public record of scans, signals and filters."
-        action={<Badge tone="demo">Demo Data</Badge>}
+        action={<DataModeBadge data={demoData} />}
       />
       <div className="filter-bar">
         <label>
@@ -1575,10 +1626,76 @@ export function ActivityPage() {
   );
 }
 
+export function MarketDataPage() {
+  const data = useData();
+  const market = data.marketData;
+  const statusTone = market.status === "healthy" ? "positive" : market.status === "offline" ? "negative" : "warning";
+  return (
+    <>
+      <PageTitle
+        eyebrow="Deterministic data layer"
+        title="Market data"
+        text="The provider snapshot behind the public universe and benchmark context."
+        action={
+          <>
+            <Badge tone={statusTone}>{market.status}</Badge>
+            {data.demo && <DataModeBadge data={data} />}
+          </>
+        }
+      />
+      <div className="metrics-grid">
+        <MetricCard label="Universe total" value={market.universe.total.toLocaleString()} detail="Rows received" />
+        <MetricCard label="Universe eligible" value={market.universe.eligible.toLocaleString()} detail="After deterministic filters" accent />
+        <MetricCard label="Excluded" value={market.universe.excluded.toLocaleString()} detail="Never passed silently" />
+        <MetricCard label="Provider" value={market.provider} detail={`As of ${market.asOf ?? "—"}`} />
+      </div>
+      <section className="panel">
+        <SectionHeading
+          eyebrow="Benchmarks"
+          title="SPY and QQQ"
+          text="Normalized OHLCV reference bars used to keep research reproducible."
+        />
+        {market.benchmarks.length === 0 ? (
+          <div className="empty-state"><Database /><strong>No validated benchmark data</strong><p className="muted">The next successful provider update will appear here.</p></div>
+        ) : (
+          <div className="responsive-table market-data-table">
+            <div className="table-row table-head"><span>Symbol</span><span>Date</span><span>Open</span><span>High</span><span>Low</span><span>Close</span><span>Volume</span></div>
+            {market.benchmarks.map((bar) => (
+              <div className="table-row" key={`${bar.symbol}:${bar.date}`}>
+                <span data-label="Symbol"><strong>{bar.symbol}</strong></span>
+                <span data-label="Date">{bar.date}</span>
+                <span data-label="Open">{formatMoney(bar.open)}</span>
+                <span data-label="High">{formatMoney(bar.high)}</span>
+                <span data-label="Low">{formatMoney(bar.low)}</span>
+                <span data-label="Close"><strong>{formatMoney(bar.close)}</strong></span>
+                <span data-label="Volume">{bar.volume.toLocaleString()}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+      <section className="panel">
+        <SectionHeading title="Validation notes" text={`Last provider result: ${formatDate(market.lastSuccessfulUpdate)}`} />
+        {market.warnings.length === 0 ? (
+          <div className="system-ok"><Check /><div><strong>Snapshot passed validation</strong><span>Required benchmarks and universe checks completed.</span></div></div>
+        ) : (
+          <div className="event-callout"><AlertTriangle /><div><strong>Snapshot needs attention</strong>{market.warnings.map((warning) => <span key={warning}>{warning}</span>)}</div></div>
+        )}
+      </section>
+    </>
+  );
+}
+
 export function StatusPage() {
   const demoData = useData();
   const s = demoData.status;
-  const healthy = s.engine === "online" && s.apiHealth === "healthy";
+  const marketStatus = demoData.marketData.status;
+  const marketHealthy = marketStatus === "healthy";
+  const healthy = s.engine === "online" && s.apiHealth === "healthy" && marketHealthy;
+  const marketState = marketHealthy ? "current" : marketStatus === "offline" ? "unavailable" : "degraded";
+  const marketDetail = marketHealthy
+    ? "Updated " + formatDate(demoData.marketData.lastSuccessfulUpdate)
+    : demoData.marketData.warnings[0] ?? `Provider status: ${marketStatus}`;
   const components: [string, string, string][] = [
     [
       "Engine",
@@ -1589,8 +1706,8 @@ export function StatusPage() {
     ],
     [
       "Market data",
-      s.engine === "online" && s.lastDataUpdate ? "current" : "unavailable",
-      "Updated " + formatDate(s.lastDataUpdate),
+      marketState,
+      marketDetail,
     ],
     ["Earnings data", "operational", "Event calendar synced with the engine"],
     ["AI / event analysis", "operational", "Structured assessments only"],
@@ -1604,7 +1721,7 @@ export function StatusPage() {
       "scheduled",
       formatDate(s.nextScan),
     ],
-    ["Data freshness", "current", "Point-in-time timestamps enforced"],
+    ["Data freshness", marketState === "current" ? "current" : marketState === "unavailable" ? "unavailable" : "stale", marketDetail],
     ["Public sync", "operational", "Read-only public views in sync"],
   ];
   return (
@@ -1613,10 +1730,10 @@ export function StatusPage() {
         eyebrow="Safe public health"
         title="System status"
         text="Operational information without private infrastructure details."
-        action={<Badge tone="demo">Demo Data</Badge>}
+        action={<DataModeBadge data={demoData} />}
       />
-      <div className="system-ok">
-        <Check />
+      <div className={healthy ? "system-ok" : "event-callout"}>
+        {healthy ? <Check /> : <AlertTriangle />}
         <div>
           <strong>
             {healthy
