@@ -26,7 +26,7 @@ def health_job(store: StateStore) -> None:
 
 
 def _health_interval_seconds(settings: Settings) -> int:
-    """Return two intervals of the configured health cron cadence."""
+    """Return twice the time between consecutive scheduled health fires."""
     try:
         trigger = CronTrigger.from_crontab(
             settings.health_check_cron,
@@ -42,6 +42,25 @@ def _health_interval_seconds(settings: Settings) -> int:
     return 3600
 
 
+def _missed_health_check(settings: Settings, finished_at: datetime, now: datetime | None = None) -> bool:
+    """True when at least one scheduled check should have fired since
+    ``finished_at``."""
+    if now is None:
+        now = datetime.now(ZoneInfo(settings.timezone))
+    try:
+        trigger = CronTrigger.from_crontab(
+            settings.health_check_cron,
+            timezone=ZoneInfo(settings.timezone),
+        )
+        now_inner = datetime.now(ZoneInfo(settings.timezone)) if now is None else now
+        if finished_at.tzinfo is None:
+            finished_at = finished_at.replace(tzinfo=ZoneInfo(settings.timezone))
+        nxt = trigger.get_next_fire_time(finished_at, now_inner)
+        return nxt is not None and nxt <= now_inner
+    except (TypeError, ValueError):
+        return True
+
+
 def health_report(settings: Settings, store: StateStore, sched=None) -> dict:
     from .scheduler import next_runs  # lazy import to avoid cycle
 
@@ -53,8 +72,8 @@ def health_report(settings: Settings, store: StateStore, sched=None) -> dict:
             finished = datetime.fromisoformat(last_health["finished_at"])
             if finished.tzinfo is None:
                 finished = finished.replace(tzinfo=timezone.utc)
-            age = (datetime.now(timezone.utc) - finished).total_seconds()
-            health_failed = health_failed or age > _health_interval_seconds(settings)
+            if _missed_health_check(settings, finished):
+                health_failed = True
         except (TypeError, ValueError):
             health_failed = True
     return {
