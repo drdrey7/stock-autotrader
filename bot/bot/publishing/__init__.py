@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 
 from ..config import Settings
+from ..market_data.models import MarketDataSnapshot
 
 log = logging.getLogger(__name__)
 
@@ -25,12 +26,26 @@ def _public_engine_status(settings: Settings) -> str:
     return "delayed" if settings.check_secrets() else "online"
 
 
-def publish_system_status(settings: Settings, last_data_update: str | None = None) -> dict:
-    """Publish runtime status without fabricating market-data freshness.
+def publish_market_data(settings: Settings, snapshot: MarketDataSnapshot) -> dict:
+    """Publish a bounded, normalized market-data health snapshot."""
+    from publisher import client
 
-    ``last_data_update`` must come from the last successful market-data update;
-    when unknown it is omitted rather than set to the heartbeat timestamp.
-    """
+    event = client.make_event("MARKET_DATA_UPDATED", snapshot.public_dict())
+    result = publish_events(settings, [event])
+    if not isinstance(result, dict):
+        raise RuntimeError("market-data publication returned an invalid response")
+    applied = result.get("applied", [])
+    skipped = result.get("skipped", [])
+    rejected = result.get("rejected", [])
+    if not isinstance(applied, list) or not isinstance(skipped, list) or not isinstance(rejected, list):
+        raise RuntimeError("market-data publication returned an invalid acknowledgement")
+    if rejected or event["event_id"] not in applied + skipped:
+        raise RuntimeError("market-data event was not acknowledged by ingest")
+    return result
+
+
+def publish_system_status(settings: Settings, last_data_update: str | None = None) -> dict:
+    """Publish runtime status without fabricating market-data freshness."""
     from publisher import client
 
     degraded = bool(settings.check_secrets())

@@ -5,10 +5,11 @@ Secrets are never committed: .env is gitignored, only .env.example is tracked.
 """
 from __future__ import annotations
 
+import math
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BOT_DIR = Path(__file__).resolve().parent
@@ -27,6 +28,12 @@ class Settings(BaseSettings):
     bot_env: str = "dev"  # dev | production
     log_level: str = "INFO"
     data_dir: Path = BOT_DIR / "data"
+    market_data_dir: Path = BOT_DIR / "data" / "market"
+    market_data_cache: Path = BOT_DIR / "data" / "market" / "latest.json"
+    market_min_price: float = 5.0
+    market_min_avg_volume: int = 250_000
+    market_min_market_cap: int = 300_000_000
+    market_max_staleness_days: int = 3
 
     # --- scheduler (America/New_York) ---
     # BOT_TIMEZONE alias avoids the generic TIMEZONE env var that many hosts set empty.
@@ -44,6 +51,21 @@ class Settings(BaseSettings):
 
     # NOTE: no Telegram credentials here — operational alerts are delivered by
     # a Hermes cron (profile default) to the already-configured Telegram channel.
+
+    @model_validator(mode="after")
+    def _market_paths_follow_data_dir(self) -> "Settings":
+        if "market_data_dir" not in self.model_fields_set:
+            self.market_data_dir = self.data_dir / "market"
+        if "market_data_cache" not in self.model_fields_set:
+            self.market_data_cache = self.market_data_dir / "latest.json"
+        return self
+
+    @field_validator("market_min_price", "market_min_avg_volume", "market_min_market_cap", "market_max_staleness_days")
+    @classmethod
+    def _market_threshold_non_negative(cls, v: float | int) -> float | int:
+        if not math.isfinite(float(v)) or v < 0:
+            raise ValueError("market thresholds must be finite and non-negative")
+        return v
 
     @field_validator("timezone", mode="before")
     @classmethod

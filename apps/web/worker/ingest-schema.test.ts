@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { eventSchema } from "./ingest";
+import { demoData } from "@stock-autotrader/contracts/src/demo-data";
+import { dashboardReadSchema, eventSchema, marketDataSchema } from "./ingest";
+import { normalizeDirection } from "./index";
 
 const base = {
   event_id: "scan-test-0001",
@@ -35,7 +37,7 @@ describe("ingest event schema (publication contract)", () => {
             relativeVolume: 1.8,
             breakout: "50D breakout",
             status: "Strong Setup",
-            direction: "Long",
+            direction: "Bullish",
             riskFlags: [],
             updatedAt: "2026-08-10T22:00:00Z",
             reasons: [{ code: "trend_alignment", label: "Price above all EMAs", outcome: "pass" }],
@@ -49,6 +51,27 @@ describe("ingest event schema (publication contract)", () => {
     }
   });
 
+  it("normalizes legacy Long direction to the shared Bullish contract", () => {
+    const parsed = eventSchema.parse({
+      ...base,
+      type: "SIGNAL_SURFACED",
+      payload: {
+        symbol: "AAPL",
+        company: "Apple Inc.",
+        quantScore: 80,
+        strategyId: "trend_breakout_v1",
+        strategyVersion: "1.0.0",
+        strategy: "Trend Breakout",
+        trend: "Strong",
+        status: "Strong Setup",
+        direction: "Long",
+        riskFlags: [],
+        updatedAt: "2026-08-10T22:00:00Z",
+      },
+    });
+    if (parsed.type === "SIGNAL_SURFACED") expect(parsed.payload.direction).toBe("Bullish");
+  });
+
   it("accepts SYSTEM_STATUS and SHADOW_POSITION events", () => {
     expect(eventSchema.parse({ ...base, type: "SYSTEM_STATUS", payload: { engine: "online", apiHealth: "healthy" } }).type).toBe("SYSTEM_STATUS");
     expect(eventSchema.parse({
@@ -58,11 +81,62 @@ describe("ingest event schema (publication contract)", () => {
     }).type).toBe("SHADOW_POSITION_OPENED");
   });
 
+  it("accepts MARKET_DATA_UPDATED with bounded benchmark bars", () => {
+    const payload = {
+      provider: "csv",
+      status: "healthy" as const,
+      asOf: "2026-08-10",
+      lastSuccessfulUpdate: "2026-08-10T22:00:00Z",
+      universe: { total: 100, eligible: 80, excluded: 20 },
+      benchmarks: [
+        { symbol: "SPY", date: "2026-08-10", open: 1, high: 2, low: 0.9, close: 1.5, adjustedClose: 1.5, volume: 1000 },
+        { symbol: "QQQ", date: "2026-08-10", open: 2, high: 3, low: 1.9, close: 2.5, adjustedClose: 2.5, volume: 900 },
+      ],
+      warnings: [],
+      updatedAt: "2026-08-10T22:00:00Z",
+    };
+    const parsed = eventSchema.parse({ ...base, type: "MARKET_DATA_UPDATED", payload });
+    expect(parsed.type).toBe("MARKET_DATA_UPDATED");
+    expect(() => eventSchema.parse({
+      ...base,
+      type: "MARKET_DATA_UPDATED",
+      payload: { ...payload, benchmarks: [{ ...payload.benchmarks[0], date: "not-a-date", high: 0.5 }] },
+    })).toThrow();
+    expect(() => eventSchema.parse({ ...base, timestamp: "not-a-timestamp", type: "MARKET_DATA_UPDATED", payload })).toThrow();
+    expect(() => eventSchema.parse({ ...base, type: "MARKET_DATA_UPDATED", payload: { ...payload, asOf: "2026-99-99" } })).toThrow();
+    expect(() => eventSchema.parse({ ...base, type: "MARKET_DATA_UPDATED", payload: { ...payload, lastSuccessfulUpdate: "not-a-timestamp" } })).toThrow();
+    expect(() => eventSchema.parse({ ...base, type: "MARKET_DATA_UPDATED", payload: { ...payload, benchmarks: [{ ...payload.benchmarks[0], volume: 0 }, payload.benchmarks[1]] } })).toThrow();
+    expect(marketDataSchema.safeParse({ ...payload, universe: { total: 2, eligible: 1, excluded: 0 } }).success).toBe(false);
+  });
+
+
   it("rejects unknown types and malformed payloads", () => {
     expect(() => eventSchema.parse({ ...base, type: "HACK_EVENT", payload: {} })).toThrow();
     expect(() => eventSchema.parse({ ...base, type: "SCAN_COMPLETED", payload: { nope: 1 } })).toThrow();
     expect(() => eventSchema.parse({ ...base, type: "SYSTEM_STATUS", payload: { engine: "onfire", apiHealth: "healthy" } })).toThrow();
+    expect(() => eventSchema.parse({ ...base, type: "SYSTEM_STATUS", payload: { engine: "online", nextScan: "not-a-timestamp", apiHealth: "healthy" } })).toThrow();
     expect(() => eventSchema.parse({ ...base, type: "SCAN_COMPLETED", payload: { scannedAt: "x", universe: -5, passedFilters: 0, candidates: 0, setups: 0, watch: 0 } })).toThrow();
+  });
+
+  it("validates the complete read model and preserves the canonical direction", () => {
+    expect(dashboardReadSchema.safeParse(demoData).success).toBe(true);
+    expect(normalizeDirection("Long")).toBe("Bullish");
+    expect(normalizeDirection("Bullish")).toBe("Bullish");
+
+    const invalidFreshness = {
+      ...demoData,
+      status: { ...demoData.status, lastDataUpdate: "not-a-timestamp" },
+    };
+    expect(dashboardReadSchema.safeParse(invalidFreshness).success).toBe(false);
+
+    const invalidRiskPolicy = {
+      ...demoData,
+      portfolio: {
+        ...demoData.portfolio,
+        riskPolicy: { ...demoData.portfolio.riskPolicy, maxPositions: 0 },
+      },
+    };
+    expect(dashboardReadSchema.safeParse(invalidRiskPolicy).success).toBe(false);
   });
 
   it("rejects oversized batches and bad symbols", () => {

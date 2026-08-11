@@ -97,6 +97,30 @@ export interface ResearchResult {
   metrics: Record<string, number | null>;
 }
 
+export interface MarketDataSnapshot {
+  provider: string;
+  status: "healthy" | "degraded" | "offline";
+  asOf: string | null;
+  lastSuccessfulUpdate: string | null;
+  universe: {
+    total: number;
+    eligible: number;
+    excluded: number;
+  };
+  benchmarks: Array<{
+    symbol: string;
+    date: string;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    adjustedClose: number;
+    volume: number;
+  }>;
+  warnings: string[];
+  updatedAt: string | null;
+}
+
 export interface DashboardData {
   demo: boolean;
   status: {
@@ -106,6 +130,7 @@ export interface DashboardData {
     lastDataUpdate: string | null;
     apiHealth: "healthy" | "degraded";
   };
+  marketData: MarketDataSnapshot;
   scan: {
     universe: number;
     passedFilters: number;

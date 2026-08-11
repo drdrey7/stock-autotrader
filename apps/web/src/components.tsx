@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Activity, BarChart3, CalendarDays, FlaskConical, Gauge, Home, Menu, Search, ShieldCheck, Target, Wallet, X } from "lucide-react";
+import { Activity, BarChart3, CalendarDays, Database, FlaskConical, Gauge, Home, Menu, Search, ShieldCheck, Target, Wallet, X } from "lucide-react";
 import { useState } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import type { DecisionReason, SignalStatus } from "@stock-autotrader/contracts";
@@ -30,7 +30,7 @@ export function Rationale({ reasons }: { reasons: DecisionReason[] }) {
 
 const navItems = [
   ["/dashboard", "Overview", Home], ["/signals", "Signals", Search], ["/strategies", "Strategies", Target],
-  ["/earnings", "Earnings", CalendarDays], ["/portfolio", "Portfolio", Wallet], ["/research", "Research", FlaskConical],
+  ["/earnings", "Earnings", CalendarDays], ["/market-data", "Market Data", Database], ["/portfolio", "Portfolio", Wallet], ["/research", "Research", FlaskConical],
   ["/activity", "Activity", Activity], ["/status", "Status", Gauge]
 ] as const;
 

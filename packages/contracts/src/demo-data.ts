@@ -77,6 +77,19 @@ export const demoData: DashboardData = {
     lastDataUpdate: "2026-08-10T20:16:12Z",
     apiHealth: "healthy",
   },
+  marketData: {
+    provider: "demo-csv",
+    status: "healthy",
+    asOf: "2026-08-10",
+    lastSuccessfulUpdate: "2026-08-10T20:16:12Z",
+    universe: { total: 1648, eligible: 972, excluded: 676 },
+    benchmarks: [
+      { symbol: "SPY", date: "2026-08-10", open: 680.12, high: 685.44, low: 678.91, close: 684.77, adjustedClose: 684.77, volume: 48200000 },
+      { symbol: "QQQ", date: "2026-08-10", open: 590.42, high: 595.18, low: 588.06, close: 594.31, adjustedClose: 594.31, volume: 31800000 },
+    ],
+    warnings: [],
+    updatedAt: "2026-08-10T20:16:12Z",
+  },
   scan: { universe: 1648, passedFilters: 972, candidates: 8, setups: 3, watch: 3 },
   portfolio: {
     initialCapital: 10000,

@@ -1,7 +1,7 @@
 """Scheduler framework — APScheduler with America/New_York timezone.
 
-Jobs registered here are the *skeleton* for Fase 2; their handlers are wired
-in later PRs (screening, strategies, research...). Health job runs now.
+The data-refresh and health handlers are active; screening, strategies and
+research jobs remain explicit later-phase extension points.
 """
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 from .config import Settings
 from .state import StateStore
 from .jobs.health import health_job
+from .jobs.market_data import market_data_job
 
 log = logging.getLogger(__name__)
 
@@ -64,9 +65,11 @@ def build_scheduler(settings: Settings, store: StateStore, blocking: bool = Fals
         name="Post-close scan",
         replace_existing=True,
     )
+    # Data refresh is wired to the validated provider pipeline in PR #5.
     sched.add_job(
-        _noop("data_refresh"),
+        market_data_job,
         _cron(settings.data_refresh_cron, settings.timezone),
+        args=[settings, store],
         id="data_refresh",
         name="Data refresh",
         replace_existing=True,
