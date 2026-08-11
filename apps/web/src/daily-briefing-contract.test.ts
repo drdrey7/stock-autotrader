@@ -1,4 +1,8 @@
-import { dailyBriefingSchema, type DailyBriefing } from "@stock-autotrader/contracts";
+import {
+  dailyBriefingSchema,
+  publishedDailyBriefingSchema,
+  type DailyBriefing,
+} from "@stock-autotrader/contracts";
 import { describe, expect, it } from "vitest";
 import { exampleDailyBriefing } from "./daily-briefing-example";
 
@@ -93,5 +97,49 @@ describe("DailyBriefing v1 contract", () => {
 
     Reflect.deleteProperty(firstIdea.source, "collectedTimestamp");
     expect(dailyBriefingSchema.safeParse(briefing).success).toBe(false);
+  });
+
+  it("requires HTTPS source references", () => {
+    const briefing = cloneBriefing();
+    const firstIdea = briefing.ideas[0];
+    if (!firstIdea) throw new Error("Example briefing must contain an idea");
+    firstIdea.source.reference = "example-post-001";
+
+    expect(dailyBriefingSchema.safeParse(briefing).success).toBe(false);
+  });
+
+  it("requires membership and a numeric reward-risk ratio for Potential Entry", () => {
+    const briefing = cloneBriefing();
+    const firstIdea = briefing.ideas[0];
+    if (!firstIdea) throw new Error("Example briefing must contain an idea");
+    firstIdea.universe = "Outside universe" as DailyBriefing["ideas"][number]["universe"];
+    firstIdea.levels.rewardRiskRatio = null;
+
+    expect(dailyBriefingSchema.safeParse(briefing).success).toBe(false);
+  });
+
+  it("rejects inconsistent reward-risk text and ratio", () => {
+    const briefing = cloneBriefing();
+    const firstIdea = briefing.ideas[0];
+    if (!firstIdea) throw new Error("Example briefing must contain an idea");
+    firstIdea.levels.rewardRisk = "3.1R illustrative";
+    firstIdea.levels.rewardRiskRatio = 2.3;
+
+    expect(dailyBriefingSchema.safeParse(briefing).success).toBe(false);
+  });
+
+  it("allows an honest briefing with zero qualifying ideas", () => {
+    const briefing = cloneBriefing();
+    briefing.ideas = [];
+
+    expect(dailyBriefingSchema.safeParse(briefing).success).toBe(true);
+  });
+
+  it("does not allow the Example Data fixture to be published", () => {
+    expect(publishedDailyBriefingSchema.safeParse(exampleDailyBriefing).success).toBe(false);
+
+    const realBriefing = cloneBriefing();
+    realBriefing.example = false;
+    expect(publishedDailyBriefingSchema.safeParse(realBriefing).success).toBe(true);
   });
 });

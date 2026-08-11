@@ -1,5 +1,18 @@
-import type { DashboardData, MarketDataSnapshot, StrategySummary, Candidate } from "@stock-autotrader/contracts";
+import {
+  briefingCalendarDateSchema,
+  briefingEditionTypeSchema,
+  type Candidate,
+  type DashboardData,
+  type MarketDataSnapshot,
+  type StrategySummary,
+} from "@stock-autotrader/contracts";
 import { dashboardReadSchema, handleIngest, isoTimestampSchema, marketDataSchema } from "./ingest";
+import {
+  readBriefingByDateAndType,
+  readBriefingStatus,
+  readLatestBriefing,
+  type BriefingStatus,
+} from "./daily-briefings";
 
 /**
  * Stock Autotrader public read-only API (PR #2).
@@ -24,6 +37,16 @@ const json = (data: unknown, status = 200) =>
       "access-control-allow-headers": "Content-Type, Accept",
     },
   });
+
+const unavailableBriefingStatus = (): BriefingStatus => ({
+  available: false,
+  freshness: "unavailable",
+  editionDate: null,
+  editionType: null,
+  preparedAt: null,
+  publishedAt: null,
+  ageSeconds: null,
+});
 
 const int = (v: unknown): number => Number(v) || 0;
 const num = (v: unknown): number => (v === null || v === undefined ? 0 : Number(v));
@@ -315,12 +338,65 @@ export default {
     if (pathname === "/healthz") {
       return json({ ok: true, time: new Date().toISOString() });
     }
-    if (pathname === "/api/status" || pathname === "/api/dashboard") {
+    if (pathname === "/api/status") {
+      try {
+        const [dashboard, briefing] = await Promise.all([
+          buildDashboard(env),
+          readBriefingStatus(env.DB),
+        ]);
+        return json({ ...dashboard, briefing });
+      } catch (err) {
+        console.error("status error", err);
+        try {
+          return json({ ...await buildDashboard(env), briefing: unavailableBriefingStatus() });
+        } catch {
+          return json({ error: "Internal error" }, 500);
+        }
+      }
+    }
+    if (pathname === "/api/dashboard") {
       try {
         return json(await buildDashboard(env));
       } catch (err) {
         console.error("dashboard error", err);
         return json(emptyDashboard);
+      }
+    }
+    if (pathname === "/api/briefs/latest") {
+      const requestedEditionType = new URL(request.url).searchParams.get("editionType");
+      const editionType = requestedEditionType === null
+        ? undefined
+        : briefingEditionTypeSchema.safeParse(requestedEditionType);
+      if (requestedEditionType !== null && !editionType?.success) {
+        return json({ error: "invalid_edition_type" }, 400);
+      }
+      try {
+        const briefing = await readLatestBriefing(
+          env.DB,
+          editionType?.success ? editionType.data : undefined,
+        );
+        return briefing
+          ? json(briefing)
+          : json({ error: "brief_not_found", message: "No Daily Briefing is available." }, 404);
+      } catch {
+        return json({ error: "brief_store_unavailable" }, 503);
+      }
+    }
+    const briefingMatch = pathname.match(/^\/api\/briefs\/([^/]+)\/([^/]+)$/);
+    if (briefingMatch) {
+      const editionDate = briefingMatch[1]!;
+      const editionTypeResult = briefingEditionTypeSchema.safeParse(briefingMatch[2]);
+      const dateResult = briefingCalendarDateSchema.safeParse(editionDate);
+      if (!dateResult.success || !editionTypeResult.success) {
+        return json({ error: "invalid_briefing_identifier" }, 400);
+      }
+      try {
+        const briefing = await readBriefingByDateAndType(env.DB, editionDate, editionTypeResult.data);
+        return briefing
+          ? json(briefing)
+          : json({ error: "brief_not_found", message: "No Daily Briefing is available." }, 404);
+      } catch {
+        return json({ error: "brief_store_unavailable" }, 503);
       }
     }
     if (pathname === "/api/market-data") {

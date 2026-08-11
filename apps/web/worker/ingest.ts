@@ -1,5 +1,7 @@
 import { z } from "zod";
+import { publishedDailyBriefingSchema } from "@stock-autotrader/contracts";
 import type { Env } from "./index";
+import { publishDailyBriefing } from "./daily-briefings";
 
 /**
  * Protected publication layer (PR #3).
@@ -11,6 +13,7 @@ import type { Env } from "./index";
  */
 
 const EVENT_TYPES = [
+  "DAILY_BRIEFING_PUBLISHED",
   "SCAN_STARTED",
   "SCAN_COMPLETED",
   "SIGNAL_SURFACED",
@@ -262,6 +265,12 @@ const dashboardReadSchema = z.object({
 });
 
 const eventSchema = z.discriminatedUnion("type", [
+  z.strictObject({
+    type: z.literal("DAILY_BRIEFING_PUBLISHED"),
+    event_id: z.string().min(8).max(80),
+    timestamp: isoTimestampSchema,
+    payload: publishedDailyBriefingSchema,
+  }),
   z.object({ type: z.literal("SCAN_STARTED"), event_id: z.string().min(8).max(80), timestamp: isoTimestampSchema, payload: z.object({ scheduledAt: isoTimestampSchema, universe: z.number().int().nonnegative() }) }),
   z.object({ type: z.literal("SCAN_COMPLETED"), event_id: z.string().min(8).max(80), timestamp: isoTimestampSchema, payload: scanCompletedSchema }),
   z.object({ type: z.enum(["SIGNAL_SURFACED", "SIGNAL_UPDATED", "SIGNAL_REJECTED"]), event_id: z.string().min(8).max(80), timestamp: isoTimestampSchema, payload: candidateSchema }),
@@ -276,6 +285,7 @@ const eventSchema = z.discriminatedUnion("type", [
 type IngestEvent = z.infer<typeof eventSchema>;
 
 export { eventSchema, marketDataSchema, dashboardReadSchema };
+export const dailyBriefingPublishedEventSchema = eventSchema.options[0];
 export type { IngestEvent };
 
 const JSON_HEADERS = {
@@ -473,6 +483,24 @@ export async function handleIngest(request: Request, env: Env): Promise<Response
     } catch {
       const id = (rawEvent as { event_id?: string })?.event_id ?? "unknown";
       rejected.push({ event_id: id, reason: "invalid schema" });
+      continue;
+    }
+
+    if (event.type === "DAILY_BRIEFING_PUBLISHED") {
+      try {
+        const result = await publishDailyBriefing(
+          env.DB,
+          event.event_id,
+          event.timestamp,
+          event.payload,
+          new Date().toISOString(),
+        );
+        if (result.kind === "applied") applied.push(event.event_id);
+        else if (result.kind === "skipped") skipped.push(event.event_id);
+        else rejected.push({ event_id: event.event_id, reason: result.reason });
+      } catch {
+        return json({ error: "Failed to apply event", event_id: event.event_id }, 500);
+      }
       continue;
     }
 

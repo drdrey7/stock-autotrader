@@ -47,6 +47,7 @@ export const exampleDailyBriefing: DailyBriefingExample = {
     {
       symbol: "NVDA",
       company: "NVIDIA Corporation",
+      universe: "Both",
       verdict: "Potential Entry",
       price: "$182.64",
       change: "+1.80%",
@@ -54,7 +55,7 @@ export const exampleDailyBriefing: DailyBriefingExample = {
         "Relative strength and volume expansion support the setup, provided price confirms above the stated trigger instead of opening extended.",
       source: {
         handle: "@nolimitgains",
-        reference: "example-post-001",
+        reference: "https://example.invalid/nolimitgains/post-001",
         originalTimestamp: "2026-08-11T07:42:00-04:00",
         collectedTimestamp: "2026-08-11T08:02:00-04:00",
         summary:
@@ -82,11 +83,13 @@ export const exampleDailyBriefing: DailyBriefingExample = {
         invalidation: "$176.80 close",
         objective: "$198.00 example zone",
         rewardRisk: "2.3R illustrative",
+        rewardRiskRatio: 2.3,
       },
     },
     {
       symbol: "MSFT",
       company: "Microsoft Corporation",
+      universe: "Both",
       verdict: "Watch",
       price: "$512.40",
       change: "+0.42%",
@@ -94,7 +97,7 @@ export const exampleDailyBriefing: DailyBriefingExample = {
         "Trend quality is positive, but the example setup lacks enough distance from a near-term event window to qualify as a potential entry.",
       source: {
         handle: "@nolimitgains",
-        reference: "example-post-002",
+        reference: "https://example.invalid/nolimitgains/post-002",
         originalTimestamp: "2026-08-11T07:18:00-04:00",
         collectedTimestamp: "2026-08-11T08:03:00-04:00",
         summary:
@@ -121,11 +124,13 @@ export const exampleDailyBriefing: DailyBriefingExample = {
         invalidation: "$498.00 example support",
         objective: "Insufficient confirmation",
         rewardRisk: "Not calculated",
+        rewardRiskRatio: null,
       },
     },
     {
       symbol: "TSLA",
       company: "Tesla, Inc.",
+      universe: "Both",
       verdict: "Avoid",
       price: "$338.45",
       change: "-1.25%",
@@ -133,7 +138,7 @@ export const exampleDailyBriefing: DailyBriefingExample = {
         "The illustrative idea fails the V1 quality gate because relative strength, volume and event clarity do not support a current setup.",
       source: {
         handle: "@nolimitgains",
-        reference: "example-post-003",
+        reference: "https://example.invalid/nolimitgains/post-003",
         originalTimestamp: "2026-08-11T06:55:00-04:00",
         collectedTimestamp: "2026-08-11T08:04:00-04:00",
         summary:
@@ -159,6 +164,7 @@ export const exampleDailyBriefing: DailyBriefingExample = {
         invalidation: "Not applicable",
         objective: "Not applicable",
         rewardRisk: "Not calculated",
+        rewardRiskRatio: null,
       },
     },
   ],

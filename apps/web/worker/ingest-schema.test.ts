@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { demoData } from "@stock-autotrader/contracts/src/demo-data";
+import { exampleDailyBriefing } from "../src/daily-briefing-example";
 import { dashboardReadSchema, eventSchema, marketDataSchema } from "./ingest";
 import { normalizeDirection } from "./index";
 
@@ -107,6 +108,30 @@ describe("ingest event schema (publication contract)", () => {
     expect(() => eventSchema.parse({ ...base, type: "MARKET_DATA_UPDATED", payload: { ...payload, lastSuccessfulUpdate: "not-a-timestamp" } })).toThrow();
     expect(() => eventSchema.parse({ ...base, type: "MARKET_DATA_UPDATED", payload: { ...payload, benchmarks: [{ ...payload.benchmarks[0], volume: 0 }, payload.benchmarks[1]] } })).toThrow();
     expect(marketDataSchema.safeParse({ ...payload, universe: { total: 2, eligible: 1, excluded: 0 } }).success).toBe(false);
+  });
+
+  it("accepts a real DailyBriefing publication event and rejects Example Data", () => {
+    const payload = JSON.parse(JSON.stringify({ ...exampleDailyBriefing, example: false }));
+    const parsed = eventSchema.parse({
+      ...base,
+      event_id: "briefing-test-0001",
+      type: "DAILY_BRIEFING_PUBLISHED",
+      payload,
+    });
+    expect(parsed.type).toBe("DAILY_BRIEFING_PUBLISHED");
+
+    expect(() => eventSchema.parse({
+      ...base,
+      event_id: "briefing-test-0002",
+      type: "DAILY_BRIEFING_PUBLISHED",
+      payload: exampleDailyBriefing,
+    })).toThrow();
+    expect(() => eventSchema.parse({
+      ...base,
+      event_id: "briefing-test-0003",
+      type: "DAILY_BRIEFING_PUBLISHED",
+      payload: { ...payload, unknownField: true },
+    })).toThrow();
   });
 
 
