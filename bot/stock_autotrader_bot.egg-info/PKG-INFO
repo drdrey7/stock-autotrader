@@ -1,0 +1,10 @@
+Metadata-Version: 2.4
+Name: stock-autotrader-bot
+Version: 5.1.0
+Summary: VPS runtime for the Stock Autotrader engine (PR #4). No broker, no live trading.
+Requires-Python: >=3.11
+Requires-Dist: pydantic<3,>=2.7
+Requires-Dist: pydantic-settings<3,>=2.3
+Requires-Dist: APScheduler<4,>=3.10
+Provides-Extra: dev
+Requires-Dist: pytest>=8; extra == "dev"

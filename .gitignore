@@ -13,3 +13,10 @@ coverage/
 .dev.vars
 __pycache__/
 *.pyc
+
+# bot runtime
+bot/.env
+bot/data/*.db
+bot/data/*.log
+bot/**/data/*.db
+bot/**/data/*.log
