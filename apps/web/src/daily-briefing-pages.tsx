@@ -162,7 +162,7 @@ function TerminalPreview() {
             </span>
             <div>
               <strong>{featured.symbol}</strong>
-              <em>Potential Entry</em>
+              <em>{featured.verdict}</em>
             </div>
             <p>{featured.thesis}</p>
             <span className="briefing-preview-levels">

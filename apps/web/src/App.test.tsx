@@ -58,6 +58,28 @@ describe("Stock Daily Briefing public experience", () => {
     ).toBeInTheDocument();
   });
 
+  it("renders the featured idea verdict in the landing preview", () => {
+    const featured = exampleDailyBriefing.ideas[0];
+    if (!featured) throw new Error("Example briefing must contain a featured idea");
+
+    const originalVerdict = featured.verdict;
+    featured.verdict = "Watch";
+
+    try {
+      const view = render(
+        <MemoryRouter initialEntries={["/"]}>
+          <App />
+        </MemoryRouter>,
+      );
+
+      const preview = view.container.querySelector(".briefing-preview-idea");
+      expect(preview).not.toBeNull();
+      expect(preview).toHaveTextContent("Watch");
+    } finally {
+      featured.verdict = originalVerdict;
+    }
+  });
+
   it("does not expose the legacy product navigation or trading experience", () => {
     const view = render(
       <MemoryRouter initialEntries={["/"]}>
