@@ -102,14 +102,15 @@ describe("Stock Daily Briefing public experience", () => {
     expect(screen.queryByText(/log in|sign in/i)).not.toBeInTheDocument();
   });
 
-  it("renders the three dashboard menu views and a mobile drawer toggle", () => {
+  it("renders the three dashboard menu views and an accessible mobile drawer toggle", () => {
     const view = render(
       <MemoryRouter initialEntries={["/dashboard"]}>
         <App />
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole("complementary", { name: "Dashboard menu" })).toBeInTheDocument();
+    const menu = screen.getByRole("complementary", { name: "Dashboard menu" });
+    expect(menu).toBeInTheDocument();
 
     const morningBriefing = screen.getByRole("link", { name: /Morning briefing/ });
     expect(morningBriefing).toHaveAttribute("href", "#briefing-today");
@@ -131,7 +132,14 @@ describe("Stock Daily Briefing public experience", () => {
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-label", "Close dashboard menu");
     expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(menu).toHaveFocus();
 
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(toggle).toHaveAttribute("aria-label", "Open dashboard menu");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(toggle).toHaveFocus();
+
+    fireEvent.click(toggle);
     const backdrop = view.container.querySelector<HTMLButtonElement>(
       ".briefing-dashboard-menu-backdrop",
     );
@@ -139,6 +147,7 @@ describe("Stock Daily Briefing public experience", () => {
     fireEvent.click(backdrop!);
     expect(toggle).toHaveAttribute("aria-label", "Open dashboard menu");
     expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(toggle).toHaveFocus();
   });
 
   it.each([

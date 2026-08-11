@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
   BarChart3,
@@ -290,10 +290,36 @@ const dashboardMenuItems = [
 
 function DashboardMenu() {
   const [isOpen, setIsOpen] = useState(false);
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLElement>(null);
+  const wasOpenRef = useRef(false);
+
+  useEffect(() => {
+    if (!isOpen) {
+      if (wasOpenRef.current) {
+        wasOpenRef.current = false;
+        toggleRef.current?.focus();
+      }
+      return;
+    }
+
+    wasOpenRef.current = true;
+    menuRef.current?.focus();
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setIsOpen(false);
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen]);
 
   return (
     <>
       <button
+        ref={toggleRef}
         className="briefing-dashboard-menu-toggle"
         type="button"
         aria-controls="briefing-dashboard-menu"
@@ -314,9 +340,11 @@ function DashboardMenu() {
       )}
 
       <aside
+        ref={menuRef}
         id="briefing-dashboard-menu"
         className={`briefing-dashboard-menu${isOpen ? " is-open" : ""}`}
         aria-label="Dashboard menu"
+        tabIndex={-1}
       >
         <div className="briefing-dashboard-menu-heading">
           <span className="briefing-kicker">TODAY</span>
