@@ -4,6 +4,9 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
+from apscheduler.triggers.cron import CronTrigger
+from zoneinfo import ZoneInfo
+
 from .config import Settings
 from .state import StateStore
 
@@ -23,15 +26,19 @@ def health_job(store: StateStore) -> None:
 
 
 def _health_interval_seconds(settings: Settings) -> int:
-    """Return the configured health cadence, with a small two-run grace."""
-    minute = settings.health_check_cron.split()[0]
-    if minute == "*":
-        return 120
-    if minute.startswith("*/"):
-        try:
-            return max(60, int(minute[2:]) * 60 * 2)
-        except ValueError:
-            pass
+    """Return two intervals of the configured health cron cadence."""
+    try:
+        trigger = CronTrigger.from_crontab(
+            settings.health_check_cron,
+            timezone=ZoneInfo(settings.timezone),
+        )
+        now = datetime.now(ZoneInfo(settings.timezone))
+        first = trigger.get_next_fire_time(None, now)
+        second = trigger.get_next_fire_time(first, first) if first else None
+        if first and second:
+            return max(60, int((second - first).total_seconds()) * 2)
+    except (TypeError, ValueError):
+        pass
     return 3600
 
 

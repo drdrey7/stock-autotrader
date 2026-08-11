@@ -36,7 +36,6 @@ def publish_system_status(settings: Settings, last_data_update: str | None = Non
     degraded = bool(settings.check_secrets())
     payload = {
         "engine": _public_engine_status(settings),
-        "nextScan": None,
         "apiHealth": "degraded" if degraded else "healthy",
     }
     if last_data_update is not None:
