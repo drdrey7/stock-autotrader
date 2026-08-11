@@ -25,7 +25,9 @@ def send_alert(settings: Settings, text: str) -> bool:
         resp.raise_for_status()
         return True
     except requests.RequestException as exc:
-        log.error("telegram alert failed: %s", exc)
+        # NEVER log the raw exception: requests embeds the full token in the
+        # URL on connection failures. Log the exception type only.
+        log.error("telegram alert failed: %s", type(exc).__name__)
         return False
 
 

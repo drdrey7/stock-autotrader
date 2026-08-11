@@ -31,6 +31,33 @@ class AlertsTests(unittest.TestCase):
         with mock.patch("bot.alerts.requests.post", side_effect=requests.ConnectionError("boom")):
             self.assertFalse(send_alert(s, "hi"))
 
+    def test_alert_error_log_never_contains_token(self):
+        """The raw requests exception embeds the token in the URL on connection
+        failures — the log must only contain the exception type (PR #4 B3)."""
+        import io
+        import logging
+
+        import requests
+
+        token = "SECRET_TOKEN_1234567890"
+        s = Settings(bot_env="dev", telegram_bot_token=token, telegram_chat_id="c")
+        exc = requests.ConnectionError(
+            f"HTTPSConnectionPool(host='api.telegram.org', port=443): Max retries "
+            f"exceeded with url: /bot{token}/sendMessage"
+        )
+        stream = io.StringIO()
+        handler = logging.StreamHandler(stream)
+        logger = logging.getLogger("bot.alerts")
+        logger.addHandler(handler)
+        logger.setLevel(logging.ERROR)
+        try:
+            with mock.patch("bot.alerts.requests.post", side_effect=exc):
+                send_alert(s, "hi")
+        finally:
+            logger.removeHandler(handler)
+        self.assertNotIn(token, stream.getvalue())
+        self.assertIn("ConnectionError", stream.getvalue())
+
 
 class SchedulerTests(unittest.TestCase):
     def test_build_registers_jobs(self):
@@ -62,6 +89,29 @@ class SchedulerTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             _cron("not-a-cron")
+
+    def test_weekday_cron_never_fires_on_weekend(self):
+        """APScheduler day_of_week: 0=Monday..6=Sunday. 'mon-fri' must never
+        fire on Sat/Sun (numeric '1-5' would mean Tue-Sat — PR #4 B2)."""
+        from datetime import timedelta
+        from zoneinfo import ZoneInfo
+
+        from bot.scheduler import _cron
+
+        trigger = _cron("30 7 * * mon-fri")
+        now = __import__("datetime").datetime.now(ZoneInfo("America/New_York"))
+        tz = ZoneInfo("America/New_York")
+        fires = []
+        prev = None
+        for _ in range(20):
+            nxt = trigger.get_next_fire_time(prev, now)
+            self.assertIsNotNone(nxt)
+            assert nxt is not None
+            fires.append(nxt)
+            prev = nxt
+            now = nxt + timedelta(minutes=1)
+        for f in fires:
+            self.assertLess(f.weekday(), 5, f"cron fired on weekend: {f}")
 
 
 if __name__ == "__main__":

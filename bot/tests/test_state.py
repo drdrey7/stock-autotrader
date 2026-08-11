@@ -36,6 +36,30 @@ class StateStoreTests(unittest.TestCase):
         ).fetchall()
         self.assertEqual(len(tables), 2)
 
+    def test_job_runs_from_worker_thread(self):
+        """APScheduler runs jobs on worker threads; the connection must not be
+        thread-bound (check_same_thread=False). Regression for PR #4 B1."""
+        import threading
+
+        from bot.jobs.health import health_job
+
+        errors = []
+
+        def _run():
+            try:
+                health_job(self.store)
+            except Exception as exc:  # pragma: no cover - test failure
+                errors.append(exc)
+
+        t = threading.Thread(target=_run)
+        t.start()
+        t.join()
+        self.assertEqual(errors, [])
+        last = self.store.last_job_status("health_check")
+        self.assertIsNotNone(last)
+        assert last is not None
+        self.assertEqual(last["status"], "ok")
+
 
 if __name__ == "__main__":
     unittest.main()

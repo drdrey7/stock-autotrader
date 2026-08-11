@@ -30,8 +30,10 @@ class Settings(BaseSettings):
     # --- scheduler (America/New_York) ---
     # BOT_TIMEZONE alias avoids the generic TIMEZONE env var that many hosts set empty.
     timezone: str = Field(default="America/New_York", validation_alias="BOT_TIMEZONE")
-    pre_market_scan_cron: str = "30 7 * * 1-5"    # 07:30 ET Mon-Fri (before open)
-    post_close_scan_cron: str = "30 16 * * 1-5"   # 16:30 ET Mon-Fri (after close)
+    # APScheduler day_of_week: 0=Monday..6=Sunday, so use names ("mon-fri")
+    # instead of numeric ranges ("1-5" would mean Tue-Sat).
+    pre_market_scan_cron: str = "30 7 * * mon-fri"    # 07:30 ET Mon-Fri (before open)
+    post_close_scan_cron: str = "30 16 * * mon-fri"   # 16:30 ET Mon-Fri (after close)
     data_refresh_cron: str = "15 * * * *"         # hourly data refresh
     health_check_cron: str = "*/5 * * * *"        # every 5 minutes
 
