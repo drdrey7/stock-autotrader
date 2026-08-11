@@ -181,8 +181,8 @@ function buildStatements(event: IngestEvent): [string, unknown[]][] {
         );
         for (const r of c.reasons) {
           stmts.push(
-            ["INSERT INTO decision_reasons (candidate_id, reason_code, reason_label, outcome, observed, threshold) SELECT id, ?, ?, ?, ?, ? FROM scan_candidates WHERE symbol = ? AND scan_id = (SELECT MAX(id) FROM scans)",
-              [r.code, r.label, r.outcome, r.observed ?? null, r.threshold ?? null, c.symbol]],
+            ["INSERT INTO decision_reasons (candidate_id, reason_code, reason_label, outcome, observed, threshold) SELECT id, ?, ?, ?, ?, ? FROM scan_candidates WHERE symbol = ? AND strategy_id = ? AND scan_id = (SELECT MAX(id) FROM scans)",
+              [r.code, r.label, r.outcome, r.observed ?? null, r.threshold ?? null, c.symbol, c.strategyId]],
           );
         }
       }
@@ -238,7 +238,7 @@ function buildStatements(event: IngestEvent): [string, unknown[]][] {
       const items = event.payload.items;
       for (const e of items) {
         stmts.push(
-          ["INSERT INTO earnings (symbol, company, date, timing, event_signal, engine_relevant, signal, strategy, has_position, tracked, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (symbol, date) DO UPDATE SET event_signal = excluded.event_signal, engine_relevant = excluded.engine_relevant, signal = excluded.signal, tracked = excluded.tracked, updated_at = excluded.updated_at",
+          ["INSERT INTO earnings (symbol, company, date, timing, event_signal, engine_relevant, signal, strategy, has_position, tracked, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (symbol, date) DO UPDATE SET company = excluded.company, timing = excluded.timing, event_signal = excluded.event_signal, engine_relevant = excluded.engine_relevant, signal = excluded.signal, strategy = excluded.strategy, has_position = excluded.has_position, tracked = excluded.tracked, updated_at = excluded.updated_at",
             [e.symbol, e.company, e.date, e.timing, e.eventSignal, e.engineRelevant ? 1 : 0, e.signal, e.strategy, e.hasPosition ? 1 : 0, e.tracked ? 1 : 0, e.updatedAt]],
         );
       }
