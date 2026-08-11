@@ -23,6 +23,12 @@ class HealthReportTests(unittest.TestCase):
             self.assertFalse(report["db_writable"])
             store.close()
 
+    def test_wildcard_health_cron_has_short_expiry(self):
+        from bot.health import _health_interval_seconds
+
+        settings = Settings(bot_env="dev", health_check_cron="* * * * *")
+        self.assertEqual(_health_interval_seconds(settings), 120)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -25,6 +25,8 @@ def health_job(store: StateStore) -> None:
 def _health_interval_seconds(settings: Settings) -> int:
     """Return the configured health cadence, with a small two-run grace."""
     minute = settings.health_check_cron.split()[0]
+    if minute == "*":
+        return 120
     if minute.startswith("*/"):
         try:
             return max(60, int(minute[2:]) * 60 * 2)

@@ -250,10 +250,16 @@ function buildStatements(event: IngestEvent): [string, unknown[]][] {
       stmts.push(
         ["INSERT INTO app_meta (key, value) VALUES ('engine', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", [s.engine]],
         ["INSERT INTO app_meta (key, value) VALUES ('nextScan', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", [s.nextScan ?? ""]],
-        ["INSERT INTO app_meta (key, value) VALUES ('lastDataUpdate', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", [s.lastDataUpdate ?? ""]],
         ["INSERT INTO app_meta (key, value) VALUES ('apiHealth', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", [s.apiHealth]],
         insertBotEvent("SYSTEM_STATUS", `System status: engine ${s.engine}, api ${s.apiHealth}`, null),
       );
+      if (s.lastDataUpdate !== undefined && s.lastDataUpdate !== null) {
+        stmts.splice(
+          stmts.length - 1,
+          0,
+          ["INSERT INTO app_meta (key, value) VALUES ('lastDataUpdate', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", [s.lastDataUpdate]],
+        );
+      }
       break;
     }
   }
