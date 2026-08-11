@@ -1,46 +1,40 @@
 import { Navigate, Route, Routes } from "react-router-dom";
-import { AppShell } from "./components";
 import {
-  ActivityPage,
-  DashboardPage,
-  DisclaimerPage,
-  EarningsPage,
-  LandingPage,
-  MarketDataPage,
-  MethodologyPage,
-  NotFoundPage,
-  PortfolioPage,
-  ResearchDetailPage,
-  ResearchPage,
-  SignalsPage,
-  StatusPage,
-  StockPage,
-  StrategiesPage,
-  StrategyPage,
-} from "./pages";
+  DailyBriefingDashboardPage,
+  DailyBriefingDisclaimerPage,
+  DailyBriefingLandingPage,
+  DailyBriefingMethodologyPage,
+  DailyBriefingNotFoundPage,
+  DailyBriefingStatusPage,
+} from "./daily-briefing-pages";
+
+const legacyRoutes = [
+  "/scanner",
+  "/signals",
+  "/stocks/:symbol",
+  "/strategies",
+  "/strategies/:strategyId",
+  "/research",
+  "/research/:researchId",
+  "/portfolio",
+  "/earnings",
+  "/market-data",
+  "/activity",
+  "/x-search",
+] as const;
 
 export default function App() {
   return (
     <Routes>
-      <Route path="/" element={<LandingPage />} />
-      <Route path="/methodology" element={<MethodologyPage />} />
-      <Route path="/disclaimer" element={<DisclaimerPage />} />
-      <Route path="/scanner" element={<Navigate to="/signals" replace />} />
-      <Route element={<AppShell />}>
-        <Route path="/dashboard" element={<DashboardPage />} />
-        <Route path="/signals" element={<SignalsPage />} />
-        <Route path="/stocks/:symbol" element={<StockPage />} />
-        <Route path="/strategies" element={<StrategiesPage />} />
-        <Route path="/strategies/:strategyId" element={<StrategyPage />} />
-        <Route path="/research" element={<ResearchPage />} />
-        <Route path="/research/:researchId" element={<ResearchDetailPage />} />
-        <Route path="/portfolio" element={<PortfolioPage />} />
-        <Route path="/earnings" element={<EarningsPage />} />
-        <Route path="/market-data" element={<MarketDataPage />} />
-        <Route path="/activity" element={<ActivityPage />} />
-        <Route path="/status" element={<StatusPage />} />
-      </Route>
-      <Route path="*" element={<NotFoundPage />} />
+      <Route path="/" element={<DailyBriefingLandingPage />} />
+      <Route path="/dashboard" element={<DailyBriefingDashboardPage />} />
+      <Route path="/methodology" element={<DailyBriefingMethodologyPage />} />
+      <Route path="/status" element={<DailyBriefingStatusPage />} />
+      <Route path="/disclaimer" element={<DailyBriefingDisclaimerPage />} />
+      {legacyRoutes.map((path) => (
+        <Route key={path} path={path} element={<Navigate to="/dashboard" replace />} />
+      ))}
+      <Route path="*" element={<DailyBriefingNotFoundPage />} />
     </Routes>
   );
 }
