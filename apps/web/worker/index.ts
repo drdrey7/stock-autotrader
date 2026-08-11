@@ -185,14 +185,22 @@ async function buildDashboard(env: Env): Promise<DashboardData> {
     riskPolicy: parseJson(metaMap.get("riskPolicy"), {}),
   };
 
+  // Stale-data detection: if the engine has not published in 26h (daily scans +
+  // margin), surface it as delayed/degraded instead of pretending health.
+  const lastDataUpdate = str(metaMap.get("lastDataUpdate"));
+  const lastUpdateMs = lastDataUpdate ? Date.parse(lastDataUpdate) : Number.NaN;
+  const stale = !Number.isNaN(lastUpdateMs) && Date.now() - lastUpdateMs > 26 * 3600_000;
+  const engine = (metaMap.get("engine") as DashboardData["status"]["engine"] | undefined) ?? "online";
+  const apiHealth = (metaMap.get("apiHealth") as DashboardData["status"]["apiHealth"] | undefined) ?? "healthy";
+
   return {
     demo: false,
     status: {
-      engine: (metaMap.get("engine") as DashboardData["status"]["engine"]) ?? "online",
+      engine: stale ? "delayed" : engine,
       latestScan: scan ? scan.scanned_at : null,
       nextScan: str(metaMap.get("nextScan")),
-      lastDataUpdate: str(metaMap.get("lastDataUpdate")),
-      apiHealth: (metaMap.get("apiHealth") as DashboardData["status"]["apiHealth"]) ?? "healthy",
+      lastDataUpdate,
+      apiHealth: stale ? "degraded" : apiHealth,
     },
     scan: {
       universe: scan ? int(scan.universe) : 0,
