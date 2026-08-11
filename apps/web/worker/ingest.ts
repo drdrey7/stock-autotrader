@@ -6,7 +6,7 @@ import { publishDailyBriefing } from "./daily-briefings";
 /**
  * Protected publication layer (PR #3).
  * POST /ingest/events — batch of normalized public events signed with HMAC-SHA256.
- * - Authentication: X-Ingest-Signature: sha256=<hex> over the raw body, keyed by INGEST_SECRET.
+ * - Authentication: X-Ingest-Signature: sha256=<hex> over `${timestamp}.${raw body}`, keyed by INGEST_SECRET.
  * - Replay protection: X-Ingest-Timestamp must be within a 5-minute window.
  * - Idempotency: each event_id is applied at most once (ingest_events ledger).
  * - Strict schemas: invalid events are rejected with 400; nothing is passed through.
@@ -295,7 +295,7 @@ const JSON_HEADERS = {
 
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: JSON_HEADERS });
 
-async function hmacHex(secret: string, body: string): Promise<string> {
+async function hmacHex(secret: string, timestamp: string, body: string): Promise<string> {
   const key = await crypto.subtle.importKey(
     "raw",
     new TextEncoder().encode(secret),
@@ -303,7 +303,7 @@ async function hmacHex(secret: string, body: string): Promise<string> {
     false,
     ["sign"],
   );
-  const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(body));
+  const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${timestamp}.${body}`));
   return [...new Uint8Array(mac)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
@@ -320,7 +320,7 @@ async function verifyRequest(request: Request, body: string, secret: string): Pr
   const t = Date.parse(ts);
   if (Number.isNaN(t)) return false;
   if (Math.abs(Date.now() - t) > 5 * 60 * 1000) return false;
-  const expected = `sha256=${await hmacHex(secret, body)}`;
+  const expected = `sha256=${await hmacHex(secret, ts, body)}`;
   return constantTimeEqual(sig, expected);
 }
 

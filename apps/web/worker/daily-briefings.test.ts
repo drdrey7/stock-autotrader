@@ -116,6 +116,19 @@ export class FakeD1 {
 
 const fixedNow = Date.parse("2026-08-12T12:00:00.000Z");
 
+async function signIngestBody(secret: string, timestamp: string, body: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${timestamp}.${body}`));
+  const hex = [...new Uint8Array(mac)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `sha256=${hex}`;
+}
+
 describe("DailyBriefing publication helpers", () => {
   it("canonicalizes object keys before hashing", async () => {
     expect(canonicalJson({ b: 1, a: { d: 2, c: 3 } })).toBe('{"a":{"c":3,"d":2},"b":1}');
@@ -232,5 +245,44 @@ describe("DailyBriefing publication helpers", () => {
       ingestEnv,
     );
     expect(unsigned.status).toBe(401);
+
+    const signedDb = new FakeD1();
+    const signedEnv = { ...env, DB: signedDb, INGEST_SECRET: "test-secret" } as unknown as Env;
+    const timestamp = new Date().toISOString();
+    const signedBody = JSON.stringify({
+      events: [{
+        type: "DAILY_BRIEFING_PUBLISHED",
+        event_id: "signed-brief-001",
+        timestamp,
+        payload: briefing,
+      }],
+    });
+    const signature = await signIngestBody("test-secret", timestamp, signedBody);
+    const signed = await handleIngest(
+      new Request("https://example.test/ingest/events", {
+        method: "POST",
+        body: signedBody,
+        headers: {
+          "X-Ingest-Signature": signature,
+          "X-Ingest-Timestamp": timestamp,
+        },
+      }),
+      signedEnv,
+    );
+    expect(signed.status).toBe(200);
+
+    const tamperedTimestamp = new Date(Date.parse(timestamp) + 1000).toISOString();
+    const replayWithFreshTimestamp = await handleIngest(
+      new Request("https://example.test/ingest/events", {
+        method: "POST",
+        body: signedBody,
+        headers: {
+          "X-Ingest-Signature": signature,
+          "X-Ingest-Timestamp": tamperedTimestamp,
+        },
+      }),
+      signedEnv,
+    );
+    expect(replayWithFreshTimestamp.status).toBe(401);
   });
 });

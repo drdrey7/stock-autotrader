@@ -13,12 +13,10 @@ SECRET = "test-secret-12345"
 def post(body: bytes, secret: str | None = SECRET, ts: str | None = None) -> tuple[int, dict]:
     req = urllib.request.Request(ENDPOINT, data=body, method="POST")
     req.add_header("Content-Type", "application/json")
+    timestamp = ts or __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
     if secret:
-        req.add_header("X-Ingest-Signature", client.sign(secret, body))
-    if ts:
-        req.add_header("X-Ingest-Timestamp", ts)
-    else:
-        req.add_header("X-Ingest-Timestamp", __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat())
+        req.add_header("X-Ingest-Signature", client.sign(secret, body, timestamp))
+    req.add_header("X-Ingest-Timestamp", timestamp)
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             return resp.status, json.loads(resp.read())

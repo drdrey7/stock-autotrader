@@ -118,6 +118,25 @@ describe("DailyBriefing v1 contract", () => {
     expect(dailyBriefingSchema.safeParse(briefing).success).toBe(false);
   });
 
+  it("rejects a ticker outside the declared universe", () => {
+    const briefing = cloneBriefing();
+    const firstIdea = briefing.ideas[0];
+    if (!firstIdea) throw new Error("Example briefing must contain an idea");
+    firstIdea.symbol = "ZZZZ";
+
+    expect(dailyBriefingSchema.safeParse(briefing).success).toBe(false);
+  });
+
+  it("rejects a real member assigned to the wrong universe", () => {
+    const briefing = cloneBriefing();
+    const firstIdea = briefing.ideas[0];
+    if (!firstIdea) throw new Error("Example briefing must contain an idea");
+    firstIdea.symbol = "MMM";
+    firstIdea.universe = "Nasdaq-100";
+
+    expect(dailyBriefingSchema.safeParse(briefing).success).toBe(false);
+  });
+
   it("rejects inconsistent reward-risk text and ratio", () => {
     const briefing = cloneBriefing();
     const firstIdea = briefing.ideas[0];

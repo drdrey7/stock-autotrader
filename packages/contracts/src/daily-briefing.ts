@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isBriefingSymbolInUniverse } from "./briefing-universe";
 
 export const briefingVerdictValues = [
   "Potential Entry",
@@ -21,6 +22,8 @@ export const briefingBenchmarkDefinitions = [
 const nonEmptyString = z.string().trim().min(1);
 
 const isoTimestamp = z.string().datetime({ offset: true });
+
+const tickerSymbol = z.string().regex(/^[A-Z0-9.-]{1,12}$/, "symbol must use a canonical ticker format");
 
 export const briefingCalendarDateSchema = z
   .string()
@@ -60,7 +63,7 @@ export const briefingSourceSchema = z.strictObject({
 });
 
 export const briefingIdeaSchema = z.strictObject({
-  symbol: nonEmptyString,
+  symbol: tickerSymbol,
   company: nonEmptyString,
   universe: z.enum(briefingUniverseValues),
   verdict: z.enum(briefingVerdictValues),
@@ -158,6 +161,13 @@ export const dailyBriefingSchema = z
     });
 
     briefing.ideas.forEach((idea, index) => {
+      if (!isBriefingSymbolInUniverse(idea.symbol, idea.universe)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["ideas", index, "symbol"],
+          message: `${idea.symbol} is not a member of the declared ${idea.universe} universe`,
+        });
+      }
       if (idea.verdict !== "Potential Entry" && idea.levels.rewardRiskRatio !== null) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
