@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it } from "vitest";
 import App from "./App";
+import { exampleDailyBriefing } from "./daily-briefing-example";
 import indexHtml from "../index.html?raw";
 import cloudflareHeaders from "../public/_headers?raw";
 
@@ -53,7 +54,7 @@ describe("Stock Daily Briefing public experience", () => {
     fireEvent.click(screen.getByRole("link", { name: "View Live Dashboard" }));
 
     expect(
-      screen.getByRole("heading", { name: "Pre-market briefing" }),
+      screen.getByRole("heading", { name: exampleDailyBriefing.title }),
     ).toBeInTheDocument();
   });
 
@@ -81,6 +82,10 @@ describe("Stock Daily Briefing public experience", () => {
     expect(
       screen.getByText("Example Data", { selector: ".briefing-example-badge" }),
     ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: exampleDailyBriefing.title })).toBeInTheDocument();
+    expect(
+      screen.getByText(new RegExp(`^(PRE|POST) / ${exampleDailyBriefing.editionDate}$`)),
+    ).toBeInTheDocument();
     expect(screen.getByText("S&P 500")).toBeInTheDocument();
     expect(screen.getByText("Nasdaq-100")).toBeInTheDocument();
     expect(screen.getByText("VIX")).toBeInTheDocument();
@@ -97,38 +102,21 @@ describe("Stock Daily Briefing public experience", () => {
     expect(screen.queryByText(/log in|sign in/i)).not.toBeInTheDocument();
   });
 
-  it("maps planned functions to demo anchors and disables future integrations", () => {
+  it("renders the three dashboard menu views and a mobile drawer toggle", () => {
     const view = render(
       <MemoryRouter initialEntries={["/dashboard"]}>
         <App />
       </MemoryRouter>,
     );
 
-    expect(
-      screen.getByRole("navigation", { name: "Dashboard functions" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "Dashboard menu" })).toBeInTheDocument();
 
-    for (const [label, href] of [
-      ["Market context", "#market-context"],
-      ["Qualified ideas", "#briefing-ideas"],
-      ["Analysis & risk", "#briefing-analysis"],
-      ["Source provenance", "#source-provenance"],
-      ["Publication rhythm", "#publication-rhythm"],
-    ] as const) {
-      const link = screen.getByRole("link", {
-        name: new RegExp(`Example Data.*${label}`),
-      });
-      expect(link).toHaveAttribute("href", href);
-      expect(link).toHaveTextContent(label);
-      expect(view.container.querySelector(href)).toBeInTheDocument();
-    }
+    const morningBriefing = screen.getByRole("link", { name: /Morning briefing/ });
+    expect(morningBriefing).toHaveAttribute("href", "#briefing-today");
+    expect(morningBriefing).toHaveAttribute("aria-current", "page");
+    expect(morningBriefing).toHaveTextContent("Today");
 
-    for (const label of [
-      "Live X discovery",
-      "Live TradingView analysis",
-      "Brief history",
-      "Live publication",
-    ]) {
+    for (const label of ["X search", "Earnings"]) {
       const button = screen.getByRole("button", {
         name: new RegExp(`Coming soon.*${label}`),
       });
@@ -137,6 +125,20 @@ describe("Stock Daily Briefing public experience", () => {
       expect(button).toHaveTextContent(label);
       expect(button).not.toHaveAttribute("href");
     }
+
+    const toggle = screen.getByRole("button", { name: "Open dashboard menu" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-label", "Close dashboard menu");
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+
+    const backdrop = view.container.querySelector<HTMLButtonElement>(
+      ".briefing-dashboard-menu-backdrop",
+    );
+    expect(backdrop).not.toBeNull();
+    fireEvent.click(backdrop!);
+    expect(toggle).toHaveAttribute("aria-label", "Open dashboard menu");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
   });
 
   it.each([
@@ -160,7 +162,7 @@ describe("Stock Daily Briefing public experience", () => {
     );
 
     expect(
-      screen.getByRole("heading", { name: "Pre-market briefing" }),
+      screen.getByRole("heading", { name: exampleDailyBriefing.title }),
     ).toBeInTheDocument();
     expect(screen.queryByText("Stock Autotrader")).not.toBeInTheDocument();
   });

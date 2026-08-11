@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   ArrowRight,
   BarChart3,
@@ -8,12 +9,14 @@ import {
   FileSearch,
   Globe2,
   LineChart,
+  Menu,
   Newspaper,
   Radar,
   ShieldCheck,
   Sparkles,
   TrendingUp,
   TriangleAlert,
+  X as CloseIcon,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import {
@@ -45,6 +48,45 @@ function ExampleBadge() {
   );
 }
 
+function formatBriefingDate(date: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    day: "numeric",
+    month: "long",
+    timeZone: exampleDailyBriefing.timezone,
+    weekday: "long",
+    year: "numeric",
+  })
+    .format(new Date(`${date}T12:00:00Z`))
+    .toUpperCase();
+}
+
+function formatBriefingTime(date: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    hour: "2-digit",
+    hour12: false,
+    minute: "2-digit",
+    timeZone: exampleDailyBriefing.timezone,
+  }).format(new Date(date));
+}
+
+function formatBriefingTimezone(date: string) {
+  return (
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: exampleDailyBriefing.timezone,
+      timeZoneName: "short",
+    })
+      .formatToParts(new Date(date))
+      .find((part) => part.type === "timeZoneName")?.value ?? "ET"
+  );
+}
+
+const briefingEditionDate = formatBriefingDate(exampleDailyBriefing.editionDate);
+const briefingPreparedTime = formatBriefingTime(exampleDailyBriefing.preparedAt);
+const briefingTimezone = formatBriefingTimezone(exampleDailyBriefing.preparedAt);
+const briefingEditionLabel =
+  exampleDailyBriefing.editionType === "post_close" ? "POST-CLOSE" : "PRE-MARKET";
+const briefingEditionCode = exampleDailyBriefing.editionType === "post_close" ? "POST" : "PRE";
+
 function BriefingFooter() {
   return (
     <footer className="briefing-footer">
@@ -60,7 +102,7 @@ function BriefingFooter() {
 }
 
 function TerminalPreview() {
-  const featured = exampleDailyBriefing.ideas[0]!;
+  const featured = exampleDailyBriefing.ideas[0];
 
   return (
     <div
@@ -74,8 +116,10 @@ function TerminalPreview() {
           <i />
           <i />
         </span>
-        <small>DAILY BRIEF / PRE-MARKET</small>
-        <small>08:30 ET</small>
+        <small>DAILY BRIEF / {briefingEditionLabel}</small>
+        <small>
+          {briefingPreparedTime} {briefingTimezone}
+        </small>
       </div>
       <div className="briefing-preview-strip">
         {exampleDailyBriefing.market.map((item) => (
@@ -110,21 +154,38 @@ function TerminalPreview() {
             />
           </svg>
         </div>
-        <div className="briefing-preview-idea">
-          <span>
-            <small>QUALIFIED IDEA</small>
-            <b>01 / 03</b>
-          </span>
-          <div>
-            <strong>{featured.symbol}</strong>
-            <em>Potential Entry</em>
+        {featured ? (
+          <div className="briefing-preview-idea">
+            <span>
+              <small>QUALIFIED IDEA</small>
+              <b>01 / 03</b>
+            </span>
+            <div>
+              <strong>{featured.symbol}</strong>
+              <em>Potential Entry</em>
+            </div>
+            <p>{featured.thesis}</p>
+            <span className="briefing-preview-levels">
+              <small>Trigger {featured.levels.trigger}</small>
+              <small>Risk {featured.levels.invalidation}</small>
+            </span>
           </div>
-          <p>{featured.thesis}</p>
-          <span className="briefing-preview-levels">
-            <small>Trigger {featured.levels.trigger}</small>
-            <small>Risk {featured.levels.invalidation}</small>
-          </span>
-        </div>
+        ) : (
+          <div className="briefing-preview-idea">
+            <span>
+              <small>QUALIFIED IDEAS</small>
+              <b>00 / 00</b>
+            </span>
+            <div>
+              <strong>No qualifying ideas</strong>
+              <em>Insufficient Data</em>
+            </div>
+            <p>This example edition has no ideas that passed the qualification gate.</p>
+            <span className="briefing-preview-levels">
+              <small>Next review follows the next briefing.</small>
+            </span>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -206,123 +267,108 @@ function MarketStrip() {
   );
 }
 
-const demoFunctionItems = [
+const dashboardMenuItems = [
   {
-    label: "Market context",
-    detail: "S&P 500 · Nasdaq-100 · VIX",
-    href: "#market-context",
-    Icon: BarChart3,
+    label: "Morning briefing",
+    detail: "Today",
+    href: "#briefing-today",
+    Icon: Newspaper,
   },
   {
-    label: "Qualified ideas",
-    detail: "Potential Entry · Watch · Avoid",
-    href: "#briefing-ideas",
-    Icon: Radar,
-  },
-  {
-    label: "Analysis & risk",
-    detail: "Technical · financial · risk",
-    href: "#briefing-analysis",
-    Icon: LineChart,
-  },
-  {
-    label: "Source provenance",
-    detail: "X source · timestamps · evidence",
-    href: "#source-provenance",
+    label: "X search",
+    detail: "Curated source discovery",
+    href: undefined,
     Icon: Globe2,
   },
   {
-    label: "Publication rhythm",
-    detail: "Pre-market · post-close",
-    href: "#publication-rhythm",
+    label: "Earnings",
+    detail: "Results and guidance",
+    href: undefined,
     Icon: CalendarClock,
   },
 ] as const;
 
-const plannedFunctionItems = [
-  {
-    label: "Live X discovery",
-    detail: "Curated posts from the approved allowlist",
-    Icon: Newspaper,
-  },
-  {
-    label: "Live TradingView analysis",
-    detail: "Quotes, structure and market context",
-    Icon: TrendingUp,
-  },
-  {
-    label: "Brief history",
-    detail: "Auditable editions and freshness history",
-    Icon: FileSearch,
-  },
-  {
-    label: "Live publication",
-    detail: "Validated briefs delivered to the public read model",
-    Icon: CircleDot,
-  },
-] as const;
+function DashboardMenu() {
+  const [isOpen, setIsOpen] = useState(false);
 
-function BriefingFunctionMenu() {
   return (
-    <section
-      className="briefing-function-menu"
-      aria-labelledby="briefing-function-menu-title"
-    >
-      <div className="briefing-function-menu-intro">
-        <span className="briefing-kicker">BRIEFING MAP</span>
-        <h2 id="briefing-function-menu-title">Explore the terminal</h2>
-        <p>
-          Demo areas are ready to review now. Live connections arrive in the next focused
-          releases.
-        </p>
-      </div>
+    <>
+      <button
+        className="briefing-dashboard-menu-toggle"
+        type="button"
+        aria-controls="briefing-dashboard-menu"
+        aria-expanded={isOpen}
+        aria-label={isOpen ? "Close dashboard menu" : "Open dashboard menu"}
+        onClick={() => setIsOpen((open) => !open)}
+      >
+        {isOpen ? <CloseIcon size={20} aria-hidden="true" /> : <Menu size={20} aria-hidden="true" />}
+      </button>
 
-      <nav className="briefing-function-groups" aria-label="Dashboard functions">
-        <div className="briefing-function-group">
-          <span className="briefing-function-group-label">Available now</span>
-          <div className="briefing-function-list">
-            {demoFunctionItems.map(({ label, detail, href, Icon }) => (
-              <a
-                key={label}
-                className="briefing-function-item"
-                href={href}
-                aria-label={`Example Data: ${label}`}
-              >
-                <Icon size={15} aria-hidden="true" />
-                <span>
-                  <small>Example Data</small>
-                  <strong>{label}</strong>
-                  <em>{detail}</em>
-                </span>
-                <ArrowRight size={13} aria-hidden="true" />
-              </a>
-            ))}
-          </div>
+      {isOpen && (
+        <button
+          className="briefing-dashboard-menu-backdrop"
+          type="button"
+          aria-label="Close dashboard menu"
+          onClick={() => setIsOpen(false)}
+        />
+      )}
+
+      <aside
+        id="briefing-dashboard-menu"
+        className={`briefing-dashboard-menu${isOpen ? " is-open" : ""}`}
+        aria-label="Dashboard menu"
+      >
+        <div className="briefing-dashboard-menu-heading">
+          <span className="briefing-kicker">TODAY</span>
+          <strong>Dashboard</strong>
+          <p>Choose a briefing view.</p>
         </div>
 
-        <div className="briefing-function-group">
-          <span className="briefing-function-group-label">Planned</span>
-          <div className="briefing-function-list">
-            {plannedFunctionItems.map(({ label, detail, Icon }) => (
+        <nav aria-label="Dashboard sections">
+          {dashboardMenuItems.map(({ label, detail, href, Icon }) => {
+            if (href) {
+              return (
+                <a
+                  key={label}
+                  className="briefing-dashboard-menu-item is-active"
+                  href={href}
+                  aria-current="page"
+                  onClick={() => setIsOpen(false)}
+                >
+                  <Icon size={17} aria-hidden="true" />
+                  <span>
+                    <small>{detail}</small>
+                    <strong>{label}</strong>
+                  </span>
+                </a>
+              );
+            }
+
+            return (
               <button
                 key={label}
-                className="briefing-function-item is-coming-soon"
+                className="briefing-dashboard-menu-item is-coming-soon"
                 type="button"
                 disabled
                 aria-label={`Coming soon: ${label}`}
               >
-                <Icon size={15} aria-hidden="true" />
+                <Icon size={17} aria-hidden="true" />
                 <span>
                   <small>Coming soon</small>
                   <strong>{label}</strong>
                   <em>{detail}</em>
                 </span>
               </button>
-            ))}
-          </div>
+            );
+          })}
+        </nav>
+
+        <div className="briefing-dashboard-menu-note">
+          <span>Example Data</span>
+          <p>Today’s morning briefing is available for review. Live connections follow in focused releases.</p>
         </div>
-      </nav>
-    </section>
+      </aside>
+    </>
   );
 }
 
@@ -447,22 +493,24 @@ export function DailyBriefingDashboardPage() {
         <ExampleBadge />
       </header>
 
+      <DashboardMenu />
+
       <main className="briefing-dashboard-main">
-        <section className="briefing-dashboard-title">
+        <section id="briefing-today" className="briefing-dashboard-title">
           <div>
-            <p className="briefing-kicker">TUESDAY · AUGUST 11, 2026 · 08:30 ET</p>
-            <h1>Pre-market briefing</h1>
+            <p className="briefing-kicker">
+              {briefingEditionLabel} · {briefingEditionDate} · {briefingPreparedTime} {briefingTimezone}
+            </p>
+            <h1>{exampleDailyBriefing.title}</h1>
             <p>{exampleDailyBriefing.marketSummary}</p>
           </div>
           <span className="briefing-edition-stamp">
             <CalendarClock size={18} aria-hidden="true" />
             <span>
-              Edition<strong>PRE / 2026-08-11</strong>
+              Edition<strong>{briefingEditionCode} / {exampleDailyBriefing.editionDate}</strong>
             </span>
           </span>
         </section>
-
-        <BriefingFunctionMenu />
 
         <MarketStrip />
 

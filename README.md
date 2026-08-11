@@ -11,11 +11,10 @@ runtime integration:
 
 - short public landing page at `/`;
 - local terminal preview and exact **View Live Dashboard** CTA;
-- single public terminal at `/dashboard`, without tabs, sidebar or login;
-- S&P 500, Nasdaq-100 and VIX context;
-- curated-X discovery shown inline with stock analysis and provenance;
-- dashboard function map with `Example Data` anchors for the demo areas;
-- planned live integrations shown as non-clickable **Coming soon** buttons;
+- single public terminal at `/dashboard` with a fixed desktop menu and mobile hamburger;
+- three dashboard views: **Morning briefing**, **X search** and **Earnings**;
+- Today’s Morning briefing information is available as frontend-only `Example Data`;
+- planned X search and Earnings views are non-clickable **Coming soon** entries;
 - informational verdicts: **Potential Entry**, **Watch**, **Avoid** and
   **Insufficient Data**;
 - public Methodology, Status and Disclaimer pages;
