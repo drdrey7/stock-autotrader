@@ -35,3 +35,8 @@ jobs:
         run: node scripts/seed.mjs --local
       - name: Test publisher client (Python)
         run: npm run test -w @stock-autotrader/publisher
+      - name: Test VPS runtime (bot, PR #4)
+        working-directory: bot
+        run: |
+          pip install --quiet -e .
+          python3 -m unittest discover -s tests -v

@@ -1,0 +1,13 @@
+services:
+  runtime:
+    build:
+      context: ..
+      dockerfile: bot/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ./data:/app/bot/data
+    # No host ports exposed: private runtime, alerts/publishing go outbound only.
+    ports: []
