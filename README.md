@@ -1,74 +1,64 @@
-# Stock Autotrader — Public Frontend
+# Stock Daily Briefing
 
-Public, read-only frontend for a systematic US stock research and swing-trading engine.
+Public, read-only market intelligence for S&P 500 and Nasdaq-100 investors.
+The product publishes focused pre-market and post-close briefings with market
+context, curated stock ideas, independent qualification, risks and provenance.
 
-This repository contains the public read-only frontend, the Cloudflare Worker/D1
-read model and the private VPS runtime foundation. PR #5 adds a deterministic,
-reproducible CSV market-data provider and universe pipeline. No broker, automatic
-orders or live trading is included.
+## PR #6 — frontend preview
 
-## What's included
+This release validates the product experience before any new backend or private
+runtime integration:
 
-- Landing page — Data. Analysis. Opportunity.
-- Public dashboard, scanner and stock analysis views
-- Strategies, research/backtests, shadow portfolio, earnings, activity and status
-- Methodology and disclaimer pages
-- Responsive mobile + desktop layouts
-- Deterministic CSV market-data provider: universe normalization/filtering, OHLCV validation, SPY/QQQ benchmarks, freshness checks and atomic cache
-- Private VPS runtime: scheduler, SQLite ledger, health and publishing bridge
-- Cloudflare Worker/D1 ingest and public API read model
-- Central demo/mock data in `packages/contracts/src/demo-data.ts`
-- Frontend, Python publisher and runtime tests, lint, typecheck and production build
+- short public landing page at `/`;
+- local terminal preview and exact **View Live Dashboard** CTA;
+- single public terminal at `/dashboard` with a fixed desktop menu and mobile hamburger;
+- three dashboard views: **Morning briefing**, **X search** and **Earnings**;
+- Today’s Morning briefing information is available as frontend-only `Example Data`;
+- planned X search and Earnings views are non-clickable **Coming soon** entries;
+- informational verdicts: **Potential Entry**, **Watch**, **Avoid** and
+  **Insufficient Data**;
+- public Methodology, Status and Disclaimer pages;
+- safe redirects from legacy product routes to `/dashboard`;
+- responsive mobile and desktop layouts.
 
-## What's not included (later PRs)
+All values shown in PR #6 come from the frontend-only
+`apps/web/src/daily-briefing-example.ts` fixture and are labelled
+**Example Data**. They are synthetic and are not live quotes, current X posts or
+claims about market conditions.
 
-- Python quant features, strategies, risk, portfolio and backtester
-- AI schemas/providers, TradingView MCP, Firecrawl
-- External market-data API provider credentials or network ingestion
-- IBKR or any broker integration
-- Automatic/live trading
-- Docker for the bot/VPS
+## Deliberately not included in PR #6
+
+- live X Search or TradingView MCP calls;
+- a new public API, D1 schema or migration;
+- briefing ingestion or publishing;
+- cron or market-session scheduling;
+- authentication;
+- broker, order, paper-trading or live-trading functionality.
+
+The existing Worker/D1 and private Python foundations remain unchanged for
+compatibility. They are not consumed by the new frontend preview. Later focused
+PRs will add the validated DailyBriefing contract, private publisher and live
+read model.
+
+## Briefing rhythm
+
+The planned canonical timezone is `America/New_York`:
+
+- pre-market: `08:30 ET` on valid market sessions;
+- post-close: `16:30 ET` on valid market sessions.
+
+PR #6 displays this schedule only. It does not create a scheduler.
 
 ## Development
 
-Prerequisites: Node 20+ (22 recommended), npm.
+Prerequisites: Node 20+ (Node 22 recommended) and npm.
 
 ```bash
 npm ci
 npm run dev
 ```
 
-The web app opens at `http://localhost:5173` and runs in demo mode by default
-(`VITE_DEMO_MODE !== "false"`). Every demo number comes from the central
-`demo-data.ts` fixture and every affected view is labelled **Demo Data**.
-
-To point at a future public API, set `VITE_DEMO_MODE=false` and
-`VITE_API_BASE_URL` (see `.env.example`).
-
-## Market-data pipeline (PR #5)
-
-The private runtime reads two files from `MARKET_DATA_DIR`:
-
-- `universe.csv`: `symbol,company,sector,exchange,security_type,index_membership,active,market_cap,avg_volume,price`
-- `bars.csv`: `symbol,date,open,high,low,close,adjusted_close,volume`
-
-The CSV adapter is intentionally network-free and reproducible. It accepts only
-active common stocks/ADRs from the SP500/NASDAQ core universe, normalizes symbols,
-requires positive finite OHLCV values and validates SPY/QQQ freshness (default:
-three days). Invalid, missing, stale or future market data produces a degraded
-snapshot with explicit warnings and never becomes healthy silently. `adjusted_close` is the provider's
-corporate-action-adjusted field when supplied.
-
-```bash
-cd bot
-python -m bot market-data --no-cache       # validate and print public snapshot
-python -m bot market-data                  # validate and write latest.json
-python -m bot market-data --publish        # validate, cache and publish to D1
-```
-
-`--publish` requires `INGEST_SECRET`; production publication is HMAC-signed through
-`MARKET_DATA_UPDATED`. The scheduler's hourly `data_refresh` job runs the same
-pipeline and records the result in the local SQLite health ledger.
+The Vite app opens at `http://localhost:5173`.
 
 ## Quality gates
 
@@ -77,21 +67,26 @@ npm run lint
 npm run typecheck
 npm test
 npm run build
+npx wrangler deploy --dry-run
 ```
+
+The repository also retains Python runtime tests under `bot/tests` to protect
+existing foundations from frontend regressions.
 
 ## Project structure
 
 ```text
-apps/web                 React 19 + TypeScript + Vite public UI
-apps/web/worker          Cloudflare Worker routes, protected ingest and D1 read model
-bot/bot                  Private Python runtime, scheduler, state and market-data pipeline
-packages/contracts       Shared TypeScript types and central demo fixtures
+apps/web/src/daily-briefing-pages.tsx   Public landing, terminal and information pages
+apps/web/src/daily-briefing-example.ts  Single synthetic PR #6 fixture
+apps/web/src/daily-briefing.css         Isolated responsive product styling
+apps/web/worker                         Existing Cloudflare Worker and D1 read model
+bot/bot                                 Existing private runtime foundation
+packages/contracts                      Existing shared contracts; DailyBriefing v1 follows in PR #7
 ```
 
 ## Disclaimer
 
-Stock Autotrader provides model-generated research for educational and
-informational purposes. Strong Setup, Watch, No Setup, Bullish, Neutral and
-Bearish are model labels, not personalised investment advice. Demo data,
-backtests and shadow portfolios are hypothetical and do not guarantee future
-results.
+Stock Daily Briefing provides general market research for informational and
+educational purposes only. Nothing on the website is a recommendation,
+solicitation or personalised assessment to buy, hold or sell a security. Verify
+all data and sources independently.
