@@ -26,12 +26,13 @@ def health_report(settings: Settings, store: StateStore, sched=None) -> dict:
 
     missing = settings.check_secrets()
     last_health = store.last_job_status("health_check")
+    health_failed = last_health is not None and last_health.get("status") != "ok"
     return {
-        "status": "ok" if not missing else "degraded",
+        "status": "ok" if not missing and not health_failed else "degraded",
         "env": settings.bot_env,
         "timezone": settings.timezone,
         "db": str(store.db_path),
-        "db_writable": store.last_job_status("health_check") is not None or store.recent_events(1) is not None,
+        "db_writable": not health_failed,
         "last_health_check": last_health,
         "missing_secrets": missing,
         "jobs": next_runs(sched) if sched else [],

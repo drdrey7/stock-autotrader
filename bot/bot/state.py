@@ -6,6 +6,7 @@ local to the VPS. Not a replacement for D1 — D1 is the public read model.
 from __future__ import annotations
 
 import sqlite3
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -40,6 +41,7 @@ class StateStore:
         # Scheduler jobs run on APScheduler worker threads -> same-thread binding
         # would crash every job. Single-process runtime makes this safe.
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        self._lock = threading.RLock()
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA busy_timeout=5000")
@@ -48,12 +50,13 @@ class StateStore:
 
     @contextmanager
     def tx(self):
-        try:
-            yield self._conn
-            self._conn.commit()
-        except Exception:
-            self._conn.rollback()
-            raise
+        with self._lock:
+            try:
+                yield self._conn
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
 
     def record_event(self, level: str, source: str, message: str) -> None:
         import datetime as _dt
@@ -87,18 +90,21 @@ class StateStore:
             )
 
     def last_job_status(self, job_name: str) -> dict | None:
-        row = self._conn.execute(
-            "SELECT * FROM job_runs WHERE job_name = ? ORDER BY id DESC LIMIT 1",
-            (job_name,),
-        ).fetchone()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM job_runs WHERE job_name = ? ORDER BY id DESC LIMIT 1",
+                (job_name,),
+            ).fetchone()
         return dict(row) if row else None
 
     def recent_events(self, limit: int = 20) -> list[dict]:
-        rows = self._conn.execute(
-            "SELECT * FROM runtime_events ORDER BY id DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM runtime_events ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
         return [dict(r) for r in rows]
 
     def close(self) -> None:
-        self._conn.close()
+        with self._lock:
+            self._conn.close()

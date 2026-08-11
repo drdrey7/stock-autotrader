@@ -4,6 +4,7 @@ from pathlib import Path
 
 from bot.alerts import format_alert, runtime_start_message
 from bot.config import Settings
+from bot.state import StateStore
 
 
 class AlertsTests(unittest.TestCase):
@@ -65,6 +66,22 @@ class SchedulerTests(unittest.TestCase):
             self.assertEqual(len(runs), len(jobs))
             for r in runs:
                 self.assertIn("next_run", r)
+            try:
+                sched.shutdown(wait=False)
+            except Exception:
+                pass
+            store.close()
+
+    def test_scheduler_uses_configured_timezone(self):
+        from bot.scheduler import build_scheduler
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = StateStore(Path(tmp) / "state.db")
+            settings = Settings(bot_env="dev", timezone="Europe/Zurich")
+            sched = build_scheduler(settings, store, blocking=False)
+            by_id = {job.id: job for job in sched.get_jobs()}
+            for job_id in ("pre_market_scan", "post_close_scan", "data_refresh", "health_check"):
+                self.assertEqual(str(by_id[job_id].trigger.timezone), "Europe/Zurich")
             try:
                 sched.shutdown(wait=False)
             except Exception:

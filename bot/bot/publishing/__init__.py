@@ -20,15 +20,21 @@ def publish_events(settings: Settings, events: list[dict]) -> dict:
     return client.publish(settings.ingest_url, settings.ingest_secret, events, timeout=30)
 
 
+def _public_engine_status(settings: Settings) -> str:
+    """Map private runtime health to the public ingest enum."""
+    return "delayed" if settings.check_secrets() else "online"
+
+
 def publish_system_status(settings: Settings) -> dict:
     """Publish a SYSTEM_STATUS event so the public dashboard stays fresh."""
     from publisher import client
 
     now = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
+    degraded = bool(settings.check_secrets())
     event = client.make_event("SYSTEM_STATUS", {
-        "engine": "online" if not settings.check_secrets() else "degraded",
+        "engine": _public_engine_status(settings),
         "nextScan": None,
         "lastDataUpdate": now,
-        "apiHealth": "healthy" if not settings.check_secrets() else "degraded",
+        "apiHealth": "degraded" if degraded else "healthy",
     })
     return publish_events(settings, [event])

@@ -20,6 +20,7 @@ class Settings(BaseSettings):
         env_file=REPO_ROOT / "bot/.env",
         env_file_encoding="utf-8",
         extra="ignore",
+        populate_by_name=True,
     )
 
     # --- runtime ---
@@ -43,6 +44,11 @@ class Settings(BaseSettings):
 
     # NOTE: no Telegram credentials here — operational alerts are delivered by
     # a Hermes cron (profile default) to the already-configured Telegram channel.
+
+    @field_validator("timezone", mode="before")
+    @classmethod
+    def _timezone_default_if_empty(cls, v: str | None) -> str:
+        return v or "America/New_York"
 
     @field_validator("ingest_secret")
     @classmethod

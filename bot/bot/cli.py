@@ -22,8 +22,9 @@ from .state import StateStore
 
 def _cmd_smoke(args) -> int:
     settings = get_settings()
-    store = StateStore(settings.data_dir / "state.db")
-    store.record_event("INFO", "cli", "smoke command executed")
+    # Smoke must be safe against a production DATA_DIR: use an in-memory
+    # ledger so validation never creates files or appends runtime events.
+    store = StateStore(":memory:")
     from .scheduler import build_scheduler, next_runs
 
     sched = build_scheduler(settings, store, blocking=False)

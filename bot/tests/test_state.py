@@ -36,6 +36,25 @@ class StateStoreTests(unittest.TestCase):
         ).fetchall()
         self.assertEqual(len(tables), 2)
 
+    def test_concurrent_events_are_serialized(self):
+        import threading
+
+        errors = []
+
+        def _record(index):
+            try:
+                self.store.record_event("INFO", "worker", f"event-{index}")
+            except Exception as exc:  # pragma: no cover - test failure
+                errors.append(exc)
+
+        threads = [threading.Thread(target=_record, args=(i,)) for i in range(20)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertEqual(errors, [])
+        self.assertEqual(len(self.store.recent_events(25)), 20)
+
     def test_job_runs_from_worker_thread(self):
         """APScheduler runs jobs on worker threads; the connection must not be
         thread-bound (check_same_thread=False). Regression for PR #4 B1."""

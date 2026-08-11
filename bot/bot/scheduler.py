@@ -20,7 +20,7 @@ from .jobs.health import health_job
 log = logging.getLogger(__name__)
 
 
-def _cron(field: str) -> CronTrigger:
+def _cron(field: str, timezone: str = "America/New_York") -> CronTrigger:
     parts = field.split()
     if len(parts) != 5:
         raise ValueError(f"cron field must have 5 parts: {field!r}")
@@ -31,7 +31,7 @@ def _cron(field: str) -> CronTrigger:
         day=day,
         month=month,
         day_of_week=weekday,
-        timezone=ZoneInfo("America/New_York"),
+        timezone=ZoneInfo(timezone),
     )
 
 
@@ -52,21 +52,21 @@ def build_scheduler(settings: Settings, store: StateStore, blocking: bool = Fals
     # runtime shape (and the scheduler wiring) is production-true.
     sched.add_job(
         _noop("pre_market_scan"),
-        _cron(settings.pre_market_scan_cron),
+        _cron(settings.pre_market_scan_cron, settings.timezone),
         id="pre_market_scan",
         name="Pre-market scan",
         replace_existing=True,
     )
     sched.add_job(
         _noop("post_close_scan"),
-        _cron(settings.post_close_scan_cron),
+        _cron(settings.post_close_scan_cron, settings.timezone),
         id="post_close_scan",
         name="Post-close scan",
         replace_existing=True,
     )
     sched.add_job(
         _noop("data_refresh"),
-        _cron(settings.data_refresh_cron),
+        _cron(settings.data_refresh_cron, settings.timezone),
         id="data_refresh",
         name="Data refresh",
         replace_existing=True,
