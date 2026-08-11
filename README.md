@@ -14,6 +14,8 @@ runtime integration:
 - single public terminal at `/dashboard`, without tabs, sidebar or login;
 - S&P 500, Nasdaq-100 and VIX context;
 - curated-X discovery shown inline with stock analysis and provenance;
+- dashboard function map with `Example Data` anchors for the demo areas;
+- planned live integrations shown as non-clickable **Coming soon** buttons;
 - informational verdicts: **Potential Entry**, **Watch**, **Avoid** and
   **Insufficient Data**;
 - public Methodology, Status and Disclaimer pages;

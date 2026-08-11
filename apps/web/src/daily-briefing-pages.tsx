@@ -179,7 +179,11 @@ function VerdictBadge({ verdict }: { verdict: BriefingVerdict }) {
 
 function MarketStrip() {
   return (
-    <section className="briefing-market-strip" aria-label="Example market context">
+    <section
+      id="market-context"
+      className="briefing-market-strip"
+      aria-label="Example market context"
+    >
       {exampleDailyBriefing.market.map((item) => (
         <article key={item.symbol}>
           <header>
@@ -198,6 +202,126 @@ function MarketStrip() {
           <p>{item.note}</p>
         </article>
       ))}
+    </section>
+  );
+}
+
+const demoFunctionItems = [
+  {
+    label: "Market context",
+    detail: "S&P 500 · Nasdaq-100 · VIX",
+    href: "#market-context",
+    Icon: BarChart3,
+  },
+  {
+    label: "Qualified ideas",
+    detail: "Potential Entry · Watch · Avoid",
+    href: "#briefing-ideas",
+    Icon: Radar,
+  },
+  {
+    label: "Analysis & risk",
+    detail: "Technical · financial · risk",
+    href: "#briefing-analysis",
+    Icon: LineChart,
+  },
+  {
+    label: "Source provenance",
+    detail: "X source · timestamps · evidence",
+    href: "#source-provenance",
+    Icon: Globe2,
+  },
+  {
+    label: "Publication rhythm",
+    detail: "Pre-market · post-close",
+    href: "#publication-rhythm",
+    Icon: CalendarClock,
+  },
+] as const;
+
+const plannedFunctionItems = [
+  {
+    label: "Live X discovery",
+    detail: "Curated posts from the approved allowlist",
+    Icon: Newspaper,
+  },
+  {
+    label: "Live TradingView analysis",
+    detail: "Quotes, structure and market context",
+    Icon: TrendingUp,
+  },
+  {
+    label: "Brief history",
+    detail: "Auditable editions and freshness history",
+    Icon: FileSearch,
+  },
+  {
+    label: "Live publication",
+    detail: "Validated briefs delivered to the public read model",
+    Icon: CircleDot,
+  },
+] as const;
+
+function BriefingFunctionMenu() {
+  return (
+    <section
+      className="briefing-function-menu"
+      aria-labelledby="briefing-function-menu-title"
+    >
+      <div className="briefing-function-menu-intro">
+        <span className="briefing-kicker">BRIEFING MAP</span>
+        <h2 id="briefing-function-menu-title">Explore the terminal</h2>
+        <p>
+          Demo areas are ready to review now. Live connections arrive in the next focused
+          releases.
+        </p>
+      </div>
+
+      <nav className="briefing-function-groups" aria-label="Dashboard functions">
+        <div className="briefing-function-group">
+          <span className="briefing-function-group-label">Available now</span>
+          <div className="briefing-function-list">
+            {demoFunctionItems.map(({ label, detail, href, Icon }) => (
+              <a
+                key={label}
+                className="briefing-function-item"
+                href={href}
+                aria-label={`Example Data: ${label}`}
+              >
+                <Icon size={15} aria-hidden="true" />
+                <span>
+                  <small>Example Data</small>
+                  <strong>{label}</strong>
+                  <em>{detail}</em>
+                </span>
+                <ArrowRight size={13} aria-hidden="true" />
+              </a>
+            ))}
+          </div>
+        </div>
+
+        <div className="briefing-function-group">
+          <span className="briefing-function-group-label">Planned</span>
+          <div className="briefing-function-list">
+            {plannedFunctionItems.map(({ label, detail, Icon }) => (
+              <button
+                key={label}
+                className="briefing-function-item is-coming-soon"
+                type="button"
+                disabled
+                aria-label={`Coming soon: ${label}`}
+              >
+                <Icon size={15} aria-hidden="true" />
+                <span>
+                  <small>Coming soon</small>
+                  <strong>{label}</strong>
+                  <em>{detail}</em>
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </nav>
     </section>
   );
 }
@@ -254,7 +378,10 @@ function IdeaCard({ idea, featured }: { idea: BriefingIdea; featured: boolean })
           </span>
         </div>
 
-        <div className="briefing-analysis-grid">
+        <div
+          id={featured ? "briefing-analysis" : undefined}
+          className="briefing-analysis-grid"
+        >
           <section>
             <h3>
               <LineChart size={16} aria-hidden="true" /> Technical confirmation
@@ -281,7 +408,10 @@ function IdeaCard({ idea, featured }: { idea: BriefingIdea; featured: boolean })
           </section>
         </div>
 
-        <section className="briefing-provenance">
+        <section
+          id={featured ? "source-provenance" : undefined}
+          className="briefing-provenance"
+        >
           <h3>
             <Globe2 size={16} aria-hidden="true" /> Provenance
           </h3>
@@ -332,10 +462,12 @@ export function DailyBriefingDashboardPage() {
           </span>
         </section>
 
+        <BriefingFunctionMenu />
+
         <MarketStrip />
 
         <div className="briefing-terminal-grid">
-          <section className="briefing-main-column">
+          <section id="briefing-ideas" className="briefing-main-column">
             <header className="briefing-section-header">
               <div>
                 <span className="briefing-kicker">CURATED DISCOVERY · QUALIFIED INDEPENDENTLY</span>
@@ -354,7 +486,7 @@ export function DailyBriefingDashboardPage() {
           </section>
 
           <aside className="briefing-side-column">
-            <section className="briefing-side-card">
+            <section id="publication-rhythm" className="briefing-side-card">
               <span className="briefing-kicker">PUBLICATION RHYTHM</span>
               <h2>Two market checkpoints</h2>
               <div className="briefing-schedule-list">

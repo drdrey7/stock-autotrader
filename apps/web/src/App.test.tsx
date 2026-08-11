@@ -78,7 +78,9 @@ describe("Stock Daily Briefing public experience", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText("Example Data")).toBeInTheDocument();
+    expect(
+      screen.getByText("Example Data", { selector: ".briefing-example-badge" }),
+    ).toBeInTheDocument();
     expect(screen.getByText("S&P 500")).toBeInTheDocument();
     expect(screen.getByText("Nasdaq-100")).toBeInTheDocument();
     expect(screen.getByText("VIX")).toBeInTheDocument();
@@ -93,6 +95,48 @@ describe("Stock Daily Briefing public experience", () => {
     expect(screen.getAllByText("Provenance").length).toBeGreaterThan(0);
     expect(view.container.querySelector(".sidebar, .tabs")).toBeNull();
     expect(screen.queryByText(/log in|sign in/i)).not.toBeInTheDocument();
+  });
+
+  it("maps planned functions to demo anchors and disables future integrations", () => {
+    const view = render(
+      <MemoryRouter initialEntries={["/dashboard"]}>
+        <App />
+      </MemoryRouter>,
+    );
+
+    expect(
+      screen.getByRole("navigation", { name: "Dashboard functions" }),
+    ).toBeInTheDocument();
+
+    for (const [label, href] of [
+      ["Market context", "#market-context"],
+      ["Qualified ideas", "#briefing-ideas"],
+      ["Analysis & risk", "#briefing-analysis"],
+      ["Source provenance", "#source-provenance"],
+      ["Publication rhythm", "#publication-rhythm"],
+    ] as const) {
+      const link = screen.getByRole("link", {
+        name: new RegExp(`Example Data.*${label}`),
+      });
+      expect(link).toHaveAttribute("href", href);
+      expect(link).toHaveTextContent(label);
+      expect(view.container.querySelector(href)).toBeInTheDocument();
+    }
+
+    for (const label of [
+      "Live X discovery",
+      "Live TradingView analysis",
+      "Brief history",
+      "Live publication",
+    ]) {
+      const button = screen.getByRole("button", {
+        name: new RegExp(`Coming soon.*${label}`),
+      });
+      expect(button).toBeDisabled();
+      expect(button).toHaveTextContent("Coming soon");
+      expect(button).toHaveTextContent(label);
+      expect(button).not.toHaveAttribute("href");
+    }
   });
 
   it.each([
