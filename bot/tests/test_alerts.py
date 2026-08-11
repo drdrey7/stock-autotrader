@@ -1,62 +1,49 @@
 import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
 
-from bot.alerts import send_alert
+from bot.alerts import format_alert, runtime_start_message
 from bot.config import Settings
 
 
 class AlertsTests(unittest.TestCase):
-    def test_send_alert_success(self):
-        s = Settings(bot_env="dev", telegram_bot_token="t", telegram_chat_id="c")
-        with mock.patch("bot.alerts.requests.post") as post:
-            post.return_value.__enter__ = mock.Mock(return_value=post.return_value)
-            post.return_value.__exit__ = mock.Mock(return_value=False)
-            post.return_value.raise_for_status = mock.Mock()
-            self.assertTrue(send_alert(s, "hi"))
-        post.assert_called_once()
-        args, kwargs = post.call_args
-        self.assertEqual(kwargs["json"]["chat_id"], "c")
-        self.assertEqual(kwargs["json"]["text"], "hi")
+    def test_format_alert_includes_env_and_text(self):
+        s = Settings(bot_env="dev")
+        msg = format_alert(s, "runtime started")
+        self.assertIn("stock-autotrader", msg)
+        self.assertIn("[dev]", msg)
+        self.assertIn("runtime started", msg)
 
-    def test_send_alert_skipped_without_config(self):
-        s = Settings(bot_env="dev", telegram_bot_token="", telegram_chat_id="")
-        self.assertFalse(send_alert(s, "hi"))
+    def test_format_alert_never_contains_secrets(self):
+        s = Settings(bot_env="production", ingest_secret="super-secret-value")
+        msg = runtime_start_message(s)
+        self.assertNotIn("super-secret-value", msg)
+        self.assertNotIn("secret", msg.lower())
 
-    def test_send_alert_failure(self):
-        import requests
-
-        s = Settings(bot_env="dev", telegram_bot_token="t", telegram_chat_id="c")
-        with mock.patch("bot.alerts.requests.post", side_effect=requests.ConnectionError("boom")):
-            self.assertFalse(send_alert(s, "hi"))
-
-    def test_alert_error_log_never_contains_token(self):
-        """The raw requests exception embeds the token in the URL on connection
-        failures — the log must only contain the exception type (PR #4 B3)."""
+    def test_alert_prints_to_stdout_for_hermes_delivery(self):
+        """Delivery contract: `python -m bot alert` prints the line to stdout;
+        a Hermes cron (profile default) delivers it to Telegram."""
+        import contextlib
         import io
-        import logging
+        import os
+        import tempfile as _tmp
 
-        import requests
+        from bot import cli
 
-        token = "SECRET_TOKEN_1234567890"
-        s = Settings(bot_env="dev", telegram_bot_token=token, telegram_chat_id="c")
-        exc = requests.ConnectionError(
-            f"HTTPSConnectionPool(host='api.telegram.org', port=443): Max retries "
-            f"exceeded with url: /bot{token}/sendMessage"
-        )
-        stream = io.StringIO()
-        handler = logging.StreamHandler(stream)
-        logger = logging.getLogger("bot.alerts")
-        logger.addHandler(handler)
-        logger.setLevel(logging.ERROR)
-        try:
-            with mock.patch("bot.alerts.requests.post", side_effect=exc):
-                send_alert(s, "hi")
-        finally:
-            logger.removeHandler(handler)
-        self.assertNotIn(token, stream.getvalue())
-        self.assertIn("ConnectionError", stream.getvalue())
+        with _tmp.TemporaryDirectory() as tmp:
+            old = os.environ.get("DATA_DIR")
+            os.environ["DATA_DIR"] = str(Path(tmp) / "data")
+            buf = io.StringIO()
+            try:
+                with contextlib.redirect_stdout(buf):
+                    code = cli.main(["alert", "engine degraded"])
+            finally:
+                if old is None:
+                    os.environ.pop("DATA_DIR", None)
+                else:
+                    os.environ["DATA_DIR"] = old
+        self.assertEqual(code, 0)
+        self.assertIn("engine degraded", buf.getvalue())
 
 
 class SchedulerTests(unittest.TestCase):

@@ -41,9 +41,8 @@ class Settings(BaseSettings):
     ingest_url: str = "https://stock-autotrader-web.barroso-labs.workers.dev/ingest/events"
     ingest_secret: str = ""  # required in production (from .env / secret store)
 
-    # --- Telegram operational alerts ---
-    telegram_bot_token: str = ""
-    telegram_chat_id: str = ""
+    # NOTE: no Telegram credentials here — operational alerts are delivered by
+    # a Hermes cron (profile default) to the already-configured Telegram channel.
 
     @field_validator("ingest_secret")
     @classmethod
@@ -68,10 +67,6 @@ class Settings(BaseSettings):
         missing: list[str] = []
         if self.production and not self.ingest_secret:
             missing.append("INGEST_SECRET")
-        if self.production and not self.telegram_bot_token:
-            missing.append("TELEGRAM_BOT_TOKEN")
-        if self.production and not self.telegram_chat_id:
-            missing.append("TELEGRAM_CHAT_ID")
         return missing
 
 

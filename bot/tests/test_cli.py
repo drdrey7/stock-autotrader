@@ -57,13 +57,12 @@ class ConfigTests(unittest.TestCase):
                 os.environ["INGEST_SECRET"] = old
 
     def test_check_secrets_production(self):
-        import os
-
         from bot.config import Settings
 
-        s = Settings(bot_env="production", ingest_secret="x", telegram_bot_token="", telegram_chat_id="")
-        self.assertIn("TELEGRAM_BOT_TOKEN", s.check_secrets())
-        self.assertIn("TELEGRAM_CHAT_ID", s.check_secrets())
+        s = Settings(bot_env="production", ingest_secret="")
+        self.assertIn("INGEST_SECRET", s.check_secrets())
+        s2 = Settings(bot_env="production", ingest_secret="real-value")
+        self.assertEqual(s2.check_secrets(), [])
 
 
 if __name__ == "__main__":

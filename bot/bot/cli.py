@@ -4,7 +4,7 @@ Usage:
     python -m bot smoke            # validate runtime (no side effects)
     python -m bot health           # print health report
     python -m bot run              # start the scheduler (blocking)
-    python -m bot alert "message"  # send a Telegram alert (config required)
+    python -m bot alert "message"  # print alert line to stdout (Hermes cron delivers)
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import json
 import signal
 import sys
 
-from .alerts import send_alert
+from .alerts import format_alert
 from .config import get_settings
 from .health import health_report
 from .logging_setup import setup_logging
@@ -82,9 +82,11 @@ def _cmd_run(args) -> int:
 
 
 def _cmd_alert(args) -> int:
+    """Print the alert line to stdout — a Hermes cron (profile default)
+    delivers it to the configured Telegram channel."""
     settings = get_settings()
-    ok = send_alert(settings, args.message)
-    return 0 if ok else 1
+    print(format_alert(settings, args.message))
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -94,7 +96,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("smoke", help="validate runtime (no side effects)")
     sub.add_parser("health", help="print health report")
     sub.add_parser("run", help="start scheduler (blocking)")
-    alert = sub.add_parser("alert", help="send Telegram alert")
+    alert = sub.add_parser("alert", help="print alert line to stdout (Hermes cron delivers)")
     alert.add_argument("message", help="alert text")
 
     args = parser.parse_args(argv)

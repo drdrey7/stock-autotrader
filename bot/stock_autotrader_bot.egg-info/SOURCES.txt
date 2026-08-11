@@ -1,5 +1,6 @@
 pyproject.toml
 bot/__init__.py
+bot/__main__.py
 bot/alerts.py
 bot/cli.py
 bot/config.py
