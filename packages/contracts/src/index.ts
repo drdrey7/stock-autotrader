@@ -121,6 +121,8 @@ export interface MarketDataSnapshot {
   updatedAt: string | null;
 }
 
+export * from "./daily-briefing";
+
 export interface DashboardData {
   demo: boolean;
   status: {

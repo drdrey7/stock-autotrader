@@ -36,9 +36,10 @@ claims about market conditions.
 - broker, order, paper-trading or live-trading functionality.
 
 The existing Worker/D1 and private Python foundations remain unchanged for
-compatibility. They are not consumed by the new frontend preview. Later focused
-PRs will add the validated DailyBriefing contract, private publisher and live
-read model.
+compatibility. They are not consumed by the new frontend preview. PR #7 adds
+only the shared, runtime-validated `DailyBriefing` v1 contract and keeps the
+fixture synthetic; later focused PRs will add a private publisher and live read
+model.
 
 ## Briefing rhythm
 
@@ -81,7 +82,8 @@ apps/web/src/daily-briefing-example.ts  Single synthetic PR #6 fixture
 apps/web/src/daily-briefing.css         Isolated responsive product styling
 apps/web/worker                         Existing Cloudflare Worker and D1 read model
 bot/bot                                 Existing private runtime foundation
-packages/contracts                      Existing shared contracts; DailyBriefing v1 follows in PR #7
+packages/contracts/src/daily-briefing.ts  Shared validated DailyBriefing v1 contract
+packages/contracts                      Existing shared contracts and schemas
 ```
 
 ## Disclaimer

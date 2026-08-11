@@ -1,65 +1,12 @@
-export type BriefingVerdict =
-  | "Potential Entry"
-  | "Watch"
-  | "Avoid"
-  | "Insufficient Data";
+import type { DailyBriefing } from "@stock-autotrader/contracts";
 
-export interface MarketContextItem {
-  name: "S&P 500" | "Nasdaq-100" | "VIX";
-  symbol: "SP:SPX" | "NASDAQ:NDX" | "CBOE:VIX";
-  value: string;
-  change: string;
-  state: string;
-  note: string;
-}
-
-export interface BriefingIdea {
-  symbol: string;
-  company: string;
-  verdict: BriefingVerdict;
-  price: string;
-  change: string;
-  thesis: string;
-  source: {
-    handle: "@nolimitgains";
-    reference: string;
-    originalTimestamp: string;
-    collectedTimestamp: string;
-    summary: string;
-  };
-  technical: string[];
-  financial: string[];
-  news: string[];
-  risks: string[];
-  levels: {
-    trigger: string;
-    invalidation: string;
-    objective: string;
-    rewardRisk: string;
-  };
-}
-
-export interface DailyBriefingExample {
-  example: true;
-  editionDate: string;
-  editionType: "pre_market" | "post_close";
-  timezone: "America/New_York";
-  preparedAt: string;
-  title: string;
-  marketSummary: string;
-  market: MarketContextItem[];
-  ideas: BriefingIdea[];
-  schedule: Array<{
-    label: string;
-    time: string;
-    detail: string;
-  }>;
-}
+export type { BriefingIdea, BriefingVerdict } from "@stock-autotrader/contracts";
+export type DailyBriefingExample = DailyBriefing;
 
 /**
  * Frontend-only example fixture for PR #6.
  * It is deliberately synthetic and never represents live market or X data.
- * The shared validated DailyBriefing v1 contract belongs to PR #7.
+ * It is typed against and covered by the shared validated DailyBriefing v1 contract.
  */
 export const exampleDailyBriefing: DailyBriefingExample = {
   example: true,
