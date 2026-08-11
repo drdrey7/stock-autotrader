@@ -68,7 +68,8 @@ def _cmd_run(args) -> int:
 
     def _shutdown(signum, frame):
         store.record_event("INFO", "runtime", f"received signal {signum}, shutting down")
-        sched.shutdown(wait=False)
+        # Drain APScheduler workers before closing their shared SQLite store.
+        sched.shutdown(wait=True)
 
     signal.signal(signal.SIGTERM, _shutdown)
     signal.signal(signal.SIGINT, _shutdown)

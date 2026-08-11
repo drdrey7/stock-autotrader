@@ -8,15 +8,19 @@ from bot.state import StateStore
 
 
 class HealthReportTests(unittest.TestCase):
-    def test_failed_latest_health_degrades_report(self):
+    def test_stale_success_degrades_report(self):
+        from datetime import datetime, timedelta, timezone
+
         with tempfile.TemporaryDirectory() as tmp:
             store = StateStore(Path(tmp) / "state.db")
             run_id = store.start_job("health_check")
-            store.finish_job(run_id, "error", "database probe failed")
+            store.finish_job(run_id, "ok")
+            old = (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat()
+            with store.tx() as conn:
+                conn.execute("UPDATE job_runs SET finished_at = ? WHERE id = ?", (old, run_id))
             report = health_report(Settings(bot_env="dev"), store)
             self.assertEqual(report["status"], "degraded")
             self.assertFalse(report["db_writable"])
-            self.assertEqual(report["last_health_check"]["status"], "error")
             store.close()
 
 

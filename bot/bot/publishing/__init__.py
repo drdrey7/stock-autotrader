@@ -25,16 +25,21 @@ def _public_engine_status(settings: Settings) -> str:
     return "delayed" if settings.check_secrets() else "online"
 
 
-def publish_system_status(settings: Settings) -> dict:
-    """Publish a SYSTEM_STATUS event so the public dashboard stays fresh."""
+def publish_system_status(settings: Settings, last_data_update: str | None = None) -> dict:
+    """Publish runtime status without fabricating market-data freshness.
+
+    ``last_data_update`` must come from the last successful market-data update;
+    when unknown it is omitted rather than set to the heartbeat timestamp.
+    """
     from publisher import client
 
-    now = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
     degraded = bool(settings.check_secrets())
-    event = client.make_event("SYSTEM_STATUS", {
+    payload = {
         "engine": _public_engine_status(settings),
         "nextScan": None,
-        "lastDataUpdate": now,
         "apiHealth": "degraded" if degraded else "healthy",
-    })
+    }
+    if last_data_update is not None:
+        payload["lastDataUpdate"] = last_data_update
+    event = client.make_event("SYSTEM_STATUS", payload)
     return publish_events(settings, [event])
