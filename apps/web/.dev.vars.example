@@ -1,0 +1,4 @@
+# Local-only secrets for `wrangler dev` (never committed).
+# Copy to .dev.vars and set a value. Production/preview secrets come from
+# GitHub Actions secrets (INGEST_SECRET) via `wrangler secret put`.
+INGEST_SECRET=dev-secret-change-me

@@ -1,4 +1,5 @@
 import type { DashboardData, StrategySummary, Candidate } from "@stock-autotrader/contracts";
+import { handleIngest } from "./ingest";
 
 /**
  * Stock Autotrader public read-only API (PR #2).
@@ -9,6 +10,7 @@ import type { DashboardData, StrategySummary, Candidate } from "@stock-autotrade
 export interface Env {
   DB: D1Database;
   ASSETS: Fetcher;
+  INGEST_SECRET?: string;
 }
 
 const json = (data: unknown, status = 200) =>
@@ -54,7 +56,8 @@ async function buildDashboard(env: Env): Promise<DashboardData> {
   const [scanRes, strategiesRes, candidatesRes, earningsRes, positionsRes, eventsRes, researchRes] = await Promise.all([
     env.DB.prepare("SELECT * FROM scans ORDER BY id DESC LIMIT 1").first(),
     env.DB.prepare("SELECT * FROM strategies ORDER BY id").all(),
-    env.DB.prepare("SELECT * FROM scan_candidates ORDER BY id").all(),
+    // Surface only the candidates from the latest scan (older scans are history).
+    env.DB.prepare("SELECT * FROM scan_candidates WHERE scan_id = (SELECT MAX(id) FROM scans) ORDER BY id").all(),
     env.DB.prepare("SELECT * FROM earnings ORDER BY date").all(),
     env.DB.prepare("SELECT * FROM shadow_positions ORDER BY id").all(),
     env.DB.prepare("SELECT * FROM bot_events ORDER BY id").all(),
@@ -182,14 +185,22 @@ async function buildDashboard(env: Env): Promise<DashboardData> {
     riskPolicy: parseJson(metaMap.get("riskPolicy"), {}),
   };
 
+  // Stale-data detection: if the engine has not published in 26h (daily scans +
+  // margin), surface it as delayed/degraded instead of pretending health.
+  const lastDataUpdate = str(metaMap.get("lastDataUpdate"));
+  const lastUpdateMs = lastDataUpdate ? Date.parse(lastDataUpdate) : Number.NaN;
+  const stale = !Number.isNaN(lastUpdateMs) && Date.now() - lastUpdateMs > 26 * 3600_000;
+  const engine = (metaMap.get("engine") as DashboardData["status"]["engine"] | undefined) ?? "online";
+  const apiHealth = (metaMap.get("apiHealth") as DashboardData["status"]["apiHealth"] | undefined) ?? "healthy";
+
   return {
     demo: false,
     status: {
-      engine: (metaMap.get("engine") as DashboardData["status"]["engine"]) ?? "online",
+      engine: stale ? "delayed" : engine,
       latestScan: scan ? scan.scanned_at : null,
       nextScan: str(metaMap.get("nextScan")),
-      lastDataUpdate: str(metaMap.get("lastDataUpdate")),
-      apiHealth: (metaMap.get("apiHealth") as DashboardData["status"]["apiHealth"]) ?? "healthy",
+      lastDataUpdate,
+      apiHealth: stale ? "degraded" : apiHealth,
     },
     scan: {
       universe: scan ? int(scan.universe) : 0,
@@ -210,10 +221,14 @@ async function buildDashboard(env: Env): Promise<DashboardData> {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    const { pathname } = new URL(request.url);
+
+    // Protected publication endpoint (PR #3) — accepts POST before the GET-only gate.
+    if (pathname === "/ingest/events") return handleIngest(request, env);
+
     if (request.method !== "GET" && request.method !== "HEAD" && request.method !== "OPTIONS") {
       return json({ error: "Method not allowed" }, 405);
     }
-    const { pathname } = new URL(request.url);
 
     if (pathname === "/healthz") {
       return json({ ok: true, time: new Date().toISOString() });
