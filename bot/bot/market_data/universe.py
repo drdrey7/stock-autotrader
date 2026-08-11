@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections import Counter
 from math import isfinite
 from typing import Any, Mapping
 
@@ -40,23 +41,23 @@ def build_universe(rows: list[Mapping[str, Any]], config: UniverseConfig | None 
     eligible: list[Instrument] = []
     excluded_symbols: list[str] = []
     exclusions: dict[str, str] = {}
-    seen: set[str] = set()
+    normalized_symbols = [_symbol(row.get("symbol")) or "<invalid-symbol>" for row in rows]
+    duplicate_symbols = {
+        symbol
+        for symbol, count in Counter(normalized_symbols).items()
+        if count > 1
+    }
 
-    for row in rows:
-        symbol = _symbol(row.get("symbol")) or "<invalid-symbol>"
-        reason: str | None = None
+    for row, symbol in zip(rows, normalized_symbols):
+        reason: str | None = "duplicate symbol" if symbol in duplicate_symbols else None
         security_type = ""
         exchange = ""
         memberships: set[str] = set()
         market_cap = 0
         avg_volume = 0
         price = 0.0
-        if symbol in seen:
-            reason = "duplicate symbol"
-        else:
-            seen.add(symbol)
-            if not SYMBOL_RE.fullmatch(symbol):
-                reason = "invalid symbol"
+        if reason is None and not SYMBOL_RE.fullmatch(symbol):
+            reason = "invalid symbol"
         try:
             security_type = str(row.get("security_type", "")).strip().upper()
             exchange = str(row.get("exchange", "")).strip().upper()

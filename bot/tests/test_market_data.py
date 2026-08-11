@@ -121,6 +121,27 @@ class MarketDataTests(unittest.TestCase):
         self.assertEqual(result.total, 2)
         self.assertEqual(result.exclusions["<invalid-symbol>"], "duplicate symbol")
 
+    def test_duplicate_valid_symbols_never_become_candidates(self):
+        base = {
+            "company": "Duplicate Microsoft",
+            "sector": "Technology",
+            "exchange": "NASDAQ",
+            "index_membership": "NASDAQ",
+            "active": "true",
+            "market_cap": "3000000000",
+            "avg_volume": "300000",
+            "price": "50",
+            "security_type": "common_stock",
+        }
+        result = build_universe([
+            {**base, "symbol": "MSFT"},
+            {**base, "symbol": " msft "},
+        ])
+        self.assertEqual(result.eligible, ())
+        self.assertEqual(result.total, 2)
+        self.assertEqual(result.excluded, 2)
+        self.assertEqual(result.exclusions["MSFT"], "duplicate symbol")
+
     def test_csv_pipeline_validates_benchmarks_and_writes_cache(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
