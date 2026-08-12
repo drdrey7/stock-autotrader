@@ -181,6 +181,34 @@ describe("DailyBriefing publication helpers", () => {
     expect(changed).not.toBe(original);
   });
 
+  it("keeps immutable stored briefs readable after current universe membership changes", async () => {
+    const db = new FakeD1();
+    const historicalBriefing = JSON.parse(JSON.stringify({ ...exampleDailyBriefing, example: false }));
+    historicalBriefing.ideas[0].symbol = "FORMER";
+    const publishedAt = "2026-08-11T13:00:00.000Z";
+
+    db.briefings.set("2026-08-11:pre_market", {
+      edition_date: "2026-08-11",
+      edition_type: "pre_market",
+      timezone: historicalBriefing.timezone,
+      prepared_at: historicalBriefing.preparedAt,
+      published_at: publishedAt,
+      content_hash: await briefingContentHash(historicalBriefing),
+      event_id: "historical-membership-001",
+      payload_json: canonicalJson(historicalBriefing),
+    });
+
+    await expect(readLatestBriefing(db as unknown as D1Database)).resolves.toMatchObject({
+      editionDate: "2026-08-11",
+      editionType: "pre_market",
+      example: false,
+    });
+    await expect(readBriefingStatus(db as unknown as D1Database, fixedNow)).resolves.toMatchObject({
+      available: true,
+      freshness: "fresh",
+    });
+  });
+
   it("classifies missing, fresh, stale, and future publication timestamps", () => {
     expect(briefingFreshness(null, fixedNow)).toBe("unavailable");
     expect(briefingFreshness("2026-08-11T13:00:00.000Z", fixedNow)).toBe("fresh");

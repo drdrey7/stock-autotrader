@@ -1,6 +1,7 @@
 import {
   briefingEditionTypeSchema,
   publishedDailyBriefingSchema,
+  storedDailyBriefingSchema,
   type BriefingEditionType,
   type DailyBriefing,
 } from "@stock-autotrader/contracts";
@@ -82,7 +83,7 @@ async function parseStoredRow(row: BriefingRow): Promise<DailyBriefing> {
   } catch {
     throw new Error("stored briefing payload is not valid JSON");
   }
-  const briefing = publishedDailyBriefingSchema.parse(parsedPayload);
+  const briefing = storedDailyBriefingSchema.parse(parsedPayload);
   if (
     briefing.editionDate !== row.edition_date ||
     briefing.editionType !== row.edition_type ||

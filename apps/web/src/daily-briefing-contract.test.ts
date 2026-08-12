@@ -1,6 +1,7 @@
 import {
   dailyBriefingSchema,
   publishedDailyBriefingSchema,
+  storedDailyBriefingSchema,
   type DailyBriefing,
 } from "@stock-autotrader/contracts";
 import { describe, expect, it } from "vitest";
@@ -248,6 +249,7 @@ describe("DailyBriefing v1 contract", () => {
 
   it("does not allow the Example Data fixture to be published", () => {
     expect(publishedDailyBriefingSchema.safeParse(exampleDailyBriefing).success).toBe(false);
+    expect(storedDailyBriefingSchema.safeParse(exampleDailyBriefing).success).toBe(false);
 
     const realBriefing = cloneBriefing();
     realBriefing.example = false;

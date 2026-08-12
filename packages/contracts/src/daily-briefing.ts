@@ -101,7 +101,7 @@ export const briefingIdeaSchema = z.strictObject({
 export type BriefingVerdict = z.infer<typeof briefingIdeaSchema>["verdict"];
 export type BriefingIdea = z.infer<typeof briefingIdeaSchema>;
 
-export const dailyBriefingSchema = z
+const dailyBriefingObjectSchema = z
   .strictObject({
     example: z.boolean(),
     editionDate: briefingCalendarDateSchema,
@@ -119,7 +119,9 @@ export const dailyBriefingSchema = z
         detail: nonEmptyString,
       }),
     ).max(20),
-  })
+  });
+
+const createDailyBriefingSchema = (validateCurrentUniverse: boolean) => dailyBriefingObjectSchema
   .superRefine((briefing, ctx) => {
     const expectedByName = new Map(
       briefingBenchmarkDefinitions.map((benchmark) => [benchmark.name, benchmark.symbol]),
@@ -218,7 +220,7 @@ export const dailyBriefingSchema = z
         });
       }
       seenIdeaSymbols.add(canonicalSymbol);
-      if (!isBriefingSymbolInUniverse(idea.symbol, idea.universe)) {
+      if (validateCurrentUniverse && !isBriefingSymbolInUniverse(idea.symbol, idea.universe)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["ideas", index, "symbol"],
@@ -242,9 +244,11 @@ export const dailyBriefingSchema = z
     });
   });
 
+export const dailyBriefingSchema = createDailyBriefingSchema(true);
+
 export type DailyBriefing = z.infer<typeof dailyBriefingSchema>;
 
-export const publishedDailyBriefingSchema = dailyBriefingSchema.superRefine((briefing, ctx) => {
+function rejectExampleData(briefing: DailyBriefing, ctx: z.RefinementCtx): void {
   if (briefing.example) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -252,4 +256,9 @@ export const publishedDailyBriefingSchema = dailyBriefingSchema.superRefine((bri
       message: "Example Data cannot be published as a live briefing",
     });
   }
-});
+}
+
+export const storedDailyBriefingSchema = createDailyBriefingSchema(false)
+  .superRefine(rejectExampleData);
+
+export const publishedDailyBriefingSchema = dailyBriefingSchema.superRefine(rejectExampleData);
