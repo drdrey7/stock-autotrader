@@ -277,7 +277,7 @@ const dashboardMenuItems = [
   {
     label: "X search",
     detail: "Curated source discovery",
-    href: undefined,
+    href: "/x",
     Icon: Globe2,
   },
   {
@@ -355,7 +355,27 @@ function DashboardMenu() {
         <nav aria-label="Dashboard sections">
           {dashboardMenuItems.map(({ label, detail, href, Icon }) => {
             if (href) {
-              return (
+              const isInternal = href.startsWith("/");
+              const content = (
+                <>
+                  <Icon size={17} aria-hidden="true" />
+                  <span>
+                    <small>{detail}</small>
+                    <strong>{label}</strong>
+                  </span>
+                </>
+              );
+              return isInternal ? (
+                <Link
+                  key={label}
+                  className="briefing-dashboard-menu-item is-active"
+                  to={href}
+                  aria-current="page"
+                  onClick={() => setIsOpen(false)}
+                >
+                  {content}
+                </Link>
+              ) : (
                 <a
                   key={label}
                   className="briefing-dashboard-menu-item is-active"
@@ -363,11 +383,7 @@ function DashboardMenu() {
                   aria-current="page"
                   onClick={() => setIsOpen(false)}
                 >
-                  <Icon size={17} aria-hidden="true" />
-                  <span>
-                    <small>{detail}</small>
-                    <strong>{label}</strong>
-                  </span>
+                  {content}
                 </a>
               );
             }

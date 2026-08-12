@@ -82,6 +82,20 @@ def _cmd_brief(args: argparse.Namespace) -> int:
     return 0 if report.ok else 1
 
 
+def _cmd_x_posts(args: argparse.Namespace) -> int:
+    """Publish collected X posts as an X_POSTS_COLLECTED event (read model)."""
+    payload = json.loads(Path(args.posts).read_text())
+    posts = payload.get("posts") if isinstance(payload, dict) else payload
+    if not isinstance(posts, list) or not posts:
+        print("error: --posts must contain a JSON array (or {posts: [...]})", file=sys.stderr)
+        return 2
+    secret = _load_secret(args)
+    event = make_event("X_POSTS_COLLECTED", {"posts": posts})
+    result = publish(args.endpoint, secret, [event], timeout=args.timeout)
+    print(json.dumps(result))
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Stock Autotrader publisher.")
     subparsers = parser.add_subparsers(dest="command")
@@ -107,6 +121,14 @@ def main() -> int:
     brief.add_argument("--secret")
     brief.add_argument("--secret-file", type=Path)
     brief.set_defaults(handler=_cmd_brief)
+
+    x_posts = subparsers.add_parser("x-posts", help="Publish collected X posts to the read model (X Search feed).")
+    x_posts.add_argument("--posts", required=True, type=Path, help="JSON array of X posts (or {posts: [...]}).")
+    x_posts.add_argument("--endpoint", required=True)
+    x_posts.add_argument("--secret")
+    x_posts.add_argument("--secret-file", type=Path)
+    x_posts.add_argument("--timeout", type=int, default=30)
+    x_posts.set_defaults(handler=_cmd_x_posts)
 
     args = parser.parse_args()
     if not hasattr(args, "handler"):
