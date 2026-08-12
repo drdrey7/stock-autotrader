@@ -8,7 +8,7 @@ import type {
 } from "@stock-autotrader/contracts";
 import { marketIndexes as mockMarketIndexes, type MarketIndex } from "./data/market";
 import { opportunities as mockOpportunities, type Opportunity } from "./data/opportunities";
-import { xPosts as mockXPosts, type XPost } from "./data/xSurge";
+import { type XPost } from "./data/xSurge";
 import { earnings as mockEarnings, type EarningsCompany } from "./data/earnings";
 import type { DataSource } from "./data/source";
 
@@ -67,7 +67,7 @@ const labelledMockMarketIndexes: MarketIndex[] = mockMarketIndexes.map((item) =>
   source: "mock",
 }));
 
-function normaliseMockEarnings(items: EarningsCompany[], today = marketTodayKey()): EarningsCompany[] {
+function normaliseEarnings(items: EarningsCompany[], today = marketTodayKey()): EarningsCompany[] {
   return items.map((item) => item.result === "Upcoming" && item.date < today
     ? { ...item, result: "Pending" as const }
     : item);
@@ -76,8 +76,11 @@ function normaliseMockEarnings(items: EarningsCompany[], today = marketTodayKey(
 const initialData: MorningBriefingData = {
   marketIndexes: labelledMockMarketIndexes,
   opportunities: mockOpportunities,
-  xPosts: mockXPosts,
-  earnings: normaliseMockEarnings(mockEarnings),
+  // Social posts and earnings are backend publications.  Keep the initial
+  // state empty so a failed first request never turns demo fixtures into
+  // apparently current market information.
+  xPosts: [],
+  earnings: [],
   sources: {
     briefing: "mock",
     market: "mock",
@@ -127,6 +130,7 @@ const relativeTime = (iso: string): string => {
 
 const REQUEST_TIMEOUT_MS = 8_000;
 const EARNINGS_REFRESH_INTERVAL_MS = 60 * 60_000;
+const X_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
 
 async function fetchJson<T>(path: string): Promise<T | null> {
   const controller = new AbortController();
@@ -247,8 +251,15 @@ function opportunitiesFromCandidates(candidates: Candidate[]): Opportunity[] {
   }));
 }
 
+function isWithinXCacheWindow(createdAt: string): boolean {
+  const timestamp = Date.parse(createdAt);
+  const ageMs = Date.now() - timestamp;
+  return Number.isFinite(timestamp) && ageMs >= -5 * 60_000 && ageMs <= X_CACHE_MAX_AGE_MS;
+}
+
 function xPostsFromApi(posts: XApiPost[]): XPost[] {
   return [...posts]
+    .filter((post) => isWithinXCacheWindow(post.created_at))
     .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
     .map((post) => ({
     category: "Markets",
@@ -267,6 +278,52 @@ function xPostsFromApi(posts: XApiPost[]): XPost[] {
     change: post.change ?? undefined,
     source: "live",
   }));
+}
+
+function isUsableCachedPost(post: XPost): boolean {
+  return post.source === "live" || post.source === "cached";
+}
+
+function isWithinXCacheWindowForPost(post: XPost): boolean {
+  return isWithinXCacheWindow(post.createdAt);
+}
+
+function recentCachedPosts(posts: XPost[]): XPost[] {
+  return posts
+    .filter((post) => isUsableCachedPost(post) && isWithinXCacheWindowForPost(post))
+    .map((post) => ({ ...post, time: relativeTime(post.createdAt), source: "cached" as const }))
+    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+    .filter((post, index, all) => all.findIndex((candidate) => candidate.url === post.url) === index);
+}
+
+const X_CACHE_STORAGE_KEY = "morning-briefing-x-post-cache-v1";
+
+function readStoredXPosts(): XPost[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const parsed: unknown = JSON.parse(window.localStorage.getItem(X_CACHE_STORAGE_KEY) ?? "[]");
+    if (!Array.isArray(parsed)) return [];
+    const posts = parsed.flatMap((item) => {
+      if (!item || typeof item !== "object") return [];
+      const post = item as Partial<XPost>;
+      if (typeof post.createdAt !== "string" || typeof post.handle !== "string" || typeof post.text !== "string" || typeof post.url !== "string") return [];
+      return [{ ...post, source: "cached" as const } as XPost];
+    });
+    return recentCachedPosts(posts);
+  } catch {
+    return [];
+  }
+}
+
+function writeStoredXPosts(posts: XPost[]): void {
+  if (typeof window === "undefined") return;
+  try {
+    const recent = recentCachedPosts(posts);
+    if (recent.length === 0) window.localStorage.removeItem(X_CACHE_STORAGE_KEY);
+    else window.localStorage.setItem(X_CACHE_STORAGE_KEY, JSON.stringify(recent));
+  } catch {
+    // Storage is an optional durability layer; in-memory retention still works.
+  }
 }
 
 export function marketTodayKey(): string {
@@ -291,24 +348,20 @@ const candidatesAreFresh = (status: StatusResponse | null): boolean =>
 function earningsFromApi(events: EarningsEvent[]): EarningsCompany[] {
   const today = marketTodayKey();
   return events.map<EarningsCompany>((event) => {
-    const exact = mockEarnings.find((item) => item.ticker === event.symbol && item.date === event.date);
-    const known = exact ?? mockEarnings.find((item) => item.ticker === event.symbol);
+    const known = mockEarnings.find((item) => item.ticker === event.symbol);
     const isUpcoming = /^\d{4}-\d{2}-\d{2}$/.test(event.date) && event.date >= today;
-    if (!isUpcoming && exact && exact.result !== "Upcoming") {
-      return { ...exact, company: event.company, timing: event.timing, source: "mixed" as const, eventSignal: event.eventSignal };
-    }
     return {
       ticker: event.symbol,
       company: event.company,
       date: event.date,
       timing: event.timing,
       result: isUpcoming ? "Upcoming" : "Pending",
-      epsExpected: exact?.epsExpected ?? "Not published",
-      revenueExpected: exact?.revenueExpected ?? "Not published",
+      epsExpected: "Not published",
+      revenueExpected: "Not published",
       guidance: "Pending",
       officialUrl: known?.officialUrl,
       color: known?.color ?? tickerColour(event.symbol),
-      source: exact ? "mixed" : "live",
+      source: "live",
       eventSignal: event.eventSignal,
     };
   });
@@ -376,14 +429,24 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
       const currentRequest = ++xRequestId;
       const response = await fetchJson<XResponse>("/api/x/posts?limit=50");
       if (cancelled || currentRequest !== xRequestId) return;
-      const liveX = response?.posts?.length ? xPostsFromApi(response.posts) : null;
+      const liveX = response && Array.isArray(response.posts) ? xPostsFromApi(response.posts) : null;
       setData((previous) => {
-        const sources = { ...previous.sources, x: liveX ? "live" as const : cachedSource(previous.sources.x) };
+        const cached = recentCachedPosts([...readStoredXPosts(), ...previous.xPosts]);
+        const liveHandles = new Set((liveX ?? []).map((post) => post.handle.toLowerCase()));
+        const retained = cached.filter((post) => !liveHandles.has(post.handle.toLowerCase()));
+        const nextPosts = liveX === null
+          ? cached
+          : [...liveX, ...retained].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+        const source = liveX === null
+          ? cached.length > 0 ? "cached" as const : cachedSource(previous.sources.x)
+          : liveX.length > 0
+            ? retained.length > 0 ? "mixed" as const : "live" as const
+            : retained.length > 0 ? "cached" as const : "live" as const;
+        const sources = { ...previous.sources, x: source };
+        writeStoredXPosts(nextPosts);
         return {
           ...previous,
-          xPosts: liveX ?? [...previous.xPosts]
-            .map((post) => ({ ...post, time: relativeTime(post.createdAt), source: cachedSource(post.source) }))
-            .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)),
+          xPosts: nextPosts,
           sources,
           backendState: backendStateFromSources(sources),
         };
@@ -394,7 +457,7 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
       const today = marketTodayKey();
       setData((previous) => ({
         ...previous,
-        earnings: normaliseMockEarnings(previous.earnings, today),
+        earnings: normaliseEarnings(previous.earnings, today),
       }));
       const now = Date.now();
       const refreshDue = force
@@ -406,25 +469,15 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
       const currentRequest = ++earningsRequestId;
       const response = await fetchJson<EarningsEvent[]>("/api/earnings");
       if (cancelled || currentRequest !== earningsRequestId) return;
-      const apiEarnings = Array.isArray(response) && response.length ? earningsFromApi(response) : null;
-      const normalisedMocks = normaliseMockEarnings(mockEarnings);
-      const demoPast = normalisedMocks.filter((item) => item.result !== "Upcoming");
-      const mergedEarnings = apiEarnings
-        ? [
-            ...apiEarnings,
-            ...demoPast
-              .filter((demo) => !apiEarnings.some((live) => live.ticker === demo.ticker && live.date === demo.date))
-              .map((item) => ({ ...item, source: "mock" as const })),
-          ]
-        : null;
+      const apiEarnings = Array.isArray(response) ? earningsFromApi(response) : null;
       setData((previous) => {
         const sources = {
           ...previous.sources,
-          earnings: mergedEarnings ? (demoPast.length ? "mixed" as const : "live" as const) : cachedSource(previous.sources.earnings),
+          earnings: apiEarnings !== null ? "live" as const : cachedSource(previous.sources.earnings),
         };
         return {
           ...previous,
-          earnings: mergedEarnings ?? previous.earnings.map((item) => ({ ...item, source: cachedSource(item.source) })),
+          earnings: apiEarnings ?? previous.earnings.map((item) => ({ ...item, source: cachedSource(item.source) })),
           sources,
           backendState: backendStateFromSources(sources),
         };

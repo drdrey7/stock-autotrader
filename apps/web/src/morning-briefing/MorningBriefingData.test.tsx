@@ -138,6 +138,93 @@ it("keeps the last X posts when a later refresh fails", async () => {
   expect(screen.queryByText("Last update")).not.toBeInTheDocument();
 });
 
+it("does not show mock X posts after a successful empty feed", async () => {
+  const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input).startsWith("/api/x/posts")) return new Response(JSON.stringify({ posts: [], count: 0 }), { status: 200 });
+    return originalFetch(input, init);
+  });
+
+  const view = renderApp("/x");
+  await waitFor(() => expect(view.container.querySelector(".empty-state")).toHaveTextContent("No recent posts."));
+  expect(view.container.querySelector(".post-card")).toBeNull();
+  expect(screen.queryByText("Two scenarios for GOOGL and MSFT from an earlier call both played out at the same time: $GOOGL down 11% while $MSFT is up 22%.")).not.toBeInTheDocument();
+});
+
+it("does not show API posts older than seven days", async () => {
+  const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input).startsWith("/api/x/posts")) return new Response(JSON.stringify({ posts: [
+      { id: "expired", author: "@nolimitgains", text: "Expired post", created_at: "2026-08-05T22:29:00Z", url: "https://x.com/nolimitgains/status/expired", symbol: null, company: null, price: null, change: null },
+    ], count: 1 }), { status: 200 });
+    return originalFetch(input, init);
+  });
+
+  const view = renderApp("/x");
+  await waitFor(() => expect(view.container.querySelector(".empty-state")).toHaveTextContent("No recent posts."));
+  expect(screen.queryByText("Expired post")).not.toBeInTheDocument();
+  expect(view.container.querySelector(".post-card")).toBeNull();
+});
+
+it("keeps a tracked account's old posts for seven days, then shows no recent posts", async () => {
+  let xRequests = 0;
+  const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input).startsWith("/api/x/posts")) {
+      xRequests += 1;
+      if (xRequests === 1) return new Response(JSON.stringify({ posts: [
+        { id: "cached", author: "@nolimitgains", text: "Cached account post", created_at: "2026-08-06T22:30:00Z", url: "https://x.com/nolimitgains/status/cached", symbol: null, company: null, price: null, change: null },
+      ], count: 1 }), { status: 200 });
+      return new Response(JSON.stringify({ posts: [], count: 0 }), { status: 200 });
+    }
+    return originalFetch(input, init);
+  });
+
+  const view = renderApp("/x");
+  await screen.findByText("Cached account post");
+  vi.mocked(Date.now).mockReturnValue(Date.parse("2026-08-12T22:30:00Z"));
+  document.dispatchEvent(new Event("visibilitychange"));
+  await waitFor(() => expect(xRequests).toBe(2));
+  expect(screen.getByText("Cached account post")).toBeInTheDocument();
+
+  vi.mocked(Date.now).mockReturnValue(Date.parse("2026-08-14T22:30:00Z"));
+  document.dispatchEvent(new Event("visibilitychange"));
+  await waitFor(() => expect(xRequests).toBe(3));
+  await waitFor(() => expect(view.container.querySelector(".empty-state")).toHaveTextContent("No recent posts."));
+  expect(screen.queryByText("Cached account post")).not.toBeInTheDocument();
+});
+
+it("does not append static earnings results to a successful API schedule", async () => {
+  const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input) === "/api/earnings") return new Response(JSON.stringify([
+      { symbol: "API", company: "API Corp", date: "2026-08-03", timing: "AMC", eventSignal: "Confirmed" },
+      { symbol: "NEXT", company: "Next Corp", date: "2026-08-14", timing: "BMO", eventSignal: "Confirmed" },
+    ]), { status: 200 });
+    return originalFetch(input, init);
+  });
+
+  const view = renderApp();
+  await waitFor(() => expect(view.container.querySelector(".recent-results")).toHaveTextContent("API Corp"));
+  expect(view.container.querySelector(".recent-results")).not.toHaveTextContent("Microsoft");
+  expect(view.container.querySelector(".recent-results")).not.toHaveTextContent("Amazon");
+  expect(view.container.querySelector(".earnings-mini")).toHaveTextContent("Next Corp");
+});
+
+it("does not show static earnings when the first backend request fails", async () => {
+  const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input) === "/api/earnings") return new Response(null, { status: 503 });
+    return originalFetch(input, init);
+  });
+
+  const view = renderApp();
+  await waitFor(() => expect(view.container.querySelector(".recent-results")).toHaveTextContent("No recent earnings published."));
+  expect(view.container.querySelector(".recent-results")).not.toHaveTextContent("Microsoft");
+  expect(view.container.querySelector(".recent-results")).not.toHaveTextContent("Amazon");
+  expect(view.container.querySelector(".earnings-mini")).toHaveTextContent("No upcoming earnings published.");
+});
+
 it("refreshes earnings silently after the internal refresh interval", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   vi.setSystemTime(new Date("2026-08-12T16:00:00Z"));

@@ -13,6 +13,17 @@ function HistoryApp() {
   return <><button onClick={() => navigate(-1)}>Browser Back</button><MorningBriefingApp/></>;
 }
 
+const stubEarningsSchedule = () => {
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+    if (String(input) === "/api/earnings") {
+      return new Response(JSON.stringify([
+        { symbol: "MSFT", company: "Microsoft", date: "2026-08-15", timing: "AMC", eventSignal: "Confirmed" },
+      ]), { status: 200 });
+    }
+    return new Response(null, { status: 503 });
+  });
+};
+
 beforeEach(() => {
   localStorage.clear();
   vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-08-12T16:00:00Z"));
@@ -98,9 +109,9 @@ describe("Morning Briefing frontend demo", () => {
     expect(screen.queryByText("Top Social Buzz")).not.toBeInTheDocument();
     expect(screen.queryByText("Trending Keywords")).not.toBeInTheDocument();
 
-    const postStatus = view.container.querySelector(".post-status");
-    expect(postStatus?.querySelector(".data-source")).toBeNull();
-    expect(postStatus?.querySelector("time")).not.toBeNull();
+    expect(view.container.querySelector(".data-source")).toBeNull();
+    expect(view.container.querySelector(".post-status")).toBeNull();
+    expect(screen.getByText("No recent posts.")).toBeInTheDocument();
     expect(view.container.querySelector(".backend-ribbon")).toBeNull();
   });
 
@@ -116,6 +127,7 @@ describe("Morning Briefing frontend demo", () => {
   });
 
   it("opens opportunity and earnings details", async () => {
+    stubEarningsSchedule();
     renderApp();
     const opportunityTrigger = screen.getAllByRole("button", { name: /NVDA.*NVIDIA Corporation/ })[0]!;
     opportunityTrigger.focus();
@@ -137,6 +149,7 @@ describe("Morning Briefing frontend demo", () => {
   });
 
   it("closes an open detail when browser history changes the page", async () => {
+    stubEarningsSchedule();
     render(<MemoryRouter initialEntries={["/", "/earnings"]} initialIndex={1}><HistoryApp/></MemoryRouter>);
     fireEvent.click(await screen.findByRole("button", { name: /MSFT.*AMC/ }));
     expect(await screen.findByRole("dialog", { name: "Earnings Detail" })).toBeInTheDocument();
