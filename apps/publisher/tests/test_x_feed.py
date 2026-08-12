@@ -119,6 +119,12 @@ class XFeedTests(unittest.TestCase):
         self.assertEqual(result.counts["candidates"], 0)
         self.assertEqual(result.rejected["unauthorized"], ["p1"])
 
+    def test_naive_prepared_at_rejected(self) -> None:
+        posts = [self._post("p1", "$NVDA setup")]
+        naive = datetime(2026, 8, 12, 12, 30, 0)  # no tzinfo
+        with self.assertRaises(ValueError):
+            ingest_posts(posts, self._universe(), prepared_at=naive)
+
     def test_dot_ticker_resolves_to_hyphen_canonical(self) -> None:
         self.assertEqual(extract_tickers("$BRK.B earnings"), ["BRK-B"])
 

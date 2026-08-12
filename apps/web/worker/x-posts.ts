@@ -2,11 +2,19 @@ import { z } from "zod";
 
 export const X_POSTS_EVENT_TYPE = "X_POSTS_COLLECTED" as const;
 
+/** Source allowlist — mirrors the publisher's accounts registry (v1). */
+export const ALLOWED_X_AUTHORS = ["@nolimitgains"] as const;
+
 const isoTimestampSchema = z.string().datetime({ offset: true });
 
 export const xPostSchema = z.strictObject({
   id: z.string().min(4).max(120),
-  author: z.string().regex(/^@[A-Za-z0-9_]{1,30}$/, "author must be an @handle"),
+  author: z
+    .string()
+    .regex(/^@[A-Za-z0-9_]{1,30}$/, "author must be an @handle")
+    .refine((handle) => (ALLOWED_X_AUTHORS as readonly string[]).includes(handle), {
+      message: "author is not an allowed X source",
+    }),
   text: z.string().trim().min(1).max(4_000),
   created_at: isoTimestampSchema,
   url: z.string().url().refine((value) => value.startsWith("https://"), "url must be HTTPS"),

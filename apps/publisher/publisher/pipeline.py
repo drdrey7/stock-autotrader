@@ -109,6 +109,10 @@ def run_pipeline(
             message="data unavailable",
         )
 
+    if prepared_at is not None and prepared_at.tzinfo is None:
+        raise ValueError(
+            "prepared_at must include an explicit timezone offset (naive timestamps are rejected)"
+        )
     anchor = prepared_at or _default_prepared_at(edition_type)
     if anchor.tzinfo is None:
         anchor = anchor.replace(tzinfo=timezone.utc)
@@ -176,15 +180,21 @@ def run_pipeline(
     # can never kill the edition.
     seen_symbols: set[str] = set()
     unique_ideas: list[IdeaDraft] = []
+    duplicate_symbol_skipped = 0
+    capped_candidates = 0
     for idea in ideas:
         if idea.candidate.symbol in seen_symbols:
+            duplicate_symbol_skipped += 1
             rejected.setdefault("duplicate_symbol", []).append(idea.candidate.post.post_id)
+            continue
+        if len(unique_ideas) == 3:
+            capped_candidates += 1
+            rejected.setdefault("capped", []).append(idea.candidate.post.post_id)
             continue
         seen_symbols.add(idea.candidate.symbol)
         unique_ideas.append(idea)
-        if len(unique_ideas) == 3:
-            break
-    counts["duplicate_symbol_skipped"] = len(ideas) - len(unique_ideas)
+    counts["duplicate_symbol_skipped"] = duplicate_symbol_skipped
+    counts["ideas_capped"] = capped_candidates
     ideas = unique_ideas
 
     # 4. Composition + local validation
@@ -239,7 +249,10 @@ def run_pipeline(
                 message="publication failed — brief kept locally",
             )
         applied = result.get("applied", [])
-        if event["event_id"] not in applied:
+        skipped = result.get("skipped", [])
+        # An idempotent replay of an identical edition is acknowledged by
+        # ingest with `skipped`; both arrays count as successful publication.
+        if event["event_id"] not in applied and event["event_id"] not in skipped:
             return PipelineReport(
                 ok=False, publishable=True, published=False,
                 counts=counts, rejected=rejected, briefing=briefing,

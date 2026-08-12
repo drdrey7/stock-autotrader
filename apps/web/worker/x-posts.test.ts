@@ -237,6 +237,25 @@ describe("ingest X_POSTS_COLLECTED", () => {
     expect(db.posts.size).toBe(2);
   });
 
+  it("rejects posts with a syntactically valid but non-allowlisted handle", async () => {
+    const db = new FakeD1();
+    const request = await signedRequest({
+      events: [
+        {
+          type: "X_POSTS_COLLECTED",
+          event_id: "xcollect-0002b",
+          timestamp: new Date().toISOString(),
+          payload: { posts: [{ ...postA, author: "@another_account" }] },
+        },
+      ],
+    });
+    const response = await handleIngest(request, env(db));
+    const body = (await response.json()) as { rejected: { event_id: string; reason: string }[] };
+    expect(body.rejected).toHaveLength(1);
+    expect(body.rejected[0]?.reason).toBe("invalid schema");
+    expect(db.posts.size).toBe(0);
+  });
+
   it("rejects posts with a non-allowlisted handle at the schema layer", async () => {
     const db = new FakeD1();
     const request = await signedRequest({

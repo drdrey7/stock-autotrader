@@ -73,7 +73,7 @@ def _cmd_brief(args: argparse.Namespace) -> int:
         quotes=quotes,
         data_dir=args.data_dir,
         prepared_at=prepared_at,
-        dry_run=not args.publish,
+        dry_run=args.dry_run or not args.publish,
         publish=args.publish,
         endpoint=args.endpoint if args.publish else None,
         secret=_load_secret(args) if args.publish else None,
@@ -93,11 +93,22 @@ def _cmd_x_posts(args: argparse.Namespace) -> int:
     event = make_event("X_POSTS_COLLECTED", {"posts": posts})
     result = publish(args.endpoint, secret, [event], timeout=args.timeout)
     print(json.dumps(result))
-    return 0
+    # Fail unless the event was applied or acknowledged as an idempotent skip;
+    # an HTTP-200 `rejected` means the batch was discarded (feed stays stale).
+    acknowledged = event["event_id"] in result.get("applied", []) or event["event_id"] in result.get("skipped", [])
+    return 0 if acknowledged else 1
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Stock Autotrader publisher.")
+    # Root options keep the legacy PR #3 no-subcommand invocation working.
+    parser.add_argument("--endpoint")
+    parser.add_argument("--secret")
+    parser.add_argument("--secret-file", type=Path)
+    parser.add_argument("--file", type=Path)
+    parser.add_argument("--type")
+    parser.add_argument("--payload")
+    parser.add_argument("--timeout", type=int, default=30)
     subparsers = parser.add_subparsers(dest="command")
 
     events = subparsers.add_parser("events", help="Publish normalized events (PR #3).")
@@ -115,8 +126,9 @@ def main() -> int:
     brief.add_argument("--x-posts", required=True, type=Path, help="JSON array of X posts.")
     brief.add_argument("--quotes", required=True, type=Path, help="JSON market quotes/snapshot.")
     brief.add_argument("--data-dir", default="data", type=Path, help="Publisher data directory (versioned snapshots).")
-    brief.add_argument("--prepared-at", help="ISO-8601 preparedAt (default: next scheduled NY anchor).")
-    brief.add_argument("--publish", action="store_true", help="Publish via signed ingest (default: dry-run).")
+    brief.add_argument("--prepared-at", help="ISO-8601 preparedAt with explicit timezone offset (default: next scheduled NY anchor).")
+    brief.add_argument("--dry-run", action="store_true", help="Explicit dry-run (default; no publication).")
+    brief.add_argument("--publish", action="store_true", help="Publish via signed ingest (overrides --dry-run).")
     brief.add_argument("--endpoint")
     brief.add_argument("--secret")
     brief.add_argument("--secret-file", type=Path)
@@ -131,6 +143,12 @@ def main() -> int:
     x_posts.set_defaults(handler=_cmd_x_posts)
 
     args = parser.parse_args()
+    if args.command is None:
+        # Legacy PR #3 invocation without a subcommand.
+        if getattr(args, "endpoint", None):
+            return _cmd_events(args)
+        parser.print_usage(file=sys.stderr)
+        return 2
     if not hasattr(args, "handler"):
         parser.print_usage(file=sys.stderr)
         return 2

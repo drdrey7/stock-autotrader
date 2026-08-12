@@ -152,6 +152,9 @@ class PipelineTests(unittest.TestCase):
         self.assertTrue(report.ok)
         assert report.briefing is not None
         self.assertEqual(len(report.briefing["ideas"]), 3)
+        # the 4th distinct candidate is capped (not a duplicate symbol)
+        self.assertEqual(report.counts["ideas_capped"], 1)
+        self.assertEqual(report.counts["duplicate_symbol_skipped"], 0)
 
     def test_universe_version_is_string(self) -> None:
         report = self._run()

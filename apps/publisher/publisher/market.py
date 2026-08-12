@@ -38,9 +38,14 @@ NON_EMPTY_FIELDS = (
 )
 
 
+MAX_TEXT_LENGTH = 2_000  # mirrors nonEmptyString in the wire contract
+
+
 def _non_empty_string(value: Any, field_name: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{field_name} must be a non-empty string")
+    if len(value) > MAX_TEXT_LENGTH:
+        raise ValueError(f"{field_name} exceeds {MAX_TEXT_LENGTH} characters")
     return value.strip()
 
 
@@ -84,6 +89,8 @@ def load_benchmarks(raw_items: list[dict[str, Any]]) -> list[BenchmarkItem] | No
     parsed: list[BenchmarkItem] = []
     try:
         for raw in raw_items:
+            if not isinstance(raw, dict):
+                return None
             parsed.append(_parse_benchmark(raw))
     except ValueError:
         return None

@@ -68,6 +68,8 @@ class MarketTests(unittest.TestCase):
                 _benchmark("S&P 500", "SP:SPX"),
                 _benchmark("VIX", "CBOE:VIX"),
             ],
+            [None, _benchmark("Nasdaq-100", "NASDAQ:NDX"), _benchmark("VIX", "CBOE:VIX")],
+            ["not-an-object", _benchmark("Nasdaq-100", "NASDAQ:NDX"), _benchmark("VIX", "CBOE:VIX")],
         ]
         for items in cases:
             with self.subTest(items=items):
