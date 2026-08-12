@@ -72,9 +72,7 @@ afterEach(() => {
 
 it("renders only qualified ideas and classifies scheduled earnings by date", async () => {
   const view = renderApp();
-  await waitFor(() => expect(screen.getByText("Backend connected")).toBeInTheDocument());
-  expect(screen.getAllByText("Live").length).toBeGreaterThan(0);
-  expect(screen.getAllByText("Demo").length).toBeGreaterThan(0);
+  await waitFor(() => expect(view.container.querySelector(".market-status")).toHaveTextContent("S&P 500 up +0.31%"));
   expect(screen.getByText("+1.75%")).toBeInTheDocument();
   expect(screen.getAllByText("Not published").length).toBeGreaterThan(0);
   expect(screen.queryByText("TSLA")).not.toBeInTheDocument();
@@ -115,7 +113,6 @@ it("renders successful sources without waiting for a stalled X request", async (
 
   const view = renderApp();
   await waitFor(() => expect(view.container.querySelector(".market-status")).toHaveTextContent("S&P 500 up +0.31%"));
-  expect(screen.getByText("Backend partially populated")).toBeInTheDocument();
   expect(screen.getByText("Future Corp")).toBeInTheDocument();
 });
 
@@ -138,15 +135,26 @@ it("keeps the last X posts when a later refresh fails", async () => {
   expect(screen.getByText("Newest post")).toBeInTheDocument();
   expect(screen.getByText("5h")).toBeInTheDocument();
   expect(screen.getByText("1d 6h")).toBeInTheDocument();
-  expect(screen.getAllByText("Last update").length).toBeGreaterThan(0);
+  expect(screen.queryByText("Last update")).not.toBeInTheDocument();
 });
 
-it("does not refetch earnings on each minute or visibility refresh", async () => {
+it("refreshes earnings silently after the internal refresh interval", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  vi.setSystemTime(new Date("2026-08-12T16:00:00Z"));
+  renderApp();
+  await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input) === "/api/earnings")).toHaveLength(1));
+  await vi.advanceTimersByTimeAsync(60 * 60_000);
+  await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input) === "/api/earnings")).toHaveLength(2));
+  expect(screen.queryByText("Backend connected")).not.toBeInTheDocument();
+  expect(screen.queryByText("Live")).not.toBeInTheDocument();
+  expect(screen.queryByText("Last update")).not.toBeInTheDocument();
+});
+
+it("does not force an earnings fetch when the tab becomes visible before the cadence is due", async () => {
   renderApp();
   await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input) === "/api/earnings")).toHaveLength(1));
   document.dispatchEvent(new Event("visibilitychange"));
-  await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input) === "/api/status").length).toBeGreaterThan(1));
-  expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input) === "/api/earnings")).toHaveLength(1);
+  await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input) === "/api/earnings")).toHaveLength(1));
 });
 
 it("treats an empty earnings response as a successful daily refresh", async () => {
@@ -213,9 +221,8 @@ it("rejects a degraded market snapshot instead of labelling stale prices live", 
   });
 
   renderApp();
-  await waitFor(() => expect(screen.getByText("Demo fallback active")).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText("Good morning.")).toBeInTheDocument());
   expect(screen.queryByText("9,999.00")).not.toBeInTheDocument();
-  expect(screen.getAllByText("Demo").length).toBeGreaterThan(0);
 });
 
 it("rejects stale briefing data and invalid live market numbers", async () => {
@@ -228,10 +235,9 @@ it("rejects stale briefing data and invalid live market numbers", async () => {
   });
 
   renderApp();
-  await waitFor(() => expect(screen.getByText("Demo fallback active")).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText("Good morning.")).toBeInTheDocument());
   expect(screen.queryByText("Constructive session.")).not.toBeInTheDocument();
   expect(screen.queryByText("N/A")).not.toBeInTheDocument();
-  expect(screen.getAllByText("Demo").length).toBeGreaterThan(0);
 });
 
 it("sorts fresh candidate fallback by score and does not invent a daily move", async () => {
@@ -254,7 +260,7 @@ it("sorts fresh candidate fallback by score and does not invent a daily move", a
   });
 
   const view = renderApp();
-  await waitFor(() => expect(screen.getByText("Backend partially populated")).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText("HIGH")).toBeInTheDocument());
   const rows = [...view.container.querySelectorAll(".opportunity-row")];
   expect(rows[0]).toHaveTextContent("HIGH");
   expect(rows[0]).toHaveTextContent("Not published");
@@ -263,7 +269,7 @@ it("sorts fresh candidate fallback by score and does not invent a daily move", a
 
 it("refreshes backend data when the page becomes visible", async () => {
   renderApp();
-  await waitFor(() => expect(screen.getByText("Backend connected")).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText("Good morning.")).toBeInTheDocument());
   const before = vi.mocked(fetch).mock.calls.length;
   document.dispatchEvent(new Event("visibilitychange"));
   await waitFor(() => expect(vi.mocked(fetch).mock.calls.length).toBeGreaterThan(before));

@@ -9,8 +9,9 @@ The approved **Morning Briefing** interface is the public product shell:
 - Morning Briefing consumes the published briefing, market/status and candidate APIs;
 - X Pulse consumes curated posts from the tracked X accounts;
 - Earnings consumes the D1 earnings schedule;
-- missing backend fields use clearly labelled demo data;
+- missing backend fields use conservative fallback data internally;
 - stale or invalid backend values are never presented as live;
+- the frontend refreshes silently while the backend controls publication cadence;
 - there is no login, portfolio, watchlist, chat or trading action.
 
 Routes: `/`, `/dashboard`, `/x` and `/earnings`. The public Methodology, Status
@@ -21,8 +22,10 @@ and Disclaimer routes remain available.
 PR #6 introduced the first synthetic, frontend-only product demo. PR #7 added
 the validated `DailyBriefing` contract and D1 read model. PR #8 added curated X
 post ingestion. PR #9 replaces that demo shell with the current live-aware
-Morning Briefing frontend while retaining labelled mock fallbacks for fields
-whose APIs do not yet exist.
+Morning Briefing frontend while retaining conservative mock fallbacks for fields
+whose APIs do not yet exist. Source-refresh mechanics are kept out of the main
+product UI; values can still be delayed or illustrative when no backend field is
+available.
 
 ## Briefing rhythm
 

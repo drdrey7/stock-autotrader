@@ -76,9 +76,12 @@ describe("Morning Briefing public experience", () => {
     expect(document.body).not.toHaveTextContent("Live publication arrives in a later release");
   });
 
-  it("does not claim the backend is healthy when status is unavailable", async () => {
+  it("keeps the status route free of technical source indicators", () => {
     render(<MemoryRouter initialEntries={["/status"]}><App /></MemoryRouter>);
-    expect(await screen.findByText("Temporarily unavailable")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "System status" })).toBeInTheDocument();
+    expect(screen.queryByText("Backend integration")).not.toBeInTheDocument();
+    expect(screen.queryByText("Temporarily unavailable")).not.toBeInTheDocument();
     expect(screen.queryByText("Online and healthy")).not.toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent(/fresh|stale|fallback/i);
   });
 });

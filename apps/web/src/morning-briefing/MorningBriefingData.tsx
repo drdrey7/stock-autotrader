@@ -10,7 +10,7 @@ import { marketIndexes as mockMarketIndexes, type MarketIndex } from "./data/mar
 import { opportunities as mockOpportunities, type Opportunity } from "./data/opportunities";
 import { xPosts as mockXPosts, type XPost } from "./data/xSurge";
 import { earnings as mockEarnings, type EarningsCompany } from "./data/earnings";
-import { sourceLabel, type DataSource } from "./data/source";
+import type { DataSource } from "./data/source";
 
 type BriefingHealth = {
   available: boolean;
@@ -126,6 +126,7 @@ const relativeTime = (iso: string): string => {
 };
 
 const REQUEST_TIMEOUT_MS = 8_000;
+const EARNINGS_REFRESH_INTERVAL_MS = 60 * 60_000;
 
 async function fetchJson<T>(path: string): Promise<T | null> {
   const controller = new AbortController();
@@ -321,7 +322,8 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
     let coreRequestId = 0;
     let xRequestId = 0;
     let earningsRequestId = 0;
-    let lastEarningsMarketDate: string | null = null;
+    let lastEarningsAttemptAt = 0;
+    let lastEarningsAttemptDate: string | null = null;
 
     const refreshCore = async () => {
       const currentRequest = ++coreRequestId;
@@ -394,11 +396,16 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
         ...previous,
         earnings: normaliseMockEarnings(previous.earnings, today),
       }));
-      if (!force && lastEarningsMarketDate === today) return;
+      const now = Date.now();
+      const refreshDue = force
+        || lastEarningsAttemptDate !== today
+        || now - lastEarningsAttemptAt >= EARNINGS_REFRESH_INTERVAL_MS;
+      if (!refreshDue) return;
+      lastEarningsAttemptAt = now;
+      lastEarningsAttemptDate = today;
       const currentRequest = ++earningsRequestId;
       const response = await fetchJson<EarningsEvent[]>("/api/earnings");
       if (cancelled || currentRequest !== earningsRequestId) return;
-      if (Array.isArray(response)) lastEarningsMarketDate = today;
       const apiEarnings = Array.isArray(response) && response.length ? earningsFromApi(response) : null;
       const normalisedMocks = normaliseMockEarnings(mockEarnings);
       const demoPast = normalisedMocks.filter((item) => item.result !== "Upcoming");
@@ -453,26 +460,4 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
 
 export function useMorningBriefingData(): MorningBriefingData {
   return useContext(MorningBriefingDataContext);
-}
-
-export function DataSourceBadge({ source }: { source: DataSource }) {
-  return <span className={`data-source ${source}`}>{sourceLabel(source)}</span>;
-}
-
-export function BackendRibbon() {
-  const { backendState, briefingFreshness, lastPublishedAt } = useMorningBriefingData();
-  const label = backendState === "connected"
-    ? "Backend connected"
-    : backendState === "partial"
-      ? "Backend partially populated"
-      : backendState === "loading"
-        ? "Connecting to backend"
-        : "Demo fallback active";
-  return (
-    <div className={`backend-ribbon ${backendState}`} role="status">
-      <span><i />{label}</span>
-      <span>Briefing: {briefingFreshness}</span>
-      {lastPublishedAt ? <time dateTime={lastPublishedAt}>Updated {relativeTime(lastPublishedAt)} ago</time> : null}
-    </div>
-  );
 }

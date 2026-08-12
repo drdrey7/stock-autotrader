@@ -52,9 +52,9 @@ describe("Morning Briefing frontend demo", () => {
     expect(screen.getByRole("status", { name: "Current path" })).toHaveTextContent("/earnings");
   });
 
-  it("discloses the decorative demo chart", () => {
+  it("keeps the decorative chart out of the public source labels and accessibility tree", () => {
     const view = renderApp();
-    expect(screen.getByText("Demo chart")).toBeInTheDocument();
+    expect(screen.queryByText("Demo chart")).not.toBeInTheDocument();
     expect(view.container.querySelector(".hero-chart")).toHaveAttribute("aria-hidden", "true");
   });
 
@@ -86,7 +86,7 @@ describe("Morning Briefing frontend demo", () => {
     expect(screen.getByText("MONDAY · 31 AUGUST")).toBeInTheDocument();
   });
 
-  it("shows one filter per tracked account and keeps the source badge separate from time", async () => {
+  it("shows one filter per tracked account without technical source badges", async () => {
     const view = renderApp();
     fireEvent.click(screen.getAllByRole("button", { name: "X Pulse" })[0]!);
     await screen.findByRole("heading", { level: 1, name: /X Pulse/ });
@@ -99,8 +99,9 @@ describe("Morning Briefing frontend demo", () => {
     expect(screen.queryByText("Trending Keywords")).not.toBeInTheDocument();
 
     const postStatus = view.container.querySelector(".post-status");
-    expect(postStatus?.querySelector(".data-source")).not.toBeNull();
+    expect(postStatus?.querySelector(".data-source")).toBeNull();
     expect(postStatus?.querySelector("time")).not.toBeNull();
+    expect(view.container.querySelector(".backend-ribbon")).toBeNull();
   });
 
   it("persists the selected colour theme", async () => {
