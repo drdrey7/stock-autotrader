@@ -60,8 +60,13 @@ type MorningBriefingData = {
   lastPublishedAt: string | null;
 };
 
+const labelledMockMarketIndexes: MarketIndex[] = mockMarketIndexes.map((item) => ({
+  ...item,
+  source: "mock",
+}));
+
 const initialData: MorningBriefingData = {
-  marketIndexes: mockMarketIndexes,
+  marketIndexes: labelledMockMarketIndexes,
   opportunities: mockOpportunities,
   xPosts: mockXPosts,
   earnings: mockEarnings,
@@ -274,7 +279,7 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
         .filter(Boolean).length;
 
       setData({
-        marketIndexes: liveMarket ?? mockMarketIndexes,
+        marketIndexes: liveMarket ?? labelledMockMarketIndexes,
         opportunities: liveOpportunities ?? mockOpportunities,
         xPosts: liveX ?? mockXPosts,
         earnings: mergedEarnings,
