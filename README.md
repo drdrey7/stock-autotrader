@@ -1,10 +1,23 @@
-# Stock Daily Briefing
+# Morning Briefing
 
 Public, read-only market intelligence for S&P 500 and Nasdaq-100 investors.
 The product publishes focused pre-market and post-close briefings with market
 context, curated stock ideas, independent qualification, risks and provenance.
 
-## PR #6 — frontend preview
+## Current frontend
+
+The approved **Morning Briefing** interface is the public, read-only product shell:
+
+- Morning Briefing uses the published briefing, market/status and candidate APIs;
+- X Surge uses the curated X posts API;
+- Earnings uses the existing earnings schedule API;
+- fields without a backend source remain visibly labelled Demo;
+- no login, personal portfolio, watchlist, chat or trading actions.
+
+The legacy information pages remain available while the new product shell runs at
+`/`, `/dashboard`, `/x` and `/earnings`.
+
+## Previous PR #6 frontend
 
 This release validates the product experience before any new backend or private
 runtime integration:
