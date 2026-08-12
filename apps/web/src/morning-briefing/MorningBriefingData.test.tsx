@@ -1,6 +1,9 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { MemoryRouter } from "react-router-dom";
 import MorningBriefingApp from "./MorningBriefingApp";
+
+const renderApp = (path = "/") => render(<MemoryRouter initialEntries={[path]}><MorningBriefingApp/></MemoryRouter>);
 
 const briefing = {
   example: false,
@@ -22,6 +25,18 @@ const briefing = {
     source: { handle: "@nolimitgains", reference: "https://x.com/nolimitgains/status/1234", originalTimestamp: "2026-08-12T10:15:00Z", collectedTimestamp: "2026-08-12T12:30:00Z", summary: "Source." },
     technical: ["Strong"], financial: ["Healthy"], news: ["Clear"], risks: ["Gap risk"],
     levels: { trigger: "Above $183.60", invalidation: "Below $179.20", objective: "$194", rewardRisk: "2.6R", rewardRiskRatio: 2.6 },
+  }, {
+    symbol: "AMD", company: "Advanced Micro Devices", universe: "Both",
+    verdict: "Potential Entry", price: "$184.00", change: "-1.25%",
+    thesis: "Valid setup despite a negative session.",
+    source: { handle: "@nolimitgains", reference: "https://x.com/nolimitgains/status/5678", originalTimestamp: "2026-08-12T10:15:00Z", collectedTimestamp: "2026-08-12T12:30:00Z", summary: "Source." },
+    technical: ["Strong"], financial: ["Healthy"], news: ["Clear"], risks: ["Gap risk"],
+    levels: { trigger: "Above $185", invalidation: "Below $179", objective: "$194", rewardRisk: "2.0R", rewardRiskRatio: 2 },
+  }, {
+    symbol: "TSLA", company: "Tesla", universe: "Both", verdict: "Avoid", price: "$400", change: "+4.00%",
+    thesis: "Explicit rejection.", source: { handle: "@source", reference: "https://x.com/source/1", originalTimestamp: null, collectedTimestamp: "2026-08-12T12:30:00Z", summary: "Source." },
+    technical: ["Weak"], financial: ["Mixed"], news: ["Risk"], risks: ["High risk"],
+    levels: { trigger: "Not applicable", invalidation: "Not applicable", objective: "Not applicable", rewardRisk: "Not applicable", rewardRiskRatio: null },
   }],
   schedule: [],
 };
@@ -39,7 +54,10 @@ beforeEach(() => {
       { id: "older", author: "@nolimitgains", text: "Older post", created_at: "2026-08-11T19:30:00Z", url: "https://x.com/nolimitgains/status/older", symbol: null, company: null, price: null, change: null },
       { id: "newer", author: "@nolimitgains", text: "Newest post", created_at: "2026-08-12T20:30:00Z", url: "https://x.com/nolimitgains/status/newer", symbol: null, company: null, price: null, change: null },
     ], count: 2 }), { status: 200 });
-    if (url === "/api/earnings") return new Response(JSON.stringify([]), { status: 200 });
+    if (url === "/api/earnings") return new Response(JSON.stringify([
+      { symbol: "OLD", company: "Past Corp", date: "2026-08-03", timing: "AMC", eventSignal: "Confirmed" },
+      { symbol: "NEW", company: "Future Corp", date: "2026-08-14", timing: "BMO", eventSignal: "Confirmed" },
+    ]), { status: 200 });
     if (url === "/api/market-data") return new Response(JSON.stringify({ benchmarks: [] }), { status: 200 });
     return new Response(null, { status: 404 });
   }));
@@ -51,16 +69,23 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it("renders published briefing data as live and keeps missing domains as demo", async () => {
-  render(<MorningBriefingApp />);
+it("renders only qualified ideas and classifies scheduled earnings by date", async () => {
+  const view = renderApp();
   await waitFor(() => expect(screen.getByText("Backend partially populated")).toBeInTheDocument());
   expect(screen.getAllByText("Live").length).toBeGreaterThan(0);
   expect(screen.getAllByText("Demo").length).toBeGreaterThan(0);
   expect(screen.getByText("+1.75%")).toBeInTheDocument();
+  expect(screen.queryByText("TSLA")).not.toBeInTheDocument();
+  const negative = screen.getByText("-1.25%");
+  expect(negative).toHaveClass("negative");
+  expect(screen.queryByText("+-1.25%")).not.toBeInTheDocument();
+  expect(screen.getByText("WEDNESDAY · 12 AUGUST")).toBeInTheDocument();
+  expect(view.container.querySelector(".earnings-mini")).toHaveTextContent("Future Corp");
+  expect(view.container.querySelector(".earnings-mini")).not.toHaveTextContent("Past Corp");
 });
 
 it("sorts X Pulse newest first and shows days plus remaining hours", async () => {
-  const view = render(<MorningBriefingApp initialPage="surge" />);
+  const view = renderApp("/x");
   await screen.findByRole("heading", { level: 1, name: /X Pulse/ });
   await waitFor(() => expect(screen.getByText("Newest post")).toBeInTheDocument());
 

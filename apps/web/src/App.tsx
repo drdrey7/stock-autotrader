@@ -25,9 +25,9 @@ export default function App() {
     <Routes>
       <Route path="/" element={<MorningBriefingApp />} />
       <Route path="/dashboard" element={<MorningBriefingApp />} />
-      <Route path="/x" element={<MorningBriefingApp initialPage="surge" />} />
+      <Route path="/x" element={<MorningBriefingApp />} />
       <Route path="/x-search" element={<Navigate to="/x" replace />} />
-      <Route path="/earnings" element={<MorningBriefingApp initialPage="earnings" />} />
+      <Route path="/earnings" element={<MorningBriefingApp />} />
       <Route path="/methodology" element={<DailyBriefingMethodologyPage />} />
       <Route path="/status" element={<DailyBriefingStatusPage />} />
       <Route path="/disclaimer" element={<DailyBriefingDisclaimerPage />} />

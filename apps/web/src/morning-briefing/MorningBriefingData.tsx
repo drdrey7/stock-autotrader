@@ -58,6 +58,7 @@ type MorningBriefingData = {
   backendState: "loading" | "connected" | "partial" | "offline";
   briefingFreshness: BriefingHealth["freshness"];
   lastPublishedAt: string | null;
+  editionDate: string | null;
 };
 
 const labelledMockMarketIndexes: MarketIndex[] = mockMarketIndexes.map((item) => ({
@@ -65,11 +66,17 @@ const labelledMockMarketIndexes: MarketIndex[] = mockMarketIndexes.map((item) =>
   source: "mock",
 }));
 
+function normaliseMockEarnings(items: EarningsCompany[], today = marketTodayKey()): EarningsCompany[] {
+  return items.map((item) => item.result === "Upcoming" && item.date < today
+    ? { ...item, result: "Pending" as const, source: "mock" as const }
+    : item);
+}
+
 const initialData: MorningBriefingData = {
   marketIndexes: labelledMockMarketIndexes,
   opportunities: mockOpportunities,
   xPosts: mockXPosts,
-  earnings: mockEarnings,
+  earnings: normaliseMockEarnings(mockEarnings),
   sources: {
     briefing: "mock",
     market: "mock",
@@ -82,6 +89,7 @@ const initialData: MorningBriefingData = {
   backendState: "loading",
   briefingFreshness: "unavailable",
   lastPublishedAt: null,
+  editionDate: null,
 };
 
 const MorningBriefingDataContext = createContext<MorningBriefingData>(initialData);
@@ -162,7 +170,7 @@ function opportunitiesFromBriefing(
   briefing: DailyBriefing,
   candidates: Candidate[],
 ): Opportunity[] {
-  return briefing.ideas.map((idea) => {
+  return briefing.ideas.filter((idea) => idea.verdict === "Potential Entry").map((idea) => {
     const candidate = candidates.find((item) => item.symbol === idea.symbol);
     return {
       ticker: idea.symbol,
@@ -184,7 +192,7 @@ function opportunitiesFromBriefing(
 }
 
 function opportunitiesFromCandidates(candidates: Candidate[]): Opportunity[] {
-  return candidates.slice(0, 4).map((candidate) => ({
+  return candidates.filter((candidate) => candidate.status === "Strong Setup").slice(0, 4).map((candidate) => ({
     ticker: candidate.symbol,
     company: candidate.company,
     change: 0,
@@ -221,22 +229,35 @@ function xPostsFromApi(posts: XApiPost[]): XPost[] {
   }));
 }
 
+function marketTodayKey(): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(new Date(Date.now()));
+  const value = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? "";
+  return `${value("year")}-${value("month")}-${value("day")}`;
+}
+
 function earningsFromApi(events: EarningsEvent[]): EarningsCompany[] {
-  return events.map((event) => {
+  const today = marketTodayKey();
+  return events.map<EarningsCompany>((event) => {
     const exact = mockEarnings.find((item) => item.ticker === event.symbol && item.date === event.date);
     const known = exact ?? mockEarnings.find((item) => item.ticker === event.symbol);
+    const isUpcoming = /^\d{4}-\d{2}-\d{2}$/.test(event.date) && event.date >= today;
+    if (!isUpcoming && exact && exact.result !== "Upcoming") {
+      return { ...exact, company: event.company, timing: event.timing, source: "mixed" as const, eventSignal: event.eventSignal };
+    }
     return {
       ticker: event.symbol,
       company: event.company,
       date: event.date,
       timing: event.timing,
-      result: "Upcoming",
+      result: isUpcoming ? "Upcoming" : "Pending",
       epsExpected: exact?.epsExpected ?? "Not published",
       revenueExpected: exact?.revenueExpected ?? "Not published",
       guidance: "Pending",
       officialUrl: known?.officialUrl,
       color: known?.color ?? tickerColour(event.symbol),
-      source: "live",
+      source: exact ? "mixed" : "live",
       eventSignal: event.eventSignal,
     };
   });
@@ -270,7 +291,8 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
       const apiEarnings = Array.isArray(liveEarnings) && liveEarnings.length
         ? earningsFromApi(liveEarnings)
         : null;
-      const demoPast = mockEarnings.filter((item) => item.result !== "Upcoming");
+      const normalisedMocks = normaliseMockEarnings(mockEarnings);
+      const demoPast = normalisedMocks.filter((item) => item.result !== "Upcoming");
       const mergedEarnings = apiEarnings
         ? [
             ...apiEarnings,
@@ -278,7 +300,7 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
               .filter((demo) => !apiEarnings.some((live) => live.ticker === demo.ticker && live.date === demo.date))
               .map((item) => ({ ...item, source: "mock" as const })),
           ]
-        : mockEarnings;
+        : normalisedMocks;
 
       const liveCount = [briefing, liveMarket, liveOpportunities, liveX, apiEarnings]
         .filter(Boolean).length;
@@ -300,6 +322,7 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
         backendState: liveCount === 0 ? "offline" : liveCount === 5 ? "connected" : "partial",
         briefingFreshness: status?.briefing?.freshness ?? "unavailable",
         lastPublishedAt: status?.briefing?.publishedAt ?? briefing?.preparedAt ?? null,
+        editionDate: briefing?.editionDate ?? null,
       });
     })();
 
