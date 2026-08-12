@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { isBriefingSymbolInUniverse } from "./briefing-universe";
+import { canonicalBriefingSymbol, isBriefingSymbolInUniverse } from "./briefing-universe";
 
 export const briefingVerdictValues = [
   "Potential Entry",
@@ -20,9 +20,21 @@ export const briefingBenchmarkDefinitions = [
   { name: "VIX", symbol: "CBOE:VIX" },
 ] as const;
 
-const nonEmptyString = z.string().trim().min(1);
+const nonEmptyString = z.string().trim().min(1).max(2_000);
+const titleString = z.string().trim().min(1).max(200);
 
 const isoTimestamp = z.string().datetime({ offset: true });
+
+function calendarDateInBriefingTimezone(timestamp: string): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: briefingTimezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(timestamp));
+  const valueFor = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
+  return `${valueFor("year")}-${valueFor("month")}-${valueFor("day")}`;
+}
 
 const tickerSymbol = z.string().regex(/^[A-Z0-9.-]{1,12}$/, "symbol must use a canonical ticker format");
 
@@ -72,10 +84,10 @@ export const briefingIdeaSchema = z.strictObject({
   change: nonEmptyString,
   thesis: nonEmptyString,
   source: briefingSourceSchema,
-  technical: z.array(nonEmptyString).min(1),
-  financial: z.array(nonEmptyString).min(1),
-  news: z.array(nonEmptyString).min(1),
-  risks: z.array(nonEmptyString).min(1),
+  technical: z.array(nonEmptyString).min(1).max(20),
+  financial: z.array(nonEmptyString).min(1).max(20),
+  news: z.array(nonEmptyString).min(1).max(20),
+  risks: z.array(nonEmptyString).min(1).max(20),
   levels: z.strictObject({
     trigger: nonEmptyString,
     invalidation: nonEmptyString,
@@ -95,7 +107,7 @@ export const dailyBriefingSchema = z
     editionType: briefingEditionTypeSchema,
     timezone: z.literal(briefingTimezone),
     preparedAt: isoTimestamp,
-    title: nonEmptyString,
+    title: titleString,
     marketSummary: nonEmptyString,
     market: z.array(marketContextItemSchema).length(briefingBenchmarkDefinitions.length),
     ideas: z.array(briefingIdeaSchema).max(3),
@@ -105,7 +117,7 @@ export const dailyBriefingSchema = z
         time: nonEmptyString,
         detail: nonEmptyString,
       }),
-    ),
+    ).max(20),
   })
   .superRefine((briefing, ctx) => {
     const expectedByName = new Map(
@@ -132,6 +144,14 @@ export const dailyBriefingSchema = z
       });
     }
 
+    if (calendarDateInBriefingTimezone(briefing.preparedAt) !== briefing.editionDate) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["preparedAt"],
+        message: "preparedAt must fall on editionDate in the briefing timezone",
+      });
+    }
+
     const potentialEntries = briefing.ideas.filter(
       (idea) => idea.verdict === "Potential Entry",
     );
@@ -147,6 +167,13 @@ export const dailyBriefingSchema = z
     potentialEntries.forEach((idea, index) => {
       const originalIndex = briefing.ideas.indexOf(idea);
       const issuePath = ["ideas", originalIndex >= 0 ? originalIndex : index, "levels", "rewardRiskRatio"];
+      if (idea.source.originalTimestamp === null || idea.source.collectedTimestamp === null) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["ideas", originalIndex >= 0 ? originalIndex : index, "source"],
+          message: "Potential Entry ideas require original and collected source timestamps",
+        });
+      }
       const rewardRiskMatch = /^(\d+(?:\.\d+)?)R\b/i.exec(idea.levels.rewardRisk.trim());
       if (
         idea.levels.rewardRiskRatio === null
@@ -161,7 +188,17 @@ export const dailyBriefingSchema = z
       }
     });
 
+    const seenIdeaSymbols = new Set<string>();
     briefing.ideas.forEach((idea, index) => {
+      const canonicalSymbol = canonicalBriefingSymbol(idea.symbol);
+      if (seenIdeaSymbols.has(canonicalSymbol)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["ideas", index, "symbol"],
+          message: "briefing must not contain duplicate idea symbols",
+        });
+      }
+      seenIdeaSymbols.add(canonicalSymbol);
       if (!isBriefingSymbolInUniverse(idea.symbol, idea.universe)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,

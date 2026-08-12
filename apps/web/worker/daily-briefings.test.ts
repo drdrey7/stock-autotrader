@@ -192,11 +192,15 @@ describe("DailyBriefing publication helpers", () => {
   it("publishes once, skips the same content, and rejects altered content for an edition", async () => {
     const db = new FakeD1();
     const briefing = JSON.parse(JSON.stringify({ ...exampleDailyBriefing, example: false }));
+    const nowMs = Date.now();
+    const publicationTimestamp = new Date(nowMs - 3_000).toISOString();
+    const replayTimestamp = new Date(nowMs - 2_000).toISOString();
+    const conflictTimestamp = new Date(nowMs - 1_000).toISOString();
 
     const first = await publishDailyBriefing(
       db as unknown as D1Database,
       "brief-event-001",
-      "2026-08-12T08:00:00.000-04:00",
+      publicationTimestamp,
       briefing,
     );
     expect(first.kind).toBe("applied");
@@ -204,7 +208,7 @@ describe("DailyBriefing publication helpers", () => {
     const replay = await publishDailyBriefing(
       db as unknown as D1Database,
       "brief-event-002",
-      "2026-08-12T12:00:02.000Z",
+      replayTimestamp,
       briefing,
     );
     expect(replay.kind).toBe("skipped");
@@ -213,7 +217,7 @@ describe("DailyBriefing publication helpers", () => {
     const conflict = await publishDailyBriefing(
       db as unknown as D1Database,
       "brief-event-003",
-      "2026-08-12T12:00:03.000Z",
+      conflictTimestamp,
       altered,
     );
     expect(conflict.kind).toBe("rejected");
@@ -226,13 +230,13 @@ describe("DailyBriefing publication helpers", () => {
     await expect(readBriefingByDateAndType(db as unknown as D1Database, "2026-08-11", "pre_market")).resolves.toMatchObject({
       title: "Pre-market briefing",
     });
-    await expect(readBriefingStatus(db as unknown as D1Database, Date.parse("2026-08-12T12:00:03.000Z"))).resolves.toMatchObject({
+    await expect(readBriefingStatus(db as unknown as D1Database, nowMs)).resolves.toMatchObject({
       available: true,
       freshness: "fresh",
       ageSeconds: 3,
     });
     expect(db.briefings.size).toBe(1);
-    expect(db.briefings.get("2026-08-11:pre_market")?.published_at).toBe("2026-08-12T12:00:00.000Z");
+    expect(db.briefings.get("2026-08-11:pre_market")?.published_at).toBe(publicationTimestamp);
 
     const stored = db.briefings.get("2026-08-11:pre_market");
     if (!stored) throw new Error("Expected stored briefing row");
@@ -273,7 +277,7 @@ describe("DailyBriefing publication helpers", () => {
     const notFound = await worker.fetch(new Request("https://example.test/api/briefs/latest"), env);
     expect(notFound.status).toBe(404);
 
-    await publishDailyBriefing(db as unknown as D1Database, "brief-route-001", "2026-08-12T12:00:00.000Z", briefing);
+    await publishDailyBriefing(db as unknown as D1Database, "brief-route-001", new Date(Date.now() - 1_000).toISOString(), briefing);
 
     const latest = await worker.fetch(new Request("https://example.test/api/briefs/latest?editionType=pre_market"), env);
     expect(latest.status).toBe(200);
@@ -327,6 +331,40 @@ describe("DailyBriefing publication helpers", () => {
     );
     expect(signed.status).toBe(200);
 
+    const futureDb = new FakeD1();
+    const futureEnv = { ...env, DB: futureDb, INGEST_SECRET: "test-secret" } as unknown as Env;
+    const futureEventTimestamp = new Date(Date.now() + 60_000).toISOString();
+    const futureRequestTimestamp = new Date().toISOString();
+    const futureBody = JSON.stringify({
+      events: [{
+        type: "DAILY_BRIEFING_PUBLISHED",
+        event_id: "signed-brief-future-001",
+        timestamp: futureEventTimestamp,
+        payload: briefing,
+      }],
+    });
+    const futureSignature = await signIngestBody("test-secret", futureRequestTimestamp, futureBody);
+    const future = await handleIngest(
+      new Request("https://example.test/ingest/events", {
+        method: "POST",
+        body: futureBody,
+        headers: {
+          "X-Ingest-Signature": futureSignature,
+          "X-Ingest-Timestamp": futureRequestTimestamp,
+        },
+      }),
+      futureEnv,
+    );
+    expect(future.status).toBe(200);
+    await expect(future.json()).resolves.toEqual({
+      applied: [],
+      skipped: [],
+      rejected: [{ event_id: "signed-brief-future-001", reason: "event timestamp is in the future" }],
+    });
+    expect(futureDb.briefings.size).toBe(0);
+    expect(futureDb.events.size).toBe(0);
+    expect(futureDb.logs).toHaveLength(0);
+
     const backfilledDb = new FakeD1();
     const backfilledEnv = { ...env, DB: backfilledDb, INGEST_SECRET: "test-secret" } as unknown as Env;
     const backfillEventTimestamp = "2026-08-10T09:00:00-04:00";
@@ -336,7 +374,11 @@ describe("DailyBriefing publication helpers", () => {
         type: "DAILY_BRIEFING_PUBLISHED",
         event_id: "signed-brief-backfill-001",
         timestamp: backfillEventTimestamp,
-        payload: { ...briefing, editionDate: "2026-08-10" },
+        payload: {
+          ...briefing,
+          editionDate: "2026-08-10",
+          preparedAt: "2026-08-10T08:30:00-04:00",
+        },
       }],
     });
     const backfillSignature = await signIngestBody("test-secret", backfillRequestTimestamp, backfillBody);

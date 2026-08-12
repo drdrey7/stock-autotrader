@@ -46,6 +46,23 @@ describe("DailyBriefing v1 contract", () => {
     expect(dailyBriefingSchema.safeParse(briefing).success).toBe(false);
   });
 
+  it("requires preparedAt to use the declared edition date", () => {
+    const briefing = cloneBriefing();
+    briefing.preparedAt = "2026-08-12T08:30:00-04:00";
+
+    expect(dailyBriefingSchema.safeParse(briefing).success).toBe(false);
+  });
+
+  it("bounds user-facing briefing text", () => {
+    const longTitle = cloneBriefing();
+    longTitle.title = "x".repeat(201);
+    expect(dailyBriefingSchema.safeParse(longTitle).success).toBe(false);
+
+    const longSummary = cloneBriefing();
+    longSummary.marketSummary = "x".repeat(2_001);
+    expect(dailyBriefingSchema.safeParse(longSummary).success).toBe(false);
+  });
+
   it("rejects more than three Potential Entry ideas", () => {
     const briefing = cloneBriefing();
     const firstIdea = briefing.ideas[0];
@@ -87,10 +104,13 @@ describe("DailyBriefing v1 contract", () => {
     expect(dailyBriefingSchema.safeParse(briefing).success).toBe(false);
   });
 
-  it("keeps missing collection freshness explicit as null", () => {
+  it("keeps missing collection freshness explicit as null for non-qualified ideas", () => {
     const briefing = cloneBriefing();
     const firstIdea = briefing.ideas[0];
     if (!firstIdea) throw new Error("Example briefing must contain an idea");
+    firstIdea.verdict = "Watch";
+    firstIdea.levels.rewardRisk = "Not calculated";
+    firstIdea.levels.rewardRiskRatio = null;
     firstIdea.source.collectedTimestamp = null;
 
     expect(dailyBriefingSchema.safeParse(briefing).success).toBe(true);
@@ -142,6 +162,39 @@ describe("DailyBriefing v1 contract", () => {
     if (!firstIdea) throw new Error("Example briefing must contain an idea");
     firstIdea.symbol = "MMM";
     firstIdea.universe = "Nasdaq-100";
+
+    expect(dailyBriefingSchema.safeParse(briefing).success).toBe(false);
+  });
+
+  it("rejects Potential Entry without source freshness timestamps", () => {
+    const briefing = cloneBriefing();
+    const firstIdea = briefing.ideas[0];
+    if (!firstIdea) throw new Error("Example briefing must contain an idea");
+    firstIdea.source.originalTimestamp = null;
+    firstIdea.source.collectedTimestamp = null;
+
+    expect(dailyBriefingSchema.safeParse(briefing).success).toBe(false);
+  });
+
+  it("rejects duplicate idea symbols", () => {
+    const briefing = cloneBriefing();
+    const firstIdea = briefing.ideas[0];
+    const secondIdea = briefing.ideas[1];
+    if (!firstIdea || !secondIdea) throw new Error("Example briefing must contain at least two ideas");
+    secondIdea.symbol = firstIdea.symbol;
+
+    expect(dailyBriefingSchema.safeParse(briefing).success).toBe(false);
+  });
+
+  it("rejects duplicate idea symbols after ticker canonicalization", () => {
+    const briefing = cloneBriefing();
+    const firstIdea = briefing.ideas[0];
+    const secondIdea = briefing.ideas[1];
+    if (!firstIdea || !secondIdea) throw new Error("Example briefing must contain at least two ideas");
+    firstIdea.symbol = "BRK-B";
+    firstIdea.universe = "S&P 500";
+    secondIdea.symbol = "BRK.B";
+    secondIdea.universe = "S&P 500";
 
     expect(dailyBriefingSchema.safeParse(briefing).success).toBe(false);
   });

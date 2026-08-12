@@ -36,7 +36,7 @@ export type PublishBriefingResult =
   | { kind: "rejected"; reason: string; contentHash: string };
 
 const MAX_FRESH_AGE_MS = 26 * 60 * 60 * 1000;
-const FUTURE_TOLERANCE_MS = 5 * 60 * 1000;
+
 
 function canonicalize(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalize);
@@ -70,7 +70,7 @@ export function briefingFreshness(
   const publishedMs = Date.parse(publishedAt);
   if (!Number.isFinite(publishedMs)) return "unavailable";
   const ageMs = nowMs - publishedMs;
-  if (ageMs < -FUTURE_TOLERANCE_MS || ageMs > MAX_FRESH_AGE_MS) return "stale";
+  if (ageMs < 0 || ageMs > MAX_FRESH_AGE_MS) return "stale";
   return "fresh";
 }
 
@@ -140,11 +140,24 @@ export async function publishDailyBriefing(
 ): Promise<PublishBriefingResult> {
   const parsed = publishedDailyBriefingSchema.parse(briefing);
   const contentHash = await briefingContentHash(parsed);
+  const receivedAt = new Date().toISOString();
+  const publishedAtMs = Date.parse(eventTimestamp);
+  const receivedAtMs = Date.parse(receivedAt);
+  if (
+    !Number.isFinite(publishedAtMs)
+    || !Number.isFinite(receivedAtMs)
+    || publishedAtMs > receivedAtMs
+  ) {
+    return {
+      kind: "rejected",
+      reason: "event timestamp is in the future",
+      contentHash,
+    };
+  }
   // eventTimestamp is signed together with the event payload and is the
   // authoritative publication time for ordering and freshness. The Worker
   // receipt time must not make a backfilled briefing look fresh.
-  const publishedAt = new Date(eventTimestamp).toISOString();
-  const receivedAt = new Date().toISOString();
+  const publishedAt = new Date(publishedAtMs).toISOString();
   const existingEdition = await findByEdition(db, parsed.editionDate, parsed.editionType);
 
   if (existingEdition) {
