@@ -99,7 +99,13 @@ class XFeedTests(unittest.TestCase):
             )
 
     def test_xpost_rejects_malformed_host(self) -> None:
-        for bad_url in ("https:// not-a-url", "https://exa mple.com/x", "https://"):
+        for bad_url in (
+            "https:// not-a-url",
+            "https://exa mple.com/x",
+            "https://example.com:bad/x",
+            "https://%zz/x",
+            "https://",
+        ):
             with self.subTest(url=bad_url):
                 with self.assertRaises(ValueError):
                     XPost.from_dict(
