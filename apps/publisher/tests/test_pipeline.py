@@ -160,6 +160,16 @@ class PipelineTests(unittest.TestCase):
         report = self._run()
         self.assertEqual(report.counts["universe_version"], "2026-08-11")
 
+    def test_default_prepared_at_never_in_future(self) -> None:
+        from datetime import timezone as dt_timezone
+        from publisher.pipeline import _default_prepared_at
+
+        early = datetime(2026, 8, 12, 11, 0, 0, tzinfo=dt_timezone.utc)  # 07:00 ET
+        late = datetime(2026, 8, 12, 14, 0, 0, tzinfo=dt_timezone.utc)  # 10:00 ET
+        for now in (early, late):
+            with self.subTest(now=now):
+                self.assertEqual(_default_prepared_at("pre_market", now=now), now)
+
 
 if __name__ == "__main__":
     unittest.main()

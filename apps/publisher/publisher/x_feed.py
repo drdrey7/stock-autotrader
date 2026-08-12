@@ -64,6 +64,8 @@ class XPost:
             raise ValueError(f"X post {post_id!r} has an invalid 'url'")
         if parsed_url.scheme != "https" or not parsed_url.netloc:
             raise ValueError(f"X post {post_id!r} requires an absolute HTTPS 'url'")
+        if any(char.isspace() for char in parsed_url.netloc):
+            raise ValueError(f"X post {post_id!r} has a malformed host in 'url'")
         if not isinstance(created_at_raw, str) or not created_at_raw:
             raise ValueError(f"X post {post_id!r} requires 'created_at'")
         if not isinstance(author, str) or not author.startswith("@") or len(author) < 2:

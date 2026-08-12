@@ -52,15 +52,12 @@ class PipelineReport:
 
 
 def _default_prepared_at(edition_type: str, now: datetime | None = None) -> datetime:
-    """Anchor: pre_market 08:30 ET / post_close 16:30 ET on the current NY date.
+    """Anchor: the actual run time in America/New_York.
 
-    If the run happens after the scheduled anchor, use the actual run time so
-    the 24h window and ``preparedAt`` stay honest (never claim an earlier time).
+    ``preparedAt`` must never be in the future (false provenance) and must
+    never claim an earlier time than the run; the honest anchor is now.
     """
-    reference = (now or datetime.now(timezone.utc)).astimezone(ZoneInfoNY())
-    hour = 8 if edition_type == "pre_market" else 16
-    candidate = reference.replace(hour=hour, minute=30, second=0, microsecond=0)
-    return candidate if candidate > reference else reference
+    return (now or datetime.now(timezone.utc)).astimezone(ZoneInfoNY())
 
 
 def ZoneInfoNY():

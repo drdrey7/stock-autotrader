@@ -98,6 +98,14 @@ class XFeedTests(unittest.TestCase):
                 {"id": "x", "text": "$NVDA", "created_at": PREPARED_AT.isoformat(), "url": "http://x.com/a", "author": "@nolimitgains"}
             )
 
+    def test_xpost_rejects_malformed_host(self) -> None:
+        for bad_url in ("https:// not-a-url", "https://exa mple.com/x", "https://"):
+            with self.subTest(url=bad_url):
+                with self.assertRaises(ValueError):
+                    XPost.from_dict(
+                        {"id": "x", "text": "$NVDA", "created_at": PREPARED_AT.isoformat(), "url": bad_url, "author": "@nolimitgains"}
+                    )
+
     def test_xpost_requires_author(self) -> None:
         with self.assertRaises(ValueError, msg="author required"):
             XPost.from_dict(
