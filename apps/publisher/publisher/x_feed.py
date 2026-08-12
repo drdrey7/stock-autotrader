@@ -28,10 +28,59 @@ from typing import Any
 from .universe import UniverseSnapshot, canonical_symbol
 
 TICKER_RE = re.compile(r"\$([A-Z]{1,5}(?:\.[A-Z]{1,3})?(?:-[A-Z])?)\b", re.IGNORECASE)
+AUTHOR_RE = re.compile(r"^@[A-Za-z0-9_]{1,30}$")
 WINDOW_HOURS = 24
 WHATWG_FORBIDDEN_HOST_CHARS = frozenset(
     '\x00\t\n\r "#%/:<>?@[]\\^|\x7f'
 )
+X_POST_HOSTS = frozenset({"x.com", "www.x.com"})
+
+
+def _raw_path_segments_are_whatwg_safe(path: str) -> bool:
+    """Reject raw path segments that WHATWG normalizes or rejects."""
+    from urllib.parse import unquote
+
+    for segment in path.split("/"):
+        if any(ord(char) > 0x7E or char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F for char in segment):
+            return False
+        if any(char == "%" and (index + 2 >= len(segment) or not all(digit in "0123456789abcdefABCDEF" for digit in segment[index + 1:index + 3])) for index, char in enumerate(segment)):
+            return False
+        try:
+            decoded = unquote(segment, encoding="utf-8", errors="strict")
+        except UnicodeDecodeError:
+            return False
+        if any(ord(char) > 0x7E or char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F for char in decoded):
+            return False
+        if decoded in {".", ".."} or any(separator in decoded for separator in ("/", "\\")):
+            return False
+    return True
+
+
+def _is_expected_x_post_url(parsed_url: Any, *, post_id: str, author: str) -> bool:
+    """Require a canonical X host and a status path for the declared author."""
+    if parsed_url.hostname.casefold() not in X_POST_HOSTS:
+        return False
+    authority = parsed_url.netloc.rsplit("@", 1)[-1]
+    if authority.endswith(":"):
+        return False
+    if parsed_url.username is not None or parsed_url.password is not None:
+        return False
+    try:
+        port = parsed_url.port
+    except ValueError:
+        return False
+    if port not in (None, 443):
+        return False
+    if not _raw_path_segments_are_whatwg_safe(parsed_url.path):
+        return False
+    segments = parsed_url.path.split("/")
+    return (
+        len(segments) == 4
+        and segments[0] == ""
+        and segments[1].casefold() == author.removeprefix("@").casefold()
+        and segments[2].casefold() == "status"
+        and segments[3] == post_id
+    )
 
 
 def _idna_variants(hostname: str) -> tuple[str, ...] | None:
@@ -147,8 +196,8 @@ class XPost:
         url = raw.get("url")
         created_at_raw = raw.get("created_at")
         author = raw.get("author")
-        if not isinstance(post_id, str) or not post_id:
-            raise ValueError("X post requires a non-empty string 'id'")
+        if not isinstance(post_id, str) or not 4 <= len(post_id) <= 120:
+            raise ValueError("X post requires an 'id' between 4 and 120 characters")
         if not isinstance(text, str) or not text.strip():
             raise ValueError(f"X post {post_id!r} requires non-empty 'text'")
         if not isinstance(url, str):
@@ -157,6 +206,10 @@ class XPost:
         # whitespace or userinfo before the shared ingest contract sees them.
         if not url.startswith("https://"):
             raise ValueError(f"X post {post_id!r} requires an absolute HTTPS 'url'")
+        # Reject raw backslashes before urlsplit() so producer and WHATWG
+        # consumer cannot disagree after URL parser normalization.
+        if "\\" in url:
+            raise ValueError(f"X post {post_id!r} has backslashes in 'url'")
         # urlsplit() silently removes ASCII tab/LF/CR characters. Reject them
         # on the raw source URL so validation cannot accept a normalized value.
         if any(ord(char) <= 0x1F or ord(char) == 0x7F for char in url):
@@ -191,8 +244,10 @@ class XPost:
             raise ValueError(f"X post {post_id!r} has a malformed host in 'url'")
         if not isinstance(created_at_raw, str) or not created_at_raw:
             raise ValueError(f"X post {post_id!r} requires 'created_at'")
-        if not isinstance(author, str) or not author.startswith("@") or len(author) < 2:
+        if not isinstance(author, str) or not AUTHOR_RE.fullmatch(author):
             raise ValueError(f"X post {post_id!r} requires an 'author' handle starting with '@'")
+        if not _is_expected_x_post_url(parsed_url, post_id=post_id, author=author):
+            raise ValueError(f"X post {post_id!r} URL does not match its declared X author")
         return cls(
             post_id=post_id,
             text=text,

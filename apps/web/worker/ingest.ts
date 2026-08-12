@@ -42,6 +42,7 @@ const directionSchema = z.enum(["Bullish", "Neutral", "Bearish"]).or(
 );
 
 export const isoTimestampSchema = z.string().datetime({ offset: true });
+const MAX_EVENT_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
 export const marketDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
   const parsed = new Date(`${value}T00:00:00Z`);
@@ -486,6 +487,12 @@ export async function handleIngest(request: Request, env: Env): Promise<Response
     } catch {
       const id = (rawEvent as { event_id?: string })?.event_id ?? "unknown";
       rejected.push({ event_id: id, reason: "invalid schema" });
+      continue;
+    }
+
+    const eventTimestampMs = Date.parse(event.timestamp);
+    if (!Number.isFinite(eventTimestampMs) || eventTimestampMs - Date.now() > MAX_EVENT_CLOCK_SKEW_MS) {
+      rejected.push({ event_id: event.event_id, reason: "event timestamp is in the future" });
       continue;
     }
 

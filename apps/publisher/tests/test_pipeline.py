@@ -97,7 +97,7 @@ class PipelineTests(unittest.TestCase):
             dry_run=False,
             publish=True,
             endpoint="http://127.0.0.1:1/ingest/events",
-            secret="test-secret",
+            secret="fixture",
         )
         self.assertFalse(report.ok)
         self.assertTrue(report.publishable)
@@ -136,8 +136,8 @@ class PipelineTests(unittest.TestCase):
     def test_more_than_three_candidates_capped(self) -> None:
         """A fourth qualified candidate must be capped, not crash the edition."""
         posts = [
-            {"id": f"p{i}", "text": f"${s} setup", "created_at": PREPARED_AT.isoformat(),
-             "url": f"https://x.com/nolimitgains/status/p{i}", "author": "@nolimitgains"}
+            {"id": f"post-{i}", "text": f"${s} setup", "created_at": PREPARED_AT.isoformat(),
+             "url": f"https://x.com/nolimitgains/status/post-{i}", "author": "@nolimitgains"}
             for i, s in enumerate(["NVDA", "AAPL", "MSFT", "AMZN"], start=1)
         ]
         quotes = _load("quotes.sample.json")
@@ -169,6 +169,20 @@ class PipelineTests(unittest.TestCase):
         for now in (early, late):
             with self.subTest(now=now):
                 self.assertEqual(_default_prepared_at("pre_market", now=now), now)
+
+    def test_future_prepared_at_rejected_before_publish(self) -> None:
+        report = self._run(
+            prepared_at=datetime(2099, 1, 1, tzinfo=timezone.utc),
+            dry_run=False,
+            publish=True,
+            endpoint="http://127.0.0.1:1/ingest/events",
+            secret="fixture",
+        )
+        self.assertFalse(report.ok)
+        self.assertFalse(report.publishable)
+        self.assertFalse(report.published)
+        self.assertIsNone(report.briefing)
+        self.assertIn("prepared_at cannot be in the future", " ".join(report.errors))
 
 
 if __name__ == "__main__":

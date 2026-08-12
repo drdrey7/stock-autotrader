@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Env } from "./index";
 import { handleIngest } from "./ingest";
-import { readXPosts, storeXPosts, type XPost, type XPostRow } from "./x-posts";
+import { readXPosts, storeXPosts, type XPost, type XPostRow, xPostSchema } from "./x-posts";
 
 type IngestEventRow = { event_id: string; event_type: string; received_at: string; status: string };
 
@@ -165,6 +165,79 @@ const postB: XPost = {
   universe: "S&P 500",
 };
 
+describe("xPostSchema provenance", () => {
+  it("accepts the declared author and post id on the canonical X host", () => {
+    expect(xPostSchema.safeParse(postA).success).toBe(true);
+  });
+
+  it("rejects empty userinfo even when the canonical host and path match", () => {
+    const result = xPostSchema.safeParse({
+      ...postA,
+      url: "https://@x.com/nolimitgains/status/post-aaa",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects raw ASCII controls before URL normalization", () => {
+    for (const control of ["\u0001", "\t", "\n", "\r", "\u007f"]) {
+      const result = xPostSchema.safeParse({
+        ...postA,
+        url: `https://x.com/nolimitgains/status/post-${control}aaa`,
+      });
+      expect(result.success).toBe(false);
+    }
+  });
+
+  it("rejects raw outer whitespace before URL parser normalization", () => {
+    for (const url of [
+      " https://x.com/nolimitgains/status/post-aaa",
+      "https://x.com/nolimitgains/status/post-aaa ",
+      "https://x.com/nolimitgains/status/post-aaa\n",
+    ]) {
+      expect(xPostSchema.safeParse({ ...postA, url }).success).toBe(false);
+    }
+  });
+
+  it("rejects URL parser normalization of backslashes and Unicode hostnames", () => {
+    const invalidUrls = [
+      "https://x.com" + "\\" + "nolimitgains/status/post-aaa",
+      "https://x.com/nolimitgains" + "\\" + "status/post-aaa",
+      "https://ｘ.com/nolimitgains/status/post-aaa",
+      "https://x。com/nolimitgains/status/post-aaa",
+    ];
+    for (const url of invalidUrls) {
+      expect(xPostSchema.safeParse({ ...postA, url }).success).toBe(false);
+    }
+  });
+
+  it("rejects raw path dot-segments instead of accepting URL-normalized paths", () => {
+    for (const url of [
+      "https://x.com/nolimitgains/status/./post-aaa",
+      "https://x.com/nolimitgains/status/post-aaa/.",
+      "https://x.com/nolimitgains/status//post-aaa",
+      "https://x.com/nolimitgains/status/post-aaa\\..\\",
+      "https://x.com/nolimitgains/status/post%20aaa",
+      "https://x.com/nolimitgains/status/post%00aaa",
+      "https://x.com/nolimitgains/status/post%2Faaa",
+      "https://x.com/nolimitgains/status/post%5Caaa",
+      "https://x.com:/nolimitgains/status/post-aaa",
+      "https://x.com/nolimitgains/status/foöbar",
+      "https://x.com/nolimitgains/status/foo%C3%B6bar",
+    ]) {
+      const result = xPostSchema.safeParse({ ...postA, url });
+      expect(result.success).toBe(false);
+    }
+  });
+
+  it("rejects an arbitrary HTTPS URL even when the author is allowlisted", () => {
+    const result = xPostSchema.safeParse({
+      ...postA,
+      url: "https://example.com/nolimitgains/status/post-aaa",
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
 describe("storeXPosts", () => {
   it("stores posts and claims the event idempotently", async () => {
     const db = new FakeD1();
@@ -325,6 +398,45 @@ describe("ingest X_POSTS_COLLECTED", () => {
     expect(body.rejected).toHaveLength(1);
     expect(body.rejected[0]?.reason).toBe("invalid schema");
     expect(db.posts.size).toBe(0);
+  });
+
+  it("rejects a signed event timestamp materially in the future before writing", async () => {
+    const db = new FakeD1();
+    const request = await signedRequest({
+      events: [{
+        type: "X_POSTS_COLLECTED",
+        event_id: "xcollect-future-01",
+        timestamp: new Date(Date.now() + 10 * 60_000).toISOString(),
+        payload: { posts: [postA] },
+      }],
+    });
+    const response = await handleIngest(request, env(db));
+    const body = (await response.json()) as { rejected: { event_id: string; reason: string }[] };
+    expect(response.status).toBe(200);
+    expect(body.rejected).toEqual([
+      { event_id: "xcollect-future-01", reason: "event timestamp is in the future" },
+    ]);
+    expect(db.events.size).toBe(0);
+    expect(db.posts.size).toBe(0);
+  });
+
+  it("rejects a future timestamp before claiming a generic event", async () => {
+    const db = new FakeD1();
+    const request = await signedRequest({
+      events: [{
+        type: "SYSTEM_STATUS",
+        event_id: "status-future-01",
+        timestamp: new Date(Date.now() + 10 * 60_000).toISOString(),
+        payload: { engine: "online", apiHealth: "healthy" },
+      }],
+    });
+    const response = await handleIngest(request, env(db));
+    const body = (await response.json()) as { rejected: { event_id: string; reason: string }[] };
+    expect(response.status).toBe(200);
+    expect(body.rejected).toEqual([
+      { event_id: "status-future-01", reason: "event timestamp is in the future" },
+    ]);
+    expect(db.events.size).toBe(0);
   });
 
   it("rejects an unsigned request", async () => {

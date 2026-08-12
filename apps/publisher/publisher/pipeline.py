@@ -113,6 +113,13 @@ def run_pipeline(
     anchor = prepared_at or _default_prepared_at(edition_type)
     if anchor.tzinfo is None:
         anchor = anchor.replace(tzinfo=timezone.utc)
+    if publish and not dry_run and anchor.astimezone(timezone.utc) > datetime.now(timezone.utc):
+        return PipelineReport(
+            ok=False, publishable=False, published=False,
+            counts=counts, rejected=rejected, briefing=None,
+            errors=["prepared_at cannot be in the future when publishing"],
+            message="future prepared_at rejected",
+        )
 
     counts["active_accounts"] = len(accounts.active_handles)
     counts["universe_version"] = universe.version

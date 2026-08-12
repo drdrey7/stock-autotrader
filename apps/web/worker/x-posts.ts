@@ -7,6 +7,52 @@ export const ALLOWED_X_AUTHORS = ["@nolimitgains"] as const;
 
 const isoTimestampSchema = z.string().datetime({ offset: true });
 const MAX_POST_CLOCK_SKEW_MS = 5 * 60 * 1000;
+const X_POST_HOSTS = new Set(["x.com", "www.x.com"]);
+
+function isExpectedXPostUrl(url: string, author: string, postId: string): boolean {
+  if (url.trim() !== url) return false;
+  if (url.includes("\\")) return false;
+  if ([...url].some((char) => {
+    const code = char.codePointAt(0) ?? 0;
+    return code <= 0x1f || code === 0x7f;
+  })) return false;
+  try {
+    const parsed = new URL(url);
+    const rest = url.slice("https://".length);
+    const pathStart = rest.search(/[/?#]/);
+    const authority = pathStart >= 0 ? rest.slice(0, pathStart) : rest;
+    if (authority.includes("@") || authority.endsWith(":")) return false;
+    const rawHost = authority.split(":", 1)[0] ?? "";
+    if (!X_POST_HOSTS.has(rawHost.toLowerCase())) return false;
+    if (pathStart < 0) return false;
+    const rawPath = rest.slice(pathStart).split(/[?#]/, 1)[0] ?? "";
+    if (rawPath.includes("\\")) return false;
+    for (const segment of rawPath.split("/")) {
+      try {
+        const decoded = decodeURIComponent(segment);
+        if ([".", ".."].includes(decoded)) return false;
+        if ([...decoded].some((char) => {
+          const code = char.codePointAt(0) ?? 0;
+          return code > 0x7e || code <= 0x1f || code === 0x7f || /\s/u.test(char);
+        })) return false;
+        if (decoded.includes("/") || decoded.includes("\\")) return false;
+      } catch {
+        return false;
+      }
+    }
+    if (parsed.username || parsed.password || parsed.port) return false;
+    const segments = parsed.pathname.split("/");
+    return (
+      segments.length === 4
+      && segments[0] === ""
+      && segments[1]?.toLowerCase() === author.slice(1).toLowerCase()
+      && segments[2]?.toLowerCase() === "status"
+      && segments[3] === postId
+    );
+  } catch {
+    return false;
+  }
+}
 
 export const xPostSchema = z.strictObject({
   id: z.string().min(4).max(120),
@@ -18,7 +64,17 @@ export const xPostSchema = z.strictObject({
     }),
   text: z.string().trim().min(1).max(4_000),
   created_at: isoTimestampSchema,
-  url: z.string().url().refine((value) => value.startsWith("https://"), "url must be HTTPS"),
+  url: z
+    .string()
+    .refine((value) => {
+      try {
+        new URL(value);
+        return true;
+      } catch {
+        return false;
+      }
+    }, "url must be a valid URL")
+    .refine((value) => value.startsWith("https://"), "url must be HTTPS"),
   symbol: z
     .string()
     .regex(/^[A-Z0-9.-]{1,12}$/, "symbol must use a canonical ticker format")
@@ -29,6 +85,10 @@ export const xPostSchema = z.strictObject({
   chart: z.array(z.number()).min(2).max(120).nullable().optional(),
   price: z.string().trim().min(1).max(32).nullable().optional(),
   change: z.string().trim().min(1).max(32).nullable().optional(),
+}).superRefine((post, ctx) => {
+  if (!isExpectedXPostUrl(post.url, post.author, post.id)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["url"], message: "url must match the declared X author" });
+  }
 });
 
 export type XPost = z.infer<typeof xPostSchema>;
@@ -65,6 +125,9 @@ export async function storeXPosts(
   const receivedAtMs = Date.parse(receivedAt);
   if (!Number.isFinite(receivedAtMs)) {
     return { kind: "rejected", reason: "event timestamp is invalid" };
+  }
+  if (receivedAtMs - Date.now() > MAX_POST_CLOCK_SKEW_MS) {
+    return { kind: "rejected", reason: "event timestamp is in the future" };
   }
   for (const post of posts) {
     const createdAtMs = Date.parse(post.created_at);
