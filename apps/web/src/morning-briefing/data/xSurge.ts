@@ -1,7 +1,9 @@
+import type { DataSource } from "./source";
+
 export type XPost = {
   category: "AI" | "Markets" | "Tech" | "Investing"; name: string; handle: string;
   time: string; createdAt: string; text: string; likes: string; reposts: string; replies: string; color: string; url: string;
-  source?: "live" | "mock"; symbol?: string; price?: string; change?: string;
+  source?: DataSource; symbol?: string; price?: string; change?: string;
 };
 
 export const trackedXAccounts = ["@nolimitgains"] as const;

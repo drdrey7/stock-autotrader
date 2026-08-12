@@ -1,7 +1,9 @@
+import type { DataSource } from "./source";
+
 export type Opportunity = {
   ticker: string; company: string; change: number | null; confidence: "High" | "Medium" | null;
   score: number | null; thesis: string; trigger: string; risk: string; color: string;
-  source?: "live" | "mock"; verdict?: string; invalidation?: string; objective?: string; reference?: string;
+  source?: DataSource; verdict?: string; invalidation?: string; objective?: string; reference?: string;
 };
 
 export const opportunities: Opportunity[] = [

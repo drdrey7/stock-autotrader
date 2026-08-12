@@ -72,5 +72,13 @@ describe("Morning Briefing public experience", () => {
   ])("keeps public information route %s", (path, heading) => {
     render(<MemoryRouter initialEntries={[path]}><App /></MemoryRouter>);
     expect(screen.getByRole("heading", { name: heading })).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent("Not connected in PR #6");
+    expect(document.body).not.toHaveTextContent("Live publication arrives in a later release");
+  });
+
+  it("does not claim the backend is healthy when status is unavailable", async () => {
+    render(<MemoryRouter initialEntries={["/status"]}><App /></MemoryRouter>);
+    expect(await screen.findByText("Temporarily unavailable")).toBeInTheDocument();
+    expect(screen.queryByText("Online and healthy")).not.toBeInTheDocument();
   });
 });

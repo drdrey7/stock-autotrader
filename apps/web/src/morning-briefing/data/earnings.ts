@@ -1,10 +1,12 @@
+import type { DataSource } from "./source";
+
 export type EarningsCompany = {
   ticker: string; company: string; date: string; timing: "BMO" | "AMC" | "TBD";
   result: "Beat" | "Miss" | "Mixed" | "Upcoming" | "Pending"; epsActual?: string; epsExpected: string;
   revenueActual?: string; revenueExpected: string; reaction?: string;
   guidance: "Raised" | "Maintained" | "Lowered" | "Pending"; revenueYoy?: string;
   epsYoy?: string; margin?: string; segment?: string; officialUrl?: string; color: string;
-  source?: "live" | "mock" | "mixed"; eventSignal?: "Confirmed" | "Pending" | "Risk Window";
+  source?: DataSource; eventSignal?: "Confirmed" | "Pending" | "Risk Window";
 };
 
 export const earnings: EarningsCompany[] = [

@@ -65,6 +65,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -80,10 +81,105 @@ it("renders only qualified ideas and classifies scheduled earnings by date", asy
   const negative = screen.getByText("-1.25%");
   expect(negative).toHaveClass("negative");
   expect(screen.queryByText("+-1.25%")).not.toBeInTheDocument();
-  expect(screen.getByText("WEDNESDAY · 12 AUGUST")).toBeInTheDocument();
+  expect(screen.getByText("WEDNESDAY · 12 AUGUST · PRE-MARKET")).toBeInTheDocument();
   expect(view.container.querySelector(".market-status")).toHaveTextContent("S&P 500 up +0.31%");
   expect(view.container.querySelector(".earnings-mini")).toHaveTextContent("Future Corp");
   expect(view.container.querySelector(".earnings-mini")).not.toHaveTextContent("Past Corp");
+});
+
+it("labels a post-close edition instead of showing a morning greeting", async () => {
+  const postCloseBriefing = { ...briefing, editionType: "post_close", title: "Closing briefing" };
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === "/api/briefs/latest") return new Response(JSON.stringify(postCloseBriefing), { status: 200 });
+    if (url === "/api/status") return new Response(JSON.stringify({ candidates: [], briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt } }), { status: 200 });
+    return new Response(null, { status: 404 });
+  });
+
+  renderApp();
+  expect(await screen.findByRole("heading", { name: "Market close." })).toBeInTheDocument();
+  expect(screen.getByText("WEDNESDAY · 12 AUGUST · POST-CLOSE")).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Good morning." })).not.toBeInTheDocument();
+});
+
+it("renders successful sources without waiting for a stalled X request", async () => {
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === "/api/briefs/latest") return new Response(JSON.stringify(briefing), { status: 200 });
+    if (url === "/api/status") return new Response(JSON.stringify({ candidates: [], briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt } }), { status: 200 });
+    if (url.startsWith("/api/x/posts")) return await new Promise<Response>(() => undefined);
+    if (url === "/api/earnings") return new Response(JSON.stringify([{ symbol: "NEW", company: "Future Corp", date: "2026-08-14", timing: "BMO", eventSignal: "Confirmed" }]), { status: 200 });
+    if (url === "/api/market-data") return new Response(JSON.stringify({ benchmarks: [] }), { status: 200 });
+    return new Response(null, { status: 404 });
+  });
+
+  const view = renderApp();
+  await waitFor(() => expect(view.container.querySelector(".market-status")).toHaveTextContent("S&P 500 up +0.31%"));
+  expect(screen.getByText("Backend partially populated")).toBeInTheDocument();
+  expect(screen.getByText("Future Corp")).toBeInTheDocument();
+});
+
+it("keeps the last X posts when a later refresh fails", async () => {
+  let xRequests = 0;
+  const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input).startsWith("/api/x/posts")) {
+      xRequests += 1;
+      if (xRequests > 1) return new Response(null, { status: 503 });
+    }
+    return originalFetch(input, init);
+  });
+
+  renderApp("/x");
+  await screen.findByText("Newest post");
+  vi.mocked(Date.now).mockReturnValue(Date.parse("2026-08-13T01:30:00Z"));
+  document.dispatchEvent(new Event("visibilitychange"));
+  await waitFor(() => expect(xRequests).toBe(2));
+  expect(screen.getByText("Newest post")).toBeInTheDocument();
+  expect(screen.getByText("5h")).toBeInTheDocument();
+  expect(screen.getByText("1d 6h")).toBeInTheDocument();
+  expect(screen.getAllByText("Last update").length).toBeGreaterThan(0);
+});
+
+it("does not refetch earnings on each minute or visibility refresh", async () => {
+  renderApp();
+  await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input) === "/api/earnings")).toHaveLength(1));
+  document.dispatchEvent(new Event("visibilitychange"));
+  await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input) === "/api/status").length).toBeGreaterThan(1));
+  expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input) === "/api/earnings")).toHaveLength(1);
+});
+
+it("treats an empty earnings response as a successful daily refresh", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input) === "/api/earnings") return new Response(JSON.stringify([]), { status: 200 });
+    return originalFetch(input, init);
+  });
+  renderApp();
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input) === "/api/earnings")).toHaveLength(1);
+});
+
+it("reclassifies earnings and refreshes once when the New York market date changes", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  vi.setSystemTime(new Date("2026-08-13T03:59:00Z"));
+  const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input) === "/api/earnings") return new Response(JSON.stringify([
+      { symbol: "ROLL", company: "Rollover Corp", date: "2026-08-12", timing: "AMC", eventSignal: "Confirmed" },
+    ]), { status: 200 });
+    return originalFetch(input, init);
+  });
+
+  const view = renderApp();
+  await waitFor(() => expect(view.container.querySelector(".earnings-mini")).toHaveTextContent("Rollover Corp"));
+  vi.setSystemTime(new Date("2026-08-13T04:01:00Z"));
+  await vi.advanceTimersByTimeAsync(60_000);
+  await waitFor(() => expect(view.container.querySelector(".earnings-mini")).not.toHaveTextContent("Rollover Corp"));
+  expect(view.container.querySelector(".recent-results")).toHaveTextContent("Rollover Corp");
+  expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input) === "/api/earnings")).toHaveLength(2);
+  vi.useRealTimers();
 });
 
 it("renders zero market movement as flat without an upward arrow", async () => {
@@ -134,7 +230,8 @@ it("rejects stale briefing data and invalid live market numbers", async () => {
   renderApp();
   await waitFor(() => expect(screen.getByText("Demo fallback active")).toBeInTheDocument());
   expect(screen.queryByText("Constructive session.")).not.toBeInTheDocument();
-  expect(screen.queryByText("0.00")).not.toBeInTheDocument();
+  expect(screen.queryByText("N/A")).not.toBeInTheDocument();
+  expect(screen.getAllByText("Demo").length).toBeGreaterThan(0);
 });
 
 it("sorts fresh candidate fallback by score and does not invent a daily move", async () => {

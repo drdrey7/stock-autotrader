@@ -27,12 +27,12 @@ import {
 
 function Brand({ compact = false }: { compact?: boolean }) {
   return (
-    <Link className="briefing-brand" to="/" aria-label="Stock Daily Briefing home">
+    <Link className="briefing-brand" to="/" aria-label="Morning Briefing home">
       <span className="briefing-brand-mark" aria-hidden="true">
         <BarChart3 size={18} />
       </span>
       <span>
-        Stock Daily Briefing
+        Morning Briefing
         {!compact && <small>New York market intelligence</small>}
       </span>
     </Link>
@@ -87,10 +87,15 @@ const briefingEditionLabel =
   exampleDailyBriefing.editionType === "post_close" ? "POST-CLOSE" : "PRE-MARKET";
 const briefingEditionCode = exampleDailyBriefing.editionType === "post_close" ? "POST" : "PRE";
 
+type PublicStatus = {
+  status?: { apiHealth?: string; engine?: string };
+  briefing?: { available?: boolean; freshness?: string; publishedAt?: string | null };
+};
+
 function BriefingFooter() {
   return (
     <footer className="briefing-footer">
-      <span>© 2026 Stock Daily Briefing</span>
+      <span>© 2026 Morning Briefing</span>
       <span className="briefing-footer-links">
         <Link to="/methodology">Methodology</Link>
         <Link to="/status">Status</Link>
@@ -108,7 +113,7 @@ function TerminalPreview() {
     <div
       className="briefing-terminal-preview"
       role="img"
-      aria-label="Stock Daily Briefing terminal preview"
+      aria-label="Morning Briefing terminal preview"
     >
       <div className="briefing-window-bar">
         <span>
@@ -608,14 +613,14 @@ export function DailyBriefingDashboardPage() {
                   <CheckCircle2 size={16} aria-hidden="true" />
                   <span>
                     <strong>Market context</strong>
-                    <small>Illustrative frontend fixture</small>
+                    <small>Live when available, clearly labelled otherwise</small>
                   </span>
                 </span>
                 <span>
                   <CheckCircle2 size={16} aria-hidden="true" />
                   <span>
                     <strong>X discovery</strong>
-                    <small>Example summaries, no live integration</small>
+                    <small>Curated posts with last-update fallback</small>
                   </span>
                 </span>
                 <span>
@@ -680,7 +685,7 @@ export function DailyBriefingMethodologyPage() {
     <InformationLayout
       eyebrow="HOW THE BRIEF IS BUILT"
       title="Methodology"
-      lead="Stock Daily Briefing turns a small, explicit source allowlist into independently checked market research."
+      lead="Morning Briefing turns a small, explicit source allowlist into independently checked market research."
     >
       <h2>1. Discover, do not endorse</h2>
       <p>
@@ -707,32 +712,74 @@ export function DailyBriefingMethodologyPage() {
 }
 
 export function DailyBriefingStatusPage() {
+  const [service, setService] = useState<PublicStatus | null>(null);
+  const [unavailable, setUnavailable] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    let requestId = 0;
+    let controller: AbortController | null = null;
+    const refresh = () => {
+      const currentRequest = ++requestId;
+      controller?.abort();
+      const requestController = new AbortController();
+      controller = requestController;
+      const signal = requestController.signal;
+      const timeout = window.setTimeout(() => requestController.abort(), 8_000);
+      void fetch("/api/status", { headers: { accept: "application/json" }, signal })
+        .then((response) => response.ok ? response.json() as Promise<PublicStatus> : Promise.reject())
+        .then((value) => {
+          if (cancelled || currentRequest !== requestId) return;
+          setService(value); setUnavailable(false);
+        })
+        .catch(() => {
+          if (cancelled || currentRequest !== requestId) return;
+          setService(null); setUnavailable(true);
+        })
+        .finally(() => window.clearTimeout(timeout));
+    };
+    refresh();
+    const interval = window.setInterval(refresh, 60_000);
+    const onVisibilityChange = () => { if (document.visibilityState === "visible") refresh(); };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      cancelled = true; controller?.abort(); window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, []);
+
+  const healthy = service?.status?.apiHealth === "healthy" && service.status.engine === "online";
+  const briefingFreshness = service?.briefing?.freshness ?? "unavailable";
+  const published = service?.briefing?.publishedAt
+    ? new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(new Date(service.briefing.publishedAt))
+    : "No published edition reported";
+
   return (
     <InformationLayout
-      eyebrow="PUBLIC PREVIEW HEALTH"
+      eyebrow="PUBLIC SERVICE HEALTH"
       title="System status"
-      lead="This PR validates the public frontend with a clearly labelled example fixture. Live publication arrives in a later release."
+      lead="Morning Briefing uses live backend sources where available and keeps the latest useful information visible when a source is temporarily unavailable."
     >
       <div className="briefing-status-grid">
         <span>
           <CheckCircle2 aria-hidden="true" />
           <span>
-            <strong>Frontend preview</strong>
+            <strong>Public frontend</strong>
             <small>Available</small>
           </span>
         </span>
-        <span>
-          <CheckCircle2 aria-hidden="true" />
+        <span className={healthy ? "" : "is-pending"}>
+          {healthy ? <CheckCircle2 aria-hidden="true" /> : <CircleDot aria-hidden="true" />}
           <span>
-            <strong>Example fixture</strong>
-            <small>Loaded locally</small>
+            <strong>Backend integration</strong>
+            <small>{service ? (healthy ? "Online and healthy" : "Degraded") : unavailable ? "Temporarily unavailable" : "Checking…"}</small>
           </span>
         </span>
-        <span className="is-pending">
-          <CircleDot aria-hidden="true" />
+        <span className={briefingFreshness === "fresh" ? "" : "is-pending"}>
+          {briefingFreshness === "fresh" ? <CheckCircle2 aria-hidden="true" /> : <CircleDot aria-hidden="true" />}
           <span>
-            <strong>Live publisher</strong>
-            <small>Not connected in PR #6</small>
+            <strong>Latest briefing</strong>
+            <small>{service ? `${briefingFreshness} · ${published}` : unavailable ? "Status unavailable · dashboard fallback remains active" : "Checking…"}</small>
           </span>
         </span>
       </div>
@@ -745,17 +792,18 @@ export function DailyBriefingDisclaimerPage() {
     <InformationLayout
       eyebrow="READ BEFORE USING THE BRIEF"
       title="Disclaimer"
-      lead="Stock Daily Briefing provides general, example market research for informational and educational purposes only."
+      lead="Morning Briefing provides general market research for informational and educational purposes only."
     >
       <h2>Not investment advice</h2>
       <p>
         Nothing on this website is a recommendation, solicitation or personalised
         assessment to buy, hold or sell a security.
       </p>
-      <h2>Example data</h2>
+      <h2>Data sources</h2>
       <p>
-        PR #6 uses synthetic, illustrative values. They are not live quotes, current X
-        posts or claims about market conditions.
+        Sections are labelled as Live, Last update, Live + demo or Demo. When a source is
+        temporarily unavailable, the latest useful information may remain visible instead
+        of being removed.
       </p>
       <h2>Risk and verification</h2>
       <p>
