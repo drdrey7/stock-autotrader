@@ -18,7 +18,7 @@ import {
   TriangleAlert,
   X as CloseIcon,
 } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import {
   exampleDailyBriefing,
   type BriefingIdea,
@@ -277,7 +277,7 @@ const dashboardMenuItems = [
   {
     label: "X search",
     detail: "Curated source discovery",
-    href: undefined,
+    href: "/x",
     Icon: Globe2,
   },
   {
@@ -290,6 +290,7 @@ const dashboardMenuItems = [
 
 function DashboardMenu() {
   const [isOpen, setIsOpen] = useState(false);
+  const location = useLocation();
   const toggleRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLElement>(null);
   const wasOpenRef = useRef(false);
@@ -355,19 +356,38 @@ function DashboardMenu() {
         <nav aria-label="Dashboard sections">
           {dashboardMenuItems.map(({ label, detail, href, Icon }) => {
             if (href) {
-              return (
-                <a
-                  key={label}
-                  className="briefing-dashboard-menu-item is-active"
-                  href={href}
-                  aria-current="page"
-                  onClick={() => setIsOpen(false)}
-                >
+              const isInternal = href.startsWith("/");
+              const isCurrent = href.startsWith("#")
+                ? location.pathname === "/dashboard" && (location.hash === "" || location.hash === href)
+                : location.pathname === href;
+              const content = (
+                <>
                   <Icon size={17} aria-hidden="true" />
                   <span>
                     <small>{detail}</small>
                     <strong>{label}</strong>
                   </span>
+                </>
+              );
+              return isInternal ? (
+                <Link
+                  key={label}
+                  className={`briefing-dashboard-menu-item${isCurrent ? " is-active" : ""}`}
+                  to={href}
+                  aria-current={isCurrent ? "page" : undefined}
+                  onClick={() => setIsOpen(false)}
+                >
+                  {content}
+                </Link>
+              ) : (
+                <a
+                  key={label}
+                  className={`briefing-dashboard-menu-item${isCurrent ? " is-active" : ""}`}
+                  href={href}
+                  aria-current={isCurrent ? "page" : undefined}
+                  onClick={() => setIsOpen(false)}
+                >
+                  {content}
                 </a>
               );
             }

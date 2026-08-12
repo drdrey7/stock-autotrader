@@ -13,6 +13,7 @@ import {
   readLatestBriefing,
   type BriefingStatus,
 } from "./daily-briefings";
+import { readXPosts } from "./x-posts";
 
 /**
  * Stock Autotrader public read-only API (PR #2).
@@ -397,6 +398,23 @@ export default {
           : json({ error: "brief_not_found", message: "No Daily Briefing is available." }, 404);
       } catch {
         return json({ error: "brief_store_unavailable" }, 503);
+      }
+    }
+    if (pathname === "/api/x/posts") {
+      try {
+        const params = new URL(request.url).searchParams;
+        const author = params.get("author") ?? undefined;
+        const symbol = params.get("symbol") ?? undefined;
+        const rawLimit = Number.parseInt(params.get("limit") ?? "50", 10);
+        const posts = await readXPosts(env.DB, {
+          author,
+          symbol: symbol?.toUpperCase(),
+          limit: Number.isFinite(rawLimit) ? rawLimit : 50,
+        });
+        return json({ posts, count: posts.length });
+      } catch (err) {
+        console.error("x posts error", err);
+        return json({ error: "x_store_unavailable" }, 503);
       }
     }
     if (pathname === "/api/market-data") {

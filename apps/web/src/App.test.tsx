@@ -139,15 +139,19 @@ describe("Stock Daily Briefing public experience", () => {
     expect(morningBriefing).toHaveAttribute("aria-current", "page");
     expect(morningBriefing).toHaveTextContent("Today");
 
-    for (const label of ["X search", "Earnings"]) {
-      const button = screen.getByRole("button", {
-        name: new RegExp(`Coming soon.*${label}`),
-      });
-      expect(button).toBeDisabled();
-      expect(button).toHaveTextContent("Coming soon");
-      expect(button).toHaveTextContent(label);
-      expect(button).not.toHaveAttribute("href");
-    }
+    const xSearch = screen.getByRole("link", { name: /X search/ });
+    expect(xSearch).toHaveAttribute("href", "/x");
+    expect(xSearch).toHaveTextContent("Curated source discovery");
+    expect(xSearch).not.toHaveAttribute("aria-current");
+    expect(xSearch).not.toHaveClass("is-active");
+
+    const earnings = screen.getByRole("button", {
+      name: /Coming soon.*Earnings/,
+    });
+    expect(earnings).toBeDisabled();
+    expect(earnings).toHaveTextContent("Coming soon");
+    expect(earnings).toHaveTextContent("Earnings");
+    expect(earnings).not.toHaveAttribute("href");
 
     const toggle = screen.getByRole("button", { name: "Open dashboard menu" });
     expect(toggle).toHaveAttribute("aria-expanded", "false");

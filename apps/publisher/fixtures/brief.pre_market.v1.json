@@ -1,0 +1,127 @@
+{
+  "example": false,
+  "editionDate": "2026-08-12",
+  "editionType": "pre_market",
+  "timezone": "America/New_York",
+  "preparedAt": "2026-08-12T12:30:00Z",
+  "title": "Pre-market briefing",
+  "marketSummary": "Index snapshot: S&P 500 constructive, Nasdaq-100 leading, VIX contained. See benchmark notes for context; this is not investment advice.",
+  "market": [
+    {
+      "name": "S&P 500",
+      "symbol": "SP:SPX",
+      "value": "6,412.10",
+      "change": "+0.31%",
+      "state": "Constructive",
+      "note": "Holding above the 20-day average with breadth improving."
+    },
+    {
+      "name": "Nasdaq-100",
+      "symbol": "NASDAQ:NDX",
+      "value": "23,830.02",
+      "change": "+0.55%",
+      "state": "Leading",
+      "note": "Relative strength remains in large-cap technology."
+    },
+    {
+      "name": "VIX",
+      "symbol": "CBOE:VIX",
+      "value": "15.40",
+      "change": "-2.10%",
+      "state": "Contained",
+      "note": "Volatility regime calm ahead of the session."
+    }
+  ],
+  "ideas": [
+    {
+      "symbol": "NVDA",
+      "company": "NVIDIA Corporation",
+      "universe": "Both",
+      "verdict": "Potential Entry",
+      "price": "$183.10",
+      "change": "+1.75%",
+      "thesis": "Relative strength and volume support the setup; confirmation requires a hold above the trigger.",
+      "source": {
+        "handle": "@nolimitgains",
+        "reference": "https://x.com/nolimitgains/status/post-001",
+        "originalTimestamp": "2026-08-12T10:15:00Z",
+        "collectedTimestamp": "2026-08-12T12:30:00Z",
+        "summary": "Idea from @nolimitgains on 2026-08-12 06:15 EDT."
+      },
+      "technical": [
+        "Price above 20D, 50D and 200D averages.",
+        "Relative volume 1.6x versus the 20-day average.",
+        "Confirmation requires a hold above $183.60."
+      ],
+      "financial": [
+        "Large-cap Nasdaq-100 and S&P 500 constituent.",
+        "Growth profile remains strong; valuation sensitivity elevated."
+      ],
+      "news": [
+        "No material adverse headline in the collection snapshot.",
+        "Earnings proximity must be rechecked before use."
+      ],
+      "risks": [
+        "Gap risk after an extended pre-market move.",
+        "Concentrated semiconductor leadership can reverse quickly."
+      ],
+      "levels": {
+        "trigger": "Hold above $183.60",
+        "invalidation": "Close below $179.20",
+        "objective": "$194.00",
+        "rewardRisk": "2.6R",
+        "rewardRiskRatio": 2.6
+      }
+    },
+    {
+      "symbol": "AAPL",
+      "company": "Apple Inc.",
+      "universe": "Both",
+      "verdict": "Potential Entry",
+      "price": "$231.45",
+      "change": "+0.42%",
+      "thesis": "Breakout zone holding on low volume; structure remains constructive.",
+      "source": {
+        "handle": "@nolimitgains",
+        "reference": "https://x.com/nolimitgains/status/post-002",
+        "originalTimestamp": "2026-08-12T11:02:00Z",
+        "collectedTimestamp": "2026-08-12T12:30:00Z",
+        "summary": "Idea from @nolimitgains on 2026-08-12 07:02 EDT."
+      },
+      "technical": [
+        "Price above 50D and 200D averages.",
+        "Breakout level defended on the first retest."
+      ],
+      "financial": [
+        "Large-cap S&P 500 constituent.",
+        "Cash-generative franchise with stable margins."
+      ],
+      "news": [
+        "No material headlines in the collection snapshot."
+      ],
+      "risks": [
+        "Low relative volume weakens the breakout conviction.",
+        "Macro rate sensitivity remains a swing factor."
+      ],
+      "levels": {
+        "trigger": "Hold above $230.90",
+        "invalidation": "Close below $226.00",
+        "objective": "$236.40",
+        "rewardRisk": "2.0R",
+        "rewardRiskRatio": 2.0
+      }
+    }
+  ],
+  "schedule": [
+    {
+      "label": "Pre-market briefing",
+      "time": "08:30 ET",
+      "detail": "Published before the US open."
+    },
+    {
+      "label": "X source window",
+      "time": "24h",
+      "detail": "Ideas collected from the source account within 24h of publication."
+    }
+  ]
+}

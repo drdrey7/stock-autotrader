@@ -2,6 +2,7 @@ import { z } from "zod";
 import { publishedDailyBriefingSchema } from "@stock-autotrader/contracts";
 import type { Env } from "./index";
 import { publishDailyBriefing } from "./daily-briefings";
+import { storeXPosts, xPostsCollectedEventSchema } from "./x-posts";
 
 /**
  * Protected publication layer (PR #3).
@@ -14,6 +15,7 @@ import { publishDailyBriefing } from "./daily-briefings";
 
 const EVENT_TYPES = [
   "DAILY_BRIEFING_PUBLISHED",
+  "X_POSTS_COLLECTED",
   "SCAN_STARTED",
   "SCAN_COMPLETED",
   "SIGNAL_SURFACED",
@@ -40,6 +42,7 @@ const directionSchema = z.enum(["Bullish", "Neutral", "Bearish"]).or(
 );
 
 export const isoTimestampSchema = z.string().datetime({ offset: true });
+const MAX_EVENT_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
 export const marketDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
   const parsed = new Date(`${value}T00:00:00Z`);
@@ -271,6 +274,7 @@ const eventSchema = z.discriminatedUnion("type", [
     timestamp: isoTimestampSchema,
     payload: publishedDailyBriefingSchema,
   }),
+  xPostsCollectedEventSchema,
   z.object({ type: z.literal("SCAN_STARTED"), event_id: z.string().min(8).max(80), timestamp: isoTimestampSchema, payload: z.object({ scheduledAt: isoTimestampSchema, universe: z.number().int().nonnegative() }) }),
   z.object({ type: z.literal("SCAN_COMPLETED"), event_id: z.string().min(8).max(80), timestamp: isoTimestampSchema, payload: scanCompletedSchema }),
   z.object({ type: z.enum(["SIGNAL_SURFACED", "SIGNAL_UPDATED", "SIGNAL_REJECTED"]), event_id: z.string().min(8).max(80), timestamp: isoTimestampSchema, payload: candidateSchema }),
@@ -486,6 +490,12 @@ export async function handleIngest(request: Request, env: Env): Promise<Response
       continue;
     }
 
+    const eventTimestampMs = Date.parse(event.timestamp);
+    if (!Number.isFinite(eventTimestampMs) || eventTimestampMs - Date.now() > MAX_EVENT_CLOCK_SKEW_MS) {
+      rejected.push({ event_id: event.event_id, reason: "event timestamp is in the future" });
+      continue;
+    }
+
     if (event.type === "DAILY_BRIEFING_PUBLISHED") {
       try {
         const result = await publishDailyBriefing(
@@ -493,6 +503,23 @@ export async function handleIngest(request: Request, env: Env): Promise<Response
           event.event_id,
           event.timestamp,
           event.payload,
+        );
+        if (result.kind === "applied") applied.push(event.event_id);
+        else if (result.kind === "skipped") skipped.push(event.event_id);
+        else rejected.push({ event_id: event.event_id, reason: result.reason });
+      } catch {
+        return json({ error: "Failed to apply event", event_id: event.event_id }, 500);
+      }
+      continue;
+    }
+
+    if (event.type === "X_POSTS_COLLECTED") {
+      try {
+        const result = await storeXPosts(
+          env.DB,
+          event.event_id,
+          event.timestamp,
+          event.payload.posts,
         );
         if (result.kind === "applied") applied.push(event.event_id);
         else if (result.kind === "skipped") skipped.push(event.event_id);

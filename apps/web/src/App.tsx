@@ -1,12 +1,13 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import {
   DailyBriefingDashboardPage,
-  DailyBriefingDisclaimerPage,
   DailyBriefingLandingPage,
   DailyBriefingMethodologyPage,
   DailyBriefingNotFoundPage,
   DailyBriefingStatusPage,
+  DailyBriefingDisclaimerPage,
 } from "./daily-briefing-pages";
+import { DailyBriefingXSearchPage } from "./x-search-page";
 
 const legacyRoutes = [
   "/scanner",
@@ -28,6 +29,7 @@ export default function App() {
     <Routes>
       <Route path="/" element={<DailyBriefingLandingPage />} />
       <Route path="/dashboard" element={<DailyBriefingDashboardPage />} />
+      <Route path="/x" element={<DailyBriefingXSearchPage />} />
       <Route path="/methodology" element={<DailyBriefingMethodologyPage />} />
       <Route path="/status" element={<DailyBriefingStatusPage />} />
       <Route path="/disclaimer" element={<DailyBriefingDisclaimerPage />} />
