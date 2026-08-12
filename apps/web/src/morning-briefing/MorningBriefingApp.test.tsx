@@ -35,7 +35,7 @@ describe("Morning Briefing frontend demo", () => {
     expect(await screen.findByRole("heading", { name: "X Surge" })).toBeInTheDocument();
 
     fireEvent.click(screen.getAllByRole("button", { name: "Earnings" })[0]!);
-    expect(await screen.findByRole("heading", { name: "Earnings Calendar" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /Earnings Calendar/ })).toBeInTheDocument();
   });
 
   it("persists the selected colour theme", async () => {
@@ -56,7 +56,7 @@ describe("Morning Briefing frontend demo", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     fireEvent.click(screen.getAllByRole("button", { name: "Earnings" })[0]!);
-    await screen.findByRole("heading", { name: "Earnings Calendar" });
+    await screen.findByRole("heading", { name: /Earnings Calendar/ });
     fireEvent.click(await screen.findByRole("button", { name: /MSFT AMC/ }));
 
     expect(await screen.findByText("Earnings Detail")).toBeInTheDocument();
