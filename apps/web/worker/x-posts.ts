@@ -61,16 +61,20 @@ export async function storeXPosts(
   receivedAt: string,
   posts: XPost[],
 ): Promise<StoreXPostsResult> {
-  const claim = await db
+  // Idempotency check: a prior claim (applied or in-progress) is a duplicate.
+  const existing = await db
+    .prepare("SELECT event_id FROM ingest_events WHERE event_id = ?")
+    .bind(eventId)
+    .first<{ event_id: string }>();
+  if (existing) {
+    return { kind: "skipped", reason: "duplicate event" };
+  }
+
+  const claim = db
     .prepare(
       "INSERT OR IGNORE INTO ingest_events (event_id, event_type, received_at, status) VALUES (?, ?, ?, 'applied')",
     )
-    .bind(eventId, X_POSTS_EVENT_TYPE, receivedAt)
-    .run();
-
-  if (claim.meta.changes === 0) {
-    return { kind: "skipped", reason: "duplicate event" };
-  }
+    .bind(eventId, X_POSTS_EVENT_TYPE, receivedAt);
 
   const stmts = posts.map((post) =>
     db
@@ -94,13 +98,20 @@ export async function storeXPosts(
   );
 
   try {
-    const results = await db.batch(stmts);
-    const applied = results.filter((result) => result.meta.changes === 1).length;
+    // Claim + post writes in ONE atomic D1 batch: if the Worker dies mid-batch
+    // nothing is persisted, so a retry can still apply the event.
+    const results = await db.batch([claim, ...stmts]);
+    const claimChanges = results[0]?.meta.changes ?? 0;
+    if (claimChanges === 0) {
+      // Lost a race with a concurrent duplicate; treat as an idempotent skip.
+      return { kind: "skipped", reason: "duplicate event" };
+    }
+    const applied = results
+      .slice(1)
+      .filter((result) => result.meta.changes === 1).length;
     const skipped = posts.length - applied;
     return { kind: "applied", applied, skipped };
   } catch (err) {
-    // Roll back the claim so a transient failure can be retried.
-    await db.prepare("DELETE FROM ingest_events WHERE event_id = ?").bind(eventId).run();
     return { kind: "rejected", reason: String(err).slice(0, 400) };
   }
 }

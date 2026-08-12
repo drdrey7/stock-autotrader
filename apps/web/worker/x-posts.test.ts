@@ -30,6 +30,14 @@ class FakeStatement {
     return this;
   }
 
+  async first<T>(): Promise<T | null> {
+    if (this.sql.includes("FROM ingest_events")) {
+      const eventId = String(this.args[0]);
+      return this.db.events.has(eventId) ? ({ event_id: eventId } as T) : null;
+    }
+    throw new Error(`Unhandled SELECT: ${this.sql}`);
+  }
+
   async run(): Promise<{ meta: { changes: number } }> {
     if (this.sql.includes("INSERT OR IGNORE INTO ingest_events")) {
       const eventId = String(this.args[0]);

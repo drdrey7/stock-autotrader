@@ -119,7 +119,10 @@ def run_pipeline(
 
     counts["active_accounts"] = len(accounts.active_handles)
     counts["universe_version"] = universe.version
-    counts["universe_total"] = sum(len(members) for members in universe.indexes.values())
+    combined = set()
+    for members in universe.indexes.values():
+        combined |= set(members)
+    counts["universe_total"] = len(combined)
 
     # 1. X ingestion (cheap gates first)
     ingest = ingest_posts(

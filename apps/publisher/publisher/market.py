@@ -180,6 +180,8 @@ def _string_list(value: Any) -> tuple[str, ...]:
     for item in value:
         if not isinstance(item, str) or not item.strip():
             raise ValueError("list items must be non-empty strings")
+        if len(item) > MAX_TEXT_LENGTH:
+            raise ValueError(f"list item exceeds {MAX_TEXT_LENGTH} characters")
         items.append(item.strip())
     return tuple(items)
 
