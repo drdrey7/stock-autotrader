@@ -1,5 +1,5 @@
 export type Opportunity = {
-  ticker: string; company: string; change: number; confidence: "High" | "Medium";
+  ticker: string; company: string; change: number | null; confidence: "High" | "Medium" | null;
   score: number | null; thesis: string; trigger: string; risk: string; color: string;
   source?: "live" | "mock"; verdict?: string; invalidation?: string; objective?: string; reference?: string;
 };

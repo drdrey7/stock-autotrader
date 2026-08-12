@@ -31,8 +31,10 @@ it("ships restrictive Cloudflare static-asset headers", () => {
 });
 
 it("ships Morning Briefing metadata in the static HTML fallback", () => {
-  expect(indexHtml).toContain("<title>Morning Briefing — Markets, Opportunities & Insights</title>");
+  expect(indexHtml).toContain("<title>Morning Briefing — Markets, Opportunities &amp; Insights</title>");
+  expect(indexHtml).toContain('name="application-name" content="Morning Briefing"');
   expect(indexHtml).not.toContain("Stock Autotrader");
+  expect(indexHtml).not.toContain("Stock Daily Briefing");
 });
 
 describe("Morning Briefing public experience", () => {

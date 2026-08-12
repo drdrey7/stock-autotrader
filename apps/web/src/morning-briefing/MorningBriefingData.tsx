@@ -94,14 +94,14 @@ const initialData: MorningBriefingData = {
 
 const MorningBriefingDataContext = createContext<MorningBriefingData>(initialData);
 
-const numberFrom = (value: string | number | null | undefined): number => {
-  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
-  if (!value) return 0;
+const numberFrom = (value: string | number | null | undefined): number | null => {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (!value || !/[0-9]/.test(value)) return null;
   const parsed = Number(value.replace(/[^0-9.-]/g, ""));
-  return Number.isFinite(parsed) ? parsed : 0;
+  return Number.isFinite(parsed) ? parsed : null;
 };
 
-const changeFrom = (value: string | null | undefined): number => numberFrom(value);
+const changeFrom = (value: string | null | undefined): number | null => numberFrom(value);
 
 const tickerColour = (ticker: string): string => {
   const known = [...mockOpportunities, ...mockEarnings].find((item) =>
@@ -133,21 +133,40 @@ async function fetchJson<T>(path: string): Promise<T | null> {
   }
 }
 
-function marketFromBriefing(briefing: DailyBriefing): MarketIndex[] {
-  const live = briefing.market.map((item) => ({
-    name: item.name === "Nasdaq-100" ? "Nasdaq" : item.name,
-    symbol: item.symbol.split(":").at(-1) ?? item.symbol,
-    value: numberFrom(item.value),
-    decimals: 2,
-    change: changeFrom(item.change),
-    source: "live" as const,
-  }));
+function marketFromBriefing(briefing: DailyBriefing): MarketIndex[] | null {
+  const live = briefing.market.flatMap((item) => {
+    const value = numberFrom(item.value); const change = changeFrom(item.change);
+    if (value === null || change === null) return [];
+    return [{
+      name: item.name === "Nasdaq-100" ? "Nasdaq" : item.name,
+      symbol: item.symbol.split(":").at(-1) ?? item.symbol,
+      value,
+      decimals: 2,
+      change,
+      source: "live" as const,
+    }];
+  });
+  const findBenchmark = (name: string, symbol: string) => live.find((item) =>
+    item.name.toLowerCase().includes(name) || item.symbol.toUpperCase() === symbol
+  );
+  const sp500 = findBenchmark("s&p", "SPX");
   const dow = mockMarketIndexes.find((item) => item.symbol === "DJI");
-  return dow ? [...live.slice(0, 2), { ...dow, source: "mock" as const }, ...live.slice(2)] : live;
+  const ordered = [
+    sp500,
+    findBenchmark("nasdaq", "NDX"),
+    dow ? { ...dow, source: "mock" as const } : undefined,
+    findBenchmark("vix", "VIX"),
+  ].filter((item): item is MarketIndex => Boolean(item));
+  return sp500
+    ? [...ordered, ...live.filter((item) => !ordered.includes(item))].slice(0, 4)
+    : null;
 }
 
 function marketFromSnapshot(snapshot: MarketDataSnapshot | null | undefined): MarketIndex[] | null {
-  if (!snapshot?.benchmarks?.length) return null;
+  if (!snapshot?.benchmarks?.length || snapshot.status !== "healthy") return null;
+  const publishedAt = Date.parse(snapshot.lastSuccessfulUpdate ?? "");
+  const ageMs = Date.now() - publishedAt;
+  if (!Number.isFinite(publishedAt) || ageMs < -5 * 60_000 || ageMs > 26 * 60 * 60_000) return null;
   const mapped = snapshot.benchmarks.map((benchmark) => {
     const isQqq = benchmark.symbol.toUpperCase().includes("QQQ");
     const change = benchmark.open ? ((benchmark.close - benchmark.open) / benchmark.open) * 100 : 0;
@@ -176,7 +195,7 @@ function opportunitiesFromBriefing(
       ticker: idea.symbol,
       company: idea.company,
       change: changeFrom(idea.change),
-      confidence: idea.verdict === "Potential Entry" ? "High" : "Medium",
+      confidence: null,
       score: candidate?.quantScore ?? null,
       thesis: idea.thesis,
       trigger: idea.levels.trigger,
@@ -192,11 +211,12 @@ function opportunitiesFromBriefing(
 }
 
 function opportunitiesFromCandidates(candidates: Candidate[]): Opportunity[] {
-  return candidates.filter((candidate) => candidate.status === "Strong Setup").slice(0, 4).map((candidate) => ({
+  return candidates.filter((candidate) => candidate.status === "Strong Setup")
+    .sort((a, b) => b.quantScore - a.quantScore).slice(0, 4).map((candidate) => ({
     ticker: candidate.symbol,
     company: candidate.company,
-    change: 0,
-    confidence: candidate.status === "Strong Setup" ? "High" : "Medium",
+    change: null,
+    confidence: null,
     score: candidate.quantScore,
     thesis: candidate.reasons.map((reason) => reason.label).join(" · ") || candidate.strategy,
     trigger: candidate.breakout ?? "Not published",
@@ -229,13 +249,24 @@ function xPostsFromApi(posts: XApiPost[]): XPost[] {
   }));
 }
 
-function marketTodayKey(): string {
+export function marketTodayKey(): string {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
   }).formatToParts(new Date(Date.now()));
   const value = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? "";
   return `${value("year")}-${value("month")}-${value("day")}`;
 }
+
+const isRecentTimestamp = (value: string | null | undefined): boolean => {
+  const timestamp = Date.parse(value ?? "");
+  const ageMs = Date.now() - timestamp;
+  return Number.isFinite(timestamp) && ageMs >= -5 * 60_000 && ageMs <= 26 * 60 * 60_000;
+};
+
+const candidatesAreFresh = (status: StatusResponse | null): boolean =>
+  status?.status?.engine === "online" &&
+  status.status.apiHealth === "healthy" &&
+  isRecentTimestamp(status.status.lastDataUpdate);
 
 function earningsFromApi(events: EarningsEvent[]): EarningsCompany[] {
   const today = marketTodayKey();
@@ -268,7 +299,9 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
 
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
+    let requestId = 0;
+    const refresh = async () => {
+      const currentRequest = ++requestId;
       const [briefing, status, xResponse, liveEarnings, marketData] = await Promise.all([
         fetchJson<DailyBriefing>("/api/briefs/latest"),
         fetchJson<StatusResponse>("/api/status"),
@@ -276,14 +309,17 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
         fetchJson<EarningsEvent[]>("/api/earnings"),
         fetchJson<MarketDataSnapshot>("/api/market-data"),
       ]);
-      if (cancelled) return;
+      if (cancelled || currentRequest !== requestId) return;
 
-      const candidates = status?.candidates ?? [];
-      const liveMarket = briefing
-        ? marketFromBriefing(briefing)
+      const freshBriefing = briefing && status?.briefing?.freshness === "fresh" ? briefing : null;
+      const candidates = candidatesAreFresh(status)
+        ? (status?.candidates ?? []).filter((candidate) => isRecentTimestamp(candidate.updatedAt))
+        : [];
+      const liveMarket = freshBriefing
+        ? marketFromBriefing(freshBriefing)
         : marketFromSnapshot(marketData ?? status?.marketData);
-      const liveOpportunities = briefing
-        ? opportunitiesFromBriefing(briefing, candidates)
+      const liveOpportunities = freshBriefing
+        ? opportunitiesFromBriefing(freshBriefing, candidates)
         : candidates.length
           ? opportunitiesFromCandidates(candidates)
           : null;
@@ -302,7 +338,7 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
           ]
         : normalisedMocks;
 
-      const liveCount = [briefing, liveMarket, liveOpportunities, liveX, apiEarnings]
+      const liveCount = [freshBriefing, liveMarket, liveOpportunities, liveX, apiEarnings]
         .filter(Boolean).length;
 
       setData({
@@ -311,7 +347,7 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
         xPosts: liveX ?? mockXPosts,
         earnings: mergedEarnings,
         sources: {
-          briefing: briefing ? "live" : "mock",
+          briefing: freshBriefing ? "live" : "mock",
           market: liveMarket ? (liveMarket.some((item) => item.source === "mock") ? "mixed" : "live") : "mock",
           opportunities: liveOpportunities ? "live" : "mock",
           x: liveX ? "live" : "mock",
@@ -322,12 +358,18 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
         backendState: liveCount === 0 ? "offline" : liveCount === 5 ? "connected" : "partial",
         briefingFreshness: status?.briefing?.freshness ?? "unavailable",
         lastPublishedAt: status?.briefing?.publishedAt ?? briefing?.preparedAt ?? null,
-        editionDate: briefing?.editionDate ?? null,
+        editionDate: freshBriefing?.editionDate ?? null,
       });
-    })();
+    };
+    void refresh();
+    const interval = window.setInterval(() => { void refresh(); }, 60_000);
+    const onVisibilityChange = () => { if (document.visibilityState === "visible") void refresh(); };
+    document.addEventListener("visibilitychange", onVisibilityChange);
 
     return () => {
       cancelled = true;
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, []);
 

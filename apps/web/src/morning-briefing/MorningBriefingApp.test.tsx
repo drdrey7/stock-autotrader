@@ -1,12 +1,16 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MemoryRouter, useLocation } from "react-router-dom";
+import { MemoryRouter, useLocation, useNavigate } from "react-router-dom";
 import MorningBriefingApp from "./MorningBriefingApp";
 
 const renderApp = (path = "/") => render(<MemoryRouter initialEntries={[path]}><MorningBriefingApp/></MemoryRouter>);
 function RoutedApp() {
   const location = useLocation();
   return <><output aria-label="Current path">{location.pathname}</output><MorningBriefingApp/></>;
+}
+function HistoryApp() {
+  const navigate = useNavigate();
+  return <><button onClick={() => navigate(-1)}>Browser Back</button><MorningBriefingApp/></>;
 }
 
 beforeEach(() => {
@@ -64,6 +68,24 @@ describe("Morning Briefing frontend demo", () => {
     expect(screen.getByRole("heading", { level: 2, name: "August 2026" })).toBeInTheDocument();
   });
 
+  it("uses the New York market date for calendar Today near a UTC boundary", async () => {
+    vi.mocked(Date.now).mockReturnValue(Date.parse("2026-09-01T01:00:00Z"));
+    renderApp("/earnings");
+    expect(await screen.findByRole("heading", { level: 2, name: "August 2026" })).toBeInTheDocument();
+    expect(document.querySelector(".is-today .day-number")).toHaveTextContent("31");
+    expect(document.querySelectorAll(".calendar-grid > div")).toHaveLength(42);
+    fireEvent.click(screen.getByRole("button", { name: "Next month" }));
+    expect(screen.getByRole("heading", { level: 2, name: "September 2026" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Today" }));
+    expect(screen.getByRole("heading", { level: 2, name: "August 2026" })).toBeInTheDocument();
+  });
+
+  it("uses the New York market date in the fallback briefing header", () => {
+    vi.mocked(Date.now).mockReturnValue(Date.parse("2026-09-01T01:00:00Z"));
+    renderApp();
+    expect(screen.getByText("MONDAY · 31 AUGUST")).toBeInTheDocument();
+  });
+
   it("shows one filter per tracked account and keeps the source badge separate from time", async () => {
     const view = renderApp();
     fireEvent.click(screen.getAllByRole("button", { name: "X Pulse" })[0]!);
@@ -94,16 +116,32 @@ describe("Morning Briefing frontend demo", () => {
 
   it("opens opportunity and earnings details", async () => {
     renderApp();
-    fireEvent.click(screen.getAllByRole("button", { name: /NVDA NVIDIA Corporation/ })[0]!);
-    expect(screen.getByRole("dialog")).toHaveTextContent("OPPORTUNITY DETAIL");
+    const opportunityTrigger = screen.getAllByRole("button", { name: /NVDA.*NVIDIA Corporation/ })[0]!;
+    opportunityTrigger.focus();
+    fireEvent.click(opportunityTrigger);
+    const opportunityDialog = screen.getByRole("dialog", { name: /NVDA/ });
+    expect(opportunityDialog).toHaveTextContent("OPPORTUNITY DETAIL");
+    expect(screen.getByRole("button", { name: "Close" })).toHaveFocus();
 
-    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(opportunityTrigger).toHaveFocus());
     fireEvent.click(screen.getAllByRole("button", { name: "Earnings" })[0]!);
     await screen.findByRole("heading", { name: /Earnings Calendar/ });
-    fireEvent.click(await screen.findByRole("button", { name: /MSFT AMC/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /MSFT.*AMC/ }));
 
-    expect(await screen.findByText("Earnings Detail")).toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: "Earnings Detail" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Back" })).toHaveFocus();
     expect(screen.getByRole("link", { name: /View Official Earnings Report/ }))
       .toHaveAttribute("href", "https://www.microsoft.com/en-us/Investor");
+  });
+
+  it("closes an open detail when browser history changes the page", async () => {
+    render(<MemoryRouter initialEntries={["/", "/earnings"]} initialIndex={1}><HistoryApp/></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("button", { name: /MSFT.*AMC/ }));
+    expect(await screen.findByRole("dialog", { name: "Earnings Detail" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Browser Back" }));
+    expect(await screen.findByRole("heading", { name: "Good morning." })).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(document.body.style.overflow).toBe("");
   });
 });
