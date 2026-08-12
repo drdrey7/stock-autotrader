@@ -47,6 +47,8 @@ describe("Morning Briefing frontend demo", () => {
     expect(screen.getByRole("button", { name: "@nolimitgains" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Markets" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "AI" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Top Social Buzz")).not.toBeInTheDocument();
+    expect(screen.queryByText("Trending Keywords")).not.toBeInTheDocument();
 
     const postStatus = view.container.querySelector(".post-status");
     expect(postStatus?.querySelector(".data-source")).not.toBeNull();
