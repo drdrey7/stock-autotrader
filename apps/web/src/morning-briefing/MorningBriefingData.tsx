@@ -110,7 +110,9 @@ const relativeTime = (iso: string): string => {
   if (minutes < 60) return `${minutes}m`;
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h`;
-  return `${Math.floor(hours / 24)}d`;
+  const days = Math.floor(hours / 24);
+  const remainingHours = hours % 24;
+  return remainingHours ? `${days}d ${remainingHours}h` : `${days}d`;
 };
 
 async function fetchJson<T>(path: string): Promise<T | null> {
@@ -198,11 +200,14 @@ function opportunitiesFromCandidates(candidates: Candidate[]): Opportunity[] {
 }
 
 function xPostsFromApi(posts: XApiPost[]): XPost[] {
-  return posts.map((post) => ({
+  return [...posts]
+    .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
+    .map((post) => ({
     category: "Markets",
     name: post.company || post.author.replace(/^@/, ""),
     handle: post.author,
     time: relativeTime(post.created_at),
+    createdAt: post.created_at,
     text: post.text,
     likes: "—",
     reposts: "—",
