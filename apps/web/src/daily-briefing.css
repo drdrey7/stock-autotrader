@@ -1871,3 +1871,19 @@
   border: 1px dashed var(--briefing-border, #2f3336);
   border-radius: 16px;
 }
+
+.x-feed-change {
+  color: #16c784;
+}
+
+.x-feed-change.is-down {
+  color: #ea3943;
+}
+
+.x-feed-sparkline {
+  width: 100%;
+  height: 120px;
+  display: block;
+  border-radius: 12px;
+  background: var(--briefing-surface, #16181c);
+}

@@ -5,6 +5,21 @@ import { readXPosts, storeXPosts, type XPost, type XPostRow } from "./x-posts";
 
 type IngestEventRow = { event_id: string; event_type: string; received_at: string; status: string };
 
+type PostRow = {
+  id: string;
+  author: string;
+  text: string;
+  created_at: string;
+  url: string;
+  symbol: string | null;
+  company: string | null;
+  universe: string | null;
+  collected_at: string;
+  chart_json: string | null;
+  price: string | null;
+  change: string | null;
+};
+
 class FakeStatement {
   private args: unknown[] = [];
 
@@ -40,6 +55,9 @@ class FakeStatement {
         company: this.args[6] === null ? null : String(this.args[6]),
         universe: this.args[7] === null ? null : String(this.args[7]),
         collected_at: String(this.args[8]),
+        chart_json: this.args[9] === null ? null : String(this.args[9]),
+        price: this.args[10] === null ? null : String(this.args[10]),
+        change: this.args[11] === null ? null : String(this.args[11]),
       });
       return { meta: { changes: 1 } };
     }
@@ -52,7 +70,7 @@ class FakeStatement {
 
   async all<T>(): Promise<{ results: T[] }> {
     if (!this.sql.includes("FROM x_posts")) throw new Error(`Unhandled SELECT: ${this.sql}`);
-    let rows = [...this.db.posts.values()] as XPostRow[];
+    let rows = [...this.db.posts.values()] as unknown as XPostRow[];
     const whereIdx = this.sql.indexOf("WHERE");
     if (whereIdx !== -1) {
       const where = this.sql.slice(whereIdx);
@@ -73,7 +91,7 @@ class FakeStatement {
 
 class FakeD1 {
   readonly events = new Map<string, IngestEventRow>();
-  readonly posts = new Map<string, XPostRow>();
+  readonly posts = new Map<string, PostRow>();
 
   prepare(sql: string): FakeStatement {
     return new FakeStatement(this, sql);
@@ -166,6 +184,21 @@ describe("readXPosts", () => {
     await storeXPosts(db as unknown as D1Database, "event-12345678", "2026-08-12T12:00:00Z", [postA, postB]);
     const rows = await readXPosts(db as unknown as D1Database, { limit: 1 });
     expect(rows).toHaveLength(1);
+  });
+
+  it("parses chart_json into a number array", async () => {
+    const db = new FakeD1();
+    const withChart: XPost = {
+      ...postA,
+      chart: [340.1, 341.5, 339.8, 343.8],
+      price: "343.80",
+      change: "-3.84",
+    };
+    await storeXPosts(db as unknown as D1Database, "event-12345678", "2026-08-12T12:00:00Z", [withChart]);
+    const rows = await readXPosts(db as unknown as D1Database, { symbol: "NVDA", limit: 10 });
+    expect(rows[0]?.chart).toEqual([340.1, 341.5, 339.8, 343.8]);
+    expect(rows[0]?.price).toBe("343.80");
+    expect(rows[0]?.change).toBe("-3.84");
   });
 });
 

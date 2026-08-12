@@ -17,6 +17,9 @@ export const xPostSchema = z.strictObject({
     .optional(),
   company: z.string().trim().min(1).max(200).nullable().optional(),
   universe: z.enum(["S&P 500", "Nasdaq-100", "Both"]).nullable().optional(),
+  chart: z.array(z.number()).min(2).max(120).nullable().optional(),
+  price: z.string().trim().min(1).max(32).nullable().optional(),
+  change: z.string().trim().min(1).max(32).nullable().optional(),
 });
 
 export type XPost = z.infer<typeof xPostSchema>;
@@ -64,7 +67,7 @@ export async function storeXPosts(
   const stmts = posts.map((post) =>
     db
       .prepare(
-        "INSERT OR IGNORE INTO x_posts (id, author, text, created_at, url, symbol, company, universe, collected_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT OR IGNORE INTO x_posts (id, author, text, created_at, url, symbol, company, universe, collected_at, chart_json, price, change) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .bind(
         post.id,
@@ -76,6 +79,9 @@ export async function storeXPosts(
         post.company ?? null,
         post.universe ?? null,
         receivedAt,
+        post.chart ? JSON.stringify(post.chart) : null,
+        post.price ?? null,
+        post.change ?? null,
       ),
   );
 
@@ -101,6 +107,9 @@ export interface XPostRow {
   company: string | null;
   universe: string | null;
   collected_at: string;
+  chart: number[] | null;
+  price: string | null;
+  change: string | null;
 }
 
 export async function readXPosts(
@@ -121,12 +130,27 @@ export async function readXPosts(
   const safeLimit = Math.min(Math.max(options.limit, 1), 200);
   const rows = await db
     .prepare(
-      `SELECT id, author, text, created_at, url, symbol, company, universe, collected_at
+      `SELECT id, author, text, created_at, url, symbol, company, universe, collected_at, chart_json, price, change
        FROM x_posts ${where}
        ORDER BY created_at DESC, id DESC
        LIMIT ?`,
     )
     .bind(...args, safeLimit)
-    .all<XPostRow>();
-  return rows.results ?? [];
+    .all<XPostRow & { chart_json: string | null }>();
+  return (rows.results ?? []).map((row) => {
+    let chart: number[] | null = null;
+    if (row.chart_json) {
+      try {
+        const parsed = JSON.parse(row.chart_json) as unknown;
+        if (Array.isArray(parsed) && parsed.every((v) => typeof v === "number")) {
+          chart = parsed;
+        }
+      } catch {
+        chart = null;
+      }
+    }
+    const { chart_json: _chartJson, ...rest } = row;
+    void _chartJson;
+    return { ...rest, chart };
+  });
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 export interface XFeedPost {
@@ -11,6 +11,9 @@ export interface XFeedPost {
   company: string | null;
   universe: string | null;
   collected_at: string;
+  chart: number[] | null;
+  price: string | null;
+  change: string | null;
 }
 
 interface XFeedResponse {
@@ -49,26 +52,40 @@ function highlightTickers(text: string): React.ReactNode[] {
   );
 }
 
-function tradingViewUrl(symbol: string): string {
-  const params = new URLSearchParams({
-    symbol,
-    interval: "D",
-    theme: "dark",
-    style: "1",
-    locale: "en",
-    hide_side_toolbar: "1",
-    allow_symbol_change: "0",
-    autosize: "1",
+function Sparkline({ points }: { points: number[] }) {
+  const width = 560;
+  const height = 120;
+  const pad = 4;
+  const min = Math.min(...points);
+  const max = Math.max(...points);
+  const range = max - min || 1;
+  const stepX = (width - pad * 2) / (points.length - 1);
+  const coords = points.map((value, index) => {
+    const x = pad + index * stepX;
+    const y = height - pad - ((value - min) / range) * (height - pad * 2);
+    return [x, y] as const;
   });
-  return `https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.html?${params.toString()}`;
+  const line = coords.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+  const area = `${pad},${height - pad} ${line} ${width - pad},${height - pad}`;
+  const up = (points[points.length - 1] ?? 0) >= (points[0] ?? 0);
+  const stroke = up ? "#16c784" : "#ea3943";
+
+  return (
+    <svg
+      className="x-feed-sparkline"
+      viewBox={`0 0 ${width} ${height}`}
+      preserveAspectRatio="none"
+      role="img"
+      aria-label={`Sparkline with ${points.length} daily closes`}
+    >
+      <polygon points={area} fill={stroke} opacity="0.12" />
+      <polyline points={line} fill="none" stroke={stroke} strokeWidth="2" strokeLinejoin="round" />
+    </svg>
+  );
 }
 
 function XPostCard({ post }: { post: XFeedPost }) {
   const initials = post.author.replace("@", "").slice(0, 1).toUpperCase() || "X";
-  const chartUrl = useMemo(
-    () => (post.symbol ? tradingViewUrl(post.symbol) : null),
-    [post.symbol],
-  );
 
   return (
     <article className="x-feed-card">
@@ -99,16 +116,14 @@ function XPostCard({ post }: { post: XFeedPost }) {
           <span className="x-feed-stock-badge">
             <strong>{post.symbol}</strong>
             {post.company ? <em>{post.company}</em> : null}
+            {post.price ? (
+              <em className={post.change?.startsWith("-") ? "x-feed-change is-down" : "x-feed-change"}>
+                {post.price}
+                {post.change ? ` (${post.change}%)` : ""}
+              </em>
+            ) : null}
           </span>
-          {chartUrl && (
-            <iframe
-              className="x-feed-chart"
-              title={`${post.symbol} daily chart`}
-              src={chartUrl}
-              loading="lazy"
-              sandbox="allow-scripts allow-same-origin allow-popups"
-            />
-          )}
+          {post.chart && post.chart.length >= 2 && <Sparkline points={post.chart} />}
         </div>
       )}
     </article>
