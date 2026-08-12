@@ -71,7 +71,7 @@ afterEach(() => {
 
 it("renders only qualified ideas and classifies scheduled earnings by date", async () => {
   const view = renderApp();
-  await waitFor(() => expect(screen.getByText("Backend partially populated")).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText("Backend connected")).toBeInTheDocument());
   expect(screen.getAllByText("Live").length).toBeGreaterThan(0);
   expect(screen.getAllByText("Demo").length).toBeGreaterThan(0);
   expect(screen.getByText("+1.75%")).toBeInTheDocument();
