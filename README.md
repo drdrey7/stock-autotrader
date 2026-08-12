@@ -9,7 +9,7 @@ context, curated stock ideas, independent qualification, risks and provenance.
 The approved **Morning Briefing** interface is the public, read-only product shell:
 
 - Morning Briefing uses the published briefing, market/status and candidate APIs;
-- X Surge uses the curated X posts API;
+- X Pulse uses the curated X posts API;
 - Earnings uses the existing earnings schedule API;
 - fields without a backend source remain visibly labelled Demo;
 - no login, personal portfolio, watchlist, chat or trading actions.
