@@ -85,6 +85,55 @@ it("renders only qualified ideas and classifies scheduled earnings by date", asy
   expect(view.container.querySelector(".earnings-mini")).not.toHaveTextContent("Past Corp");
 });
 
+it("does not add an unsupported Dow benchmark to a live briefing", async () => {
+  const view = renderApp();
+  await waitFor(() => expect(view.container.querySelectorAll(".market-card")).toHaveLength(3));
+  expect(view.container.querySelector(".market-card")).toHaveTextContent("S&P 500");
+  expect(view.container).not.toHaveTextContent("Dow Jones");
+  expect(view.container).not.toHaveTextContent("45,118.26");
+});
+
+it("does not fill a live market snapshot with unsupported mock benchmarks", async () => {
+  const snapshot = {
+    provider: "market-api", status: "healthy", asOf: "2026-08-12T20:00:00Z",
+    lastSuccessfulUpdate: "2026-08-12T20:00:00Z",
+    universe: { total: 2, eligible: 2, excluded: 0 },
+    benchmarks: [
+      { symbol: "SPY", date: "2026-08-12", open: 640, high: 645, low: 639, close: 642, adjustedClose: 642, volume: 1 },
+      { symbol: "QQQ", date: "2026-08-12", open: 570, high: 575, low: 569, close: 573, adjustedClose: 573, volume: 1 },
+    ],
+    warnings: [], updatedAt: "2026-08-12T20:00:00Z",
+  };
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === "/api/status") return new Response(JSON.stringify({ candidates: [] }), { status: 200 });
+    if (url === "/api/market-data") return new Response(JSON.stringify(snapshot), { status: 200 });
+    return new Response(null, { status: 404 });
+  });
+
+  const view = renderApp();
+  await waitFor(() => expect(view.container.querySelectorAll(".market-card")).toHaveLength(2));
+  expect(view.container).not.toHaveTextContent("Dow Jones");
+  expect(view.container).not.toHaveTextContent("VIX");
+});
+
+it("clears opportunities when the healthy candidate snapshot is explicitly empty", async () => {
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === "/api/status") return new Response(JSON.stringify({
+      status: { engine: "online", apiHealth: "healthy", lastDataUpdate: "2026-08-12T20:00:00Z" },
+      candidates: [],
+      briefing: { available: false, freshness: "unavailable", publishedAt: null },
+    }), { status: 200 });
+    return new Response(null, { status: 404 });
+  });
+
+  const view = renderApp();
+  await waitFor(() => expect(view.container.querySelector(".opportunities-card .empty-state")).toHaveTextContent("No qualified opportunities were published for this edition."));
+  expect(view.container.querySelector(".opportunity-row")).toBeNull();
+  expect(view.container.querySelector(".opportunities-card")).not.toHaveTextContent("NVDA");
+});
+
 it("labels a post-close edition instead of showing a morning greeting", async () => {
   const postCloseBriefing = { ...briefing, editionType: "post_close", title: "Closing briefing" };
   vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {

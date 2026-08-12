@@ -173,12 +173,10 @@ function marketFromBriefing(briefing: DailyBriefing): MarketIndex[] | null {
     item.name.toLowerCase().includes(name) || item.symbol.toUpperCase() === symbol
   );
   const sp500 = findBenchmark("s&p", "SPX");
-  const dow = mockMarketIndexes.find((item) => item.symbol === "DJI");
   const ordered: MarketIndex[] = [];
   if (sp500) ordered.push(sp500);
   const nasdaq = findBenchmark("nasdaq", "NDX");
   if (nasdaq) ordered.push(nasdaq);
-  if (dow) ordered.push({ ...dow, source: "mock" });
   const vix = findBenchmark("vix", "VIX");
   if (vix) ordered.push(vix);
   return sp500
@@ -203,10 +201,7 @@ function marketFromSnapshot(snapshot: MarketDataSnapshot | null | undefined): Ma
       source: "live" as const,
     };
   });
-  const demoRemainder = mockMarketIndexes
-    .filter((item) => !mapped.some((live) => live.name === item.name))
-    .map((item) => ({ ...item, source: "mock" as const }));
-  return [...mapped, ...demoRemainder].slice(0, 4);
+  return mapped.slice(0, 4);
 }
 
 function opportunitiesFromBriefing(
@@ -388,7 +383,8 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
       if (cancelled || currentRequest !== coreRequestId) return;
 
       const freshBriefing = briefing && status?.briefing?.freshness === "fresh" ? briefing : null;
-      const candidates = candidatesAreFresh(status)
+      const candidateSnapshotAvailable = candidatesAreFresh(status) && Array.isArray(status?.candidates);
+      const candidates = candidateSnapshotAvailable
         ? (status?.candidates ?? []).filter((candidate) => isRecentTimestamp(candidate.updatedAt))
         : [];
       const liveMarket = freshBriefing
@@ -396,7 +392,7 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
         : marketFromSnapshot(marketData ?? status?.marketData);
       const liveOpportunities = freshBriefing
         ? opportunitiesFromBriefing(freshBriefing, candidates)
-        : candidates.length
+        : candidateSnapshotAvailable
           ? opportunitiesFromCandidates(candidates)
           : null;
 
@@ -407,7 +403,7 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
           market: liveMarket
             ? (liveMarket.some((item) => item.source === "mock") ? "mixed" : "live")
             : cachedSource(previous.sources.market),
-          opportunities: liveOpportunities ? "live" : cachedSource(previous.sources.opportunities),
+          opportunities: liveOpportunities !== null ? "live" : cachedSource(previous.sources.opportunities),
         };
         return {
           ...previous,
