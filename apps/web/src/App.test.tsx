@@ -142,6 +142,8 @@ describe("Stock Daily Briefing public experience", () => {
     const xSearch = screen.getByRole("link", { name: /X search/ });
     expect(xSearch).toHaveAttribute("href", "/x");
     expect(xSearch).toHaveTextContent("Curated source discovery");
+    expect(xSearch).not.toHaveAttribute("aria-current");
+    expect(xSearch).not.toHaveClass("is-active");
 
     const earnings = screen.getByRole("button", {
       name: /Coming soon.*Earnings/,

@@ -18,7 +18,7 @@ import {
   TriangleAlert,
   X as CloseIcon,
 } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import {
   exampleDailyBriefing,
   type BriefingIdea,
@@ -290,6 +290,7 @@ const dashboardMenuItems = [
 
 function DashboardMenu() {
   const [isOpen, setIsOpen] = useState(false);
+  const location = useLocation();
   const toggleRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLElement>(null);
   const wasOpenRef = useRef(false);
@@ -356,6 +357,9 @@ function DashboardMenu() {
           {dashboardMenuItems.map(({ label, detail, href, Icon }) => {
             if (href) {
               const isInternal = href.startsWith("/");
+              const isCurrent = href.startsWith("#")
+                ? location.pathname === "/dashboard" && (location.hash === "" || location.hash === href)
+                : location.pathname === href;
               const content = (
                 <>
                   <Icon size={17} aria-hidden="true" />
@@ -368,9 +372,9 @@ function DashboardMenu() {
               return isInternal ? (
                 <Link
                   key={label}
-                  className="briefing-dashboard-menu-item is-active"
+                  className={`briefing-dashboard-menu-item${isCurrent ? " is-active" : ""}`}
                   to={href}
-                  aria-current="page"
+                  aria-current={isCurrent ? "page" : undefined}
                   onClick={() => setIsOpen(false)}
                 >
                   {content}
@@ -378,9 +382,9 @@ function DashboardMenu() {
               ) : (
                 <a
                   key={label}
-                  className="briefing-dashboard-menu-item is-active"
+                  className={`briefing-dashboard-menu-item${isCurrent ? " is-active" : ""}`}
                   href={href}
-                  aria-current="page"
+                  aria-current={isCurrent ? "page" : undefined}
                   onClick={() => setIsOpen(false)}
                 >
                   {content}
