@@ -1,0 +1,116 @@
+{
+  "benchmarks": [
+    {
+      "name": "S&P 500",
+      "symbol": "SP:SPX",
+      "value": "6,412.10",
+      "change": "+0.31%",
+      "state": "Constructive",
+      "note": "Holding above the 20-day average with breadth improving."
+    },
+    {
+      "name": "Nasdaq-100",
+      "symbol": "NASDAQ:NDX",
+      "value": "23,830.02",
+      "change": "+0.55%",
+      "state": "Leading",
+      "note": "Relative strength remains in large-cap technology."
+    },
+    {
+      "name": "VIX",
+      "symbol": "CBOE:VIX",
+      "value": "15.40",
+      "change": "-2.10%",
+      "state": "Contained",
+      "note": "Volatility regime calm ahead of the session."
+    }
+  ],
+  "candidates": [
+    {
+      "symbol": "NVDA",
+      "company": "NVIDIA Corporation",
+      "price": "$183.10",
+      "change": "+1.75%",
+      "thesis": "Relative strength and volume support the setup; confirmation requires a hold above the trigger.",
+      "technical": [
+        "Price above 20D, 50D and 200D averages.",
+        "Relative volume 1.6x versus the 20-day average.",
+        "Confirmation requires a hold above $183.60."
+      ],
+      "financial": [
+        "Large-cap Nasdaq-100 and S&P 500 constituent.",
+        "Growth profile remains strong; valuation sensitivity elevated."
+      ],
+      "news": [
+        "No material adverse headline in the collection snapshot.",
+        "Earnings proximity must be rechecked before use."
+      ],
+      "risks": [
+        "Gap risk after an extended pre-market move.",
+        "Concentrated semiconductor leadership can reverse quickly."
+      ],
+      "levels": {
+        "trigger": "Hold above $183.60",
+        "invalidation": "Close below $179.20",
+        "objective": "$194.00",
+        "rewardRisk": "2.6R",
+        "rewardRiskRatio": 2.6
+      }
+    },
+    {
+      "symbol": "AAPL",
+      "company": "Apple Inc.",
+      "price": "$231.45",
+      "change": "+0.42%",
+      "thesis": "Breakout zone holding on low volume; structure remains constructive.",
+      "technical": [
+        "Price above 50D and 200D averages.",
+        "Breakout level defended on the first retest."
+      ],
+      "financial": [
+        "Large-cap S&P 500 constituent.",
+        "Cash-generative franchise with stable margins."
+      ],
+      "news": [
+        "No material headlines in the collection snapshot."
+      ],
+      "risks": [
+        "Low relative volume weakens the breakout conviction.",
+        "Macro rate sensitivity remains a swing factor."
+      ],
+      "levels": {
+        "trigger": "Hold above $230.90",
+        "invalidation": "Close below $226.00",
+        "objective": "$236.40",
+        "rewardRisk": "2.0R",
+        "rewardRiskRatio": 2.0
+      }
+    },
+    {
+      "symbol": "TSLA",
+      "company": "Tesla, Inc.",
+      "price": "$248.30",
+      "change": "-1.20%",
+      "thesis": "Waiting for a pullback setup; no trigger defined yet.",
+      "technical": [
+        "Price extended above the 20D average."
+      ],
+      "financial": [
+        "Large-cap S&P 500 constituent."
+      ],
+      "news": [
+        "Post-earnings volatility elevated."
+      ],
+      "risks": [
+        "Extended move after earnings gap."
+      ],
+      "levels": {
+        "trigger": "Pullback to $240.00",
+        "invalidation": "",
+        "objective": "",
+        "rewardRisk": "No defined risk",
+        "rewardRiskRatio": null
+      }
+    }
+  ]
+}
