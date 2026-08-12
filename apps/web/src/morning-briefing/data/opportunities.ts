@@ -1,6 +1,7 @@
 export type Opportunity = {
   ticker: string; company: string; change: number; confidence: "High" | "Medium";
-  score: number | null; thesis: string; trigger: string; risk: string; color: string;\n  source?: "live" | "mock"; verdict?: string; invalidation?: string; objective?: string; reference?: string;
+  score: number | null; thesis: string; trigger: string; risk: string; color: string;
+  source?: "live" | "mock"; verdict?: string; invalidation?: string; objective?: string; reference?: string;
 };
 
 export const opportunities: Opportunity[] = [
