@@ -120,6 +120,21 @@ class BriefingTests(unittest.TestCase):
                 universe=_universe(),
             )
 
+    def test_market_summary_is_bounded(self) -> None:
+        verbose = [
+            BenchmarkItem(name=item.name, symbol=item.symbol, value=item.value, change=item.change, state="x" * 700, note=item.note)
+            for item in _benchmarks()
+        ]
+        briefing = build_briefing(
+            edition_type="pre_market",
+            prepared_at=PREPARED_AT,
+            benchmarks=verbose,
+            ideas=[],
+            universe=_universe(),
+        )
+        self.assertLessEqual(len(briefing["marketSummary"]), 2_000)
+        self.assertEqual(validate_briefing(briefing, _universe()), [])
+
     def test_validation_catches_stale_source(self) -> None:
         briefing = build_briefing(
             edition_type="pre_market",

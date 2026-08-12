@@ -41,12 +41,36 @@ NON_EMPTY_FIELDS = (
 MAX_TEXT_LENGTH = 2_000  # mirrors nonEmptyString in the wire contract
 
 
+def _utf16_length(value: str) -> int:
+    """Match JavaScript/Zod string length (UTF-16 code units)."""
+    return len(value.encode("utf-16-le")) // 2
+
+
+def _truncate_utf16(value: str, max_units: int) -> str:
+    if _utf16_length(value) <= max_units:
+        return value
+    suffix = "…"
+    budget = max_units - _utf16_length(suffix)
+    units = 0
+    chars: list[str] = []
+    for char in value:
+        char_units = _utf16_length(char)
+        if units + char_units > budget:
+            break
+        chars.append(char)
+        units += char_units
+    return "".join(chars) + suffix
+
+
 def _non_empty_string(value: Any, field_name: str) -> str:
-    if not isinstance(value, str) or not value.strip():
+    if not isinstance(value, str):
         raise ValueError(f"{field_name} must be a non-empty string")
-    if len(value) > MAX_TEXT_LENGTH:
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError(f"{field_name} must be a non-empty string")
+    if _utf16_length(normalized) > MAX_TEXT_LENGTH:
         raise ValueError(f"{field_name} exceeds {MAX_TEXT_LENGTH} characters")
-    return value.strip()
+    return normalized
 
 
 @dataclass(frozen=True)
@@ -178,11 +202,14 @@ def _string_list(value: Any) -> tuple[str, ...]:
         raise ValueError("expected a non-empty list of strings")
     items: list[str] = []
     for item in value:
-        if not isinstance(item, str) or not item.strip():
+        if not isinstance(item, str):
             raise ValueError("list items must be non-empty strings")
-        if len(item) > MAX_TEXT_LENGTH:
+        normalized = item.strip()
+        if not normalized:
+            raise ValueError("list items must be non-empty strings")
+        if _utf16_length(normalized) > MAX_TEXT_LENGTH:
             raise ValueError(f"list item exceeds {MAX_TEXT_LENGTH} characters")
-        items.append(item.strip())
+        items.append(normalized)
     return tuple(items)
 
 

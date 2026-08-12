@@ -46,11 +46,24 @@ class FakeStatement {
         event_id: eventId,
         event_type: String(this.args[1]),
         received_at: String(this.args[2]),
-        status: "applied",
+        status: String(this.args[3]),
       });
       return { meta: { changes: 1 } };
     }
+    if (this.sql.includes("UPDATE ingest_events SET status")) {
+      const eventId = String(this.args[0]);
+      const claimStatus = String(this.args[1]);
+      const event = this.db.events.get(eventId);
+      if (!event || event.status !== claimStatus) return { meta: { changes: 0 } };
+      event.status = "applied";
+      return { meta: { changes: 1 } };
+    }
     if (this.sql.includes("INSERT OR IGNORE INTO x_posts")) {
+      if (this.sql.includes("WHERE EXISTS")) {
+        const eventId = String(this.args[12]);
+        const claimStatus = String(this.args[13]);
+        if (this.db.events.get(eventId)?.status !== claimStatus) return { meta: { changes: 0 } };
+      }
       const id = String(this.args[0]);
       if (this.db.posts.has(id)) return { meta: { changes: 0 } };
       this.db.posts.set(id, {
@@ -159,7 +172,9 @@ describe("storeXPosts", () => {
     expect(first).toEqual({ kind: "applied", applied: 2, skipped: 0 });
     expect(db.posts.size).toBe(2);
 
-    const replay = await storeXPosts(db as unknown as D1Database, "event-12345678", "2026-08-12T12:00:00Z", [postA]);
+    const replay = await storeXPosts(db as unknown as D1Database, "event-12345678", "2026-08-12T12:00:00Z", [
+      { ...postA, id: "post-ccc" },
+    ]);
     expect(replay).toEqual({ kind: "skipped", reason: "duplicate event" });
     expect(db.posts.size).toBe(2);
   });

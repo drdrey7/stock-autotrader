@@ -61,25 +61,27 @@ export async function storeXPosts(
   receivedAt: string,
   posts: XPost[],
 ): Promise<StoreXPostsResult> {
-  // Idempotency check: a prior claim (applied or in-progress) is a duplicate.
-  const existing = await db
-    .prepare("SELECT event_id FROM ingest_events WHERE event_id = ?")
-    .bind(eventId)
-    .first<{ event_id: string }>();
-  if (existing) {
-    return { kind: "skipped", reason: "duplicate event" };
-  }
-
+  // The claim is acquired inside the same atomic batch as the conditional post
+  // writes, avoiding a preliminary read/claim race between concurrent requests
+  // that carry the same event_id. Each INSERT is conditional on the winner's
+  // unique claim token, so a concurrent loser's INSERT OR IGNORE is harmless.
+  const claimToken = crypto.randomUUID();
+  const claimStatus = `applying:${claimToken}`;
   const claim = db
     .prepare(
-      "INSERT OR IGNORE INTO ingest_events (event_id, event_type, received_at, status) VALUES (?, ?, ?, 'applied')",
+      "INSERT OR IGNORE INTO ingest_events (event_id, event_type, received_at, status) VALUES (?, ?, ?, ?)",
     )
-    .bind(eventId, X_POSTS_EVENT_TYPE, receivedAt);
+    .bind(eventId, X_POSTS_EVENT_TYPE, receivedAt, claimStatus);
 
   const stmts = posts.map((post) =>
     db
       .prepare(
-        "INSERT OR IGNORE INTO x_posts (id, author, text, created_at, url, symbol, company, universe, collected_at, chart_json, price, change) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        `INSERT OR IGNORE INTO x_posts
+         (id, author, text, created_at, url, symbol, company, universe, collected_at, chart_json, price, change)
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+         WHERE EXISTS (
+           SELECT 1 FROM ingest_events WHERE event_id = ? AND status = ?
+         )`,
       )
       .bind(
         post.id,
@@ -94,20 +96,26 @@ export async function storeXPosts(
         post.chart ? JSON.stringify(post.chart) : null,
         post.price ?? null,
         post.change ?? null,
+        eventId,
+        claimStatus,
       ),
   );
+  const finalize = db
+    .prepare("UPDATE ingest_events SET status = 'applied' WHERE event_id = ? AND status = ?")
+    .bind(eventId, claimStatus);
 
   try {
-    // Claim + post writes in ONE atomic D1 batch: if the Worker dies mid-batch
-    // nothing is persisted, so a retry can still apply the event.
-    const results = await db.batch([claim, ...stmts]);
+    // Claim + conditional post writes + final status update in ONE atomic D1
+    // batch. A crash rolls back the entire transaction; a concurrent loser
+    // has no matching claim token and therefore writes zero posts.
+    const results = await db.batch([claim, ...stmts, finalize]);
     const claimChanges = results[0]?.meta.changes ?? 0;
-    if (claimChanges === 0) {
-      // Lost a race with a concurrent duplicate; treat as an idempotent skip.
+    const finalizeChanges = results[results.length - 1]?.meta.changes ?? 0;
+    if (claimChanges === 0 || finalizeChanges === 0) {
       return { kind: "skipped", reason: "duplicate event" };
     }
     const applied = results
-      .slice(1)
+      .slice(1, -1)
       .filter((result) => result.meta.changes === 1).length;
     const skipped = posts.length - applied;
     return { kind: "applied", applied, skipped };

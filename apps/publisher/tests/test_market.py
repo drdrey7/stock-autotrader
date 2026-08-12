@@ -94,6 +94,11 @@ class MarketTests(unittest.TestCase):
         quotes = load_candidate_quotes([{"symbol": "NVDA", "company": "X"}])
         self.assertEqual(quotes, {})
 
+    def test_candidate_long_list_item_is_rejected(self) -> None:
+        raw = _quote()
+        raw["technical"] = ["x" * 2_001]
+        self.assertEqual(load_candidate_quotes([raw]), {})
+
     def test_sample_quote_fixture(self) -> None:
         payload = json.loads((REPO_ROOT / "fixtures" / "quotes.sample.json").read_text())
         benchmarks = load_benchmarks(payload["benchmarks"])

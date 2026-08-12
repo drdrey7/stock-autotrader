@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from .market import BenchmarkItem, CandidateQuote, load_benchmarks
+from .market import MAX_TEXT_LENGTH, BenchmarkItem, CandidateQuote, _truncate_utf16
 from .universe import UniverseSnapshot
 from .x_feed import CandidateIdea
 
@@ -48,7 +48,8 @@ def _iso(timestamp: datetime) -> str:
 
 def _market_summary(benchmarks: list[BenchmarkItem]) -> str:
     states = ", ".join(f"{item.name} {item.state.lower()}" for item in benchmarks)
-    return f"Index snapshot: {states}. See benchmark notes for context; this is not investment advice."
+    summary = f"Index snapshot: {states}. See benchmark notes for context; this is not investment advice."
+    return _truncate_utf16(summary, MAX_TEXT_LENGTH)
 
 
 @dataclass(frozen=True)
