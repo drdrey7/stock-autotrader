@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isBriefingSymbolInUniverse } from "@stock-autotrader/contracts";
 
 export const X_POSTS_EVENT_TYPE = "X_POSTS_COLLECTED" as const;
 
@@ -88,6 +89,13 @@ export const xPostSchema = z.strictObject({
 }).superRefine((post, ctx) => {
   if (!isExpectedXPostUrl(post.url, post.author, post.id)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["url"], message: "url must match the declared X author" });
+  }
+  if (post.symbol && post.universe && !isBriefingSymbolInUniverse(post.symbol, post.universe)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["universe"],
+      message: "universe must contain the declared symbol",
+    });
   }
 });
 

@@ -236,6 +236,15 @@ describe("xPostSchema provenance", () => {
     });
     expect(result.success).toBe(false);
   });
+
+  it("rejects a symbol outside the declared universe", () => {
+    const result = xPostSchema.safeParse({
+      ...postA,
+      symbol: "ONON",
+      universe: "S&P 500",
+    });
+    expect(result.success).toBe(false);
+  });
 });
 
 describe("storeXPosts", () => {

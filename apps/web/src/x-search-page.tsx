@@ -86,6 +86,7 @@ function Sparkline({ points }: { points: number[] }) {
 
 function XPostCard({ post }: { post: XFeedPost }) {
   const initials = post.author.replace("@", "").slice(0, 1).toUpperCase() || "X";
+  const normalizedChange = post.change?.trim().replace(/%+$/, "");
 
   return (
     <article className="x-feed-card">
@@ -119,7 +120,7 @@ function XPostCard({ post }: { post: XFeedPost }) {
             {post.price ? (
               <em className={post.change?.startsWith("-") ? "x-feed-change is-down" : "x-feed-change"}>
                 {post.price}
-                {post.change ? ` (${post.change}%)` : ""}
+                {normalizedChange ? ` (${normalizedChange}%)` : ""}
               </em>
             ) : null}
           </span>
