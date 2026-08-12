@@ -44,9 +44,9 @@ describe("Morning Briefing public experience", () => {
     expect(screen.queryByRole("button", { name: /buy|sell|trade/i })).not.toBeInTheDocument();
   });
 
-  it("opens the X Surge route directly", () => {
+  it("opens the X Pulse route directly", () => {
     render(<MemoryRouter initialEntries={["/x"]}><App /></MemoryRouter>);
-    expect(screen.getByRole("heading", { name: /X Surge/ })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /X Pulse/ })).toBeInTheDocument();
   });
 
   it("opens the Earnings route directly", () => {
