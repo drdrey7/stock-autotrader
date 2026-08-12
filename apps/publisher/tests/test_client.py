@@ -10,14 +10,15 @@ from publisher import client
 class SignTests(unittest.TestCase):
     def test_sign_is_deterministic_hmac_sha256(self):
         body = b'{"events":[]}'
-        sig = client.sign("sekret", body)
+        timestamp = "2026-08-11T23:00:00+00:00"
+        sig = client.sign("sekret", body, timestamp)
         self.assertTrue(sig.startswith("sha256="))
         expected = "sha256=" + hmac.new(
-            b"sekret", body, hashlib.sha256
+            b"sekret", timestamp.encode("utf-8") + b"." + body, hashlib.sha256
         ).hexdigest()
         self.assertEqual(sig, expected)
-        self.assertEqual(client.sign("sekret", body), sig)
-        self.assertNotEqual(client.sign("other", body), sig)
+        self.assertEqual(client.sign("sekret", body, timestamp), sig)
+        self.assertNotEqual(client.sign("other", body, timestamp), sig)
 
 
 class PublishTests(unittest.TestCase):
@@ -54,7 +55,7 @@ class PublishTests(unittest.TestCase):
         parsed = json.loads(captured["body"])
         self.assertEqual(parsed["events"][0]["type"], "SYSTEM_STATUS")
         # Signature must be over the exact body sent.
-        self.assertEqual(captured["signature"], client.sign("sekret", captured["body"]))
+        self.assertEqual(captured["signature"], client.sign("sekret", captured["body"], captured["timestamp"]))
         m.assert_called_once()
 
 

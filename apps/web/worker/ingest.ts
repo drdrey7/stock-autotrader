@@ -1,16 +1,19 @@
 import { z } from "zod";
+import { publishedDailyBriefingSchema } from "@stock-autotrader/contracts";
 import type { Env } from "./index";
+import { publishDailyBriefing } from "./daily-briefings";
 
 /**
  * Protected publication layer (PR #3).
  * POST /ingest/events — batch of normalized public events signed with HMAC-SHA256.
- * - Authentication: X-Ingest-Signature: sha256=<hex> over the raw body, keyed by INGEST_SECRET.
+ * - Authentication: X-Ingest-Signature: sha256=<hex> over `${timestamp}.${raw body}`, keyed by INGEST_SECRET.
  * - Replay protection: X-Ingest-Timestamp must be within a 5-minute window.
  * - Idempotency: each event_id is applied at most once (ingest_events ledger).
  * - Strict schemas: invalid events are rejected with 400; nothing is passed through.
  */
 
 const EVENT_TYPES = [
+  "DAILY_BRIEFING_PUBLISHED",
   "SCAN_STARTED",
   "SCAN_COMPLETED",
   "SIGNAL_SURFACED",
@@ -262,6 +265,12 @@ const dashboardReadSchema = z.object({
 });
 
 const eventSchema = z.discriminatedUnion("type", [
+  z.strictObject({
+    type: z.literal("DAILY_BRIEFING_PUBLISHED"),
+    event_id: z.string().min(8).max(80),
+    timestamp: isoTimestampSchema,
+    payload: publishedDailyBriefingSchema,
+  }),
   z.object({ type: z.literal("SCAN_STARTED"), event_id: z.string().min(8).max(80), timestamp: isoTimestampSchema, payload: z.object({ scheduledAt: isoTimestampSchema, universe: z.number().int().nonnegative() }) }),
   z.object({ type: z.literal("SCAN_COMPLETED"), event_id: z.string().min(8).max(80), timestamp: isoTimestampSchema, payload: scanCompletedSchema }),
   z.object({ type: z.enum(["SIGNAL_SURFACED", "SIGNAL_UPDATED", "SIGNAL_REJECTED"]), event_id: z.string().min(8).max(80), timestamp: isoTimestampSchema, payload: candidateSchema }),
@@ -276,6 +285,7 @@ const eventSchema = z.discriminatedUnion("type", [
 type IngestEvent = z.infer<typeof eventSchema>;
 
 export { eventSchema, marketDataSchema, dashboardReadSchema };
+export const dailyBriefingPublishedEventSchema = eventSchema.options[0];
 export type { IngestEvent };
 
 const JSON_HEADERS = {
@@ -285,7 +295,7 @@ const JSON_HEADERS = {
 
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: JSON_HEADERS });
 
-async function hmacHex(secret: string, body: string): Promise<string> {
+async function hmacHex(secret: string, timestamp: string, body: string): Promise<string> {
   const key = await crypto.subtle.importKey(
     "raw",
     new TextEncoder().encode(secret),
@@ -293,7 +303,7 @@ async function hmacHex(secret: string, body: string): Promise<string> {
     false,
     ["sign"],
   );
-  const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(body));
+  const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${timestamp}.${body}`));
   return [...new Uint8Array(mac)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
@@ -310,7 +320,7 @@ async function verifyRequest(request: Request, body: string, secret: string): Pr
   const t = Date.parse(ts);
   if (Number.isNaN(t)) return false;
   if (Math.abs(Date.now() - t) > 5 * 60 * 1000) return false;
-  const expected = `sha256=${await hmacHex(secret, body)}`;
+  const expected = `sha256=${await hmacHex(secret, ts, body)}`;
   return constantTimeEqual(sig, expected);
 }
 
@@ -473,6 +483,23 @@ export async function handleIngest(request: Request, env: Env): Promise<Response
     } catch {
       const id = (rawEvent as { event_id?: string })?.event_id ?? "unknown";
       rejected.push({ event_id: id, reason: "invalid schema" });
+      continue;
+    }
+
+    if (event.type === "DAILY_BRIEFING_PUBLISHED") {
+      try {
+        const result = await publishDailyBriefing(
+          env.DB,
+          event.event_id,
+          event.timestamp,
+          event.payload,
+        );
+        if (result.kind === "applied") applied.push(event.event_id);
+        else if (result.kind === "skipped") skipped.push(event.event_id);
+        else rejected.push({ event_id: event.event_id, reason: result.reason });
+      } catch {
+        return json({ error: "Failed to apply event", event_id: event.event_id }, 500);
+      }
       continue;
     }
 

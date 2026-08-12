@@ -13,8 +13,9 @@ def post(events):
     body = json.dumps({"events": events}).encode()
     req = urllib.request.Request(ENDPOINT, data=body, method="POST")
     req.add_header("Content-Type", "application/json")
-    req.add_header("X-Ingest-Signature", client.sign(SECRET, body))
-    req.add_header("X-Ingest-Timestamp", __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat())
+    timestamp = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
+    req.add_header("X-Ingest-Signature", client.sign(SECRET, body, timestamp))
+    req.add_header("X-Ingest-Timestamp", timestamp)
     with urllib.request.urlopen(req, timeout=15) as resp:
         return json.loads(resp.read())
 

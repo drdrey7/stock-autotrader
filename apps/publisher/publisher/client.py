@@ -15,9 +15,10 @@ from datetime import datetime, timezone
 from typing import Any
 
 
-def sign(secret: str, body: bytes) -> str:
-    """Return the X-Ingest-Signature value for a raw request body."""
-    digest = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).digest()
+def sign(secret: str, body: bytes, timestamp: str) -> str:
+    """Return the signature over the exact timestamp and raw request body."""
+    signing_payload = timestamp.encode("utf-8") + b"." + body
+    digest = hmac.new(secret.encode("utf-8"), signing_payload, hashlib.sha256).digest()
     return "sha256=" + digest.hex()
 
 
@@ -26,8 +27,9 @@ def publish(endpoint: str, secret: str, events: list[dict[str, Any]], timeout: i
     body = json.dumps({"events": events}).encode("utf-8")
     request = urllib.request.Request(endpoint, data=body, method="POST")
     request.add_header("Content-Type", "application/json")
-    request.add_header("X-Ingest-Signature", sign(secret, body))
-    request.add_header("X-Ingest-Timestamp", datetime.now(timezone.utc).isoformat())
+    timestamp = datetime.now(timezone.utc).isoformat()
+    request.add_header("X-Ingest-Signature", sign(secret, body, timestamp))
+    request.add_header("X-Ingest-Timestamp", timestamp)
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
 

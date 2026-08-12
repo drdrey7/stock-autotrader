@@ -36,9 +36,19 @@ claims about market conditions.
 - broker, order, paper-trading or live-trading functionality.
 
 The existing Worker/D1 and private Python foundations remain unchanged for
-compatibility. They are not consumed by the new frontend preview. Later focused
-PRs will add the validated DailyBriefing contract, private publisher and live
-read model.
+compatibility. PR #7 now adds the shared, runtime-validated `DailyBriefing` v1
+contract plus its append-only D1/API read model:
+
+- signed `DAILY_BRIEFING_PUBLISHED` ingestion through the existing HMAC endpoint;
+- content hashing, idempotent replay handling and same-edition conflict rejection;
+- `GET /api/briefs/latest` and `GET /api/briefs/:date/:editionType`;
+- `/api/status` freshness metadata with honest no-brief responses;
+- local D1 migration and unit/integration coverage.
+
+PR #7 still does not add external X/TradingView collection, a publisher, a
+scheduler or a frontend live-data adapter. Those remain separate PR8/PR9 work.
+The public preview continues to render the synthetic `Example Data` fixture until
+that adapter is deliberately introduced.
 
 ## Briefing rhythm
 
@@ -79,9 +89,12 @@ existing foundations from frontend regressions.
 apps/web/src/daily-briefing-pages.tsx   Public landing, terminal and information pages
 apps/web/src/daily-briefing-example.ts  Single synthetic PR #6 fixture
 apps/web/src/daily-briefing.css         Isolated responsive product styling
-apps/web/worker                         Existing Cloudflare Worker and D1 read model
+apps/web/worker                         Worker routes, signed ingest and DailyBriefing read model
+apps/web/worker/daily-briefings.ts      Idempotent D1 publication/read helpers
+apps/web/migrations/0004_daily_briefings.sql  Append-only DailyBriefing D1 table
 bot/bot                                 Existing private runtime foundation
-packages/contracts                      Existing shared contracts; DailyBriefing v1 follows in PR #7
+packages/contracts/src/daily-briefing.ts  Shared validated DailyBriefing v1 contract
+packages/contracts                      Existing shared contracts and schemas
 ```
 
 ## Disclaimer
