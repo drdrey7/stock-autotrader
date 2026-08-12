@@ -87,7 +87,9 @@ export async function storeXPosts(
         post.id,
         post.author,
         post.text,
-        post.created_at,
+        // Normalize to UTC so ORDER BY created_at DESC is chronological
+        // even when incoming timestamps carry different explicit offsets.
+        new Date(post.created_at).toISOString(),
         post.url,
         post.symbol ?? null,
         post.company ?? null,
