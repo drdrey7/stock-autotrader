@@ -195,6 +195,17 @@ describe("readXPosts", () => {
     expect(rows[0]?.company).toBe("Apple Inc.");
   });
 
+  it("sorts timestamps with different offsets chronologically", async () => {
+    const db = new FakeD1();
+    await storeXPosts(db as unknown as D1Database, "event-timezones", "2026-08-12T12:00:00Z", [
+      { ...postA, id: "post-utc", created_at: "2026-08-12T12:00:00Z" },
+      { ...postB, id: "post-offset", created_at: "2026-08-12T09:00:00-04:00" },
+    ]);
+    const rows = await readXPosts(db as unknown as D1Database, { limit: 10 });
+    expect(rows.map((row) => row.id)).toEqual(["post-offset", "post-utc"]);
+    expect(rows[0]?.created_at).toBe("2026-08-12T13:00:00.000Z");
+  });
+
   it("filters by symbol", async () => {
     const db = new FakeD1();
     await storeXPosts(db as unknown as D1Database, "event-12345678", "2026-08-12T12:00:00Z", [postA, postB]);
