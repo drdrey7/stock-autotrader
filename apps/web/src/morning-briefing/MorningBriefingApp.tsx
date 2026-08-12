@@ -6,7 +6,7 @@ import {
   Check, ChevronLeft, ChevronRight, ExternalLink, Heart, MessageCircle, Moon,
   Repeat2, Sun, TrendingUp, X,
 } from "lucide-react";
-import { chartPoints, quickStats } from "./data/market";
+import { quickStats } from "./data/market";
 import { type Opportunity } from "./data/opportunities";
 import { trackedXAccounts, type XPost } from "./data/xSurge";
 import { takeaways, type EarningsCompany } from "./data/earnings";
@@ -83,16 +83,7 @@ function AnimatedValue({ value, decimals = 2 }: { value: number; decimals?: numb
 
 function MarketCards() {
   const { marketIndexes } = useMorningBriefingData();
-  return <div className="market-grid">{marketIndexes.map(item => <Card key={item.symbol} className="market-card"><div><span>{item.name}</span><small>{item.symbol}</small></div><strong><AnimatedValue value={item.value}/></strong><em className={item.change > 0 ? "positive" : item.change < 0 ? "negative" : "neutral"}>{item.change > 0 ? <ArrowUpRight/> : item.change < 0 ? <ArrowDownRight/> : null}{item.change > 0 ? "+" : ""}{item.change.toFixed(2)}%</em></Card>)}</div>;
-}
-
-function IntradayChart() {
-  const reduce = useReducedMotion();
-  return <div className="hero-chart-wrap"><svg className="hero-chart" viewBox="0 0 600 100" preserveAspectRatio="none" aria-hidden="true" focusable="false">
-    <defs><linearGradient id="chartFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#19a15f" stopOpacity=".18"/><stop offset="1" stopColor="#19a15f" stopOpacity="0"/></linearGradient></defs>
-    <polygon points={`${chartPoints} 600,100 0,100`} fill="url(#chartFill)"/>
-    <motion.polyline points={chartPoints} fill="none" stroke="var(--green)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" initial={reduce ? false : { pathLength: 0, opacity: 0 }} animate={{ pathLength: 1, opacity: 1 }} transition={{ duration: 1.1, ease: "easeOut" }}/>
-  </svg></div>;
+  return <div className="market-grid" aria-label="Market overview">{marketIndexes.map(item => <Card key={item.symbol} className="market-card"><div><span>{item.name}</span><small>{item.symbol}</small></div><strong><AnimatedValue value={item.value}/></strong><em className={item.change > 0 ? "positive" : item.change < 0 ? "negative" : "neutral"}>{item.change > 0 ? <ArrowUpRight/> : item.change < 0 ? <ArrowDownRight/> : null}{item.change > 0 ? "+" : ""}{item.change.toFixed(2)}%</em></Card>)}</div>;
 }
 
 function OpportunityMove({ change }: { change: number | null }) {
@@ -114,12 +105,11 @@ function OpportunityList({ onSelect, compact = false }: { onSelect: (o: Opportun
 }
 
 function Sentiment() {
-  const reduce = useReducedMotion();
-  return <Card className="sentiment-card"><SectionTitle title="Market Sentiment"/><div className="gauge"><svg viewBox="0 0 160 86" aria-hidden="true"><path className="gauge-bg" d="M15 75 A65 65 0 0 1 145 75"/><motion.path className="gauge-value" d="M15 75 A65 65 0 0 1 145 75" initial={reduce ? {pathLength:.72} : {pathLength:0}} animate={{pathLength:.72}} transition={{duration:reduce ? 0 : .8,ease:"easeOut"}}/></svg><div className="gauge-mask"><strong>72</strong><span>Greed</span></div></div><h3>Bullish momentum</h3><p><i/> Risk appetite high</p></Card>;
+  return <Card className="sentiment-card"><SectionTitle title="Market Sentiment"/><div className="gauge gauge-unavailable"><svg viewBox="0 0 160 86" aria-hidden="true"><path className="gauge-bg" d="M15 75 A65 65 0 0 1 145 75"/></svg><div className="gauge-mask"><strong>Not available</strong><span>Sentiment</span></div></div><h3>Momentum <span className="neutral">Not available</span></h3><p><i/> Risk appetite <span className="neutral">Not available</span></p></Card>;
 }
 
 function QuickStats() {
-  return <Card className="quick-card"><SectionTitle title="Quick Market Stats"/><div className="quick-list">{quickStats.map(item => <div key={item.label}><span><b className="desktop-only">{item.label}</b><b className="mobile-only">{item.short}</b></span><strong>{item.value}</strong><em className={item.change >= 0 ? "positive" : "negative"}>{item.change >= 0 ? "▲" : "▼"}</em></div>)}</div></Card>;
+  return <Card className="quick-card"><SectionTitle title="Quick Market Stats"/><div className="quick-list">{quickStats.map(item => <div key={item.label}><span><b className="desktop-only">{item.label}</b><b className="mobile-only">{item.short}</b></span><strong className="neutral">Not available</strong><em className="neutral" aria-hidden="true">—</em></div>)}</div></Card>;
 }
 
 function PostCard({ post, compact = false }: { post: XPost; compact?: boolean }) {
@@ -139,7 +129,7 @@ function MorningBriefing({ setPage, selectOpportunity, selectEarnings }: { setPa
   const leadChange = leadMarket?.change ?? 0;
   const postClose = editionType === "post_close";
   const editionLabel = editionType ? ` · ${postClose ? "POST-CLOSE" : "PRE-MARKET"}` : "";
-  return <div className="page-content"><Card className="welcome-card"><div className="welcome-copy"><span className="eyebrow">{formatBriefingDate(editionDate)}{editionLabel}</span><h1>{postClose ? "Market close." : "Good morning."}</h1><p>{postClose ? "Here are today’s closing opportunities." : "Here are today’s top opportunities."}</p><span className={`market-status ${leadChange > 0 ? "positive" : leadChange < 0 ? "negative" : "neutral"}`}>{leadChange > 0 ? <TrendingUp/> : leadChange < 0 ? <ArrowDownRight/> : null} {leadMarket?.name ?? "Market"} {leadChange > 0 ? "up" : leadChange < 0 ? "down" : "flat"} <strong className={leadChange > 0 ? "positive" : leadChange < 0 ? "negative" : "neutral"}>{leadChange > 0 ? "+" : ""}{leadChange.toFixed(2)}%</strong></span></div><IntradayChart/></Card><MarketCards/><div className="main-grid"><Card className="opportunities-card"><SectionTitle title="Top Opportunities"/><OpportunityList onSelect={selectOpportunity}/></Card><Sentiment/><QuickStats/></div><div className="lower-grid"><EarningsSummary goEarnings={() => setPage("earnings")} onSelect={selectEarnings}/><Card className="x-preview"><SectionTitle title="X Pulse" action="View More" onAction={() => setPage("surge")}/><p className="card-subtitle">Curated insights from selected accounts.</p>{xPosts.slice(0,3).map(post => <PostCard key={post.url} post={post} compact/>)}</Card></div></div>;
+  return <div className="page-content"><Card className="welcome-card"><div className="welcome-copy"><span className="eyebrow">{formatBriefingDate(editionDate)}{editionLabel}</span><h1>{postClose ? "Market close." : "Good morning."}</h1><p>{postClose ? "Here are today’s closing opportunities." : "Here are today’s top opportunities."}</p>{leadMarket ? <span className={`market-status ${leadChange > 0 ? "positive" : leadChange < 0 ? "negative" : "neutral"}`}>{leadChange > 0 ? <TrendingUp/> : leadChange < 0 ? <ArrowDownRight/> : null} {leadMarket.name} {leadChange > 0 ? "up" : leadChange < 0 ? "down" : "flat"} <strong className={leadChange > 0 ? "positive" : leadChange < 0 ? "negative" : "neutral"}>{leadChange > 0 ? "+" : ""}{leadChange.toFixed(2)}%</strong></span> : <span className="market-status neutral">Market data <strong className="neutral">Not available</strong></span>}</div></Card><MarketCards/><div className="main-grid"><Card className="opportunities-card"><SectionTitle title="Top Opportunities"/><OpportunityList onSelect={selectOpportunity}/></Card><Sentiment/><QuickStats/></div><div className="lower-grid"><EarningsSummary goEarnings={() => setPage("earnings")} onSelect={selectEarnings}/><Card className="x-preview"><SectionTitle title="X Pulse" action="View More" onAction={() => setPage("surge")}/><p className="card-subtitle">Curated insights from selected accounts.</p>{xPosts.length ? xPosts.slice(0,3).map(post => <PostCard key={post.url} post={post} compact/>) : <p className="empty-state">No recent posts.</p>}</Card></div></div>;
 }
 
 function XPulsePage() {

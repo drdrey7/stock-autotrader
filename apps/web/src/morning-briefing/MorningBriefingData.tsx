@@ -6,7 +6,7 @@ import type {
   EarningsEvent,
   MarketDataSnapshot,
 } from "@stock-autotrader/contracts";
-import { marketIndexes as mockMarketIndexes, type MarketIndex } from "./data/market";
+import type { MarketIndex } from "./data/market";
 import { opportunities as mockOpportunities, type Opportunity } from "./data/opportunities";
 import { type XPost } from "./data/xSurge";
 import { earnings as mockEarnings, type EarningsCompany } from "./data/earnings";
@@ -58,14 +58,11 @@ type MorningBriefingData = {
   backendState: "loading" | "connected" | "partial" | "offline";
   briefingFreshness: BriefingHealth["freshness"];
   lastPublishedAt: string | null;
+  marketUpdatedAt: string | null;
+  opportunitiesUpdatedAt: string | null;
   editionDate: string | null;
   editionType: DailyBriefing["editionType"] | null;
 };
-
-const labelledMockMarketIndexes: MarketIndex[] = mockMarketIndexes.map((item) => ({
-  ...item,
-  source: "mock",
-}));
 
 function normaliseEarnings(items: EarningsCompany[], today = marketTodayKey()): EarningsCompany[] {
   return items.map((item) => item.result === "Upcoming" && item.date < today
@@ -74,8 +71,11 @@ function normaliseEarnings(items: EarningsCompany[], today = marketTodayKey()): 
 }
 
 const initialData: MorningBriefingData = {
-  marketIndexes: labelledMockMarketIndexes,
-  opportunities: mockOpportunities,
+  // Financially actionable sections stay empty until the backend publishes
+  // validated data. Static fixtures remain available internally for colours
+  // and development, but are never presented as current market information.
+  marketIndexes: [],
+  opportunities: [],
   // Social posts and earnings are backend publications.  Keep the initial
   // state empty so a failed first request never turns demo fixtures into
   // apparently current market information.
@@ -93,6 +93,8 @@ const initialData: MorningBriefingData = {
   backendState: "loading",
   briefingFreshness: "unavailable",
   lastPublishedAt: null,
+  marketUpdatedAt: null,
+  opportunitiesUpdatedAt: null,
   editionDate: null,
   editionType: null,
 };
@@ -102,7 +104,7 @@ const MorningBriefingDataContext = createContext<MorningBriefingData>(initialDat
 const numberFrom = (value: string | number | null | undefined): number | null => {
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
   if (!value || !/[0-9]/.test(value)) return null;
-  const parsed = Number(value.replace(/[^0-9.-]/g, ""));
+  const parsed = Number(value.replace(/[−–—]/g, "-").replace(/[^0-9.-]/g, ""));
   return Number.isFinite(parsed) ? parsed : null;
 };
 
@@ -131,6 +133,7 @@ const relativeTime = (iso: string): string => {
 const REQUEST_TIMEOUT_MS = 8_000;
 const EARNINGS_REFRESH_INTERVAL_MS = 60 * 60_000;
 const X_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
+const FINANCIAL_CACHE_MAX_AGE_MS = 26 * 60 * 60_000;
 
 async function fetchJson<T>(path: string): Promise<T | null> {
   const controller = new AbortController();
@@ -293,17 +296,32 @@ function recentCachedPosts(posts: XPost[]): XPost[] {
 
 const X_CACHE_STORAGE_KEY = "morning-briefing-x-post-cache-v1";
 
+function isXCategory(value: unknown): value is XPost["category"] {
+  return value === "AI" || value === "Markets" || value === "Tech" || value === "Investing";
+}
+
+function isStoredXPost(value: unknown): value is XPost {
+  if (!value || typeof value !== "object") return false;
+  const post = value as Record<string, unknown>;
+  return isXCategory(post.category)
+    && typeof post.name === "string"
+    && typeof post.handle === "string"
+    && typeof post.time === "string"
+    && typeof post.createdAt === "string"
+    && typeof post.text === "string"
+    && typeof post.likes === "string"
+    && typeof post.reposts === "string"
+    && typeof post.replies === "string"
+    && typeof post.color === "string"
+    && typeof post.url === "string";
+}
+
 function readStoredXPosts(): XPost[] {
   if (typeof window === "undefined") return [];
   try {
     const parsed: unknown = JSON.parse(window.localStorage.getItem(X_CACHE_STORAGE_KEY) ?? "[]");
     if (!Array.isArray(parsed)) return [];
-    const posts = parsed.flatMap((item) => {
-      if (!item || typeof item !== "object") return [];
-      const post = item as Partial<XPost>;
-      if (typeof post.createdAt !== "string" || typeof post.handle !== "string" || typeof post.text !== "string" || typeof post.url !== "string") return [];
-      return [{ ...post, source: "cached" as const } as XPost];
-    });
+    const posts = parsed.filter(isStoredXPost).map((post) => ({ ...post, source: "cached" as const }));
     return recentCachedPosts(posts);
   } catch {
     return [];
@@ -332,7 +350,7 @@ export function marketTodayKey(): string {
 const isRecentTimestamp = (value: string | null | undefined): boolean => {
   const timestamp = Date.parse(value ?? "");
   const ageMs = Date.now() - timestamp;
-  return Number.isFinite(timestamp) && ageMs >= -5 * 60_000 && ageMs <= 26 * 60 * 60_000;
+  return Number.isFinite(timestamp) && ageMs >= -5 * 60_000 && ageMs <= FINANCIAL_CACHE_MAX_AGE_MS;
 };
 
 const candidatesAreFresh = (status: StatusResponse | null): boolean =>
@@ -363,7 +381,16 @@ function earningsFromApi(events: EarningsEvent[]): EarningsCompany[] {
 }
 
 export function MorningBriefingDataProvider({ children }: { children: React.ReactNode }) {
-  const [data, setData] = useState<MorningBriefingData>(initialData);
+  const [data, setData] = useState<MorningBriefingData>(() => {
+    const cachedPosts = readStoredXPosts();
+    const sources = { ...initialData.sources, x: cachedPosts.length > 0 ? "cached" as const : initialData.sources.x };
+    return {
+      ...initialData,
+      xPosts: cachedPosts,
+      sources,
+      backendState: backendStateFromSources(sources),
+    };
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -375,28 +402,57 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
 
     const refreshCore = async () => {
       const currentRequest = ++coreRequestId;
-      const [briefing, status, marketData] = await Promise.all([
+    const [briefing, status, marketData] = await Promise.all([
         fetchJson<DailyBriefing>("/api/briefs/latest"),
         fetchJson<StatusResponse>("/api/status"),
         fetchJson<MarketDataSnapshot>("/api/market-data"),
       ]);
       if (cancelled || currentRequest !== coreRequestId) return;
 
-      const freshBriefing = briefing && status?.briefing?.freshness === "fresh" ? briefing : null;
+      const briefingUpdatedAt = briefing
+        ? status?.briefing?.publishedAt ?? briefing.preparedAt
+        : null;
+      const freshBriefing = briefing
+        && status?.briefing?.freshness === "fresh"
+        && isRecentTimestamp(briefingUpdatedAt)
+        ? briefing
+        : null;
       const candidateSnapshotAvailable = candidatesAreFresh(status) && Array.isArray(status?.candidates);
       const candidates = candidateSnapshotAvailable
         ? (status?.candidates ?? []).filter((candidate) => isRecentTimestamp(candidate.updatedAt))
         : [];
+      const marketSnapshot = marketData ?? status?.marketData;
       const liveMarket = freshBriefing
         ? marketFromBriefing(freshBriefing)
-        : marketFromSnapshot(marketData ?? status?.marketData);
+        : marketFromSnapshot(marketSnapshot);
       const liveOpportunities = freshBriefing
         ? opportunitiesFromBriefing(freshBriefing, candidates)
         : candidateSnapshotAvailable
           ? opportunitiesFromCandidates(candidates)
           : null;
+      const marketTimestamp = liveMarket
+        ? freshBriefing
+          ? briefingUpdatedAt
+          : marketSnapshot?.lastSuccessfulUpdate ?? null
+        : null;
+      const opportunitiesTimestamp = liveOpportunities !== null
+        ? freshBriefing
+          ? briefingUpdatedAt
+          : status?.status?.lastDataUpdate ?? null
+        : null;
 
       setData((previous) => {
+        const retainBriefing = isRecentTimestamp(previous.lastPublishedAt);
+        const retainMarket = isRecentTimestamp(previous.marketUpdatedAt);
+        const retainOpportunities = isRecentTimestamp(previous.opportunitiesUpdatedAt);
+        const nextMarketIndexes = liveMarket
+          ?? (retainMarket
+            ? previous.marketIndexes.map((item) => ({ ...item, source: cachedSource(item.source) }))
+            : []);
+        const nextOpportunities = liveOpportunities
+          ?? (retainOpportunities
+            ? previous.opportunities.map((item) => ({ ...item, source: cachedSource(item.source) }))
+            : []);
         const sources: BackendSources = {
           ...previous.sources,
           briefing: freshBriefing ? "live" : cachedSource(previous.sources.briefing),
@@ -407,16 +463,28 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
         };
         return {
           ...previous,
-          marketIndexes: liveMarket ?? previous.marketIndexes.map((item) => ({ ...item, source: cachedSource(item.source) })),
-          opportunities: liveOpportunities ?? previous.opportunities.map((item) => ({ ...item, source: cachedSource(item.source) })),
+          marketIndexes: nextMarketIndexes,
+          opportunities: nextOpportunities,
           sources,
           backendState: backendStateFromSources(sources),
           briefingFreshness: status?.briefing?.freshness ?? "unavailable",
           lastPublishedAt: freshBriefing
-            ? status?.briefing?.publishedAt ?? freshBriefing.preparedAt
-            : previous.lastPublishedAt,
-          editionDate: freshBriefing?.editionDate ?? previous.editionDate,
-          editionType: freshBriefing?.editionType ?? previous.editionType,
+            ? briefingUpdatedAt
+            : retainBriefing
+              ? previous.lastPublishedAt
+              : null,
+          marketUpdatedAt: liveMarket
+            ? marketTimestamp
+            : retainMarket
+              ? previous.marketUpdatedAt
+              : null,
+          opportunitiesUpdatedAt: liveOpportunities !== null
+            ? opportunitiesTimestamp
+            : retainOpportunities
+              ? previous.opportunitiesUpdatedAt
+              : null,
+          editionDate: freshBriefing?.editionDate ?? (retainBriefing ? previous.editionDate : null),
+          editionType: freshBriefing?.editionType ?? (retainBriefing ? previous.editionType : null),
         };
       });
     };
