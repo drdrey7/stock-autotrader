@@ -3,7 +3,8 @@ export type EarningsCompany = {
   result: "Beat" | "Miss" | "Mixed" | "Upcoming"; epsActual?: string; epsExpected: string;
   revenueActual?: string; revenueExpected: string; reaction?: string;
   guidance: "Raised" | "Maintained" | "Lowered" | "Pending"; revenueYoy?: string;
-  epsYoy?: string; margin?: string; segment?: string; officialUrl?: string; color: string;\n  source?: "live" | "mock"; eventSignal?: "Confirmed" | "Pending" | "Risk Window";
+  epsYoy?: string; margin?: string; segment?: string; officialUrl?: string; color: string;
+  source?: "live" | "mock"; eventSignal?: "Confirmed" | "Pending" | "Risk Window";
 };
 
 export const earnings: EarningsCompany[] = [
