@@ -23,6 +23,21 @@ type BriefingRow = {
   payload_json: string;
 };
 
+type IngestEventRow = {
+  event_id: string;
+  event_type: string;
+  received_at: string;
+  status: string;
+};
+
+type IngestLogRow = {
+  event_id: string;
+  event_type: string;
+  status: string;
+  detail: string | null;
+  created_at: string;
+};
+
 class FakeStatement {
   private args: unknown[] = [];
 
@@ -69,17 +84,41 @@ class FakeStatement {
     if (this.sql.includes("INSERT OR IGNORE INTO ingest_events")) {
       const eventId = String(this.args[0]);
       if (this.db.events.has(eventId)) return { meta: { changes: 0 } };
-      this.db.events.add(eventId);
+      this.db.events.set(eventId, {
+        event_id: eventId,
+        event_type: String(this.args[1]),
+        received_at: String(this.args[2]),
+        status: this.sql.includes("'duplicate_briefing'") ? "duplicate_briefing" : "applied",
+      });
       return { meta: { changes: 1 } };
     }
     if (this.sql.includes("INSERT INTO ingest_events")) {
       const eventId = String(this.args[0]);
       if (this.db.events.has(eventId)) throw new Error("UNIQUE constraint failed: ingest_events.event_id");
-      this.db.events.add(eventId);
+      const hasLiteralEventType = this.sql.includes("'DAILY_BRIEFING_PUBLISHED'");
+      this.db.events.set(eventId, {
+        event_id: eventId,
+        event_type: hasLiteralEventType ? "DAILY_BRIEFING_PUBLISHED" : String(this.args[1]),
+        received_at: String(hasLiteralEventType ? this.args[1] : this.args[2]),
+        status: "applied",
+      });
       return { meta: { changes: 1 } };
     }
     if (this.sql.includes("INSERT INTO ingest_log")) {
-      this.db.logs += 1;
+      const hasLiteralEventType = this.sql.includes("'DAILY_BRIEFING_PUBLISHED'");
+      const status = this.sql.includes("'skipped_duplicate'")
+        ? "skipped_duplicate"
+        : this.sql.includes("'error'")
+          ? "error"
+          : "applied";
+      const hasNullDetail = this.sql.includes("NULL");
+      this.db.logs.push({
+        event_id: String(this.args[0]),
+        event_type: hasLiteralEventType ? "DAILY_BRIEFING_PUBLISHED" : String(this.args[1]),
+        status,
+        detail: hasNullDetail ? null : String(hasLiteralEventType ? this.args[1] : this.args[2]),
+        created_at: String(hasLiteralEventType ? this.args[2] : this.args[3] ?? this.args[2]),
+      });
       return { meta: { changes: 1 } };
     }
     throw new Error(`Unhandled SQL: ${this.sql}`);
@@ -88,8 +127,8 @@ class FakeStatement {
 
 export class FakeD1 {
   readonly briefings = new Map<string, BriefingRow>();
-  readonly events = new Set<string>();
-  logs = 0;
+  readonly events = new Map<string, IngestEventRow>();
+  readonly logs: IngestLogRow[] = [];
 
   prepare(sql: string): FakeStatement {
     return new FakeStatement(this, sql);
@@ -97,8 +136,8 @@ export class FakeD1 {
 
   async batch(statements: FakeStatement[]): Promise<unknown[]> {
     const briefings = new Map(this.briefings);
-    const events = new Set(this.events);
-    const logs = this.logs;
+    const events = new Map(this.events);
+    const logs = [...this.logs];
     try {
       const results = [];
       for (const statement of statements) results.push(await statement.run());
@@ -107,8 +146,9 @@ export class FakeD1 {
       this.briefings.clear();
       for (const [key, row] of briefings) this.briefings.set(key, row);
       this.events.clear();
-      for (const eventId of events) this.events.add(eventId);
-      this.logs = logs;
+      for (const [eventId, row] of events) this.events.set(eventId, row);
+      this.logs.length = 0;
+      this.logs.push(...logs);
       throw error;
     }
   }
@@ -156,9 +196,8 @@ describe("DailyBriefing publication helpers", () => {
     const first = await publishDailyBriefing(
       db as unknown as D1Database,
       "brief-event-001",
-      "2026-08-12T12:00:00.000Z",
+      "2026-08-12T08:00:00.000-04:00",
       briefing,
-      "2026-08-12T12:00:01.000Z",
     );
     expect(first.kind).toBe("applied");
 
@@ -167,7 +206,6 @@ describe("DailyBriefing publication helpers", () => {
       "brief-event-002",
       "2026-08-12T12:00:02.000Z",
       briefing,
-      "2026-08-12T12:00:02.000Z",
     );
     expect(replay.kind).toBe("skipped");
 
@@ -177,7 +215,6 @@ describe("DailyBriefing publication helpers", () => {
       "brief-event-003",
       "2026-08-12T12:00:03.000Z",
       altered,
-      "2026-08-12T12:00:03.000Z",
     );
     expect(conflict.kind).toBe("rejected");
 
@@ -192,9 +229,10 @@ describe("DailyBriefing publication helpers", () => {
     await expect(readBriefingStatus(db as unknown as D1Database, Date.parse("2026-08-12T12:00:03.000Z"))).resolves.toMatchObject({
       available: true,
       freshness: "fresh",
-      ageSeconds: 2,
+      ageSeconds: 3,
     });
     expect(db.briefings.size).toBe(1);
+    expect(db.briefings.get("2026-08-11:pre_market")?.published_at).toBe("2026-08-12T12:00:00.000Z");
 
     const stored = db.briefings.get("2026-08-11:pre_market");
     if (!stored) throw new Error("Expected stored briefing row");
@@ -203,6 +241,24 @@ describe("DailyBriefing publication helpers", () => {
     await expect(readBriefingStatus(db as unknown as D1Database, fixedNow)).resolves.toMatchObject({
       available: false,
       freshness: "unavailable",
+    });
+  });
+
+  it("uses the signed event timestamp for freshness of backfilled briefings", async () => {
+    const db = new FakeD1();
+    const briefing = JSON.parse(JSON.stringify({ ...exampleDailyBriefing, example: false }));
+
+    await publishDailyBriefing(
+      db as unknown as D1Database,
+      "backfilled-brief-001",
+      "2026-08-10T09:00:00.000Z",
+      briefing,
+    );
+
+    expect(db.briefings.get("2026-08-11:pre_market")?.published_at).toBe("2026-08-10T09:00:00.000Z");
+    await expect(readBriefingStatus(db as unknown as D1Database, fixedNow)).resolves.toMatchObject({
+      available: true,
+      freshness: "stale",
     });
   });
 
@@ -217,7 +273,7 @@ describe("DailyBriefing publication helpers", () => {
     const notFound = await worker.fetch(new Request("https://example.test/api/briefs/latest"), env);
     expect(notFound.status).toBe(404);
 
-    await publishDailyBriefing(db as unknown as D1Database, "brief-route-001", "2026-08-12T12:00:00.000Z", briefing, "2026-08-12T12:00:01.000Z");
+    await publishDailyBriefing(db as unknown as D1Database, "brief-route-001", "2026-08-12T12:00:00.000Z", briefing);
 
     const latest = await worker.fetch(new Request("https://example.test/api/briefs/latest?editionType=pre_market"), env);
     expect(latest.status).toBe(200);
@@ -270,6 +326,49 @@ describe("DailyBriefing publication helpers", () => {
       signedEnv,
     );
     expect(signed.status).toBe(200);
+
+    const backfilledDb = new FakeD1();
+    const backfilledEnv = { ...env, DB: backfilledDb, INGEST_SECRET: "test-secret" } as unknown as Env;
+    const backfillEventTimestamp = "2026-08-10T09:00:00-04:00";
+    const backfillRequestTimestamp = new Date().toISOString();
+    const backfillBody = JSON.stringify({
+      events: [{
+        type: "DAILY_BRIEFING_PUBLISHED",
+        event_id: "signed-brief-backfill-001",
+        timestamp: backfillEventTimestamp,
+        payload: { ...briefing, editionDate: "2026-08-10" },
+      }],
+    });
+    const backfillSignature = await signIngestBody("test-secret", backfillRequestTimestamp, backfillBody);
+    const backfilled = await handleIngest(
+      new Request("https://example.test/ingest/events", {
+        method: "POST",
+        body: backfillBody,
+        headers: {
+          "X-Ingest-Signature": backfillSignature,
+          "X-Ingest-Timestamp": backfillRequestTimestamp,
+        },
+      }),
+      backfilledEnv,
+    );
+    expect(backfilled.status).toBe(200);
+    await expect(backfilled.json()).resolves.toMatchObject({ applied: ["signed-brief-backfill-001"] });
+
+    expect(backfilledDb.briefings.get("2026-08-10:pre_market")?.published_at).toBe("2026-08-10T13:00:00.000Z");
+    await expect(readBriefingStatus(backfilledDb as unknown as D1Database, fixedNow)).resolves.toMatchObject({
+      available: true,
+      freshness: "stale",
+      publishedAt: "2026-08-10T13:00:00.000Z",
+    });
+    const ledgerRow = backfilledDb.events.get("signed-brief-backfill-001");
+    if (!ledgerRow) throw new Error("Expected backfill ingest ledger row");
+    expect(ledgerRow.status).toBe("applied");
+    expect(Date.parse(ledgerRow.received_at)).toBeGreaterThan(Date.parse(backfillEventTimestamp));
+    const logRow = backfilledDb.logs.find((row) => row.event_id === "signed-brief-backfill-001");
+    if (!logRow) throw new Error("Expected backfill ingest log row");
+    expect(logRow.status).toBe("applied");
+    expect(logRow.detail).toContain(`event_timestamp=${backfillEventTimestamp};`);
+    expect(Date.parse(logRow.created_at)).toBeGreaterThan(Date.parse(backfillEventTimestamp));
 
     const tamperedTimestamp = new Date(Date.parse(timestamp) + 1000).toISOString();
     const replayWithFreshTimestamp = await handleIngest(

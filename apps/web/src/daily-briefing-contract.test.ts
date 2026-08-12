@@ -108,6 +108,15 @@ describe("DailyBriefing v1 contract", () => {
     expect(dailyBriefingSchema.safeParse(briefing).success).toBe(false);
   });
 
+  it("rejects source handles outside the configured allowlist", () => {
+    const briefing = cloneBriefing();
+    const firstIdea = briefing.ideas[0];
+    if (!firstIdea) throw new Error("Example briefing must contain an idea");
+    Object.assign(firstIdea.source, { handle: "@unapproved-source" });
+
+    expect(dailyBriefingSchema.safeParse(briefing).success).toBe(false);
+  });
+
   it("requires membership and a numeric reward-risk ratio for Potential Entry", () => {
     const briefing = cloneBriefing();
     const firstIdea = briefing.ideas[0];

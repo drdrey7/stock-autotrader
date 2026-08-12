@@ -137,10 +137,14 @@ export async function publishDailyBriefing(
   eventId: string,
   eventTimestamp: string,
   briefing: DailyBriefing,
-  publishedAt: string,
 ): Promise<PublishBriefingResult> {
   const parsed = publishedDailyBriefingSchema.parse(briefing);
   const contentHash = await briefingContentHash(parsed);
+  // eventTimestamp is signed together with the event payload and is the
+  // authoritative publication time for ordering and freshness. The Worker
+  // receipt time must not make a backfilled briefing look fresh.
+  const publishedAt = new Date(eventTimestamp).toISOString();
+  const receivedAt = new Date().toISOString();
   const existingEdition = await findByEdition(db, parsed.editionDate, parsed.editionType);
 
   if (existingEdition) {
@@ -177,10 +181,10 @@ export async function publishDailyBriefing(
         ),
       db
         .prepare("INSERT INTO ingest_events (event_id, event_type, received_at, status) VALUES (?, 'DAILY_BRIEFING_PUBLISHED', ?, 'applied')")
-        .bind(eventId, publishedAt),
+        .bind(eventId, receivedAt),
       db
         .prepare("INSERT INTO ingest_log (event_id, event_type, status, detail, created_at) VALUES (?, 'DAILY_BRIEFING_PUBLISHED', 'applied', ?, ?)")
-        .bind(eventId, `event_timestamp=${eventTimestamp};content_hash=${contentHash}`, publishedAt),
+        .bind(eventId, `event_timestamp=${eventTimestamp};content_hash=${contentHash}`, receivedAt),
     ]);
     return { kind: "applied", contentHash };
   } catch (error) {

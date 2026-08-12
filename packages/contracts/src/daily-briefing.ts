@@ -12,6 +12,7 @@ export const briefingEditionTypes = ["pre_market", "post_close"] as const;
 export type BriefingEditionType = (typeof briefingEditionTypes)[number];
 export const briefingTimezone = "America/New_York" as const;
 export const briefingUniverseValues = ["S&P 500", "Nasdaq-100", "Both"] as const;
+export const briefingSourceAllowlist = ["@nolimitgains"] as const;
 
 export const briefingBenchmarkDefinitions = [
   { name: "S&P 500", symbol: "SP:SPX" },
@@ -55,7 +56,7 @@ export const marketContextItemSchema = z.strictObject({
 export type MarketContextItem = z.infer<typeof marketContextItemSchema>;
 
 export const briefingSourceSchema = z.strictObject({
-  handle: nonEmptyString,
+  handle: z.enum(briefingSourceAllowlist),
   reference: httpsUrl,
   originalTimestamp: isoTimestamp.nullable(),
   collectedTimestamp: isoTimestamp.nullable(),

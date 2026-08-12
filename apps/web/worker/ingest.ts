@@ -493,7 +493,6 @@ export async function handleIngest(request: Request, env: Env): Promise<Response
           event.event_id,
           event.timestamp,
           event.payload,
-          new Date().toISOString(),
         );
         if (result.kind === "applied") applied.push(event.event_id);
         else if (result.kind === "skipped") skipped.push(event.event_id);
