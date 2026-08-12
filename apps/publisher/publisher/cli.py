@@ -73,7 +73,7 @@ def _cmd_brief(args: argparse.Namespace) -> int:
         quotes=quotes,
         data_dir=args.data_dir,
         prepared_at=prepared_at,
-        dry_run=args.dry_run or not args.publish,
+        dry_run=not args.publish,  # --publish overrides --dry-run
         publish=args.publish,
         endpoint=args.endpoint if args.publish else None,
         secret=_load_secret(args) if args.publish else None,

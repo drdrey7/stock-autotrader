@@ -20,6 +20,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlsplit
 from typing import Any
 
 from .universe import UniverseSnapshot, canonical_symbol
@@ -55,8 +56,14 @@ class XPost:
             raise ValueError("X post requires a non-empty string 'id'")
         if not isinstance(text, str) or not text.strip():
             raise ValueError(f"X post {post_id!r} requires non-empty 'text'")
-        if not isinstance(url, str) or not url.startswith("https://"):
-            raise ValueError(f"X post {post_id!r} requires an HTTPS 'url'")
+        if not isinstance(url, str):
+            raise ValueError(f"X post {post_id!r} requires a 'url'")
+        try:
+            parsed_url = urlsplit(url)
+        except ValueError:
+            raise ValueError(f"X post {post_id!r} has an invalid 'url'")
+        if parsed_url.scheme != "https" or not parsed_url.netloc:
+            raise ValueError(f"X post {post_id!r} requires an absolute HTTPS 'url'")
         if not isinstance(created_at_raw, str) or not created_at_raw:
             raise ValueError(f"X post {post_id!r} requires 'created_at'")
         if not isinstance(author, str) or not author.startswith("@") or len(author) < 2:
