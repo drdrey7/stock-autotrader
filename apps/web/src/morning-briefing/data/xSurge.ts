@@ -1,6 +1,7 @@
 export type XPost = {
   category: "AI" | "Markets" | "Tech" | "Investing"; name: string; handle: string;
-  time: string; text: string; likes: string; reposts: string; replies: string; color: string; url: string;\n  source?: "live" | "mock"; symbol?: string; price?: string; change?: string;
+  time: string; text: string; likes: string; reposts: string; replies: string; color: string; url: string;
+  source?: "live" | "mock"; symbol?: string; price?: string; change?: string;
 };
 
 export const xPosts: XPost[] = [
