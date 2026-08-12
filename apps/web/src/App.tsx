@@ -1,13 +1,11 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import {
-  DailyBriefingDashboardPage,
-  DailyBriefingLandingPage,
+  DailyBriefingDisclaimerPage,
   DailyBriefingMethodologyPage,
   DailyBriefingNotFoundPage,
   DailyBriefingStatusPage,
-  DailyBriefingDisclaimerPage,
 } from "./daily-briefing-pages";
-import { DailyBriefingXSearchPage } from "./x-search-page";
+import MorningBriefingApp from "./morning-briefing/MorningBriefingApp";
 
 const legacyRoutes = [
   "/scanner",
@@ -18,18 +16,18 @@ const legacyRoutes = [
   "/research",
   "/research/:researchId",
   "/portfolio",
-  "/earnings",
   "/market-data",
   "/activity",
-  "/x-search",
 ] as const;
 
 export default function App() {
   return (
     <Routes>
-      <Route path="/" element={<DailyBriefingLandingPage />} />
-      <Route path="/dashboard" element={<DailyBriefingDashboardPage />} />
-      <Route path="/x" element={<DailyBriefingXSearchPage />} />
+      <Route path="/" element={<MorningBriefingApp />} />
+      <Route path="/dashboard" element={<MorningBriefingApp />} />
+      <Route path="/x" element={<MorningBriefingApp initialPage="surge" />} />
+      <Route path="/x-search" element={<Navigate to="/x" replace />} />
+      <Route path="/earnings" element={<MorningBriefingApp initialPage="earnings" />} />
       <Route path="/methodology" element={<DailyBriefingMethodologyPage />} />
       <Route path="/status" element={<DailyBriefingStatusPage />} />
       <Route path="/disclaimer" element={<DailyBriefingDisclaimerPage />} />
