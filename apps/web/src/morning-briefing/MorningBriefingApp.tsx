@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 import { chartPoints, quickStats } from "./data/market";
 import { type Opportunity } from "./data/opportunities";
-import { socialBuzz, trendingKeywords, type XPost } from "./data/xSurge";
+import { socialBuzz, trackedXAccounts, trendingKeywords, type XPost } from "./data/xSurge";
 import { takeaways, type EarningsCompany } from "./data/earnings";
 import {
   BackendRibbon,
@@ -22,7 +22,7 @@ type Page = "briefing" | "surge" | "earnings";
 type Theme = "light" | "dark";
 const tabs: { id: Page; label: string }[] = [
   { id: "briefing", label: "Morning Briefing" },
-  { id: "surge", label: "X Surge" },
+  { id: "surge", label: "X Pulse" },
   { id: "earnings", label: "Earnings" },
 ];
 const spring = { duration: 0.22, ease: [0.22, 1, 0.36, 1] as const };
@@ -104,7 +104,7 @@ function QuickStats() {
 }
 
 function PostCard({ post, compact = false }: { post: XPost; compact?: boolean }) {
-  return <article className={`post-card ${compact ? "compact" : ""}`}><div className="post-head"><span className="avatar" style={{ "--avatar": post.color } as React.CSSProperties}>{post.name.slice(0,1)}</span><span><strong>{post.name}</strong><small>{post.handle}</small></span><time>{post.time}</time></div><DataSourceBadge source={post.source ?? "mock"}/><p>{post.text}</p><div className="post-meta"><span><Heart/> {post.likes}</span><span><Repeat2/> {post.reposts}</span><span><MessageCircle/> {post.replies}</span>{!compact && <a href={post.url} target="_blank" rel="noreferrer">Open on X <ExternalLink/></a>}</div></article>;
+  return <article className={`post-card ${compact ? "compact" : ""}`}><div className="post-head"><span className="avatar" style={{ "--avatar": post.color } as React.CSSProperties}>{post.name.slice(0,1)}</span><span><strong>{post.name}</strong><small>{post.handle}</small></span><span className="post-status"><DataSourceBadge source={post.source ?? "mock"}/><time>{post.time}</time></span></div><p>{post.text}</p><div className="post-meta"><span><Heart/> {post.likes}</span><span><Repeat2/> {post.reposts}</span><span><MessageCircle/> {post.replies}</span>{!compact && <a href={post.url} target="_blank" rel="noreferrer">Open on X <ExternalLink/></a>}</div></article>;
 }
 
 function EarningsSummary({ goEarnings, onSelect }: { goEarnings: () => void; onSelect: (e: EarningsCompany) => void }) {
@@ -118,14 +118,17 @@ function MorningBriefing({ setPage, selectOpportunity, selectEarnings }: { setPa
   const { sources, xPosts, marketIndexes } = useMorningBriefingData();
   const leadMarket = marketIndexes[0];
   const leadChange = leadMarket?.change ?? 0;
-  return <div className="page-content"><BackendRibbon/><Card className="welcome-card"><div className="welcome-copy"><span className="eyebrow">WEDNESDAY · 12 AUGUST</span><h1>Good morning.</h1><p>Here are today&apos;s top opportunities.</p><span className="market-status"><TrendingUp/> Markets {leadChange >= 0 ? "up" : "down"} <strong>{leadChange > 0 ? "+" : ""}{leadChange.toFixed(2)}%</strong><DataSourceBadge source={leadMarket?.source ?? "mock"}/></span></div><IntradayChart/></Card><MarketCards/><div className="main-grid"><Card className="opportunities-card"><SectionTitle title="Top Opportunities" source={sources.opportunities}/><OpportunityList onSelect={selectOpportunity}/></Card><Sentiment/><QuickStats/></div><div className="lower-grid"><EarningsSummary goEarnings={() => setPage("earnings")} onSelect={selectEarnings}/><Card className="x-preview"><SectionTitle title="X Surge" action="View More" onAction={() => setPage("surge")} source={sources.x}/><p className="card-subtitle">Real-time insights from selected accounts.</p>{xPosts.slice(0,3).map(post => <PostCard key={post.handle} post={post} compact/>)}</Card></div></div>;
+  return <div className="page-content"><BackendRibbon/><Card className="welcome-card"><div className="welcome-copy"><span className="eyebrow">WEDNESDAY · 12 AUGUST</span><h1>Good morning.</h1><p>Here are today&apos;s top opportunities.</p><span className="market-status"><TrendingUp/> Markets {leadChange >= 0 ? "up" : "down"} <strong>{leadChange > 0 ? "+" : ""}{leadChange.toFixed(2)}%</strong><DataSourceBadge source={leadMarket?.source ?? "mock"}/></span></div><IntradayChart/></Card><MarketCards/><div className="main-grid"><Card className="opportunities-card"><SectionTitle title="Top Opportunities" source={sources.opportunities}/><OpportunityList onSelect={selectOpportunity}/></Card><Sentiment/><QuickStats/></div><div className="lower-grid"><EarningsSummary goEarnings={() => setPage("earnings")} onSelect={selectEarnings}/><Card className="x-preview"><SectionTitle title="X Pulse" action="View More" onAction={() => setPage("surge")} source={sources.x}/><p className="card-subtitle">Real-time insights from selected accounts.</p>{xPosts.slice(0,3).map(post => <PostCard key={post.url} post={post} compact/>)}</Card></div></div>;
 }
 
-function XSurgePage() {
+function XPulsePage() {
   const { xPosts, sources } = useMorningBriefingData();
-  const [category, setCategory] = useState("All");
-  const shown = category === "All" ? xPosts : xPosts.filter(p => p.category === category);
-  return <div className="page-content inner-page"><div className="page-heading"><span className="eyebrow">CURATED SOCIAL SIGNALS</span><h1>X Surge <DataSourceBadge source={sources.x}/></h1><p>The posts that matter from the accounts we track.</p></div><div className="filter-row">{["All","Markets","AI","Tech","Investing"].map(item => <button key={item} className={category === item ? "active" : ""} onClick={() => setCategory(item)}>{item}</button>)}</div><div className="surge-layout"><div className="feed">{shown.map(post => <Card key={post.handle + post.time} className="post-shell"><PostCard post={post}/></Card>)}</div><aside className="social-sidebar"><Card><SectionTitle title="Top Social Buzz" source="mock"/><ol>{socialBuzz.map((ticker, index) => <li key={ticker}><span>{index+1}</span><strong>{ticker}</strong><em>{["+34%","+29%","+22%","+18%","+16%"][index]}</em></li>)}</ol></Card><Card><SectionTitle title="Trending Keywords" source="mock"/><div className="keywords">{trendingKeywords.map(k => <span key={k}>#{k}</span>)}</div></Card></aside></div></div>;
+  const [account, setAccount] = useState("All");
+  const accountTabs = ["All", ...trackedXAccounts];
+  const shown = account === "All"
+    ? xPosts
+    : xPosts.filter((post) => post.handle.toLowerCase() === account.toLowerCase());
+  return <div className="page-content inner-page"><div className="page-heading"><span className="eyebrow">CURATED SOCIAL SIGNALS</span><h1>X Pulse <DataSourceBadge source={sources.x}/></h1><p>The posts that matter from the accounts we track.</p></div><div className="filter-row" aria-label="Tracked X accounts">{accountTabs.map(item => <button key={item} className={account === item ? "active" : ""} onClick={() => setAccount(item)}>{item}</button>)}</div><div className="surge-layout"><div className="feed">{shown.length ? shown.map(post => <Card key={post.url} className="post-shell"><PostCard post={post}/></Card>) : <Card><p className="empty-state">No posts are available from this account yet.</p></Card>}</div><aside className="social-sidebar"><Card><SectionTitle title="Top Social Buzz" source="mock"/><ol>{socialBuzz.map((ticker, index) => <li key={ticker}><span>{index+1}</span><strong>{ticker}</strong><em>{["+34%","+29%","+22%","+18%","+16%"][index]}</em></li>)}</ol></Card><Card><SectionTitle title="Trending Keywords" source="mock"/><div className="keywords">{trendingKeywords.map(k => <span key={k}>#{k}</span>)}</div></Card></aside></div></div>;
 }
 
 function monthDays(month: number, year: number) {
@@ -166,7 +169,7 @@ function MorningBriefingShell({ initialPage = "briefing" }: { initialPage?: Page
   useEffect(() => { const stored = localStorage.getItem("morning-briefing-theme") as Theme | null; const preferred = typeof window.matchMedia === "function" && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"; const timer = window.setTimeout(() => setTheme(stored || preferred), 0); return () => window.clearTimeout(timer); }, []);
   useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem("morning-briefing-theme", theme); }, [theme]);
   useEffect(() => { window.scrollTo({ top: 0, behavior: "smooth" }); }, [page]);
-  return <div className="mb-demo app-shell"><AppHeader page={page} setPage={setPage} theme={theme} setTheme={setTheme}/><AnimatePresence mode="wait"><motion.main key={page} initial={{opacity:0,y:8}} animate={{opacity:1,y:0}} exit={{opacity:0,y:-4}} transition={spring}>{page === "briefing" && <MorningBriefing setPage={setPage} selectOpportunity={setSelectedOpportunity} selectEarnings={setSelectedEarnings}/>} {page === "surge" && <XSurgePage/>} {page === "earnings" && <EarningsPage onSelect={setSelectedEarnings}/>}</motion.main></AnimatePresence><footer><span>Morning Briefing</span><p>Public, read-only market intelligence. Live backend data where available; demo fields are labelled.</p></footer><AnimatePresence>{selectedOpportunity && <OpportunityModal item={selectedOpportunity} onClose={() => setSelectedOpportunity(null)}/>} {selectedEarnings && <EarningsDetail item={selectedEarnings} onClose={() => setSelectedEarnings(null)}/>}</AnimatePresence></div>;
+  return <div className="mb-demo app-shell"><AppHeader page={page} setPage={setPage} theme={theme} setTheme={setTheme}/><AnimatePresence mode="wait"><motion.main key={page} initial={{opacity:0,y:8}} animate={{opacity:1,y:0}} exit={{opacity:0,y:-4}} transition={spring}>{page === "briefing" && <MorningBriefing setPage={setPage} selectOpportunity={setSelectedOpportunity} selectEarnings={setSelectedEarnings}/>} {page === "surge" && <XPulsePage/>} {page === "earnings" && <EarningsPage onSelect={setSelectedEarnings}/>}</motion.main></AnimatePresence><footer><span>Morning Briefing</span><p>Public, read-only market intelligence. Live backend data where available; demo fields are labelled.</p></footer><AnimatePresence>{selectedOpportunity && <OpportunityModal item={selectedOpportunity} onClose={() => setSelectedOpportunity(null)}/>} {selectedEarnings && <EarningsDetail item={selectedEarnings} onClose={() => setSelectedEarnings(null)}/>}</AnimatePresence></div>;
 }
 
 
