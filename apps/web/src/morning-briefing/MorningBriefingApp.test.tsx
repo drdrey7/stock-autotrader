@@ -32,7 +32,7 @@ describe("Morning Briefing frontend demo", () => {
     expect(screen.getByRole("heading", { name: "Good morning." })).toBeInTheDocument();
 
     fireEvent.click(screen.getAllByRole("button", { name: "X Pulse" })[0]!);
-    expect(await screen.findByRole("heading", { name: "X Pulse" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: /X Pulse/ })).toBeInTheDocument();
 
     fireEvent.click(screen.getAllByRole("button", { name: "Earnings" })[0]!);
     expect(await screen.findByRole("heading", { name: /Earnings Calendar/ })).toBeInTheDocument();
@@ -41,7 +41,7 @@ describe("Morning Briefing frontend demo", () => {
   it("shows one filter per tracked account and keeps the source badge separate from time", async () => {
     const view = render(<MorningBriefingApp />);
     fireEvent.click(screen.getAllByRole("button", { name: "X Pulse" })[0]!);
-    await screen.findByRole("heading", { name: /X Pulse/ });
+    await screen.findByRole("heading", { level: 1, name: /X Pulse/ });
 
     expect(screen.getByRole("button", { name: "All" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "@nolimitgains" })).toBeInTheDocument();
