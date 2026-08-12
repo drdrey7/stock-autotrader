@@ -6,6 +6,7 @@ export const X_POSTS_EVENT_TYPE = "X_POSTS_COLLECTED" as const;
 export const ALLOWED_X_AUTHORS = ["@nolimitgains"] as const;
 
 const isoTimestampSchema = z.string().datetime({ offset: true });
+const MAX_POST_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
 export const xPostSchema = z.strictObject({
   id: z.string().min(4).max(120),
@@ -61,6 +62,17 @@ export async function storeXPosts(
   receivedAt: string,
   posts: XPost[],
 ): Promise<StoreXPostsResult> {
+  const receivedAtMs = Date.parse(receivedAt);
+  if (!Number.isFinite(receivedAtMs)) {
+    return { kind: "rejected", reason: "event timestamp is invalid" };
+  }
+  for (const post of posts) {
+    const createdAtMs = Date.parse(post.created_at);
+    if (!Number.isFinite(createdAtMs) || createdAtMs - receivedAtMs > MAX_POST_CLOCK_SKEW_MS) {
+      return { kind: "rejected", reason: "post created_at is in the future" };
+    }
+  }
+
   // The claim is acquired inside the same atomic batch as the conditional post
   // writes, avoiding a preliminary read/claim race between concurrent requests
   // that carry the same event_id. Each INSERT is conditional on the winner's

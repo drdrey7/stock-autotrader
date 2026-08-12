@@ -102,15 +102,59 @@ class XFeedTests(unittest.TestCase):
         for bad_url in (
             "https:// not-a-url",
             "https://exa mple.com/x",
+            "HTTPS://example.com/x",
+            " https://example.com/x",
             "https://example.com:bad/x",
+            "https://example.com:65536/x",
+            "https://example|com/x",
+            "https://example\u0001.com/x",
+            "https://exa\t\nmple.com/x",
+            "https://example.com/a\r\nb",
+            "https://example\u007fcom/x",
+            "https://example\uff5ccom/x",
+            "https://example\uff3bcom/x",
+            "https://example\uff3dcom/x",
+            "https://example\u200b.com/x",
+            "https://example\u200c.com/x",
+            "https://example\ufeff.com/x",
+            "https://a\ufffd.com/x",
+            "https://a\ufdd0.com/x",
+            "https://a\ue000.com/x",
+            "https://a\u0378.com/x",
+            "https://user name@example.com/path",
             "https://%zz/x",
-            "https://",
+            "https://[v1.foo]/x",
+            "https://[127.0.0.1]/x",
+            "https://999.999.999.999/x",
+            "https://256.1.1.1/x",
+            "https://1.2.3.999/x",
+            "https://1.1.1.1.1/x",
+            "https://1.1.-1.1/x",
+            "https://1.1.1.08/x",
+            "https://example.123/x",
+            "https://foo.0x10/x",
+            "https://２５６.１.１.１/x",
+            "https://foo.１２３/x",
+            "https://foo.0x/x",
+            "https://example.com:65536/x",
         ):
             with self.subTest(url=bad_url):
                 with self.assertRaises(ValueError):
                     XPost.from_dict(
                         {"id": "x", "text": "$NVDA", "created_at": PREPARED_AT.isoformat(), "url": bad_url, "author": "@nolimitgains"}
                     )
+
+    def test_xpost_accepts_ipv6_url(self) -> None:
+        post = XPost.from_dict(
+            {
+                "id": "x",
+                "text": "$NVDA",
+                "created_at": PREPARED_AT.isoformat(),
+                "url": "https://[2001:db8::1]/x?q=1",
+                "author": "@nolimitgains",
+            }
+        )
+        self.assertEqual(post.url, "https://[2001:db8::1]/x?q=1")
 
     def test_xpost_requires_author(self) -> None:
         with self.assertRaises(ValueError, msg="author required"):

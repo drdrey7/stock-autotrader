@@ -147,7 +147,7 @@ const postA: XPost = {
   id: "post-aaa",
   author: "@nolimitgains",
   text: "$NVDA reclaiming the 20D with volume.",
-  created_at: "2026-08-12T10:15:00Z",
+  created_at: "2026-08-11T10:15:00Z",
   url: "https://x.com/nolimitgains/status/post-aaa",
   symbol: "NVDA",
   company: "NVIDIA Corporation",
@@ -158,7 +158,7 @@ const postB: XPost = {
   id: "post-bbb",
   author: "@nolimitgains",
   text: "$AAPL holding the breakout zone.",
-  created_at: "2026-08-12T11:02:00Z",
+  created_at: "2026-08-11T11:02:00Z",
   url: "https://x.com/nolimitgains/status/post-bbb",
   symbol: "AAPL",
   company: "Apple Inc.",
@@ -184,6 +184,24 @@ describe("storeXPosts", () => {
     const result = await storeXPosts(db as unknown as D1Database, "event-abcdef12", "2026-08-12T12:00:00Z", [postA, { ...postA }]);
     expect(result).toEqual({ kind: "applied", applied: 1, skipped: 1 });
   });
+
+  it("rejects future-dated posts before writing the event or feed row", async () => {
+    const db = new FakeD1();
+    const receivedAt = "2026-08-12T12:00:00.000Z";
+    const futurePost = {
+      ...postA,
+      created_at: "2026-08-12T12:10:00.000Z",
+    };
+    const result = await storeXPosts(
+      db as unknown as D1Database,
+      "event-future-1",
+      receivedAt,
+      [futurePost],
+    );
+    expect(result).toEqual({ kind: "rejected", reason: "post created_at is in the future" });
+    expect(db.events.size).toBe(0);
+    expect(db.posts.size).toBe(0);
+  });
 });
 
 describe("readXPosts", () => {
@@ -197,7 +215,7 @@ describe("readXPosts", () => {
 
   it("sorts timestamps with different offsets chronologically", async () => {
     const db = new FakeD1();
-    await storeXPosts(db as unknown as D1Database, "event-timezones", "2026-08-12T12:00:00Z", [
+    await storeXPosts(db as unknown as D1Database, "event-timezones", "2026-08-12T14:00:00Z", [
       { ...postA, id: "post-utc", created_at: "2026-08-12T12:00:00Z" },
       { ...postB, id: "post-offset", created_at: "2026-08-12T09:00:00-04:00" },
     ]);

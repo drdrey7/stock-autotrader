@@ -18,8 +18,10 @@ Rules (see data/brief-spec.v1.md):
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from ipaddress import ip_address
 from urllib.parse import urlsplit
 from typing import Any
 
@@ -27,6 +29,99 @@ from .universe import UniverseSnapshot, canonical_symbol
 
 TICKER_RE = re.compile(r"\$([A-Z]{1,5}(?:\.[A-Z]{1,3})?(?:-[A-Z])?)\b", re.IGNORECASE)
 WINDOW_HOURS = 24
+WHATWG_FORBIDDEN_HOST_CHARS = frozenset(
+    '\x00\t\n\r "#%/:<>?@[]\\^|\x7f'
+)
+
+
+def _idna_variants(hostname: str) -> tuple[str, ...] | None:
+    """Return raw and per-label IDNA forms, or ``None`` for invalid IDNA."""
+    ascii_labels: list[str] = []
+    for label in hostname.split("."):
+        if not label:
+            # WHATWG accepts empty DNS labels in inputs such as ``example..com``.
+            ascii_labels.append("")
+            continue
+        try:
+            ascii_labels.append(label.encode("idna").decode("ascii"))
+        except UnicodeError:
+            return None
+    return (hostname, ".".join(ascii_labels))
+
+
+def _has_forbidden_hostname_chars(hostname: str) -> bool:
+    """Reject raw or IDNA-mapped host characters forbidden by WHATWG URL."""
+    variants = _idna_variants(hostname)
+    if variants is None:
+        return True
+    return any(
+        ord(char) <= 0x1F
+        or char in WHATWG_FORBIDDEN_HOST_CHARS
+        or unicodedata.category(char) in {"Cc", "Cf", "Cn", "Co", "Cs"}
+        for value in variants
+        for char in value
+    )
+
+
+def _parse_whatwg_ipv4_number(value: str) -> int | None:
+    """Parse one WHATWG IPv4 number, or return ``None`` on parse failure."""
+    if not value:
+        return None
+    if value[:2].lower() == "0x":
+        digits = value[2:]
+        base = 16
+        if not digits:
+            return None
+    elif len(value) > 1 and value.startswith("0"):
+        digits = value
+        base = 8
+    else:
+        digits = value
+        base = 10
+    if not digits:
+        return None
+    valid_digits = "0123456789abcdefABCDEF" if base == 16 else "01234567" if base == 8 else "0123456789"
+    if any(char not in valid_digits for char in digits):
+        return None
+    return int(digits, base)
+
+
+def _has_malformed_whatwg_ipv4(hostname: str) -> bool:
+    """Reject numeric-looking hosts that WHATWG treats as IPv4 but cannot parse."""
+    variants = _idna_variants(hostname)
+    if variants is None:
+        return True
+    for value in variants:
+        candidate = value[:-1] if value.endswith(".") else value
+        if not candidate:
+            continue
+        parts = candidate.split(".")
+        last = parts[-1]
+        is_decimal = last.isascii() and last.isdigit()
+        is_hex = (
+            last.lower() == "0x"
+            or (
+                len(last) > 2
+                and last[:2].lower() == "0x"
+                and all(char in "0123456789abcdefABCDEF" for char in last[2:])
+            )
+        )
+        if not is_decimal and not is_hex:
+            continue
+        if len(parts) > 4:
+            return True
+        numbers: list[int] = []
+        for part in parts:
+            number = _parse_whatwg_ipv4_number(part)
+            if number is None:
+                return True
+            numbers.append(number)
+        if any(number > 255 for number in numbers[:-1]):
+            return True
+        max_last = (256 ** (5 - len(parts))) - 1
+        if numbers[-1] > max_last:
+            return True
+    return False
 
 
 def parse_iso_timestamp(value: str) -> datetime:
@@ -58,6 +153,14 @@ class XPost:
             raise ValueError(f"X post {post_id!r} requires non-empty 'text'")
         if not isinstance(url, str):
             raise ValueError(f"X post {post_id!r} requires a 'url'")
+        # Keep raw source URLs strict: do not silently normalize external
+        # whitespace or userinfo before the shared ingest contract sees them.
+        if not url.startswith("https://"):
+            raise ValueError(f"X post {post_id!r} requires an absolute HTTPS 'url'")
+        # urlsplit() silently removes ASCII tab/LF/CR characters. Reject them
+        # on the raw source URL so validation cannot accept a normalized value.
+        if any(ord(char) <= 0x1F or ord(char) == 0x7F for char in url):
+            raise ValueError(f"X post {post_id!r} has control characters in 'url'")
         try:
             parsed_url = urlsplit(url)
         except ValueError:
@@ -70,7 +173,21 @@ class XPost:
             parsed_url.port
         except ValueError as exc:
             raise ValueError(f"X post {post_id!r} has an invalid port in 'url'") from exc
-        if not parsed_url.hostname or "%" in parsed_url.hostname:
+        hostname = parsed_url.hostname
+        if not hostname or "%" in hostname:
+            raise ValueError(f"X post {post_id!r} has a malformed host in 'url'")
+        authority = parsed_url.netloc.rsplit("@", 1)[-1]
+        if authority.startswith("["):
+            # WHATWG URL (used by the TypeScript contract) rejects IPvFuture
+            # literals such as [v1.foo], while urlsplit accepts them as hostnames.
+            # Keep bracketed authorities only for genuine IPv6 literals.
+            try:
+                address = ip_address(hostname)
+            except ValueError as exc:
+                raise ValueError(f"X post {post_id!r} has a malformed host in 'url'") from exc
+            if address.version != 6:
+                raise ValueError(f"X post {post_id!r} has a malformed host in 'url'")
+        elif _has_forbidden_hostname_chars(hostname) or _has_malformed_whatwg_ipv4(hostname):
             raise ValueError(f"X post {post_id!r} has a malformed host in 'url'")
         if not isinstance(created_at_raw, str) or not created_at_raw:
             raise ValueError(f"X post {post_id!r} requires 'created_at'")
