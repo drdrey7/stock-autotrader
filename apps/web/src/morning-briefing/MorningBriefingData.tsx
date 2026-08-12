@@ -151,12 +151,13 @@ function marketFromBriefing(briefing: DailyBriefing): MarketIndex[] | null {
   );
   const sp500 = findBenchmark("s&p", "SPX");
   const dow = mockMarketIndexes.find((item) => item.symbol === "DJI");
-  const ordered = [
-    sp500,
-    findBenchmark("nasdaq", "NDX"),
-    dow ? { ...dow, source: "mock" as const } : undefined,
-    findBenchmark("vix", "VIX"),
-  ].filter((item): item is MarketIndex => Boolean(item));
+  const ordered: MarketIndex[] = [];
+  if (sp500) ordered.push(sp500);
+  const nasdaq = findBenchmark("nasdaq", "NDX");
+  if (nasdaq) ordered.push(nasdaq);
+  if (dow) ordered.push({ ...dow, source: "mock" });
+  const vix = findBenchmark("vix", "VIX");
+  if (vix) ordered.push(vix);
   return sp500
     ? [...ordered, ...live.filter((item) => !ordered.includes(item))].slice(0, 4)
     : null;
