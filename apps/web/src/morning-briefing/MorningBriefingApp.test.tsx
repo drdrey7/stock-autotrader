@@ -31,11 +31,26 @@ describe("Morning Briefing frontend demo", () => {
     render(<MorningBriefingApp />);
     expect(screen.getByRole("heading", { name: "Good morning." })).toBeInTheDocument();
 
-    fireEvent.click(screen.getAllByRole("button", { name: "X Surge" })[0]!);
-    expect(await screen.findByRole("heading", { name: "X Surge" })).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole("button", { name: "X Pulse" })[0]!);
+    expect(await screen.findByRole("heading", { name: "X Pulse" })).toBeInTheDocument();
 
     fireEvent.click(screen.getAllByRole("button", { name: "Earnings" })[0]!);
     expect(await screen.findByRole("heading", { name: /Earnings Calendar/ })).toBeInTheDocument();
+  });
+
+  it("shows one filter per tracked account and keeps the source badge separate from time", async () => {
+    const view = render(<MorningBriefingApp />);
+    fireEvent.click(screen.getAllByRole("button", { name: "X Pulse" })[0]!);
+    await screen.findByRole("heading", { name: /X Pulse/ });
+
+    expect(screen.getByRole("button", { name: "All" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "@nolimitgains" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Markets" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "AI" })).not.toBeInTheDocument();
+
+    const postStatus = view.container.querySelector(".post-status");
+    expect(postStatus?.querySelector(".data-source")).not.toBeNull();
+    expect(postStatus?.querySelector("time")).not.toBeNull();
   });
 
   it("persists the selected colour theme", async () => {
