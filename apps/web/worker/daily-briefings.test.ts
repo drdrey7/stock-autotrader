@@ -248,6 +248,22 @@ describe("DailyBriefing publication helpers", () => {
     });
   });
 
+  it("allows small event-clock skew while rejecting materially future events", async () => {
+    const db = new FakeD1();
+    const briefing = JSON.parse(JSON.stringify({ ...exampleDailyBriefing, example: false }));
+    const slightlyFuture = new Date(Date.now() + 1_000).toISOString();
+
+    const result = await publishDailyBriefing(
+      db as unknown as D1Database,
+      "brief-event-clock-skew-001",
+      slightlyFuture,
+      briefing,
+    );
+
+    expect(result.kind).toBe("applied");
+    expect(db.briefings.get("2026-08-11:pre_market")?.published_at).toBe(slightlyFuture);
+  });
+
   it("uses the signed event timestamp for freshness of backfilled briefings", async () => {
     const db = new FakeD1();
     const briefing = JSON.parse(JSON.stringify({ ...exampleDailyBriefing, example: false }));
@@ -333,7 +349,7 @@ describe("DailyBriefing publication helpers", () => {
 
     const futureDb = new FakeD1();
     const futureEnv = { ...env, DB: futureDb, INGEST_SECRET: "test-secret" } as unknown as Env;
-    const futureEventTimestamp = new Date(Date.now() + 60_000).toISOString();
+    const futureEventTimestamp = new Date(Date.now() + 10 * 60_000).toISOString();
     const futureRequestTimestamp = new Date().toISOString();
     const futureBody = JSON.stringify({
       events: [{
@@ -378,6 +394,14 @@ describe("DailyBriefing publication helpers", () => {
           ...briefing,
           editionDate: "2026-08-10",
           preparedAt: "2026-08-10T08:30:00-04:00",
+          ideas: briefing.ideas.map((idea: typeof exampleDailyBriefing.ideas[number]) => ({
+            ...idea,
+            source: {
+              ...idea.source,
+              originalTimestamp: "2026-08-10T07:42:00-04:00",
+              collectedTimestamp: "2026-08-10T08:02:00-04:00",
+            },
+          })),
         },
       }],
     });

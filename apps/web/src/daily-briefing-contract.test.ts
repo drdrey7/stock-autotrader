@@ -176,6 +176,36 @@ describe("DailyBriefing v1 contract", () => {
     expect(dailyBriefingSchema.safeParse(briefing).success).toBe(false);
   });
 
+  it("rejects Potential Entry with reversed source timestamps", () => {
+    const briefing = cloneBriefing();
+    const firstIdea = briefing.ideas[0];
+    if (!firstIdea) throw new Error("Example briefing must contain an idea");
+    firstIdea.source.originalTimestamp = "2026-08-11T08:02:00-04:00";
+    firstIdea.source.collectedTimestamp = "2026-08-11T07:42:00-04:00";
+
+    expect(dailyBriefingSchema.safeParse(briefing).success).toBe(false);
+  });
+
+  it("rejects Potential Entry with stale source timestamps", () => {
+    const briefing = cloneBriefing();
+    const firstIdea = briefing.ideas[0];
+    if (!firstIdea) throw new Error("Example briefing must contain an idea");
+    firstIdea.source.originalTimestamp = "2026-08-09T07:00:00-04:00";
+    firstIdea.source.collectedTimestamp = "2026-08-09T07:15:00-04:00";
+
+    expect(dailyBriefingSchema.safeParse(briefing).success).toBe(false);
+  });
+
+  it("rejects Potential Entry collected after briefing preparation", () => {
+    const briefing = cloneBriefing();
+    const firstIdea = briefing.ideas[0];
+    if (!firstIdea) throw new Error("Example briefing must contain an idea");
+    firstIdea.source.originalTimestamp = "2026-08-11T08:20:00-04:00";
+    firstIdea.source.collectedTimestamp = "2026-08-11T08:31:00-04:00";
+
+    expect(dailyBriefingSchema.safeParse(briefing).success).toBe(false);
+  });
+
   it("rejects duplicate idea symbols", () => {
     const briefing = cloneBriefing();
     const firstIdea = briefing.ideas[0];

@@ -36,6 +36,7 @@ export type PublishBriefingResult =
   | { kind: "rejected"; reason: string; contentHash: string };
 
 const MAX_FRESH_AGE_MS = 26 * 60 * 60 * 1000;
+const MAX_EVENT_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
 
 function canonicalize(value: unknown): unknown {
@@ -146,7 +147,7 @@ export async function publishDailyBriefing(
   if (
     !Number.isFinite(publishedAtMs)
     || !Number.isFinite(receivedAtMs)
-    || publishedAtMs > receivedAtMs
+    || publishedAtMs - receivedAtMs > MAX_EVENT_CLOCK_SKEW_MS
   ) {
     return {
       kind: "rejected",

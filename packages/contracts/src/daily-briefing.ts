@@ -24,6 +24,7 @@ const nonEmptyString = z.string().trim().min(1).max(2_000);
 const titleString = z.string().trim().min(1).max(200);
 
 const isoTimestamp = z.string().datetime({ offset: true });
+const MAX_SOURCE_AGE_MS = 26 * 60 * 60 * 1000;
 
 function calendarDateInBriefingTimezone(timestamp: string): string {
   const parts = new Intl.DateTimeFormat("en-US", {
@@ -152,6 +153,7 @@ export const dailyBriefingSchema = z
       });
     }
 
+    const preparedAtMs = Date.parse(briefing.preparedAt);
     const potentialEntries = briefing.ideas.filter(
       (idea) => idea.verdict === "Potential Entry",
     );
@@ -173,6 +175,23 @@ export const dailyBriefingSchema = z
           path: ["ideas", originalIndex >= 0 ? originalIndex : index, "source"],
           message: "Potential Entry ideas require original and collected source timestamps",
         });
+      } else {
+        const originalTimestampMs = Date.parse(idea.source.originalTimestamp);
+        const collectedTimestampMs = Date.parse(idea.source.collectedTimestamp);
+        const sourceTimestampsAreChronological =
+          originalTimestampMs <= collectedTimestampMs
+          && collectedTimestampMs <= preparedAtMs;
+        const sourceTimestampsAreFresh =
+          preparedAtMs - originalTimestampMs <= MAX_SOURCE_AGE_MS
+          && preparedAtMs - collectedTimestampMs <= MAX_SOURCE_AGE_MS;
+
+        if (!sourceTimestampsAreChronological || !sourceTimestampsAreFresh) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["ideas", originalIndex >= 0 ? originalIndex : index, "source"],
+            message: "Potential Entry source timestamps must be chronological and fresh",
+          });
+        }
       }
       const rewardRiskMatch = /^(\d+(?:\.\d+)?)R\b/i.exec(idea.levels.rewardRisk.trim());
       if (
