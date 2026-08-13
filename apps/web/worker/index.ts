@@ -1,9 +1,13 @@
 import {
   briefingCalendarDateSchema,
   briefingEditionTypeSchema,
+  publicSourceHealthSchema,
+  sourceHealthSchema,
   type Candidate,
   type DashboardData,
   type MarketDataSnapshot,
+  type PublicSourceHealth,
+  type SourceHealth,
   type StrategySummary,
 } from "@stock-autotrader/contracts";
 import { dashboardReadSchema, handleIngest, isoTimestampSchema, marketDataSchema } from "./ingest";
@@ -112,6 +116,175 @@ const parseIsoTimestamp = (value: unknown): string | null => {
   const candidate = str(value);
   return candidate && isoTimestampSchema.safeParse(candidate).success ? candidate : null;
 };
+
+const HEALTHY_STALE_AFTER_SECONDS = 26 * 60 * 60;
+const X_STALE_AFTER_SECONDS = 7 * 24 * 60 * 60;
+
+const parseSafeTimestamp = (value: string | null): number | null => {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+/**
+ * Single, honest freshness boundary shared by every public data source.
+ * Sources without a validated success stay Unavailable/Error; a success
+ * older than the domain stale-after window becomes Stale, never Live.
+ */
+export function buildSourceHealth(
+  lastSuccessAt: string | null,
+  lastAttemptAt: string | null,
+  options: { provider: string; staleAfterSeconds: number; error?: string | null; nowMs?: number },
+): SourceHealth {
+  const nowMs = options.nowMs ?? Date.now();
+  const lastSuccessMs = parseSafeTimestamp(lastSuccessAt);
+  const lastAttemptMs = parseSafeTimestamp(lastAttemptAt);
+  const hasValidSuccess = lastSuccessMs !== null && lastSuccessMs <= nowMs;
+  const hasError = options.error !== null && options.error !== undefined;
+  // Evidence of activity: an explicit attempt wins; a current error is an
+  // attempt; otherwise the last success is the latest confirmed activity (an
+  // attempt necessarily happened at or before it). Keeps every emitted state
+  // schema-valid — e.g. Live requires an attempt timestamp.
+  const effectiveLastAttemptMs = lastAttemptMs !== null && lastAttemptMs <= nowMs
+    ? lastAttemptMs
+    : hasError
+      ? nowMs
+      : lastSuccessMs;
+  const ageSeconds = hasValidSuccess ? Math.floor((nowMs - (lastSuccessMs ?? 0)) / 1000) : null;
+  const state = !hasValidSuccess
+    ? hasError ? "Error" : "Unavailable"
+    : hasError
+      ? "Cached"
+      : ageSeconds !== null && ageSeconds <= options.staleAfterSeconds ? "Live" : "Stale";
+  return {
+    provider: options.provider,
+    state,
+    asOf: hasValidSuccess ? new Date(lastSuccessMs ?? 0).toISOString() : null,
+    ageSeconds,
+    staleAfterSeconds: options.staleAfterSeconds,
+    lastSuccess: hasValidSuccess ? new Date(lastSuccessMs ?? 0).toISOString() : null,
+    lastAttempt: effectiveLastAttemptMs !== null ? new Date(effectiveLastAttemptMs).toISOString() : null,
+    error: options.error ?? null,
+  };
+}
+
+async function buildSources(
+  env: Env,
+  options: {
+    briefing: BriefingStatus;
+    dashboard: DashboardData;
+    nowMs?: number;
+  },
+): Promise<PublicSourceHealth> {
+  const nowMs = options.nowMs ?? Date.now();
+  const brief = options.briefing;
+  const market = options.dashboard.marketData;
+  const marketProvider = market.status === "offline" ? "unavailable" : market.provider;
+  const marketLastAttempt = market.updatedAt ?? market.lastSuccessfulUpdate;
+  const marketLastSuccess = market.status === "healthy" ? market.lastSuccessfulUpdate : null;
+
+  let xLastSuccess: string | null = null;
+  let xError: string | null = null;
+  try {
+    const rows = await readXPosts(env.DB, { limit: 1 });
+    const latest = rows[0];
+    xLastSuccess = latest?.collected_at ? new Date(latest.collected_at).toISOString() : null;
+  } catch {
+    xError = "X store is unavailable.";
+  }
+
+  let earningsLastSuccess: string | null = null;
+  let earningsError: string | null = null;
+  try {
+    const row = await env.DB.prepare("SELECT updated_at FROM earnings ORDER BY updated_at DESC LIMIT 1").first<{ updated_at: string }>();
+    earningsLastSuccess = row?.updated_at ? new Date(row.updated_at).toISOString() : null;
+  } catch {
+    earningsError = "Earnings store is unavailable.";
+  }
+
+  const lastDataUpdate = options.dashboard.status.lastDataUpdate;
+  const scanCandidateUpdatedAt = options.dashboard.candidates
+    .map((candidate) => parseSafeTimestamp(candidate.updatedAt))
+    .filter((value): value is number => value !== null)
+    .reduce<number | null>((latest, value) => latest === null || value > latest ? value : latest, null);
+
+  const sources = {
+    briefing: buildSourceHealth(brief.publishedAt, brief.publishedAt, {
+      provider: "stock-autotrader publisher",
+      staleAfterSeconds: HEALTHY_STALE_AFTER_SECONDS,
+      error: null,
+      nowMs,
+    }),
+    market: buildSourceHealth(marketLastSuccess, marketLastAttempt, {
+      provider: marketProvider,
+      staleAfterSeconds: HEALTHY_STALE_AFTER_SECONDS,
+      error: market.status === "offline"
+        ? market.warnings[0] ?? "Market data is unavailable."
+        : market.status === "degraded"
+          ? market.warnings[0] ?? "Market data is degraded."
+          : null,
+      nowMs,
+    }),
+    opportunities: buildSourceHealth(scanCandidateUpdatedAt ? new Date(scanCandidateUpdatedAt).toISOString() : null, lastDataUpdate, {
+      provider: "scan engine",
+      staleAfterSeconds: HEALTHY_STALE_AFTER_SECONDS,
+      error: scanCandidateUpdatedAt === null ? "No fresh scan candidates are available." : null,
+      nowMs,
+    }),
+    x: buildSourceHealth(xLastSuccess, xLastSuccess, {
+      provider: "x-search collector",
+      staleAfterSeconds: X_STALE_AFTER_SECONDS,
+      error: xError,
+      nowMs,
+    }),
+    earnings: buildSourceHealth(earningsLastSuccess, earningsLastSuccess, {
+      provider: "earnings calendar",
+      staleAfterSeconds: HEALTHY_STALE_AFTER_SECONDS,
+      error: earningsError,
+      nowMs,
+    }),
+    sentiment: buildSourceHealth(null, null, {
+      provider: "unavailable",
+      staleAfterSeconds: HEALTHY_STALE_AFTER_SECONDS,
+      error: null,
+      nowMs,
+    }),
+    quickStats: buildSourceHealth(null, null, {
+      provider: "unavailable",
+      staleAfterSeconds: HEALTHY_STALE_AFTER_SECONDS,
+      error: null,
+      nowMs,
+    }),
+  };
+  return validateSourceHealth(sources);
+}
+
+/**
+ * Fail closed per source: a source that violates the shared contract degrades
+ * to Unavailable on its own — it never wipes the health of the other sources.
+ */
+export function validateSourceHealth(sources: PublicSourceHealth): PublicSourceHealth {
+  const validated = publicSourceHealthSchema.safeParse(sources);
+  if (validated.success) return validated.data;
+  console.error("source-health validation failed", validated.error.issues.length);
+  const sanitize = (source: SourceHealth): SourceHealth =>
+    sourceHealthSchema.safeParse(source).success
+      ? source
+      : buildSourceHealth(null, null, {
+          provider: "unavailable",
+          staleAfterSeconds: HEALTHY_STALE_AFTER_SECONDS,
+          error: null,
+        });
+  return {
+    briefing: sanitize(sources.briefing),
+    market: sanitize(sources.market),
+    opportunities: sanitize(sources.opportunities),
+    x: sanitize(sources.x),
+    earnings: sanitize(sources.earnings),
+    sentiment: sanitize(sources.sentiment),
+    quickStats: sanitize(sources.quickStats),
+  };
+}
 
 export const normalizeDirection = (value: unknown): Candidate["direction"] =>
   value === "Long" ? "Bullish" : String(value) as Candidate["direction"];
@@ -345,7 +518,8 @@ export default {
           buildDashboard(env),
           readBriefingStatus(env.DB),
         ]);
-        return json({ ...dashboard, briefing });
+        const sources = await buildSources(env, { briefing, dashboard });
+        return json({ ...dashboard, briefing, sources });
       } catch (err) {
         console.error("status error", err);
         try {

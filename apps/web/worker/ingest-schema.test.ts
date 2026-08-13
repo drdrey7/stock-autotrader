@@ -2,14 +2,124 @@ import { describe, expect, it } from "vitest";
 import { demoData } from "@stock-autotrader/contracts/src/demo-data";
 import { exampleDailyBriefing } from "../src/daily-briefing-example";
 import { dashboardReadSchema, eventSchema, marketDataSchema } from "./ingest";
-import { normalizeDirection } from "./index";
+import { buildSourceHealth, normalizeDirection, validateSourceHealth } from "./index";
+import { publicSourceHealthSchema, sourceHealthSchema, type SourceHealth } from "@stock-autotrader/contracts";
 
 const base = {
   event_id: "scan-test-0001",
   timestamp: "2026-08-10T22:00:00Z",
 };
 
+describe("buildSourceHealth (honest freshness boundary)", () => {
+  const nowMs = Date.parse("2026-08-13T12:00:00Z");
+  const opts = (staleAfterSeconds = 3600) => ({ provider: "test-source", staleAfterSeconds, nowMs });
+
+  it("classifies Live, Stale, Cached, Error and Unavailable without leaking data", () => {
+    expect(buildSourceHealth("2026-08-13T11:00:00Z", "2026-08-13T11:00:00Z", opts()).state).toBe("Live");
+    expect(buildSourceHealth("2026-08-10T11:00:00Z", "2026-08-10T11:00:00Z", opts()).state).toBe("Stale");
+    expect(buildSourceHealth("2026-08-10T11:00:00Z", "2026-08-13T11:00:00Z", { ...opts(), error: "degraded" }).state).toBe("Cached");
+    expect(buildSourceHealth(null, "2026-08-13T11:00:00Z", { ...opts(), error: "boom" }).state).toBe("Error");
+    expect(buildSourceHealth(null, null, opts()).state).toBe("Unavailable");
+  });
+
+  it("fails closed on future or malformed timestamps", () => {
+    const future = buildSourceHealth("2026-08-14T12:00:00Z", "2026-08-14T12:00:00Z", opts());
+    expect(future.state).toBe("Unavailable");
+    expect(future.asOf).toBeNull();
+    expect(buildSourceHealth("not-a-date", "not-a-date", { ...opts(), error: "x" }).state).toBe("Error");
+  });
+
+  it("records the last success as attempt evidence when no attempt was recorded", () => {
+    const health = buildSourceHealth("2026-08-13T11:00:00Z", null, opts());
+    expect(health.state).toBe("Live");
+    expect(health.lastAttempt).toBe(health.lastSuccess);
+    expect(sourceHealthSchema.safeParse(health).success).toBe(true);
+  });
+
+  it("always emits schema-valid health across states", () => {
+    const cases = [
+      buildSourceHealth("2026-08-13T11:00:00Z", "2026-08-13T11:00:00Z", opts()),
+      buildSourceHealth("2026-08-13T11:00:00Z", null, opts()),
+      buildSourceHealth("2026-08-10T11:00:00Z", "2026-08-10T11:00:00Z", opts()),
+      buildSourceHealth("2026-08-10T11:00:00Z", "2026-08-13T11:00:00Z", { ...opts(), error: "degraded" }),
+      buildSourceHealth(null, "2026-08-13T11:00:00Z", { ...opts(), error: "boom" }),
+      buildSourceHealth(null, null, opts()),
+      buildSourceHealth("2026-08-14T12:00:00Z", null, opts()),
+    ];
+    for (const health of cases) {
+      const parsed = sourceHealthSchema.safeParse(health);
+      expect(parsed.success, JSON.stringify(health)).toBe(true);
+    }
+  });
+});
+
+describe("validateSourceHealth (per-source fail closed)", () => {
+  const nowMs = Date.parse("2026-08-13T12:00:00Z");
+  const live = () => buildSourceHealth("2026-08-13T11:00:00Z", "2026-08-13T11:00:00Z", {
+    provider: "valid-source",
+    staleAfterSeconds: 3600,
+    nowMs,
+  });
+
+  it("degrades only the source that violates the shared contract", () => {
+    const broken: SourceHealth = { ...live(), lastAttempt: null };
+    const payload = {
+      briefing: live(),
+      market: broken,
+      opportunities: live(),
+      x: live(),
+      earnings: live(),
+      sentiment: live(),
+      quickStats: live(),
+    };
+    const result = validateSourceHealth(payload);
+    expect(result.briefing.state).toBe("Live");
+    expect(result.market.state).toBe("Unavailable");
+    expect(result.market.lastSuccess).toBeNull();
+    expect(result.opportunities.state).toBe("Live");
+    expect(publicSourceHealthSchema.safeParse(result).success).toBe(true);
+  });
+
+  it("returns valid payloads untouched", () => {
+    const payload = {
+      briefing: live(),
+      market: live(),
+      opportunities: live(),
+      x: live(),
+      earnings: live(),
+      sentiment: live(),
+      quickStats: live(),
+    };
+    expect(validateSourceHealth(payload)).toEqual(publicSourceHealthSchema.parse(payload));
+  });
+});
+
 describe("ingest event schema (publication contract)", () => {
+  it("validates the shared source-health contract without allowing live data to omit freshness", () => {
+    const live = {
+      provider: "tradingview",
+      state: "Live" as const,
+      asOf: "2026-08-13T15:30:00Z",
+      ageSeconds: 120,
+      staleAfterSeconds: 3600,
+      lastSuccess: "2026-08-13T15:29:00Z",
+      lastAttempt: "2026-08-13T15:29:00Z",
+      error: null,
+    };
+    expect(sourceHealthSchema.safeParse(live).success).toBe(true);
+    expect(sourceHealthSchema.safeParse({ ...live, asOf: null }).success).toBe(false);
+    expect(sourceHealthSchema.safeParse({ ...live, ageSeconds: null }).success).toBe(false);
+    expect(publicSourceHealthSchema.safeParse({
+      briefing: live,
+      market: live,
+      opportunities: live,
+      x: { ...live, provider: "x-search" },
+      earnings: { ...live, provider: "earnings-calendar" },
+      sentiment: { ...live, state: "Unavailable", asOf: null, ageSeconds: null, lastSuccess: null, error: "No source configured" },
+      quickStats: { ...live, state: "Unavailable", asOf: null, ageSeconds: null, lastSuccess: null, error: "No source configured" },
+    }).success).toBe(true);
+  });
+
   it("accepts a valid SCAN_COMPLETED event", () => {
     const parsed = eventSchema.parse({
       ...base,

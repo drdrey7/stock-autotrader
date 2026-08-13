@@ -1,17 +1,10 @@
 /* eslint-disable react-refresh/only-export-components */
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
-import type {
-  Candidate,
-  DailyBriefing,
-  EarningsEvent,
-  MarketDataSnapshot,
-} from "@stock-autotrader/contracts";
+import { sourceHealthSchema, type DailyBriefing, type EarningsEvent, type PublicSourceHealth, type SourceHealth } from "@stock-autotrader/contracts";
 import type { MarketIndex } from "./data/market";
 import { opportunities as mockOpportunities, type Opportunity } from "./data/opportunities";
 import { type XPost } from "./data/xSurge";
 import { earnings as mockEarnings, type EarningsCompany } from "./data/earnings";
-import type { DataSource } from "./data/source";
-
 type BriefingHealth = {
   available: boolean;
   freshness: "fresh" | "stale" | "unavailable";
@@ -20,9 +13,8 @@ type BriefingHealth = {
 
 type StatusResponse = {
   status?: { engine?: string; apiHealth?: string; lastDataUpdate?: string | null };
-  candidates?: Candidate[];
-  marketData?: MarketDataSnapshot;
   briefing?: BriefingHealth;
+  sources?: PublicSourceHealth;
 };
 
 type XApiPost = {
@@ -40,13 +32,13 @@ type XApiPost = {
 type XResponse = { posts?: XApiPost[]; count?: number };
 
 export type BackendSources = {
-  briefing: DataSource;
-  market: DataSource;
-  opportunities: DataSource;
-  x: DataSource;
-  earnings: DataSource;
-  sentiment: DataSource;
-  quickStats: DataSource;
+  briefing: SourceHealth;
+  market: SourceHealth;
+  opportunities: SourceHealth;
+  x: SourceHealth;
+  earnings: SourceHealth;
+  sentiment: SourceHealth;
+  quickStats: SourceHealth;
 };
 
 type MorningBriefingData = {
@@ -82,13 +74,13 @@ const initialData: MorningBriefingData = {
   xPosts: [],
   earnings: [],
   sources: {
-    briefing: "mock",
-    market: "mock",
-    opportunities: "mock",
-    x: "mock",
-    earnings: "mock",
-    sentiment: "mock",
-    quickStats: "mock",
+    briefing: { provider: "unavailable", state: "Unavailable", asOf: null, ageSeconds: null, staleAfterSeconds: 93600, lastSuccess: null, lastAttempt: null, error: "No validated source health has been published." },
+    market: { provider: "unavailable", state: "Unavailable", asOf: null, ageSeconds: null, staleAfterSeconds: 93600, lastSuccess: null, lastAttempt: null, error: "No validated source health has been published." },
+    opportunities: { provider: "unavailable", state: "Unavailable", asOf: null, ageSeconds: null, staleAfterSeconds: 93600, lastSuccess: null, lastAttempt: null, error: "No validated source health has been published." },
+    x: { provider: "unavailable", state: "Unavailable", asOf: null, ageSeconds: null, staleAfterSeconds: 93600, lastSuccess: null, lastAttempt: null, error: "No validated source health has been published." },
+    earnings: { provider: "unavailable", state: "Unavailable", asOf: null, ageSeconds: null, staleAfterSeconds: 93600, lastSuccess: null, lastAttempt: null, error: "No validated source health has been published." },
+    sentiment: { provider: "unavailable", state: "Unavailable", asOf: null, ageSeconds: null, staleAfterSeconds: 93600, lastSuccess: null, lastAttempt: null, error: "No validated source health has been published." },
+    quickStats: { provider: "unavailable", state: "Unavailable", asOf: null, ageSeconds: null, staleAfterSeconds: 93600, lastSuccess: null, lastAttempt: null, error: "No validated source health has been published." },
   },
   backendState: "loading",
   briefingFreshness: "unavailable",
@@ -149,13 +141,41 @@ async function fetchJson<T>(path: string): Promise<T | null> {
   }
 }
 
-const cachedSource = (source: DataSource | undefined): DataSource =>
-  source === "mock" || source === undefined ? "mock" : "cached";
+const HEALTHY_STALE_AFTER_SECONDS = 26 * 60 * 60;
+
+const unavailableSource = (error: string): SourceHealth => ({
+  provider: "unavailable",
+  state: "Unavailable",
+  asOf: null,
+  ageSeconds: null,
+  staleAfterSeconds: HEALTHY_STALE_AFTER_SECONDS,
+  lastSuccess: null,
+  lastAttempt: null,
+  error,
+});
+
+const parseSourceHealth = (value: unknown): SourceHealth | null => {
+  const parsed = sourceHealthSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+};
+
+// Validate every source the backend publishes against the shared contract.
+// Invalid or missing entries fall back to the previous validated state, so a
+// malformed health payload can never push the UI into a misleading badge.
+const mergeSources = (previous: BackendSources, raw: PublicSourceHealth | undefined): BackendSources => {
+  if (!raw) return previous;
+  return Object.fromEntries(
+    (Object.keys(previous) as Array<keyof BackendSources>).map((key) => {
+      const candidate = parseSourceHealth(raw[key]);
+      return [key, candidate ?? previous[key]] as const;
+    }),
+  ) as unknown as BackendSources;
+};
 
 const backendStateFromSources = (sources: BackendSources): MorningBriefingData["backendState"] => {
   const connectedSources = [sources.briefing, sources.market, sources.opportunities, sources.x, sources.earnings];
-  if (connectedSources.every((source) => source === "mock")) return "offline";
-  if (connectedSources.every((source) => source === "live" || source === "mixed")) return "connected";
+  if (connectedSources.every((source) => source.state === "Unavailable" || source.state === "Error")) return "offline";
+  if (connectedSources.every((source) => source.state === "Live")) return "connected";
   return "partial";
 };
 
@@ -187,54 +207,16 @@ function marketFromBriefing(briefing: DailyBriefing): MarketIndex[] | null {
     : null;
 }
 
-function marketFromSnapshot(snapshot: MarketDataSnapshot | null | undefined): MarketIndex[] | null {
-  if (!snapshot?.benchmarks?.length || snapshot.status !== "healthy") return null;
-  const publishedAt = Date.parse(snapshot.lastSuccessfulUpdate ?? "");
-  const ageMs = Date.now() - publishedAt;
-  if (!Number.isFinite(publishedAt) || ageMs < -5 * 60_000 || ageMs > 26 * 60 * 60_000) return null;
-  // The market-data pipeline currently publishes ETF proxies (SPY/QQQ).
-  // Never label those dollar prices as index levels: only accept explicit
-  // index symbols here. The cards remain visible with Not available until
-  // the backend publishes a matching index benchmark.
-  const benchmarkNames: Record<string, { name: string; symbol: string }> = {
-    SPX: { name: "S&P 500", symbol: "SPX" },
-    "^GSPC": { name: "S&P 500", symbol: "SPX" },
-    NDX: { name: "Nasdaq", symbol: "NDX" },
-    "^NDX": { name: "Nasdaq", symbol: "NDX" },
-    DJI: { name: "Dow Jones", symbol: "DJI" },
-    "^DJI": { name: "Dow Jones", symbol: "DJI" },
-    VIX: { name: "VIX", symbol: "VIX" },
-    "^VIX": { name: "VIX", symbol: "VIX" },
-  };
-  const mapped = snapshot.benchmarks.flatMap((benchmark) => {
-    const symbol = benchmark.symbol.toUpperCase().split(":").at(-1) ?? benchmark.symbol.toUpperCase();
-    const identity = benchmarkNames[symbol];
-    if (!identity || !Number.isFinite(benchmark.close)) return [];
-    const change = benchmark.open ? ((benchmark.close - benchmark.open) / benchmark.open) * 100 : 0;
-    return [{
-      ...identity,
-      value: benchmark.close,
-      decimals: 2,
-      change,
-      source: "live" as const,
-    }];
-  });
-  if (mapped.length === 0) return null;
-  return mapped.slice(0, 4);
-}
-
 function opportunitiesFromBriefing(
   briefing: DailyBriefing,
-  candidates: Candidate[],
 ): Opportunity[] {
   return briefing.ideas.filter((idea) => idea.verdict === "Potential Entry").map((idea) => {
-    const candidate = candidates.find((item) => item.symbol === idea.symbol);
     return {
       ticker: idea.symbol,
       company: idea.company,
       change: changeFrom(idea.change),
       confidence: null,
-      score: candidate?.quantScore ?? null,
+      score: null,
       thesis: idea.thesis,
       trigger: idea.levels.trigger,
       invalidation: idea.levels.invalidation,
@@ -246,23 +228,6 @@ function opportunitiesFromBriefing(
       source: "live",
     };
   });
-}
-
-function opportunitiesFromCandidates(candidates: Candidate[]): Opportunity[] {
-  return candidates.filter((candidate) => candidate.status === "Strong Setup")
-    .sort((a, b) => b.quantScore - a.quantScore).slice(0, 4).map((candidate) => ({
-    ticker: candidate.symbol,
-    company: candidate.company,
-    change: null,
-    confidence: null,
-    score: candidate.quantScore,
-    thesis: candidate.reasons.map((reason) => reason.label).join(" · ") || candidate.strategy,
-    trigger: candidate.breakout ?? "Not published",
-    risk: candidate.riskFlags.join(", ") || "See qualification",
-    verdict: candidate.status,
-    color: tickerColour(candidate.symbol),
-    source: "live",
-  }));
 }
 
 function isWithinXCacheWindow(createdAt: string): boolean {
@@ -369,11 +334,6 @@ const isRecentTimestamp = (value: string | null | undefined): boolean => {
   return Number.isFinite(timestamp) && ageMs >= -5 * 60_000 && ageMs <= FINANCIAL_CACHE_MAX_AGE_MS;
 };
 
-const candidatesAreFresh = (status: StatusResponse | null): boolean =>
-  status?.status?.engine === "online" &&
-  status.status.apiHealth === "healthy" &&
-  isRecentTimestamp(status.status.lastDataUpdate);
-
 function earningsFromApi(events: EarningsEvent[]): EarningsCompany[] {
   const today = marketTodayKey();
   return events.map<EarningsCompany>((event) => {
@@ -399,7 +359,7 @@ function earningsFromApi(events: EarningsEvent[]): EarningsCompany[] {
 export function MorningBriefingDataProvider({ children }: { children: React.ReactNode }) {
   const [data, setData] = useState<MorningBriefingData>(() => {
     const cachedPosts = readStoredXPosts();
-    const sources = { ...initialData.sources, x: cachedPosts.length > 0 ? "cached" as const : initialData.sources.x };
+    const sources = { ...initialData.sources };
     return {
       ...initialData,
       xPosts: cachedPosts,
@@ -418,10 +378,9 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
 
     const refreshCore = async () => {
       const currentRequest = ++coreRequestId;
-    const [briefing, status, marketData] = await Promise.all([
+      const [briefing, status] = await Promise.all([
         fetchJson<DailyBriefing>("/api/briefs/latest"),
         fetchJson<StatusResponse>("/api/status"),
-        fetchJson<MarketDataSnapshot>("/api/market-data"),
       ]);
       if (cancelled || currentRequest !== coreRequestId) return;
 
@@ -433,50 +392,35 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
         && isRecentTimestamp(briefingUpdatedAt)
         ? briefing
         : null;
-      const candidateSnapshotAvailable = candidatesAreFresh(status) && Array.isArray(status?.candidates);
-      const candidates = candidateSnapshotAvailable
-        ? (status?.candidates ?? []).filter((candidate) => isRecentTimestamp(candidate.updatedAt))
-        : [];
-      const marketSnapshot = marketData ?? status?.marketData;
-      const liveMarket = freshBriefing
-        ? marketFromBriefing(freshBriefing)
-        : marketFromSnapshot(marketSnapshot);
-      const liveOpportunities = freshBriefing
-        ? opportunitiesFromBriefing(freshBriefing, candidates)
-        : candidateSnapshotAvailable
-          ? opportunitiesFromCandidates(candidates)
-          : null;
+      const liveMarket = freshBriefing ? marketFromBriefing(freshBriefing) : null;
+      const liveOpportunities = freshBriefing ? opportunitiesFromBriefing(freshBriefing) : null;
       const marketTimestamp = liveMarket
         ? freshBriefing
           ? briefingUpdatedAt
-          : marketSnapshot?.lastSuccessfulUpdate ?? null
+          : null
         : null;
       const opportunitiesTimestamp = liveOpportunities !== null
         ? freshBriefing
           ? briefingUpdatedAt
-          : status?.status?.lastDataUpdate ?? null
+          : null
         : null;
 
       setData((previous) => {
         const retainBriefing = isRecentTimestamp(previous.lastPublishedAt);
-        const retainMarket = isRecentTimestamp(previous.marketUpdatedAt);
-        const retainOpportunities = isRecentTimestamp(previous.opportunitiesUpdatedAt);
-        const nextMarketIndexes = liveMarket
-          ?? (retainMarket
-            ? previous.marketIndexes.map((item) => ({ ...item, source: cachedSource(item.source) }))
-            : []);
-        const nextOpportunities = liveOpportunities
-          ?? (retainOpportunities
-            ? previous.opportunities.map((item) => ({ ...item, source: cachedSource(item.source) }))
-            : []);
-        const sources: BackendSources = {
-          ...previous.sources,
-          briefing: freshBriefing ? "live" : cachedSource(previous.sources.briefing),
-          market: liveMarket
-            ? (liveMarket.some((item) => item.source === "mock") ? "mixed" : "live")
-            : cachedSource(previous.sources.market),
-          opportunities: liveOpportunities !== null ? "live" : cachedSource(previous.sources.opportunities),
-        };
+        const nextMarketIndexes = liveMarket ?? [];
+        const nextOpportunities = liveOpportunities ?? [];
+        const parsedSources = mergeSources(previous.sources, status?.sources);
+        // Fail closed: if the briefing endpoint itself is unreachable, the
+        // sections that depend on it must not keep a Live badge from an
+        // earlier status response.
+        const sources: BackendSources = briefing === null
+          ? {
+              ...parsedSources,
+              briefing: unavailableSource("Backend is unreachable."),
+              market: unavailableSource("Backend is unreachable."),
+              opportunities: unavailableSource("Backend is unreachable."),
+            }
+          : parsedSources;
         return {
           ...previous,
           marketIndexes: nextMarketIndexes,
@@ -484,21 +428,9 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
           sources,
           backendState: backendStateFromSources(sources),
           briefingFreshness: status?.briefing?.freshness ?? "unavailable",
-          lastPublishedAt: freshBriefing
-            ? briefingUpdatedAt
-            : retainBriefing
-              ? previous.lastPublishedAt
-              : null,
-          marketUpdatedAt: liveMarket
-            ? marketTimestamp
-            : retainMarket
-              ? previous.marketUpdatedAt
-              : null,
-          opportunitiesUpdatedAt: liveOpportunities !== null
-            ? opportunitiesTimestamp
-            : retainOpportunities
-              ? previous.opportunitiesUpdatedAt
-              : null,
+          lastPublishedAt: freshBriefing ? briefingUpdatedAt : null,
+          marketUpdatedAt: liveMarket ? marketTimestamp : null,
+          opportunitiesUpdatedAt: liveOpportunities !== null ? opportunitiesTimestamp : null,
           editionDate: freshBriefing?.editionDate ?? (retainBriefing ? previous.editionDate : null),
           editionType: freshBriefing?.editionType ?? (retainBriefing ? previous.editionType : null),
         };
@@ -510,6 +442,7 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
       const response = await fetchJson<XResponse>("/api/x/posts?limit=50");
       if (cancelled || currentRequest !== xRequestId) return;
       const liveX = response && Array.isArray(response.posts) ? xPostsFromApi(response.posts) : null;
+      const status = await fetchJson<StatusResponse>("/api/status");
       setData((previous) => {
         const cached = recentCachedPosts([...readStoredXPosts(), ...previous.xPosts]);
         const liveHandles = new Set((liveX ?? []).map((post) => post.handle.toLowerCase()));
@@ -517,12 +450,7 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
         const nextPosts = liveX === null
           ? cached
           : [...liveX, ...retained].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
-        const source = liveX === null
-          ? cached.length > 0 ? "cached" as const : cachedSource(previous.sources.x)
-          : liveX.length > 0
-            ? retained.length > 0 ? "mixed" as const : "live" as const
-            : retained.length > 0 ? "cached" as const : "live" as const;
-        const sources = { ...previous.sources, x: source };
+        const sources = mergeSources(previous.sources, status?.sources);
         writeStoredXPosts(nextPosts);
         return {
           ...previous,
@@ -550,14 +478,13 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
       const response = await fetchJson<EarningsEvent[]>("/api/earnings");
       if (cancelled || currentRequest !== earningsRequestId) return;
       const apiEarnings = Array.isArray(response) ? earningsFromApi(response) : null;
+      const status = await fetchJson<StatusResponse>("/api/status");
       setData((previous) => {
-        const sources = {
-          ...previous.sources,
-          earnings: apiEarnings !== null ? "live" as const : cachedSource(previous.sources.earnings),
-        };
+        const sources = mergeSources(previous.sources, status?.sources);
+        if (apiEarnings === null) sources.earnings = unavailableSource("Backend is unreachable.");
         return {
           ...previous,
-          earnings: apiEarnings ?? previous.earnings.map((item) => ({ ...item, source: cachedSource(item.source) })),
+          earnings: apiEarnings ?? previous.earnings.map((item) => ({ ...item, source: "cached" as const })),
           sources,
           backendState: backendStateFromSources(sources),
         };
