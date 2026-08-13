@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { demoData } from "@stock-autotrader/contracts/src/demo-data";
 import { exampleDailyBriefing } from "../src/daily-briefing-example";
 import { dashboardReadSchema, eventSchema, marketDataSchema } from "./ingest";
-import { buildSourceHealth, normalizeDirection, validateSourceHealth } from "./index";
+import { buildMarketSourceHealth, buildSourceHealth, normalizeDirection, validateSourceHealth } from "./index";
 import { publicSourceHealthSchema, sourceHealthSchema, type SourceHealth } from "@stock-autotrader/contracts";
 
 const base = {
@@ -36,6 +36,21 @@ describe("buildSourceHealth (honest freshness boundary)", () => {
     expect(sourceHealthSchema.safeParse(health).success).toBe(true);
   });
 
+  it("preserves a successful timestamp when a market snapshot is degraded", () => {
+    const health = buildMarketSourceHealth({
+      provider: "market-cache",
+      status: "degraded",
+      asOf: "2026-08-10",
+      lastSuccessfulUpdate: "2026-08-10T16:00:00Z",
+      universe: { total: 1, eligible: 1, excluded: 0 },
+      benchmarks: [],
+      warnings: ["stale"],
+      updatedAt: "2026-08-13T11:00:00Z",
+    }, nowMs);
+    expect(health.state).toBe("Cached");
+    expect(health.lastSuccess).toBe("2026-08-10T16:00:00.000Z");
+    expect(sourceHealthSchema.safeParse(health).success).toBe(true);
+  });
   it("always emits schema-valid health across states", () => {
     const cases = [
       buildSourceHealth("2026-08-13T11:00:00Z", "2026-08-13T11:00:00Z", opts()),

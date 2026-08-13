@@ -99,9 +99,7 @@ function MarketCards() {
   const { sources } = useMorningBriefingData();
   return <div className="market-grid" aria-label="Market overview">{marketCardDefinitions.map(({ name, symbol }) => {
     const item = findLive(name);
-    const cardState = item ? "live" as const : sources.market.state === "Live"
-      ? "unavailable" as const
-      : stateFromHealth(sources.market);
+    const cardState = item ? stateFromHealth(sources.market) : "unavailable" as const;
     return <Card key={symbol} className="market-card"><div><span>{name}</span><small>{item?.symbol ?? symbol}<span className={`data-source ${cardState}`}>{sourceLabel(cardState)}</span></small></div>{item ? <><strong><AnimatedValue value={item.value}/></strong><em className={item.change > 0 ? "positive" : item.change < 0 ? "negative" : "neutral"}>{item.change > 0 ? <ArrowUpRight/> : item.change < 0 ? <ArrowDownRight/> : null}{item.change > 0 ? "+" : ""}{item.change.toFixed(2)}%</em></> : <><strong className="neutral">Not available</strong><em className="neutral" aria-hidden="true">—</em></>}</Card>;
   })}</div>;
 }

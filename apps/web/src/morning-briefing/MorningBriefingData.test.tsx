@@ -415,6 +415,64 @@ it("never labels a missing market card Live when the backend market source is li
   expect(dowCard!.querySelector(".data-source")).toHaveClass("unavailable");
 });
 
+it("shows populated market cards with backend cached health, not Live", async () => {
+  const cachedMarketSource = {
+    provider: "market-cache", state: "Cached", asOf: "2026-08-12T12:30:00Z",
+    ageSeconds: 7200, staleAfterSeconds: 3600,
+    lastSuccess: "2026-08-12T12:30:00Z", lastAttempt: "2026-08-12T20:30:00Z", error: "Market snapshot is degraded.",
+  };
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === "/api/briefs/latest") return new Response(JSON.stringify(briefing), { status: 200 });
+    if (url === "/api/status") return new Response(JSON.stringify({
+      candidates: [],
+      briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt },
+      sources: { market: cachedMarketSource },
+    }), { status: 200 });
+    return new Response(null, { status: 404 });
+  });
+
+  const view = renderApp();
+  await waitFor(() => expect(view.container.querySelector(".market-status")).toHaveTextContent("S&P 500 up +0.31%"));
+  expect(view.container.querySelectorAll(".market-card .data-source.cached")).toHaveLength(3);
+  expect(view.container.querySelectorAll(".market-card .data-source.live")).toHaveLength(0);
+  await waitFor(() => expect(view.container.querySelector(".market-card strong")).not.toHaveTextContent("Not available"));
+});
+
+it("drops previous Live health when a later status response omits sources", async () => {
+  let statusAvailable = true;
+  let statusRequests = 0;
+  const liveMarketSource = {
+    provider: "briefing publisher", state: "Live", asOf: briefing.preparedAt,
+    ageSeconds: 120, staleAfterSeconds: 93600,
+    lastSuccess: briefing.preparedAt, lastAttempt: briefing.preparedAt, error: null,
+  };
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === "/api/briefs/latest") return new Response(JSON.stringify(briefing), { status: 200 });
+    if (url === "/api/status") {
+      statusRequests += 1;
+      return new Response(JSON.stringify(statusAvailable ? {
+        candidates: [],
+        briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt },
+        sources: { market: liveMarketSource },
+      } : {
+        candidates: [],
+        briefing: { available: false, freshness: "unavailable", publishedAt: null },
+      }), { status: 200 });
+    }
+    return new Response(null, { status: 404 });
+  });
+
+  const view = renderApp();
+  await waitFor(() => expect(view.container.querySelectorAll(".market-card .data-source.live")).toHaveLength(3));
+  statusAvailable = false;
+  document.dispatchEvent(new Event("visibilitychange"));
+  await waitFor(() => expect(statusRequests).toBeGreaterThanOrEqual(5));
+  await waitFor(() => expect(view.container.querySelector(".market-status")).toHaveTextContent("Not available"));
+  expect(view.container.querySelectorAll(".market-card .data-source.live")).toHaveLength(0);
+});
+
 it("does not show mock X posts after a successful empty feed", async () => {
   const originalFetch = vi.mocked(fetch).getMockImplementation()!;
   vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {

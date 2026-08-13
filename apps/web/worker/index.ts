@@ -168,6 +168,21 @@ export function buildSourceHealth(
   };
 }
 
+export function buildMarketSourceHealth(market: MarketDataSnapshot, nowMs = Date.now()): SourceHealth {
+  const provider = market.status === "offline" ? "unavailable" : market.provider;
+  const error = market.status === "offline"
+    ? market.warnings[0] ?? "Market data is unavailable."
+    : market.status === "degraded"
+      ? market.warnings[0] ?? "Market data is degraded."
+      : null;
+  return buildSourceHealth(market.lastSuccessfulUpdate, market.updatedAt ?? market.lastSuccessfulUpdate, {
+    provider,
+    staleAfterSeconds: HEALTHY_STALE_AFTER_SECONDS,
+    error,
+    nowMs,
+  });
+}
+
 async function buildSources(
   env: Env,
   options: {
@@ -179,9 +194,6 @@ async function buildSources(
   const nowMs = options.nowMs ?? Date.now();
   const brief = options.briefing;
   const market = options.dashboard.marketData;
-  const marketProvider = market.status === "offline" ? "unavailable" : market.provider;
-  const marketLastAttempt = market.updatedAt ?? market.lastSuccessfulUpdate;
-  const marketLastSuccess = market.status === "healthy" ? market.lastSuccessfulUpdate : null;
 
   let xLastSuccess: string | null = null;
   let xError: string | null = null;
@@ -215,16 +227,7 @@ async function buildSources(
       error: null,
       nowMs,
     }),
-    market: buildSourceHealth(marketLastSuccess, marketLastAttempt, {
-      provider: marketProvider,
-      staleAfterSeconds: HEALTHY_STALE_AFTER_SECONDS,
-      error: market.status === "offline"
-        ? market.warnings[0] ?? "Market data is unavailable."
-        : market.status === "degraded"
-          ? market.warnings[0] ?? "Market data is degraded."
-          : null,
-      nowMs,
-    }),
+    market: buildMarketSourceHealth(market, nowMs),
     opportunities: buildSourceHealth(scanCandidateUpdatedAt ? new Date(scanCandidateUpdatedAt).toISOString() : null, lastDataUpdate, {
       provider: "scan engine",
       staleAfterSeconds: HEALTHY_STALE_AFTER_SECONDS,

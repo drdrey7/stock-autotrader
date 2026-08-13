@@ -160,14 +160,16 @@ const parseSourceHealth = (value: unknown): SourceHealth | null => {
 };
 
 // Validate every source the backend publishes against the shared contract.
-// Invalid or missing entries fall back to the previous validated state, so a
-// malformed health payload can never push the UI into a misleading badge.
-const mergeSources = (previous: BackendSources, raw: PublicSourceHealth | undefined): BackendSources => {
-  if (!raw) return previous;
+// Missing or invalid entries become Unavailable. Never retain old health: its
+// stored ageSeconds would otherwise make an old Live badge look current.
+const mergeSources = (raw: unknown): BackendSources => {
+  const record = raw !== null && typeof raw === "object"
+    ? raw as Record<string, unknown>
+    : null;
   return Object.fromEntries(
-    (Object.keys(previous) as Array<keyof BackendSources>).map((key) => {
-      const candidate = parseSourceHealth(raw[key]);
-      return [key, candidate ?? previous[key]] as const;
+    (Object.keys(initialData.sources) as Array<keyof BackendSources>).map((key) => {
+      const candidate = parseSourceHealth(record?.[key]);
+      return [key, candidate ?? unavailableSource("Source health is unavailable.")] as const;
     }),
   ) as unknown as BackendSources;
 };
@@ -409,7 +411,7 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
         const retainBriefing = isRecentTimestamp(previous.lastPublishedAt);
         const nextMarketIndexes = liveMarket ?? [];
         const nextOpportunities = liveOpportunities ?? [];
-        const parsedSources = mergeSources(previous.sources, status?.sources);
+        const parsedSources = mergeSources(status?.sources);
         // Fail closed: if the briefing endpoint itself is unreachable, the
         // sections that depend on it must not keep a Live badge from an
         // earlier status response.
@@ -450,7 +452,7 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
         const nextPosts = liveX === null
           ? cached
           : [...liveX, ...retained].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
-        const sources = mergeSources(previous.sources, status?.sources);
+        const sources = mergeSources(status?.sources);
         writeStoredXPosts(nextPosts);
         return {
           ...previous,
@@ -480,7 +482,7 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
       const apiEarnings = Array.isArray(response) ? earningsFromApi(response) : null;
       const status = await fetchJson<StatusResponse>("/api/status");
       setData((previous) => {
-        const sources = mergeSources(previous.sources, status?.sources);
+        const sources = mergeSources(status?.sources);
         if (apiEarnings === null) sources.earnings = unavailableSource("Backend is unreachable.");
         return {
           ...previous,
