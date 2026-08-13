@@ -193,7 +193,14 @@ export function buildMarketSourceHealth(market: MarketDataSnapshot, nowMs = Date
     : market.status === "degraded"
       ? market.warnings[0] ?? "Market data is degraded."
       : null;
-  return buildSourceHealth(market.lastSuccessfulUpdate, market.updatedAt ?? market.lastSuccessfulUpdate, {
+  // The freshness gate must observe the data, not the collection time: on a
+  // holiday or right after the open the bars are older than the request.
+  // The first argument drives Live/Stale, so the most recent bar wins.
+  const indices = market.indices ?? [];
+  const observation = indices.length > 0
+    ? indices.reduce((latest, index) => (index.updatedAt > latest ? index.updatedAt : latest), indices[0]!.updatedAt)
+    : (market.updatedAt ?? market.lastSuccessfulUpdate);
+  return buildSourceHealth(observation, market.lastSuccessfulUpdate ?? observation, {
     provider,
     staleAfterSeconds: HEALTHY_STALE_AFTER_SECONDS,
     error,

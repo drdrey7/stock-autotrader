@@ -338,7 +338,15 @@ async function mergeMarketDataSnapshot(
     const universe = incoming.universe.total === 0 && prev.universe.total > 0 ? prev.universe : incoming.universe;
     const benchmarks = incoming.benchmarks.length === 0 && prev.benchmarks.length > 0 ? prev.benchmarks : incoming.benchmarks;
     const indices = incoming.indices && incoming.indices.length > 0 ? incoming.indices : prev.indices;
-    return { ...incoming, universe, benchmarks, indices };
+    // Component health: a healthy index event must not mask a screening
+    // outage. When this event does not carry its own universe and the
+    // preserved screening universe is degraded, the aggregate stays degraded
+    // (with the screening warning) until the screening pipeline renews it.
+    const screeningDegraded =
+      incoming.universe.total === 0 && prev.universe.total > 0 && prev.status === "degraded";
+    const status = screeningDegraded ? "degraded" : incoming.status;
+    const warnings = screeningDegraded && prev.warnings.length > 0 ? prev.warnings : incoming.warnings;
+    return { ...incoming, universe, benchmarks, indices, status, warnings };
   } catch {
     return incoming;
   }
@@ -485,10 +493,11 @@ function buildStatements(event: IngestEvent): [string, unknown[]][] {
       break;
     }
     case "SENTIMENT_UPDATED": {
-      const sentiment = event.payload;
+      // Normalize asOf to UTC before storing: the anti-regression guard
+      // compares json_extract strings, which is only chronological when both
+      // sides share the same offset/format (e.g. 09:00-04:00 vs 12:46+00:00).
+      const sentiment = { ...event.payload, asOf: new Date(event.payload.asOf).toISOString() };
       // Never regress: a delayed older reading must not overwrite a newer one.
-      // The stored value is JSON, so the comparison uses json_extract on the
-      // normalized asOf (both sides UTC ISO strings compare chronologically).
       stmts.push(
         ["INSERT INTO app_meta (key, value) VALUES ('sentiment', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value WHERE json_extract(excluded.value, '$.asOf') > json_extract(app_meta.value, '$.asOf')", [JSON.stringify(sentiment)]],
         insertBotEvent("SENTIMENT_UPDATED", `Sentiment ${sentiment.rating}: ${sentiment.score}`, null),

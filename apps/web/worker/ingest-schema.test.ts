@@ -37,7 +37,7 @@ describe("buildSourceHealth (honest freshness boundary)", () => {
     expect(sourceHealthSchema.safeParse(health).success).toBe(true);
   });
 
-  it("preserves a successful timestamp when a market snapshot is degraded", () => {
+  it("preserves the data observation when a market snapshot is degraded", () => {
     const health = buildMarketSourceHealth({
       provider: "market-cache",
       status: "degraded",
@@ -49,7 +49,30 @@ describe("buildSourceHealth (honest freshness boundary)", () => {
       updatedAt: "2026-08-13T11:00:00Z",
     }, nowMs);
     expect(health.state).toBe("Cached");
-    expect(health.lastSuccess).toBe("2026-08-10T16:00:00.000Z");
+    expect(health.lastSuccess).toBe("2026-08-13T11:00:00.000Z");
+    expect(sourceHealthSchema.safeParse(health).success).toBe(true);
+  });
+  it("ages market health on the bar timestamps, not the collection time", () => {
+    // All six bars are from the previous session (weekday holiday): the
+    // collection just happened, but the data is ~30h old and must not be Live.
+    const health = buildMarketSourceHealth({
+      provider: "yfinance",
+      status: "healthy",
+      asOf: "2026-08-12",
+      lastSuccessfulUpdate: "2026-08-13T11:00:00Z",
+      universe: { total: 0, eligible: 0, excluded: 0 },
+      benchmarks: [],
+      indices: [
+        { symbol: "SPX", name: "S&P 500", value: 6427.18, change: 0.62, updatedAt: "2026-08-12T04:00:00Z" },
+        { symbol: "NDX", name: "Nasdaq", value: 23724.31, change: 0.78, updatedAt: "2026-08-12T04:00:00Z" },
+        { symbol: "DJI", name: "Dow Jones", value: 45118.26, change: 0.48, updatedAt: "2026-08-12T04:00:00Z" },
+        { symbol: "VIX", name: "VIX", value: 15.41, change: -1.26, updatedAt: "2026-08-12T04:00:00Z" },
+      ],
+      warnings: [],
+      updatedAt: "2026-08-13T11:00:00Z",
+    }, nowMs);
+    expect(health.state).not.toBe("Live");
+    expect(health.asOf).toBe("2026-08-12T04:00:00.000Z");
     expect(sourceHealthSchema.safeParse(health).success).toBe(true);
   });
   it("always emits schema-valid health across states", () => {

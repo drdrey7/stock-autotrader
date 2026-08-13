@@ -7,6 +7,7 @@ from unittest.mock import patch
 from bot.config import Settings
 from bot.jobs.market_context import market_indices_job, sentiment_job
 from bot.market_data import CnnFearGreedProvider, YfinanceMarketContextProvider
+from bot.market_data.provider import DataValidationError
 from bot.state import StateStore
 
 
@@ -76,6 +77,15 @@ class YfinanceProviderTests(unittest.TestCase):
         self.assertEqual(len(snapshot.indices), 3)
         self.assertTrue(any("^VIX" in w for w in snapshot.warnings))
         self.assertIsNone(snapshot.last_successful_update)
+
+    def test_library_request_errors_become_data_validation_errors(self):
+        # YFRateLimitError (and friends) are not DataValidationError; the
+        # provider wraps them so the job degrades this ticker instead of
+        # unwinding with the ledger row stuck in 'running'.
+        with patch("yfinance.Ticker") as ticker_cls:
+            ticker_cls.return_value.history.side_effect = RuntimeError("Too Many Requests")
+            with self.assertRaises(DataValidationError):
+                YfinanceMarketContextProvider._yfinance_ohlcv("^GSPC")
 
 
 class CnnFearGreedTests(unittest.TestCase):

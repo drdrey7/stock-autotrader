@@ -65,7 +65,13 @@ class YfinanceMarketContextProvider:
             import yfinance as yf
         except ImportError as exc:  # pragma: no cover - environment guard
             raise DataValidationError("yfinance is not installed") from exc
-        history = yf.Ticker(ticker).history(period="2d", interval="1d")
+        try:
+            history = yf.Ticker(ticker).history(period="2d", interval="1d")
+        except Exception as exc:
+            # YFRateLimitError and friends are not DataValidationError: without
+            # this wrap the whole job unwinds and its ledger row stays
+            # 'running' instead of degrading this ticker.
+            raise DataValidationError(f"yfinance request failed for {ticker}: {exc}") from exc
         if history is None or history.empty:
             raise DataValidationError(f"no price history for {ticker}")
         close = history["Close"].dropna()
