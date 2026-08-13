@@ -391,6 +391,7 @@ describe("free provider adapters", () => {
           "CIK|Company Name|Form Type|Date Filed|Filename",
           "789012|Microsoft Corporation|10-Q|2026-06-30|edgar/data/789012/0000789012-26-000010.txt",
           "789012|Microsoft Corporation|10-Q/A|2026-08-01|edgar/data/789012/0000789012-26-000011.txt",
+          "789012|Microsoft Corporation|6-K|2026-08-02|edgar/data/789012/0000789012-26-000013.txt",
           "789012|Microsoft Corporation|8-K|2026-08-02|edgar/data/789012/0000789012-26-000012.txt",
         ].join("\n"));
       }
@@ -488,6 +489,29 @@ describe("earnings D1 write model and API", () => {
     const [event] = await readEarningsEvents(db, { from: "2026-08-13", to: "2026-08-31" });
     expect(event?.id).toBe(first.id);
     expect(event).toMatchObject({ scheduledDate: "2026-08-21", epsActual: 4, revenueActual: 120, status: "reported" });
+  });
+
+  it("preserves the newer lifecycle when rejecting an older provider payload", async () => {
+    const db = new MemoryD1();
+    await upsertEarningsEvent(db, normalizedEvent({
+      scheduledDate: "2026-09-20",
+      providerUpdatedAt: "2026-08-13T13:00:00.000Z",
+    }));
+
+    await upsertEarningsEvent(db, normalizedEvent({
+      scheduledDate: "2026-08-10",
+      providerUpdatedAt: "2026-08-13T11:00:00.000Z",
+    }));
+
+    const [event] = await readEarningsEvents(db, { from: "2026-08-13", to: "2026-09-30" });
+    expect(event).toMatchObject({
+      scheduledDate: "2026-09-20",
+      status: "scheduled",
+      scheduled: true,
+      reported: false,
+      cancelled: false,
+      unknown: false,
+    });
   });
 
   it("keeps history and supports the rolling query, symbol/status filters and validation", async () => {

@@ -23,7 +23,9 @@ const SEC_FULL_INDEX_URL = "https://www.sec.gov/Archives/edgar/full-index";
 const PROVIDER_TIMEOUT_MS = 8_000;
 const MAX_PROVIDER_ATTEMPTS = 2;
 const SEC_MIN_REQUEST_INTERVAL_MS = 125;
-const SEC_CALENDAR_FORMS = new Set(["10-Q", "10-K", "6-K"]);
+// SEC full-index rows do not identify the subject of a 6-K. Keep 6-K for
+// targeted filing enrichment, but do not turn arbitrary 6-K rows into events.
+const SEC_CALENDAR_FORMS = new Set(["10-Q", "10-K"]);
 
 const defaultSleep: Sleeper = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 

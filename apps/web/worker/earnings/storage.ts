@@ -184,7 +184,10 @@ function mergedEvent(existing: EarningsRow | null, incoming: NormalizedEarningsE
       }
     : {};
   const reportedAlready = old.reported;
-  const preservedReported = reportedAlready
+  // If provider values are rejected, keep the lifecycle attached to the
+  // schedule/data that won. A stale payload may normalize to `unknown` or
+  // `cancelled` even though the preserved event is still scheduled.
+  const preservedLifecycle = providerOlder || reportedAlready
     ? {
         status: old.status,
         scheduled: old.scheduled,
@@ -204,7 +207,7 @@ function mergedEvent(existing: EarningsRow | null, incoming: NormalizedEarningsE
     ...old,
     ...incoming,
     ...providerValues,
-    ...preservedReported,
+    ...preservedLifecycle,
     id: targetId,
     company: incoming.company || old.company,
     cik: incoming.cik ?? old.cik,
