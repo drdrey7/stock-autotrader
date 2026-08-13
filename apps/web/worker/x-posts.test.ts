@@ -39,6 +39,7 @@ class FakeStatement {
   }
 
   async run(): Promise<{ meta: { changes: number } }> {
+    this.db.sqls.push(this.sql);
     if (this.sql.includes("INSERT OR IGNORE INTO ingest_events")) {
       const eventId = String(this.args[0]);
       if (this.db.events.has(eventId)) return { meta: { changes: 0 } };
@@ -93,12 +94,35 @@ class FakeStatement {
       return { meta: { changes: 1 } };
     }
     if (this.sql.includes("INSERT INTO app_meta")) {
-      const keyMatch = this.sql.match(/VALUES \('([^']+)', \?\)/);
-      if (keyMatch) {
-        this.db.meta.set(keyMatch[1]!, String(this.args[0]));
-      } else {
-        this.db.meta.set(String(this.args[0]), String(this.args[1]));
+      const keyValues = this.sql.match(/VALUES \('([^']+)', \?\)/);
+      if (keyValues) {
+        this.db.meta.set(keyValues[1]!, String(this.args[0]));
+        return { meta: { changes: 1 } };
       }
+      const keySelect = this.sql.match(/SELECT '([^']+)', \?/);
+      if (!keySelect) throw new Error(`Unhandled app_meta: ${this.sql}`);
+      // The real statement must gate on the claim and only advance to a
+      // newer timestamp; anything else is a contract regression.
+      if (!this.sql.includes("WHERE EXISTS") || !this.sql.includes("excluded.value > app_meta.value")) {
+        throw new Error(`Unhandled app_meta contract: ${this.sql}`);
+      }
+      const key = keySelect[1]!;
+      const value = String(this.args[0]);
+      // The collection-metadata upsert is conditional on the winning claim
+      // and only advances to a newer timestamp, mirroring the real SQL.
+      if (this.db.events.get(String(this.args[1]))?.status !== String(this.args[2])) return { meta: { changes: 0 } };
+      const existing = this.db.meta.get(key);
+      if (existing !== undefined && existing >= value) return { meta: { changes: 0 } };
+      this.db.meta.set(key, value);
+      return { meta: { changes: 1 } };
+    }
+    if (this.sql.includes("INSERT INTO earnings")) {
+      return { meta: { changes: 1 } };
+    }
+    if (this.sql.includes("INSERT INTO ingest_log")) {
+      return { meta: { changes: 1 } };
+    }
+    if (this.sql.includes("DELETE FROM earnings")) {
       return { meta: { changes: 1 } };
     }
     if (this.sql.includes("DELETE FROM ingest_events")) {
@@ -133,6 +157,7 @@ class FakeD1 {
   readonly events = new Map<string, IngestEventRow>();
   readonly posts = new Map<string, PostRow>();
   readonly meta = new Map<string, string>();
+  readonly sqls: string[] = [];
 
   prepare(sql: string): FakeStatement {
     return new FakeStatement(this, sql);
@@ -541,5 +566,70 @@ describe("ingest X_POSTS_COLLECTED", () => {
     expect(db.posts.size).toBe(1);
     expect(db.meta.get("xPostsUpdatedAt")).toBe(duplicateTimestamp);
     expect(db.posts.get(postA.id)?.collected_at).toBe(duplicateTimestamp);
+  });
+
+  it("does not regress X collection metadata on a retried event or an older delivery", async () => {
+    const db = new FakeD1();
+    const firstTimestamp = new Date().toISOString();
+    const first = await signedRequest({
+      events: [{
+        type: "X_POSTS_COLLECTED",
+        event_id: "xcollect-regress-0001",
+        timestamp: firstTimestamp,
+        payload: { posts: [postA] },
+      }],
+    });
+    await handleIngest(first, env(db));
+    expect(db.meta.get("xPostsUpdatedAt")).toBe(firstTimestamp);
+
+    // Retry of the same event with an older timestamp: claim loses, metadata
+    // must not be overwritten.
+    const older = new Date(Date.now() - 60_000).toISOString();
+    const retry = await signedRequest({
+      events: [{
+        type: "X_POSTS_COLLECTED",
+        event_id: "xcollect-regress-0001",
+        timestamp: older,
+        payload: { posts: [postA] },
+      }],
+    });
+    const retryResponse = await handleIngest(retry, env(db));
+    expect(((await retryResponse.json()) as { skipped: string[] }).skipped).toEqual(["xcollect-regress-0001"]);
+    expect(db.meta.get("xPostsUpdatedAt")).toBe(firstTimestamp);
+  });
+
+  it("clears superseded earnings before marking an empty snapshot applied", async () => {
+    const db = new FakeD1();
+    const t1 = new Date().toISOString();
+    const first = await signedRequest({
+      events: [{
+        type: "EARNINGS_UPDATED",
+        event_id: "earn-replace-0001",
+        timestamp: t1,
+        payload: { items: [{
+          symbol: "AAPL", company: "Apple Inc.", date: "2026-08-20", timing: "BMO",
+          eventSignal: "Confirmed", engineRelevant: false, signal: null, strategy: null,
+          hasPosition: false, tracked: false, updatedAt: t1,
+        }] },
+      }],
+    });
+    const firstResponse = await handleIngest(first, env(db));
+    expect(((await firstResponse.json()) as { applied: string[] }).applied).toEqual(["earn-replace-0001"]);
+
+    const t2 = new Date(Date.now() + 1_000).toISOString();
+    db.sqls.length = 0;
+    const second = await signedRequest({
+      events: [{
+        type: "EARNINGS_UPDATED",
+        event_id: "earn-replace-0002",
+        timestamp: t2,
+        payload: { items: [] },
+      }],
+    });
+    const secondResponse = await handleIngest(second, env(db));
+    expect(((await secondResponse.json()) as { applied: string[] }).applied).toEqual(["earn-replace-0002"]);
+    expect(db.meta.get("earningsUpdatedAt")).toBe(t2);
+    expect(db.sqls.some((sql) => sql.includes("DELETE FROM earnings"))).toBe(true);
+    expect(db.sqls.some((sql) => sql.includes("INSERT INTO earnings"))).toBe(false);
   });
 });

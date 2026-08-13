@@ -226,9 +226,10 @@ export async function buildSources(
   // The scan completion timestamp is the authoritative success evidence,
   // whether the scan yielded zero or many candidates.
   const scanSuccessAt = options.dashboard.status.latestScan;
-  // A degraded engine must not keep presenting retained results as Live:
-  // pass the failure through so buildSourceHealth classifies them Cached.
-  const scanEngineDegraded = options.dashboard.status.engine === "offline"
+  // A degraded or delayed engine must not keep presenting retained results
+  // as Live: pass the failure through so buildSourceHealth classifies them
+  // Cached.
+  const scanEngineDegraded = options.dashboard.status.engine !== "online"
     || options.dashboard.status.apiHealth === "degraded";
 
   const sources = {

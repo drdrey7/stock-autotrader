@@ -190,11 +190,18 @@ export async function storeXPosts(
   const finalize = db
     .prepare("UPDATE ingest_events SET status = 'applied' WHERE event_id = ? AND status = ?")
     .bind(eventId, claimStatus);
-  // Collection metadata is written even when every post is a duplicate: a
-  // successful run must keep the X source fresh regardless of inserted rows.
+  // Collection metadata is written only by the winning claim and only when it
+  // is newer than the stored value: a retried/skipped event or an out-of-order
+  // older delivery must never regress X freshness.
   const collectionMeta = db
-    .prepare("INSERT INTO app_meta (key, value) VALUES ('xPostsUpdatedAt', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value")
-    .bind(receivedAt);
+    .prepare(
+      `INSERT INTO app_meta (key, value)
+       SELECT 'xPostsUpdatedAt', ?
+       WHERE EXISTS (SELECT 1 FROM ingest_events WHERE event_id = ? AND status = ?)
+       ON CONFLICT (key) DO UPDATE SET value = excluded.value
+       WHERE excluded.value > app_meta.value`,
+    )
+    .bind(new Date(receivedAt).toISOString(), eventId, claimStatus);
 
   try {
     // Claim + conditional post writes + collection metadata + final status

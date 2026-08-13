@@ -393,6 +393,23 @@ describe("buildSources (source health assembly)", () => {
     expect(sources.opportunities.error).toContain("degraded");
   });
 
+  it("classifies opportunities Cached when the engine is explicitly delayed", async () => {
+    const dashboard = {
+      ...demoData,
+      status: {
+        ...demoData.status,
+        engine: "delayed",
+        apiHealth: "healthy",
+        latestScan: "2026-08-13T11:00:00Z",
+        lastDataUpdate: "2026-08-13T11:00:00Z",
+      },
+      candidates: [],
+    };
+    const sources = await buildSources(envFor({}) as unknown as Env, { briefing, dashboard: dashboard as unknown as DashboardData, nowMs });
+    expect(sources.opportunities.state).toBe("Cached");
+    expect(sources.opportunities.error).toContain("degraded");
+  });
+
   it("derives earnings freshness from publication metadata", async () => {
     const sources = await buildSources(
       envFor({ earningsTs: { ts: "2026-08-13T11:45:00Z" } }) as unknown as Env,
