@@ -538,6 +538,37 @@ it("fires the market refresh when the tab becomes visible", async () => {
   await waitFor(() => expect(statusCalls).toBe(2));
 });
 
+it("prefers the live /api/status indices over the briefing snapshot", async () => {
+  // The briefing is fresh (normal path during the session) and carries its
+  // own market values; the live index context must win on the cards.
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === "/api/briefs/latest") return new Response(JSON.stringify(briefing), { status: 200 });
+    if (url === "/api/status") {
+      return new Response(JSON.stringify({
+        briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt },
+        marketData: {
+          provider: "yfinance", status: "healthy", asOf: "2026-08-13", lastSuccessfulUpdate: "2026-08-13T14:45:00Z",
+          universe: { total: 0, eligible: 0, excluded: 0 }, benchmarks: [], warnings: [], updatedAt: "2026-08-13T14:45:00Z",
+          indices: [
+            { symbol: "SPX", name: "S&P 500", value: 7799.82, change: 0.66, updatedAt: "2026-08-12T22:00:00.000Z" },
+            { symbol: "NDX", name: "Nasdaq", value: 30110.55, change: 1.24, updatedAt: "2026-08-12T22:00:00.000Z" },
+            { symbol: "DJI", name: "Dow Jones", value: 53843.24, change: 0.14, updatedAt: "2026-08-12T22:00:00.000Z" },
+            { symbol: "VIX", name: "VIX", value: 14.74, change: 1.31, updatedAt: "2026-08-12T22:00:00.000Z" },
+          ],
+        },
+      }), { status: 200 });
+    }
+    return new Response(null, { status: 404 });
+  });
+  const view = renderApp();
+  await waitFor(() => expect(view.container.querySelectorAll(".market-card")).toHaveLength(4));
+  const first = view.container.querySelector(".market-card");
+  expect(first).toHaveTextContent("+0.66%");
+  expect(first).not.toHaveTextContent("Not available");
+  expect(view.container.querySelector(".market-section")).toHaveTextContent(/Updated 12 Aug/);
+});
+
 it("fills the market cards with live index quotes when no fresh briefing exists", async () => {
   // The suite pins Date.now() to 2026-08-12T22:30:00Z; stay inside the
   // 26h freshness window relative to that clock.

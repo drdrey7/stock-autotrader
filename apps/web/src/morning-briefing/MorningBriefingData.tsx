@@ -402,7 +402,7 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
         const nextEditionDate = analysisBriefing?.editionDate ?? (retained ? previous.editionDate : null);
         return {
           ...previous,
-          marketIndexes: liveMarket ?? liveIndices?.indexes ?? [],
+          marketIndexes: liveIndices?.indexes ?? liveMarket ?? [],
           opportunities: nextOpportunities,
           marketUpdatedAt,
           opportunitiesUpdatedAt: liveOpportunities !== null && briefingUpdatedAt ? briefingUpdatedAt : previous.opportunitiesUpdatedAt,

@@ -216,6 +216,51 @@ class MarketContextJobTests(unittest.TestCase):
             finally:
                 store.close()
 
+    def test_indices_job_retries_a_degraded_close(self):
+        quotes = {
+            "^GSPC": _bar("^GSPC"), "^NDX": _bar("^NDX"), "^DJI": _bar("^DJI"), "^VIX": _bar("^VIX"),
+            "SPY": _bar("SPY"), "QQQ": _bar("QQQ"),
+        }
+
+        def degraded_first(ticker: str) -> dict:
+            if ticker == "^VIX":
+                raise ValueError("no price history for ^VIX")
+            return quotes[ticker]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self._store(tmp)
+            try:
+                settings = _settings(tmp)
+                with patch("bot.jobs.market_context.YfinanceMarketContextProvider") as provider_cls, \
+                     patch("bot.publishing.publish_market_data") as publish:
+                    provider_cls.return_value.build_snapshot.side_effect = [
+                        # 16:05 — transient partial failure: degraded close must
+                        # not burn the once-per-day marker.
+                        YfinanceMarketContextProvider(fetch_ohlcv=degraded_first)
+                        .build_snapshot(now=datetime(2026, 8, 13, 16, 5, tzinfo=timezone.utc)),
+                        # 16:20 — healthy retry publishes and marks the close.
+                        YfinanceMarketContextProvider(fetch_ohlcv=lambda t: quotes[t])
+                        .build_snapshot(now=datetime(2026, 8, 13, 16, 20, tzinfo=timezone.utc)),
+                    ]
+                    market_indices_job(settings, store, now=datetime(2026, 8, 13, 16, 5))
+                    market_indices_job(settings, store, now=datetime(2026, 8, 13, 16, 20))
+                    self.assertEqual(publish.call_count, 2)
+                    # The healthy close published the marker: later runs skip.
+                    market_indices_job(settings, store, now=datetime(2026, 8, 13, 16, 35))
+                    self.assertEqual(publish.call_count, 2)
+                status = self._status(store, "market_indices")
+                self.assertEqual(status["status"], "skipped")
+                self.assertEqual(status["detail"], "close_already_published")
+            finally:
+                store.close()
+
+    def test_rejects_missing_timestamp(self):
+        provider = CnnFearGreedProvider(fetch_json=lambda: {
+            "fear_and_greed": {"score": 62, "rating": "greed"},
+        })
+        with self.assertRaises(DataValidationError):
+            provider.fetch()
+
     def test_sentiment_job_publishes_reading(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = self._store(tmp)

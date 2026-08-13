@@ -83,7 +83,12 @@ class CnnFearGreedProvider:
         if rating is None:
             raise DataValidationError(f"CNN Fear & Greed rating not recognized: {raw_rating!r}")
         raw_ts = block.get("timestamp")
-        as_of = raw_ts if isinstance(raw_ts, str) and raw_ts else now.isoformat()
+        if not isinstance(raw_ts, str) or not raw_ts:
+            # A cached or otherwise old CNN value without a source timestamp
+            # must not be stamped with the collection time: that would present
+            # a stale reading as freshly observed for up to 72 hours.
+            raise DataValidationError("CNN Fear & Greed timestamp is missing")
+        as_of = raw_ts
         return SentimentReading(
             provider=self.name,
             score=score,

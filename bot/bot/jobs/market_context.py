@@ -75,8 +75,17 @@ def market_indices_job(
             from ..publishing import publish_market_data
 
             publish_market_data(settings, snapshot)
-        close_marker = f"close_published:{ny.date().isoformat()}" if ny.time() >= _SESSION_END else f"intraday:{ny.date().isoformat()}"
-        store.finish_job(run_id, "ok" if snapshot.status == "healthy" else "degraded", close_marker)
+        if ny.time() >= _SESSION_END:
+            # Only a healthy close counts: a degraded snapshot must not burn
+            # the once-per-day marker, or the 16:15/16:30/16:45 runs could
+            # never recover the close data.
+            if snapshot.status != "healthy":
+                store.finish_job(run_id, "degraded", "close_degraded_retry")
+                return
+            marker = f"close_published:{ny.date().isoformat()}"
+        else:
+            marker = f"intraday:{ny.date().isoformat()}"
+        store.finish_job(run_id, "ok", marker)
     except (DataValidationError, OSError, RuntimeError, ValueError) as exc:
         store.record_event("ERROR", "market_indices", f"Market indices refresh failed: {exc}")
         store.finish_job(run_id, "error", str(exc))
