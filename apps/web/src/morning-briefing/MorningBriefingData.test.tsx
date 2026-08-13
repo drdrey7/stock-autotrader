@@ -49,7 +49,16 @@ beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url === "/api/briefs/latest") return new Response(JSON.stringify(briefing), { status: 200 });
-    if (url === "/api/status") return new Response(JSON.stringify({ candidates: [{ symbol: "NVDA", quantScore: 91 }], briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt } }), { status: 200 });
+    if (url === "/api/status") return new Response(JSON.stringify({
+      candidates: [{ symbol: "NVDA", quantScore: 91 }],
+      briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt },
+      market: { indices: [
+        { symbol: "SPX", name: "S&P 500", value: 6412.10, change: 0.31, updatedAt: "2026-08-12T20:00:00Z" },
+        { symbol: "NDX", name: "Nasdaq-100", value: 23830.02, change: 0.55, updatedAt: "2026-08-12T20:00:00Z" },
+        { symbol: "DJI", name: "Dow Jones", value: 45118.26, change: 0.48, updatedAt: "2026-08-12T20:00:00Z" },
+        { symbol: "VIX", name: "VIX", value: 15.40, change: -2.10, updatedAt: "2026-08-12T20:00:00Z" },
+      ] },
+    }), { status: 200 });
     if (url.startsWith("/api/x/posts")) return new Response(JSON.stringify({ posts: [
       { id: "older", author: "@nolimitgains", text: "Older post", created_at: "2026-08-11T19:30:00Z", url: "https://x.com/nolimitgains/status/older", symbol: null, company: null, price: null, change: null },
       { id: "newer", author: "@nolimitgains", text: "Newest post", created_at: "2026-08-12T20:30:00Z", url: "https://x.com/nolimitgains/status/newer", symbol: null, company: null, price: null, change: null },
@@ -92,7 +101,7 @@ it("starts financially actionable sections empty when the backend has no data", 
   expect(await screen.findByText("Market data")).toBeInTheDocument();
   expect(view.container.querySelectorAll(".market-card")).toHaveLength(4);
   expect(view.container.querySelector(".market-grid")).toHaveTextContent("S&P 500");
-  expect(view.container.querySelector(".market-grid")).toHaveTextContent("Nasdaq");
+  expect(view.container.querySelector(".market-grid")).toHaveTextContent("Nasdaq-100");
   expect(view.container.querySelector(".market-grid")).toHaveTextContent("Dow Jones");
   expect(view.container.querySelector(".market-grid")).toHaveTextContent("VIX");
   expect(view.container.querySelector(".market-grid")).toHaveTextContent("Not available");
@@ -106,7 +115,7 @@ it("keeps unavailable market panel values explicit without fixture numbers", asy
   vi.mocked(fetch).mockImplementation(async () => new Response(null, { status: 503 }));
   const view = renderApp();
 
-  expect(screen.getByRole("heading", { name: "Market Sentiment" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Fear & Greed" })).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: /Momentum Not available/ })).toBeInTheDocument();
   expect(view.container.querySelector(".sentiment-card")).toHaveTextContent("Not available");
   expect(view.container.querySelector(".quick-card")).toHaveTextContent("10Y Treasury Yield");
@@ -125,7 +134,12 @@ it("preserves a Unicode minus when rendering negative moves", async () => {
   vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url === "/api/briefs/latest") return new Response(JSON.stringify(unicodeBriefing), { status: 200 });
-    if (url === "/api/status") return new Response(JSON.stringify({ candidates: [], briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt } }), { status: 200 });
+    if (url === "/api/status") return new Response(JSON.stringify({ candidates: [], briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt }, market: { indices: [
+      { symbol: "SPX", name: "S&P 500", value: 6412.10, change: -0.31, updatedAt: "2026-08-12T20:00:00Z" },
+      { symbol: "NDX", name: "Nasdaq-100", value: 23830.02, change: 0.55, updatedAt: "2026-08-12T20:00:00Z" },
+      { symbol: "DJI", name: "Dow Jones", value: 45118.26, change: 0.48, updatedAt: "2026-08-12T20:00:00Z" },
+      { symbol: "VIX", name: "VIX", value: 15.40, change: -2.10, updatedAt: "2026-08-12T20:00:00Z" },
+    ] } }), { status: 200 });
     return new Response(null, { status: 404 });
   });
 
@@ -135,13 +149,12 @@ it("preserves a Unicode minus when rendering negative moves", async () => {
   expect(screen.queryByText("+-1.25%")).not.toBeInTheDocument();
 });
 
-it("keeps every benchmark card visible while unsupported values stay unavailable", async () => {
+it("keeps every supported benchmark card visible", async () => {
   const view = renderApp();
   await waitFor(() => expect(view.container.querySelectorAll(".market-card")).toHaveLength(4));
   expect(view.container.querySelector(".market-card")).toHaveTextContent("S&P 500");
   expect(view.container).toHaveTextContent("Dow Jones");
-  expect(view.container.querySelectorAll(".market-card")[2]).toHaveTextContent("Not available");
-  expect(view.container).not.toHaveTextContent("45,118.26");
+  expect(view.container.querySelectorAll(".market-card")[2]).not.toHaveTextContent("Not available");
 });
 
 it("does not fill a live market snapshot with unsupported mock benchmarks", async () => {
@@ -205,7 +218,12 @@ it("labels a post-close edition instead of showing a morning greeting", async ()
   vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url === "/api/briefs/latest") return new Response(JSON.stringify(postCloseBriefing), { status: 200 });
-    if (url === "/api/status") return new Response(JSON.stringify({ candidates: [], briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt } }), { status: 200 });
+    if (url === "/api/status") return new Response(JSON.stringify({ candidates: [], briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt }, market: { indices: [
+      { symbol: "SPX", name: "S&P 500", value: 6412.10, change: 0.31, updatedAt: "2026-08-12T20:00:00Z" },
+      { symbol: "NDX", name: "Nasdaq-100", value: 23830.02, change: 0.55, updatedAt: "2026-08-12T20:00:00Z" },
+      { symbol: "DJI", name: "Dow Jones", value: 45118.26, change: 0.48, updatedAt: "2026-08-12T20:00:00Z" },
+      { symbol: "VIX", name: "VIX", value: 15.40, change: -2.10, updatedAt: "2026-08-12T20:00:00Z" },
+    ] } }), { status: 200 });
     return new Response(null, { status: 404 });
   });
 
@@ -219,7 +237,12 @@ it("renders the briefing without waiting for a stalled X request", async () => {
   vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url === "/api/briefs/latest") return new Response(JSON.stringify(briefing), { status: 200 });
-    if (url === "/api/status") return new Response(JSON.stringify({ candidates: [], briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt } }), { status: 200 });
+    if (url === "/api/status") return new Response(JSON.stringify({ candidates: [], briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt }, market: { indices: [
+      { symbol: "SPX", name: "S&P 500", value: 6412.10, change: 0.31, updatedAt: "2026-08-12T20:00:00Z" },
+      { symbol: "NDX", name: "Nasdaq-100", value: 23830.02, change: 0.55, updatedAt: "2026-08-12T20:00:00Z" },
+      { symbol: "DJI", name: "Dow Jones", value: 45118.26, change: 0.48, updatedAt: "2026-08-12T20:00:00Z" },
+      { symbol: "VIX", name: "VIX", value: 15.40, change: -2.10, updatedAt: "2026-08-12T20:00:00Z" },
+    ] } }), { status: 200 });
     if (url.startsWith("/api/x/posts")) return await new Promise<Response>(() => undefined);
     if (url === "/api/earnings") return new Response(JSON.stringify([{ symbol: "NEW", company: "Future Corp", date: "2026-08-14", timing: "BMO", eventSignal: "Confirmed" }]), { status: 200 });
     return new Response(null, { status: 404 });
@@ -513,7 +536,12 @@ it("renders zero market movement as flat without an upward arrow", async () => {
   vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url === "/api/briefs/latest") return new Response(JSON.stringify(flatBriefing), { status: 200 });
-    if (url === "/api/status") return new Response(JSON.stringify({ candidates: [], briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt } }), { status: 200 });
+    if (url === "/api/status") return new Response(JSON.stringify({ candidates: [], briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt }, market: { indices: [
+      { symbol: "SPX", name: "S&P 500", value: 6412.10, change: 0, updatedAt: "2026-08-12T20:00:00Z" },
+      { symbol: "NDX", name: "Nasdaq-100", value: 23830.02, change: 0.55, updatedAt: "2026-08-12T20:00:00Z" },
+      { symbol: "DJI", name: "Dow Jones", value: 45118.26, change: 0.48, updatedAt: "2026-08-12T20:00:00Z" },
+      { symbol: "VIX", name: "VIX", value: 15.40, change: -2.10, updatedAt: "2026-08-12T20:00:00Z" },
+    ] } }), { status: 200 });
     return new Response(null, { status: 404 });
   });
 
@@ -536,4 +564,134 @@ it("fires the market refresh when the tab becomes visible", async () => {
   await waitFor(() => expect(statusCalls).toBe(1));
   document.dispatchEvent(new Event("visibilitychange"));
   await waitFor(() => expect(statusCalls).toBe(2));
+});
+
+it("prefers the live /api/status indices over the briefing snapshot", async () => {
+  // The briefing is fresh (normal path during the session) and carries its
+  // own market values; the live index context must win on the cards.
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === "/api/briefs/latest") return new Response(JSON.stringify(briefing), { status: 200 });
+    if (url === "/api/status") {
+      return new Response(JSON.stringify({
+        briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt },
+        market: { indices: [
+            { symbol: "SPX", name: "S&P 500", value: 7799.82, change: 0.66, updatedAt: "2026-08-12T22:00:00.000Z" },
+            { symbol: "NDX", name: "Nasdaq-100", value: 30110.55, change: 1.24, updatedAt: "2026-08-12T22:00:00.000Z" },
+            { symbol: "DJI", name: "Dow Jones", value: 53843.24, change: 0.14, updatedAt: "2026-08-12T22:00:00.000Z" },
+            { symbol: "VIX", name: "VIX", value: 14.74, change: 1.31, updatedAt: "2026-08-12T22:00:00.000Z" },
+          ],
+        },
+      }), { status: 200 });
+    }
+    return new Response(null, { status: 404 });
+  });
+  const view = renderApp();
+  await waitFor(() => expect(view.container.querySelectorAll(".market-card")).toHaveLength(4));
+  const first = view.container.querySelector(".market-card");
+  expect(first).toHaveTextContent("+0.66%");
+  expect(first).not.toHaveTextContent("Not available");
+  expect(view.container.querySelector(".market-section")).toHaveTextContent(/Updated 12 Aug/);
+});
+
+it("fills the market cards with live index quotes when no fresh briefing exists", async () => {
+  // The suite pins Date.now() to 2026-08-12T22:30:00Z; stay inside the
+  // 26h freshness window relative to that clock.
+  const freshIso = "2026-08-12T22:00:00.000Z";
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === "/api/briefs/latest") return new Response(null, { status: 404 });
+    if (url === "/api/status") return new Response(JSON.stringify({
+      briefing: { available: false, freshness: "unavailable", publishedAt: null },
+      market: {
+        indices: [
+          { symbol: "SPX", name: "S&P 500", value: 6427.18, change: 0.62, updatedAt: freshIso },
+          { symbol: "NDX", name: "Nasdaq-100", value: 23724.31, change: 0.78, updatedAt: freshIso },
+          { symbol: "DJI", name: "Dow Jones", value: 45118.26, change: 0.48, updatedAt: freshIso },
+          { symbol: "VIX", name: "VIX", value: 15.41, change: -1.26, updatedAt: freshIso },
+        ],
+      },
+    }), { status: 200 });
+    return new Response(null, { status: 404 });
+  });
+
+  const view = renderApp();
+  await waitFor(() => expect(view.container.querySelectorAll(".market-card")).toHaveLength(4));
+  expect(view.container.querySelectorAll(".market-card")[0]).toHaveTextContent("S&P 500");
+  // Live index quotes drive the cards: symbols and changes come from the
+  // status read model. (AnimatedValue eases the numeric figure and is driven
+  // by requestAnimationFrame, which jsdom mis-times under the pinned clock,
+  // so the exact figure is asserted elsewhere, not here.)
+  expect(view.container.querySelectorAll(".market-card")[0]).toHaveTextContent("SPX");
+  expect(view.container).toHaveTextContent("+0.62%");
+  expect(view.container).toHaveTextContent("-1.26%");
+  expect(view.container.querySelector(".market-section")).toHaveTextContent(/Updated 12 Aug/);
+  expect(view.container.querySelector(".market-section")).not.toHaveTextContent("Not available");
+});
+
+it("ignores stale index quotes (outside the 26h window)", async () => {
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === "/api/briefs/latest") return new Response(null, { status: 404 });
+    if (url === "/api/status") return new Response(JSON.stringify({
+      briefing: { available: false, freshness: "unavailable", publishedAt: null },
+      market: {
+        indices: [
+          { symbol: "SPX", name: "S&P 500", value: 6427.18, change: 0.62, updatedAt: "2026-08-01T15:30:00Z" },
+          { symbol: "NDX", name: "Nasdaq-100", value: 23724.31, change: 0.78, updatedAt: "2026-08-01T15:30:00Z" },
+          { symbol: "DJI", name: "Dow Jones", value: 45118.26, change: 0.48, updatedAt: "2026-08-01T15:30:00Z" },
+          { symbol: "VIX", name: "VIX", value: 15.41, change: -1.26, updatedAt: "2026-08-01T15:30:00Z" },
+        ],
+      },
+    }), { status: 200 });
+    return new Response(null, { status: 404 });
+  });
+
+  const view = renderApp();
+  await waitFor(() => expect(view.container.querySelectorAll(".market-card")).toHaveLength(4));
+  expect(view.container.querySelectorAll(".market-card")[0]).toHaveTextContent("Not available");
+  expect(view.container).not.toHaveTextContent("6,427.18");
+});
+
+it("renders the fear & greed number and gauge from the status sentiment", async () => {
+  const freshIso = "2026-08-12T22:00:00.000Z";
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === "/api/briefs/latest") return new Response(null, { status: 404 });
+    if (url === "/api/status") return new Response(JSON.stringify({
+      briefing: { available: false, freshness: "unavailable", publishedAt: null },
+      sentiment: { provider: "cnn-fear-greed", score: 62, rating: "greed", asOf: freshIso },
+    }), { status: 200 });
+    return new Response(null, { status: 404 });
+  });
+
+  const view = renderApp();
+  await waitFor(() => expect(view.container.querySelector(".sentiment-card")).toHaveTextContent("Greed"));
+  expect(view.container.querySelector(".sentiment-card .gauge-mask strong")).toHaveTextContent("62");
+  expect(view.container.querySelector(".sentiment-card .gauge-value")).not.toBeNull();
+  // The gauge arc must reflect the score (62/100 of the semicircle), not the
+  // full circle: π·65 ≈ 204.2 is the arc length, 62% ≈ 126.6.
+  expect(view.container.querySelector(".sentiment-card .gauge-value")).toHaveAttribute(
+    "stroke-dasharray",
+    expect.stringMatching(/^126\.\d+/),
+  );
+  expect(view.container.querySelector(".sentiment-card")).toHaveTextContent("Risk-on");
+  expect(view.container.querySelector(".sentiment-card")).not.toHaveTextContent("Not available");
+});
+
+it("keeps the sentiment card unavailable when the reading is stale", async () => {
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === "/api/briefs/latest") return new Response(null, { status: 404 });
+    if (url === "/api/status") return new Response(JSON.stringify({
+      briefing: { available: false, freshness: "unavailable", publishedAt: null },
+      sentiment: { provider: "cnn-fear-greed", score: 62, rating: "greed", asOf: "2026-08-01T12:00:00Z" },
+    }), { status: 200 });
+    return new Response(null, { status: 404 });
+  });
+
+  const view = renderApp();
+  await waitFor(() => expect(view.container.querySelector(".sentiment-card")).toHaveTextContent("Not available"));
+  expect(view.container.querySelector(".sentiment-card")).not.toHaveTextContent("Risk-on");
+  expect(view.container.querySelector(".sentiment-card .gauge-value")).toBeNull();
 });

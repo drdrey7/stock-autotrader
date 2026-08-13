@@ -43,6 +43,35 @@ const directionSchema = z.enum(["Bullish", "Neutral", "Bearish"]).or(
 
 export const isoTimestampSchema = z.string().datetime({ offset: true });
 const MAX_EVENT_CLOCK_SKEW_MS = 5 * 60 * 1000;
+const MAX_INGEST_BODY_BYTES = 1_000_000;
+
+async function readBodyWithinLimit(request: Request): Promise<string | null> {
+  if (!request.body) return "";
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_INGEST_BODY_BYTES) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
+}
 
 export const marketDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
   const parsed = new Date(`${value}T00:00:00Z`);
@@ -130,6 +159,14 @@ const marketBarSchema = z.object({
   }
 });
 
+const marketIndexSchema = z.object({
+  symbol: z.enum(["SPX", "NDX", "DJI", "VIX"]),
+  name: z.string().min(1).max(32),
+  value: z.number().finite().positive(),
+  change: z.number().finite(),
+  updatedAt: isoTimestampSchema,
+});
+
 const marketDataSchema = z.object({
   provider: z.string().min(1).max(64),
   status: z.enum(["healthy", "degraded", "offline"]),
@@ -141,6 +178,9 @@ const marketDataSchema = z.object({
     excluded: z.number().int().nonnegative(),
   }),
   benchmarks: z.array(marketBarSchema).max(10),
+  // Real-time index context (S&P 500, Nasdaq-100, Dow Jones, VIX). Optional so
+  // snapshots published before the field existed stay valid.
+  indices: z.array(marketIndexSchema).max(8).optional(),
   warnings: z.array(z.string().max(200)).max(20),
   updatedAt: isoTimestampSchema.nullable(),
 }).superRefine((snapshot, ctx) => {
@@ -433,9 +473,14 @@ function buildStatements(event: IngestEvent): [string, unknown[]][] {
     }
     case "MARKET_DATA_UPDATED": {
       const snapshot = event.payload;
+      // Index observations have their own D1 owner. Keep accepting the
+      // optional legacy field for old publishers, but never let screening
+      // publication write or replace market-context rows.
+      const screeningSnapshot = { ...snapshot };
+      delete screeningSnapshot.indices;
       stmts.push(
-        ["INSERT INTO app_meta (key, value) VALUES ('marketData', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", [JSON.stringify(snapshot)]],
-        insertBotEvent("MARKET_DATA_UPDATED", `Market data ${snapshot.status}: ${snapshot.universe.eligible}/${snapshot.universe.total} eligible`, null),
+        ["INSERT INTO app_meta (key, value) VALUES ('marketData', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", [JSON.stringify(screeningSnapshot)]],
+        insertBotEvent("MARKET_DATA_UPDATED", `Screening data ${snapshot.status}: ${snapshot.universe.eligible}/${snapshot.universe.total} eligible`, null),
       );
       break;
     }
@@ -470,10 +515,18 @@ function buildStatements(event: IngestEvent): [string, unknown[]][] {
 
 export async function handleIngest(request: Request, env: Env): Promise<Response> {
   if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
+  if (env.ENVIRONMENT === "preview") return json({ error: "Preview writes are disabled" }, 403);
   const secret = env.INGEST_SECRET;
   if (!secret) return json({ error: "Ingest not configured" }, 503);
 
-  const raw = await request.text();
+  const contentLength = Number(request.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > MAX_INGEST_BODY_BYTES) {
+    return json({ error: "Payload too large" }, 413);
+  }
+  const raw = await readBodyWithinLimit(request);
+  if (raw === null) {
+    return json({ error: "Payload too large" }, 413);
+  }
   if (!raw) return json({ error: "Empty body" }, 400);
   if (!(await verifyRequest(request, raw, secret))) return json({ error: "Unauthorized" }, 401);
 

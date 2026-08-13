@@ -26,6 +26,14 @@ def publish(endpoint: str, secret: str, events: list[dict[str, Any]], timeout: i
     """Publish a batch of events. Raises on HTTP errors; returns the ingest response."""
     body = json.dumps({"events": events}).encode("utf-8")
     request = urllib.request.Request(endpoint, data=body, method="POST")
+    # Browser-like headers: the Cloudflare WAF in front of the worker returns
+    # 403/1010 for default urllib user agents even with a valid HMAC signature.
+    request.add_header("User-Agent", (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
+        "(KHTML, like Gecko) Version/17.4 Safari/605.1.15"
+    ))
+    request.add_header("Accept", "application/json, text/plain, */*")
+    request.add_header("Accept-Language", "en-US,en;q=0.9")
     request.add_header("Content-Type", "application/json")
     timestamp = datetime.now(timezone.utc).isoformat()
     request.add_header("X-Ingest-Signature", sign(secret, body, timestamp))

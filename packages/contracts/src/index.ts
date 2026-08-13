@@ -117,6 +117,14 @@ export interface MarketDataSnapshot {
     adjustedClose: number;
     volume: number;
   }>;
+  /** Legacy read compatibility; new context is owned by market_indices. */
+  indices?: Array<{
+    symbol: "SPX" | "NDX" | "DJI" | "VIX";
+    name: string;
+    value: number;
+    change: number;
+    updatedAt: string;
+  }>;
   warnings: string[];
   updatedAt: string | null;
 }

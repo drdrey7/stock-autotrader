@@ -18,6 +18,16 @@ import {
   type BriefingStatus,
 } from "./daily-briefings";
 import { readXPosts } from "./x-posts";
+import {
+  MARKET_CONTEXT_STALE_AFTER_SECONDS,
+  MARKET_CRON,
+  SENTIMENT_CRON,
+  SENTIMENT_STALE_AFTER_SECONDS,
+  readMarketContext,
+  runMarketContextJob,
+  runSentimentJob,
+  type MarketContextReadModel,
+} from "./market-context";
 
 /**
  * Stock Autotrader public read-only API (PR #2).
@@ -29,6 +39,7 @@ export interface Env {
   DB: D1Database;
   ASSETS: Fetcher;
   INGEST_SECRET?: string;
+  ENVIRONMENT?: string;
 }
 
 const json = (data: unknown, status = 200) =>
@@ -175,10 +186,61 @@ export function buildMarketSourceHealth(market: MarketDataSnapshot, nowMs = Date
     : market.status === "degraded"
       ? market.warnings[0] ?? "Market data is degraded."
       : null;
-  return buildSourceHealth(market.lastSuccessfulUpdate, market.updatedAt ?? market.lastSuccessfulUpdate, {
+  // The freshness gate must observe the data, not the collection time: on a
+  // holiday or right after the open the bars are older than the request.
+  // The first argument drives Live/Stale, so the most recent bar wins.
+  const indices = market.indices ?? [];
+  const observation = indices.length > 0
+    ? indices.reduce((latest, index) => (index.updatedAt > latest ? index.updatedAt : latest), indices[0]!.updatedAt)
+    : (market.updatedAt ?? market.lastSuccessfulUpdate);
+  return buildSourceHealth(observation, market.lastSuccessfulUpdate ?? observation, {
     provider,
     staleAfterSeconds: HEALTHY_STALE_AFTER_SECONDS,
     error,
+    nowMs,
+  });
+}
+
+export function buildMarketContextHealth(context: MarketContextReadModel, nowMs = Date.now()): SourceHealth {
+  const latestSourceMs = parseSafeTimestamp(context.latestSourceTimestamp);
+  if (latestSourceMs === null) {
+    return buildSourceHealth(null, null, {
+      provider: "unavailable",
+      staleAfterSeconds: MARKET_CONTEXT_STALE_AFTER_SECONDS,
+      error: "No market index data has been collected.",
+      nowMs,
+    });
+  }
+  const expectedSymbols = new Set(["SPX", "NDX", "DJI", "VIX"]);
+  const complete = context.indices.length === expectedSymbols.size
+    && context.indices.every((index) => expectedSymbols.has(index.symbol));
+  const latestDate = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(latestSourceMs));
+  const currentDate = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(nowMs));
+  const indexDates = new Set(context.indices.flatMap((index) => {
+    const timestamp = parseSafeTimestamp(index.updatedAt);
+    return timestamp === null ? [] : [new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/New_York",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date(timestamp))];
+  }));
+  return buildSourceHealth(new Date(latestSourceMs).toISOString(), context.latestCollectedAt ?? context.latestSourceTimestamp, {
+    provider: context.provider ?? "unavailable",
+    staleAfterSeconds: MARKET_CONTEXT_STALE_AFTER_SECONDS,
+    error: complete && indexDates.size === 1 && latestDate === currentDate
+      ? null
+      : "Market index set is incomplete or from a prior session.",
     nowMs,
   });
 }
@@ -188,6 +250,7 @@ export async function buildSources(
   options: {
     briefing: BriefingStatus;
     dashboard: DashboardData;
+    marketContext?: MarketContextReadModel;
     nowMs?: number;
   },
 ): Promise<PublicSourceHealth> {
@@ -239,7 +302,7 @@ export async function buildSources(
       error: null,
       nowMs,
     }),
-    market: buildMarketSourceHealth(market, nowMs),
+    market: options.marketContext ? buildMarketContextHealth(options.marketContext, nowMs) : buildMarketSourceHealth(market, nowMs),
     opportunities: buildSourceHealth(scanSuccessAt, lastDataUpdate, {
       provider: "scan engine",
       staleAfterSeconds: HEALTHY_STALE_AFTER_SECONDS,
@@ -262,12 +325,19 @@ export async function buildSources(
       error: earningsError,
       nowMs,
     }),
-    sentiment: buildSourceHealth(null, null, {
-      provider: "unavailable",
-      staleAfterSeconds: HEALTHY_STALE_AFTER_SECONDS,
-      error: null,
-      nowMs,
-    }),
+    sentiment: options.marketContext?.sentiment
+      ? buildSourceHealth(options.marketContext.sentiment.asOf, options.marketContext.sentiment.asOf, {
+          provider: options.marketContext.sentiment.provider,
+          staleAfterSeconds: SENTIMENT_STALE_AFTER_SECONDS,
+          error: null,
+          nowMs,
+        })
+      : buildSourceHealth(null, null, {
+          provider: "unavailable",
+          staleAfterSeconds: SENTIMENT_STALE_AFTER_SECONDS,
+          error: null,
+          nowMs,
+        }),
     quickStats: buildSourceHealth(null, null, {
       provider: "unavailable",
       staleAfterSeconds: HEALTHY_STALE_AFTER_SECONDS,
@@ -541,6 +611,23 @@ async function buildDashboard(env: Env): Promise<DashboardData> {
 }
 
 export default {
+  async scheduled(controller: ScheduledController, env: Env): Promise<void> {
+    if (env.ENVIRONMENT !== "production") {
+      console.info("scheduled job ignored outside production", env.ENVIRONMENT ?? "unset");
+      return;
+    }
+    const scheduledTime = new Date(controller.scheduledTime);
+    if (controller.cron === MARKET_CRON) {
+      await runMarketContextJob(env, scheduledTime);
+      return;
+    }
+    if (controller.cron === SENTIMENT_CRON) {
+      await runSentimentJob(env, scheduledTime);
+      return;
+    }
+    console.warn("unknown cron trigger", controller.cron);
+  },
+
   async fetch(request: Request, env: Env): Promise<Response> {
     const { pathname } = new URL(request.url);
 
@@ -556,18 +643,30 @@ export default {
     }
     if (pathname === "/api/status") {
       try {
-        const [dashboard, briefing] = await Promise.all([
+        const [dashboard, briefing, marketContext] = await Promise.all([
           buildDashboard(env),
           readBriefingStatus(env.DB),
+          readMarketContext(env.DB),
         ]);
-        const sources = await buildSources(env, { briefing, dashboard });
-        return json({ ...dashboard, briefing, sources });
+        const sources = await buildSources(env, { briefing, dashboard, marketContext });
+        return json({
+          ...dashboard,
+          market: {
+            indices: marketContext.indices,
+            provider: marketContext.provider,
+            latestSourceTimestamp: marketContext.latestSourceTimestamp,
+            latestCollectedAt: marketContext.latestCollectedAt,
+          },
+          briefing,
+          sources,
+          sentiment: marketContext.sentiment,
+        });
       } catch (err) {
         console.error("status error", err);
         try {
           // Keep the public contract shape under degradation: sources stay
           // present, every source fail-closed to Unavailable.
-          return json({ ...await buildDashboard(env), briefing: unavailableBriefingStatus(), sources: unavailableSources() });
+          return json({ ...await buildDashboard(env), briefing: unavailableBriefingStatus(), sources: unavailableSources(), sentiment: null });
         } catch {
           return json({ error: "Internal error" }, 500);
         }
@@ -642,6 +741,9 @@ export default {
         console.error("market data error", err);
         return json(emptyMarketData);
       }
+    }
+    if (pathname === "/api/market-context") {
+      return json(await readMarketContext(env.DB));
     }
     const stockMatch = pathname.match(/^\/api\/stocks\/([A-Za-z0-9.-]+)$/);
     if (stockMatch) {

@@ -35,6 +35,11 @@ class FakeStatement {
       const eventId = String(this.args[0]);
       return this.db.events.has(eventId) ? ({ event_id: eventId } as T) : null;
     }
+    if (this.sql.includes("FROM app_meta")) {
+      const match = this.sql.match(/key = '([^']+)'/);
+      const value = match ? this.db.meta.get(match[1]!) : undefined;
+      return (value === undefined ? null : { value }) as T | null;
+    }
     throw new Error(`Unhandled SELECT: ${this.sql}`);
   }
 
@@ -104,6 +109,16 @@ class FakeStatement {
         if (this.sql.includes("excluded.value > app_meta.value")) {
           const existing = this.db.meta.get(key);
           if (existing !== undefined && existing >= value) return { meta: { changes: 0 } };
+        }
+        // json_extract guard: the stored value is JSON and the upsert only
+        // advances when the incoming asOf is strictly newer.
+        if (this.sql.includes("json_extract")) {
+          const existingRaw = this.db.meta.get(key);
+          if (existingRaw !== undefined) {
+            const incoming = JSON.parse(value) as { asOf: string };
+            const existing = JSON.parse(existingRaw) as { asOf: string };
+            if (incoming.asOf <= existing.asOf) return { meta: { changes: 0 } };
+          }
         }
         this.db.meta.set(key, value);
         return { meta: { changes: 1 } };
@@ -705,5 +720,38 @@ describe("ingest X_POSTS_COLLECTED", () => {
     const laterResponse = await handleIngest(laterLexically, env(db));
     expect(((await laterResponse.json()) as { applied: string[] }).applied).toEqual(["earn-offset-0002"]);
     expect(db.meta.get("earningsUpdatedAt")).toBe("2026-08-13T12:00:00.000Z");
+  });
+
+  it("keeps screening publication out of the market-context ownership boundary", async () => {
+    const db = new FakeD1();
+    const snapshot = {
+      provider: "csv",
+      status: "healthy" as const,
+      asOf: "2026-08-13",
+      lastSuccessfulUpdate: "2026-08-13T15:00:00Z",
+      universe: { total: 2, eligible: 2, excluded: 0 },
+      benchmarks: [
+        { symbol: "SPY", date: "2026-08-13", open: 1, high: 2, low: 0.9, close: 1.5, adjustedClose: 1.5, volume: 1000 },
+        { symbol: "QQQ", date: "2026-08-13", open: 2, high: 3, low: 1.9, close: 2.5, adjustedClose: 2.5, volume: 900 },
+      ],
+      indices: [{ symbol: "SPX", name: "S&P 500", value: 6427.18, change: 0.62, updatedAt: "2026-08-13T15:00:00Z" }],
+      warnings: [],
+      updatedAt: "2026-08-13T15:00:00Z",
+    };
+    const response = await handleIngest(await signedRequest({
+      events: [{ type: "MARKET_DATA_UPDATED", event_id: "mkt-screen-0001", timestamp: new Date().toISOString(), payload: snapshot }],
+    }), env(db));
+    expect(((await response.json()) as { applied: string[] }).applied).toEqual(["mkt-screen-0001"]);
+    const stored = JSON.parse(db.meta.get("marketData")!);
+    expect(stored.universe).toEqual({ total: 2, eligible: 2, excluded: 0 });
+    expect(stored.indices).toBeUndefined();
+  });
+
+  it("blocks preview writes even if a secret is accidentally present", async () => {
+    const response = await handleIngest(
+      new Request("https://preview.example/ingest/events", { method: "POST", body: "{}" }),
+      { ...env(new FakeD1()), ENVIRONMENT: "preview" },
+    );
+    expect(response.status).toBe(403);
   });
 });

@@ -34,6 +34,33 @@ Canonical timezone: `America/New_York`.
 - pre-market: `08:30 ET` on valid market sessions;
 - post-close: `16:30 ET` on valid market sessions.
 
+## Cloudflare market context
+
+Market indices and Fear & Greed are collected by the Worker Cron Triggers and
+stored in D1. The public API composes those rows with the screening read model;
+the VPS publisher does not write market-context data.
+
+The Worker schedules are UTC because Cloudflare Cron Triggers are UTC: indices
+run every 15 minutes on weekdays and are accepted only inside the New York
+regular session (including the supported 13:00 ET early-close calendar) plus
+a small post-close retry window; Fear & Greed runs at 14:00 and 19:00 UTC on weekdays. The
+Worker applies `America/New_York` conversion, weekends, holidays, DST and
+source-date validation before writing.
+
+The temporary zero-cost index adapter uses Yahoo Finance's public Chart HTTP
+endpoint for `^GSPC`, `^NDX`, `^DJI` and `^VIX`. It requires no API key and runs
+directly from the Worker. This endpoint is unofficial, has no published SLA or
+guaranteed quota, may be rate-limited or change without notice, and its public
+display/licensing terms must be reviewed before treating it as a permanent
+commercial data source. It is acceptable here because the product needs only
+four delayed/periodic context values and the adapter is explicitly temporary.
+
+The adapter is isolated behind `MarketDataProvider`, so changing provider does
+not change D1, the API, or the frontend. The Worker returns `Not available`
+rather than presenting old data as current when the source is unavailable.
+Fear & Greed is separately isolated behind `SentimentProvider` and retains the
+last valid D1 observation after a temporary provider failure.
+
 ## Development
 
 Requires Node 20+ (Node 22 recommended).
