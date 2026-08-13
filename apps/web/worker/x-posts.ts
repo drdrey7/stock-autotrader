@@ -188,19 +188,25 @@ export async function storeXPosts(
   const finalize = db
     .prepare("UPDATE ingest_events SET status = 'applied' WHERE event_id = ? AND status = ?")
     .bind(eventId, claimStatus);
+  // Collection metadata is written even when every post is a duplicate: a
+  // successful run must keep the X source fresh regardless of inserted rows.
+  const collectionMeta = db
+    .prepare("INSERT INTO app_meta (key, value) VALUES ('xPostsUpdatedAt', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value")
+    .bind(receivedAt);
 
   try {
-    // Claim + conditional post writes + final status update in ONE atomic D1
-    // batch. A crash rolls back the entire transaction; a concurrent loser
-    // has no matching claim token and therefore writes zero posts.
-    const results = await db.batch([claim, ...stmts, finalize]);
+    // Claim + conditional post writes + collection metadata + final status
+    // update in ONE atomic D1 batch. A crash rolls back the entire
+    // transaction; a concurrent loser has no matching claim token and
+    // therefore writes zero posts.
+    const results = await db.batch([claim, ...stmts, collectionMeta, finalize]);
     const claimChanges = results[0]?.meta.changes ?? 0;
     const finalizeChanges = results[results.length - 1]?.meta.changes ?? 0;
     if (claimChanges === 0 || finalizeChanges === 0) {
       return { kind: "skipped", reason: "duplicate event" };
     }
     const applied = results
-      .slice(1, -1)
+      .slice(1, -2)
       .filter((result) => result.meta.changes === 1).length;
     const skipped = posts.length - applied;
     return { kind: "applied", applied, skipped };

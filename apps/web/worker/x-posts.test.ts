@@ -500,4 +500,36 @@ describe("ingest X_POSTS_COLLECTED", () => {
     expect(db.meta.get("earningsUpdatedAt")).toBe(timestamp);
     expect(db.events.size).toBe(1);
   });
+
+  it("records collection metadata when a run contains only duplicate posts", async () => {
+    const db = new FakeD1();
+    const firstTimestamp = new Date().toISOString();
+    const first = await signedRequest({
+      events: [{
+        type: "X_POSTS_COLLECTED",
+        event_id: "xcollect-dup-0001",
+        timestamp: firstTimestamp,
+        payload: { posts: [postA] },
+      }],
+    });
+    const firstResponse = await handleIngest(first, env(db));
+    expect(((await firstResponse.json()) as { applied: string[] }).applied).toEqual(["xcollect-dup-0001"]);
+    expect(db.posts.size).toBe(1);
+
+    const duplicateTimestamp = new Date(Date.now() + 1_000).toISOString();
+    const duplicate = await signedRequest({
+      events: [{
+        type: "X_POSTS_COLLECTED",
+        event_id: "xcollect-dup-0002",
+        timestamp: duplicateTimestamp,
+        payload: { posts: [postA] },
+      }],
+    });
+    const duplicateResponse = await handleIngest(duplicate, env(db));
+    const body = (await duplicateResponse.json()) as { applied: string[] };
+    expect(duplicateResponse.status).toBe(200);
+    expect(body.applied).toEqual(["xcollect-dup-0002"]);
+    expect(db.posts.size).toBe(1);
+    expect(db.meta.get("xPostsUpdatedAt")).toBe(duplicateTimestamp);
+  });
 });

@@ -318,9 +318,10 @@ describe("buildSources (source health assembly)", () => {
         return {
           bind() { return this; },
           async first<T>(): Promise<T | null> {
+            // Both freshness queries are COALESCE over app_meta plus a
+            // fallback (MAX(collected_at) / MAX(updated_at)); the fake
+            // returns their resolved { ts } result.
             if (sql.includes("FROM x_posts")) return (firsts.x ?? null) as T | null;
-            // The earnings freshness query is a single COALESCE over app_meta
-            // and the latest row; the fake returns its resolved result.
             if (sql.includes("FROM app_meta")) return (firsts.earningsTs ?? null) as T | null;
             throw new Error(`Unhandled SELECT: ${sql}`);
           },
@@ -359,7 +360,7 @@ describe("buildSources (source health assembly)", () => {
   it("derives X freshness from the latest collection time", async () => {
     const seenSql: string[] = [];
     const sources = await buildSources(
-      envFor({ x: { collected_at: "2026-08-13T11:30:00Z" } }, seenSql) as unknown as Env,
+      envFor({ x: { ts: "2026-08-13T11:30:00Z" } }, seenSql) as unknown as Env,
       { briefing, dashboard: demoData, nowMs },
     );
     expect(seenSql.some((sql) => sql.includes("MAX(collected_at)") && sql.includes("FROM x_posts"))).toBe(true);
@@ -369,10 +370,27 @@ describe("buildSources (source health assembly)", () => {
 
   it("classifies an old collection as Stale, not Live", async () => {
     const sources = await buildSources(
-      envFor({ x: { collected_at: "2026-08-01T00:00:00Z" } }) as unknown as Env,
+      envFor({ x: { ts: "2026-08-01T00:00:00Z" } }) as unknown as Env,
       { briefing, dashboard: demoData, nowMs },
     );
     expect(sources.x.state).toBe("Stale");
+  });
+
+  it("classifies opportunities Cached when the engine health degrades", async () => {
+    const dashboard = {
+      ...demoData,
+      status: {
+        ...demoData.status,
+        engine: "offline",
+        apiHealth: "degraded",
+        latestScan: "2026-08-13T11:00:00Z",
+        lastDataUpdate: "2026-08-13T11:00:00Z",
+      },
+      candidates: [],
+    };
+    const sources = await buildSources(envFor({}) as unknown as Env, { briefing, dashboard: dashboard as unknown as DashboardData, nowMs });
+    expect(sources.opportunities.state).toBe("Cached");
+    expect(sources.opportunities.error).toContain("degraded");
   });
 
   it("derives earnings freshness from publication metadata", async () => {

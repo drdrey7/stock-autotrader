@@ -198,10 +198,13 @@ export async function buildSources(
   let xLastSuccess: string | null = null;
   let xError: string | null = null;
   try {
-    // Freshness follows the latest collection, not the newest-created post:
-    // posts collected/backfilled out of creation order must not keep X stale.
-    const row = await env.DB.prepare("SELECT MAX(collected_at) AS collected_at FROM x_posts").first<{ collected_at: string | null }>();
-    xLastSuccess = row?.collected_at ? new Date(row.collected_at).toISOString() : null;
+    // Freshness follows the latest successful collection, not the
+    // newest-created post: out-of-order collection/backfill and all-duplicate
+    // runs are recorded in app_meta, with MAX(collected_at) as fallback.
+    const row = await env.DB.prepare(
+      "SELECT COALESCE((SELECT value FROM app_meta WHERE key = 'xPostsUpdatedAt'), (SELECT MAX(collected_at) FROM x_posts)) AS ts",
+    ).first<{ ts: string | null }>();
+    xLastSuccess = row?.ts ? new Date(row.ts).toISOString() : null;
   } catch {
     xError = "X store is unavailable.";
   }
@@ -223,6 +226,10 @@ export async function buildSources(
   // The scan completion timestamp is the authoritative success evidence,
   // whether the scan yielded zero or many candidates.
   const scanSuccessAt = options.dashboard.status.latestScan;
+  // A degraded engine must not keep presenting retained results as Live:
+  // pass the failure through so buildSourceHealth classifies them Cached.
+  const scanEngineDegraded = options.dashboard.status.engine === "offline"
+    || options.dashboard.status.apiHealth === "degraded";
 
   const sources = {
     briefing: buildSourceHealth(brief.publishedAt, brief.publishedAt, {
@@ -235,7 +242,11 @@ export async function buildSources(
     opportunities: buildSourceHealth(scanSuccessAt, lastDataUpdate, {
       provider: "scan engine",
       staleAfterSeconds: HEALTHY_STALE_AFTER_SECONDS,
-      error: scanSuccessAt === null ? "No scan has completed." : null,
+      error: scanSuccessAt === null
+        ? "No scan has completed."
+        : scanEngineDegraded
+          ? "Scan engine is degraded."
+          : null,
       nowMs,
     }),
     x: buildSourceHealth(xLastSuccess, xLastSuccess, {
