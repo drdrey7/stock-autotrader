@@ -14,7 +14,9 @@
   "triggers": {
     "crons": [
       "*/15 * * * mon-fri",
-      "0 14,19 * * mon-fri"
+      "0 14,19 * * mon-fri",
+      "0 6 * * *",
+      "*/15 * * * *"
     ]
   },
   "d1_databases": [
