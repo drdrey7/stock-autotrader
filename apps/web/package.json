@@ -9,7 +9,7 @@
     "lint": "eslint . --max-warnings=0",
     "typecheck": "tsc -b --pretty false",
     "test": "vitest run",
-    "db:migrate": "npx --yes wrangler@4 d1 migrations apply stock-autotrader-db",
+    "db:migrate": "npx --yes wrangler@4 d1 migrations apply stock-autotrader-db --remote",
     "db:migrate:local": "npx --yes wrangler@4 d1 migrations apply stock-autotrader-db --local",
     "db:seed": "node scripts/seed.mjs",
     "db:seed:local": "node scripts/seed.mjs --local"

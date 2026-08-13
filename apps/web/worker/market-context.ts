@@ -337,7 +337,7 @@ export function marketCollectionWindow(scheduledTime: Date): "regular" | "post_c
   const minutes = parts.hour * 60 + parts.minute;
   const closeMinutes = isEarlyClose(parts) ? 13 * 60 : 16 * 60;
   if (minutes >= 9 * 60 + 30 && minutes < closeMinutes) return "regular";
-  if (minutes === closeMinutes + 15) return "post_close";
+  if (minutes >= closeMinutes + 15 && minutes <= closeMinutes + 45) return "post_close";
   return null;
 }
 

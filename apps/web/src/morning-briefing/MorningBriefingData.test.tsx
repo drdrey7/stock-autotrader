@@ -52,7 +52,7 @@ beforeEach(() => {
     if (url === "/api/status") return new Response(JSON.stringify({
       candidates: [{ symbol: "NVDA", quantScore: 91 }],
       briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt },
-      marketData: { indices: [
+      market: { indices: [
         { symbol: "SPX", name: "S&P 500", value: 6412.10, change: 0.31, updatedAt: "2026-08-12T20:00:00Z" },
         { symbol: "NDX", name: "Nasdaq-100", value: 23830.02, change: 0.55, updatedAt: "2026-08-12T20:00:00Z" },
         { symbol: "DJI", name: "Dow Jones", value: 45118.26, change: 0.48, updatedAt: "2026-08-12T20:00:00Z" },
@@ -134,7 +134,7 @@ it("preserves a Unicode minus when rendering negative moves", async () => {
   vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url === "/api/briefs/latest") return new Response(JSON.stringify(unicodeBriefing), { status: 200 });
-    if (url === "/api/status") return new Response(JSON.stringify({ candidates: [], briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt }, marketData: { indices: [
+    if (url === "/api/status") return new Response(JSON.stringify({ candidates: [], briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt }, market: { indices: [
       { symbol: "SPX", name: "S&P 500", value: 6412.10, change: -0.31, updatedAt: "2026-08-12T20:00:00Z" },
       { symbol: "NDX", name: "Nasdaq-100", value: 23830.02, change: 0.55, updatedAt: "2026-08-12T20:00:00Z" },
       { symbol: "DJI", name: "Dow Jones", value: 45118.26, change: 0.48, updatedAt: "2026-08-12T20:00:00Z" },
@@ -218,7 +218,7 @@ it("labels a post-close edition instead of showing a morning greeting", async ()
   vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url === "/api/briefs/latest") return new Response(JSON.stringify(postCloseBriefing), { status: 200 });
-    if (url === "/api/status") return new Response(JSON.stringify({ candidates: [], briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt }, marketData: { indices: [
+    if (url === "/api/status") return new Response(JSON.stringify({ candidates: [], briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt }, market: { indices: [
       { symbol: "SPX", name: "S&P 500", value: 6412.10, change: 0.31, updatedAt: "2026-08-12T20:00:00Z" },
       { symbol: "NDX", name: "Nasdaq-100", value: 23830.02, change: 0.55, updatedAt: "2026-08-12T20:00:00Z" },
       { symbol: "DJI", name: "Dow Jones", value: 45118.26, change: 0.48, updatedAt: "2026-08-12T20:00:00Z" },
@@ -237,7 +237,7 @@ it("renders the briefing without waiting for a stalled X request", async () => {
   vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url === "/api/briefs/latest") return new Response(JSON.stringify(briefing), { status: 200 });
-    if (url === "/api/status") return new Response(JSON.stringify({ candidates: [], briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt }, marketData: { indices: [
+    if (url === "/api/status") return new Response(JSON.stringify({ candidates: [], briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt }, market: { indices: [
       { symbol: "SPX", name: "S&P 500", value: 6412.10, change: 0.31, updatedAt: "2026-08-12T20:00:00Z" },
       { symbol: "NDX", name: "Nasdaq-100", value: 23830.02, change: 0.55, updatedAt: "2026-08-12T20:00:00Z" },
       { symbol: "DJI", name: "Dow Jones", value: 45118.26, change: 0.48, updatedAt: "2026-08-12T20:00:00Z" },
@@ -536,7 +536,7 @@ it("renders zero market movement as flat without an upward arrow", async () => {
   vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url === "/api/briefs/latest") return new Response(JSON.stringify(flatBriefing), { status: 200 });
-    if (url === "/api/status") return new Response(JSON.stringify({ candidates: [], briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt }, marketData: { indices: [
+    if (url === "/api/status") return new Response(JSON.stringify({ candidates: [], briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt }, market: { indices: [
       { symbol: "SPX", name: "S&P 500", value: 6412.10, change: 0, updatedAt: "2026-08-12T20:00:00Z" },
       { symbol: "NDX", name: "Nasdaq-100", value: 23830.02, change: 0.55, updatedAt: "2026-08-12T20:00:00Z" },
       { symbol: "DJI", name: "Dow Jones", value: 45118.26, change: 0.48, updatedAt: "2026-08-12T20:00:00Z" },
@@ -575,10 +575,7 @@ it("prefers the live /api/status indices over the briefing snapshot", async () =
     if (url === "/api/status") {
       return new Response(JSON.stringify({
         briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt },
-        marketData: {
-          provider: "financial-modeling-prep", status: "healthy", asOf: "2026-08-13", lastSuccessfulUpdate: "2026-08-13T14:45:00Z",
-          universe: { total: 0, eligible: 0, excluded: 0 }, benchmarks: [], warnings: [], updatedAt: "2026-08-13T14:45:00Z",
-          indices: [
+        market: { indices: [
             { symbol: "SPX", name: "S&P 500", value: 7799.82, change: 0.66, updatedAt: "2026-08-12T22:00:00.000Z" },
             { symbol: "NDX", name: "Nasdaq-100", value: 30110.55, change: 1.24, updatedAt: "2026-08-12T22:00:00.000Z" },
             { symbol: "DJI", name: "Dow Jones", value: 53843.24, change: 0.14, updatedAt: "2026-08-12T22:00:00.000Z" },
@@ -606,7 +603,7 @@ it("fills the market cards with live index quotes when no fresh briefing exists"
     if (url === "/api/briefs/latest") return new Response(null, { status: 404 });
     if (url === "/api/status") return new Response(JSON.stringify({
       briefing: { available: false, freshness: "unavailable", publishedAt: null },
-      marketData: {
+      market: {
         indices: [
           { symbol: "SPX", name: "S&P 500", value: 6427.18, change: 0.62, updatedAt: freshIso },
           { symbol: "NDX", name: "Nasdaq-100", value: 23724.31, change: 0.78, updatedAt: freshIso },
@@ -638,7 +635,7 @@ it("ignores stale index quotes (outside the 26h window)", async () => {
     if (url === "/api/briefs/latest") return new Response(null, { status: 404 });
     if (url === "/api/status") return new Response(JSON.stringify({
       briefing: { available: false, freshness: "unavailable", publishedAt: null },
-      marketData: {
+      market: {
         indices: [
           { symbol: "SPX", name: "S&P 500", value: 6427.18, change: 0.62, updatedAt: "2026-08-01T15:30:00Z" },
           { symbol: "NDX", name: "Nasdaq-100", value: 23724.31, change: 0.78, updatedAt: "2026-08-01T15:30:00Z" },

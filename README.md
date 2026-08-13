@@ -43,7 +43,7 @@ the VPS publisher does not write market-context data.
 The Worker schedules are UTC because Cloudflare Cron Triggers are UTC: indices
 run every 15 minutes on weekdays and are accepted only inside the New York
 regular session (including the supported 13:00 ET early-close calendar) plus
-one post-close run; Fear & Greed runs at 14:00 and 19:00 UTC on weekdays. The
+a small post-close retry window; Fear & Greed runs at 14:00 and 19:00 UTC on weekdays. The
 Worker applies `America/New_York` conversion, weekends, holidays, DST and
 source-date validation before writing.
 

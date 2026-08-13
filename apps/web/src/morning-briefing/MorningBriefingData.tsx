@@ -14,15 +14,6 @@ type BriefingHealth = {
 
 type StatusResponse = {
   briefing?: BriefingHealth;
-  marketData?: {
-    indices?: Array<{
-      symbol: "SPX" | "NDX" | "DJI" | "VIX";
-      name: string;
-      value: number;
-      change: number;
-      updatedAt: string;
-    }>;
-  };
   market?: {
     indices?: Array<{
       symbol: "SPX" | "NDX" | "DJI" | "VIX";
@@ -182,12 +173,12 @@ function opportunitiesFromBriefing(
 }
 
 // Real index context (PR #11): the Worker publishes live index quotes in the
-// dedicated market-context read model; they may fill the market cards when no
-// fresh briefing exists, gated by the same 26h freshness window.
+// dedicated market-context read model; it is the only source for market cards
+// and is gated by the 26h freshness window.
 const INDEX_GATE_MS = 26 * 60 * 60_000;
 
 function indicesFromStatus(status: StatusResponse | null): { indexes: MarketIndex[]; updatedAt: string } | null {
-  const indices = status?.market?.indices ?? status?.marketData?.indices;
+  const indices = status?.market?.indices;
   if (!Array.isArray(indices) || indices.length === 0) return null;
   let latestUpdatedAt = "";
   const fresh: MarketIndex[] = [];

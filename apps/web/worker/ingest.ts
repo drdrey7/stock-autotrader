@@ -515,6 +515,7 @@ function buildStatements(event: IngestEvent): [string, unknown[]][] {
 
 export async function handleIngest(request: Request, env: Env): Promise<Response> {
   if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
+  if (env.ENVIRONMENT === "preview") return json({ error: "Preview writes are disabled" }, 403);
   const secret = env.INGEST_SECRET;
   if (!secret) return json({ error: "Ingest not configured" }, 503);
 

@@ -312,6 +312,7 @@ describe("sentiment provider and schedules", () => {
     expect(marketCollectionWindow(new Date("2026-01-12T14:30:00Z"))).toBe("regular");
     expect(marketCollectionWindow(new Date("2026-07-13T13:30:00Z"))).toBe("regular");
     expect(marketCollectionWindow(new Date("2026-07-13T20:15:00Z"))).toBe("post_close");
+    expect(marketCollectionWindow(new Date("2026-07-13T20:30:00Z"))).toBe("post_close");
     expect(marketCollectionWindow(new Date("2026-07-13T13:15:00Z"))).toBeNull();
     expect(marketCollectionWindow(new Date("2026-07-11T14:30:00Z"))).toBeNull();
     expect(isUsMarketHoliday(new Date("2026-07-03T14:30:00Z"))).toBe(true); // observed Independence Day
@@ -319,5 +320,6 @@ describe("sentiment provider and schedules", () => {
     expect(marketCollectionWindow(new Date("2026-11-26T15:00:00Z"))).toBeNull(); // Thanksgiving
     expect(marketCollectionWindow(new Date("2026-11-27T18:00:00Z"))).toBeNull(); // 13:00 ET early close
     expect(marketCollectionWindow(new Date("2026-11-27T18:15:00Z"))).toBe("post_close");
+    expect(marketCollectionWindow(new Date("2026-11-27T18:45:00Z"))).toBe("post_close");
   });
 });

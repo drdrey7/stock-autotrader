@@ -746,4 +746,12 @@ describe("ingest X_POSTS_COLLECTED", () => {
     expect(stored.universe).toEqual({ total: 2, eligible: 2, excluded: 0 });
     expect(stored.indices).toBeUndefined();
   });
+
+  it("blocks preview writes even if a secret is accidentally present", async () => {
+    const response = await handleIngest(
+      new Request("https://preview.example/ingest/events", { method: "POST", body: "{}" }),
+      { ...env(new FakeD1()), ENVIRONMENT: "preview" },
+    );
+    expect(response.status).toBe(403);
+  });
 });
