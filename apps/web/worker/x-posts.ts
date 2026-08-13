@@ -120,9 +120,10 @@ export type StoreXPostsResult =
 /**
  * Persist collected X posts into the append-only read model.
  *
- * Idempotent by event_id (ingest_events claim) and by post id (INSERT OR
- * IGNORE on the primary key). Duplicate posts inside one event or across
- * events are counted as skipped, never duplicated.
+ * Idempotent by event_id (ingest_events claim) and by post id (ON CONFLICT
+ * upsert on the primary key). Duplicate posts inside one event or across
+ * events never duplicate rows; they refresh collected_at so the read model
+ * keeps recording evidence of successful collections.
  */
 export async function storeXPosts(
   db: D1Database,
@@ -159,12 +160,13 @@ export async function storeXPosts(
   const stmts = posts.map((post) =>
     db
       .prepare(
-        `INSERT OR IGNORE INTO x_posts
-         (id, author, text, created_at, url, symbol, company, universe, collected_at, chart_json, price, change)
-         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-         WHERE EXISTS (
-           SELECT 1 FROM ingest_events WHERE event_id = ? AND status = ?
-         )`,
+        `INSERT INTO x_posts
+        (id, author, text, created_at, url, symbol, company, universe, collected_at, chart_json, price, change)
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        WHERE EXISTS (
+          SELECT 1 FROM ingest_events WHERE event_id = ? AND status = ?
+        )
+        ON CONFLICT (id) DO UPDATE SET collected_at = excluded.collected_at`,
       )
       .bind(
         post.id,

@@ -329,7 +329,7 @@ it("keeps the last X posts when a later refresh fails", async () => {
   expect(screen.queryByText("Last update")).not.toBeInTheDocument();
 });
 
-it("labels retained posts cached after a feed failure while the backend source stays live", async () => {
+it("labels retained posts cached and downgrades the section badge after a feed failure", async () => {
   const liveXSource = {
     provider: "x-search collector", state: "Live", asOf: "2026-08-12T20:30:00Z",
     ageSeconds: 7200, staleAfterSeconds: 604800,
@@ -362,7 +362,10 @@ it("labels retained posts cached after a feed failure while the backend source s
   document.dispatchEvent(new Event("visibilitychange"));
   await waitFor(() => expect(xRequests).toBe(2));
   await waitFor(() => expect(view.container.querySelector(".post-status .data-source.cached")).not.toBeNull());
-  expect(view.container.querySelector(".x-preview .section-title .data-source.live")).not.toBeNull();
+  // The feed failed, so the section must not keep a Live badge even though
+  // the backend source is still live; retained posts stay labelled Cached.
+  expect(view.container.querySelector(".x-preview .section-title .data-source.live")).toBeNull();
+  expect(view.container.querySelector(".x-preview .section-title .data-source.unavailable")).not.toBeNull();
 });
 
 it("fails closed to Unavailable when the backend publishes malformed source health", async () => {

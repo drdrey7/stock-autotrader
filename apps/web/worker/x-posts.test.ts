@@ -58,14 +58,21 @@ class FakeStatement {
       event.status = "applied";
       return { meta: { changes: 1 } };
     }
-    if (this.sql.includes("INSERT OR IGNORE INTO x_posts")) {
+    if (this.sql.includes("INSERT INTO x_posts")) {
       if (this.sql.includes("WHERE EXISTS")) {
         const eventId = String(this.args[12]);
         const claimStatus = String(this.args[13]);
         if (this.db.events.get(eventId)?.status !== claimStatus) return { meta: { changes: 0 } };
       }
       const id = String(this.args[0]);
-      if (this.db.posts.has(id)) return { meta: { changes: 0 } };
+      if (this.db.posts.has(id)) {
+        // Without the ON CONFLICT upsert the row would be ignored, not
+        // refreshed: mirror the real SQL contract in the fake.
+        if (!this.sql.includes("ON CONFLICT")) return { meta: { changes: 0 } };
+        const existing = this.db.posts.get(id)!;
+        this.db.posts.set(id, { ...existing, collected_at: String(this.args[8]) });
+        return { meta: { changes: 1 } };
+      }
       this.db.posts.set(id, {
         id,
         author: String(this.args[1]),
@@ -274,10 +281,12 @@ describe("storeXPosts", () => {
     expect(db.posts.size).toBe(2);
   });
 
-  it("skips duplicate post ids within the same event", async () => {
+  it("upserts duplicate post ids within the same event without duplicating rows", async () => {
     const db = new FakeD1();
     const result = await storeXPosts(db as unknown as D1Database, "event-abcdef12", "2026-08-12T12:00:00Z", [postA, { ...postA }]);
-    expect(result).toEqual({ kind: "applied", applied: 1, skipped: 1 });
+    expect(result).toEqual({ kind: "applied", applied: 2, skipped: 0 });
+    expect(db.posts.size).toBe(1);
+    expect(db.posts.get(postA.id)?.collected_at).toBe("2026-08-12T12:00:00Z");
   });
 
   it("rejects future-dated posts before writing the event or feed row", async () => {
@@ -531,5 +540,6 @@ describe("ingest X_POSTS_COLLECTED", () => {
     expect(body.applied).toEqual(["xcollect-dup-0002"]);
     expect(db.posts.size).toBe(1);
     expect(db.meta.get("xPostsUpdatedAt")).toBe(duplicateTimestamp);
+    expect(db.posts.get(postA.id)?.collected_at).toBe(duplicateTimestamp);
   });
 });

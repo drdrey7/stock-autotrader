@@ -461,6 +461,11 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
       // Re-check after the second await: a newer invocation may have started
       // while this one was fetching status, and must not be overwritten.
       if (cancelled || currentRequest !== xRequestId) return;
+      if (liveX === null) {
+        failedSources.add("x");
+      } else {
+        failedSources.delete("x");
+      }
       setData((previous) => {
         const cached = recentCachedPosts([...readStoredXPosts(), ...previous.xPosts]);
         const liveHandles = new Set((liveX ?? []).map((post) => post.handle.toLowerCase()));
