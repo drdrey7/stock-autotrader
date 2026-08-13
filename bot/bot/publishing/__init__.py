@@ -57,21 +57,3 @@ def publish_system_status(settings: Settings, last_data_update: str | None = Non
         payload["lastDataUpdate"] = last_data_update
     event = client.make_event("SYSTEM_STATUS", payload)
     return publish_events(settings, [event])
-
-
-def publish_sentiment(settings: Settings, reading: dict) -> dict:
-    """Publish a validated market-sentiment reading (CNN Fear & Greed)."""
-    from publisher import client
-
-    event = client.make_event("SENTIMENT_UPDATED", reading)
-    result = publish_events(settings, [event])
-    if not isinstance(result, dict):
-        raise RuntimeError("sentiment publication returned an invalid response")
-    applied = result.get("applied", [])
-    skipped = result.get("skipped", [])
-    rejected = result.get("rejected", [])
-    if not isinstance(applied, list) or not isinstance(skipped, list) or not isinstance(rejected, list):
-        raise RuntimeError("sentiment publication returned an invalid acknowledgement")
-    if rejected or event["event_id"] not in applied + skipped:
-        raise RuntimeError("sentiment event was not acknowledged by ingest")
-    return result

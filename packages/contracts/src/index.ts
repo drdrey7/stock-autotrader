@@ -117,7 +117,7 @@ export interface MarketDataSnapshot {
     adjustedClose: number;
     volume: number;
   }>;
-  /** Live index context: S&P 500, Nasdaq-100, Dow Jones, VIX. */
+  /** Legacy read compatibility; new context is owned by market_indices. */
   indices?: Array<{
     symbol: "SPX" | "NDX" | "DJI" | "VIX";
     name: string;

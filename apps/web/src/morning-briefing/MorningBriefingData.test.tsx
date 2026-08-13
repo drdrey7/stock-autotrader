@@ -548,7 +548,7 @@ it("prefers the live /api/status indices over the briefing snapshot", async () =
       return new Response(JSON.stringify({
         briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt },
         marketData: {
-          provider: "yfinance", status: "healthy", asOf: "2026-08-13", lastSuccessfulUpdate: "2026-08-13T14:45:00Z",
+          provider: "financial-modeling-prep", status: "healthy", asOf: "2026-08-13", lastSuccessfulUpdate: "2026-08-13T14:45:00Z",
           universe: { total: 0, eligible: 0, excluded: 0 }, benchmarks: [], warnings: [], updatedAt: "2026-08-13T14:45:00Z",
           indices: [
             { symbol: "SPX", name: "S&P 500", value: 7799.82, change: 0.66, updatedAt: "2026-08-12T22:00:00.000Z" },

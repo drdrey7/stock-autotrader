@@ -192,9 +192,9 @@ function opportunitiesFromBriefing(
   });
 }
 
-// Real index context (PR #11): the worker publishes live index quotes in the
-// market-data snapshot; they may fill the market cards when no fresh briefing
-// exists, gated by the same 26h freshness window as briefing market data.
+// Real index context (PR #11): the Worker publishes live index quotes in the
+// dedicated market-context read model; they may fill the market cards when no
+// fresh briefing exists, gated by the same 26h freshness window.
 const INDEX_GATE_MS = 26 * 60 * 60_000;
 
 function indicesFromStatus(status: StatusResponse | null): { indexes: MarketIndex[]; updatedAt: string } | null {
@@ -218,9 +218,9 @@ function indicesFromStatus(status: StatusResponse | null): { indexes: MarketInde
   return { indexes: fresh, updatedAt: latestUpdatedAt };
 }
 
-// Market sentiment (PR #11): the CNN Fear & Greed reading published once a
-// day. A daily index may legitimately be a weekend old before the next
-// reading; the 72h window matches the daily-publication sections.
+// Market sentiment (PR #11): the CNN Fear & Greed reading is published once or
+// twice a day. A reading may legitimately be a weekend old before the next
+// one; the 72h window matches the daily-publication sections.
 const SENTIMENT_GATE_MS = 72 * 60 * 60_000;
 
 function sentimentFromStatus(status: StatusResponse | null): MorningBriefingData["sentiment"] {
@@ -381,11 +381,8 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
       // cards can still show the live index read model while it is fresh.
       const liveIndices = indicesFromStatus(status);
       // The market label always reflects what is actually displayed.
-      const marketUpdatedAt = liveMarket && briefingUpdatedAt
-        ? briefingUpdatedAt
-        : liveIndices
-          ? liveIndices.updatedAt
-          : null;
+      const marketUpdatedAt = liveIndices?.updatedAt
+        ?? (liveMarket && briefingUpdatedAt ? briefingUpdatedAt : null);
       const sentiment = sentimentFromStatus(status);
 
       setData((previous) => {

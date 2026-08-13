@@ -10,7 +10,7 @@ import {
   type SourceHealth,
   type StrategySummary,
 } from "@stock-autotrader/contracts";
-import { dashboardReadSchema, handleIngest, isoTimestampSchema, marketDataSchema, sentimentSchema } from "./ingest";
+import { dashboardReadSchema, handleIngest, isoTimestampSchema, marketDataSchema } from "./ingest";
 import {
   readBriefingByDateAndType,
   readBriefingStatus,
@@ -18,6 +18,16 @@ import {
   type BriefingStatus,
 } from "./daily-briefings";
 import { readXPosts } from "./x-posts";
+import {
+  MARKET_CONTEXT_STALE_AFTER_SECONDS,
+  MARKET_CRON,
+  SENTIMENT_CRON,
+  SENTIMENT_STALE_AFTER_SECONDS,
+  readMarketContext,
+  runMarketContextJob,
+  runSentimentJob,
+  type MarketContextReadModel,
+} from "./market-context";
 
 /**
  * Stock Autotrader public read-only API (PR #2).
@@ -29,6 +39,7 @@ export interface Env {
   DB: D1Database;
   ASSETS: Fetcher;
   INGEST_SECRET?: string;
+  FMP_API_KEY?: string;
 }
 
 const json = (data: unknown, status = 200) =>
@@ -52,24 +63,6 @@ const unavailableBriefingStatus = (): BriefingStatus => ({
   publishedAt: null,
   ageSeconds: null,
 });
-
-export interface PublicSentiment {
-  provider: string;
-  score: number;
-  rating: "extreme_fear" | "fear" | "neutral" | "greed" | "extreme_greed";
-  asOf: string;
-}
-
-async function readSentiment(env: Env): Promise<PublicSentiment | null> {
-  try {
-    const row = await env.DB.prepare("SELECT value FROM app_meta WHERE key = 'sentiment'").first<{ value: string | null }>();
-    if (!row?.value) return null;
-    const parsed = sentimentSchema.safeParse(JSON.parse(row.value));
-    return parsed.success ? parsed.data : null;
-  } catch {
-    return null;
-  }
-}
 
 const int = (v: unknown): number => Number(v) || 0;
 const num = (v: unknown): number => (v === null || v === undefined ? 0 : Number(v));
@@ -208,12 +201,29 @@ export function buildMarketSourceHealth(market: MarketDataSnapshot, nowMs = Date
   });
 }
 
+export function buildMarketContextHealth(context: MarketContextReadModel, nowMs = Date.now()): SourceHealth {
+  if (!context.latestSourceTimestamp) {
+    return buildSourceHealth(null, null, {
+      provider: "unavailable",
+      staleAfterSeconds: MARKET_CONTEXT_STALE_AFTER_SECONDS,
+      error: "No market index data has been collected.",
+      nowMs,
+    });
+  }
+  return buildSourceHealth(context.latestSourceTimestamp, context.latestCollectedAt ?? context.latestSourceTimestamp, {
+    provider: context.provider ?? "unavailable",
+    staleAfterSeconds: MARKET_CONTEXT_STALE_AFTER_SECONDS,
+    error: null,
+    nowMs,
+  });
+}
+
 export async function buildSources(
   env: Env,
   options: {
     briefing: BriefingStatus;
     dashboard: DashboardData;
-    sentiment?: PublicSentiment | null;
+    marketContext?: MarketContextReadModel;
     nowMs?: number;
   },
 ): Promise<PublicSourceHealth> {
@@ -265,7 +275,7 @@ export async function buildSources(
       error: null,
       nowMs,
     }),
-    market: buildMarketSourceHealth(market, nowMs),
+    market: options.marketContext ? buildMarketContextHealth(options.marketContext, nowMs) : buildMarketSourceHealth(market, nowMs),
     opportunities: buildSourceHealth(scanSuccessAt, lastDataUpdate, {
       provider: "scan engine",
       staleAfterSeconds: HEALTHY_STALE_AFTER_SECONDS,
@@ -288,16 +298,16 @@ export async function buildSources(
       error: earningsError,
       nowMs,
     }),
-    sentiment: options.sentiment
-      ? buildSourceHealth(options.sentiment.asOf, options.sentiment.asOf, {
-          provider: options.sentiment.provider,
-          staleAfterSeconds: HEALTHY_STALE_AFTER_SECONDS,
+    sentiment: options.marketContext?.sentiment
+      ? buildSourceHealth(options.marketContext.sentiment.asOf, options.marketContext.sentiment.asOf, {
+          provider: options.marketContext.sentiment.provider,
+          staleAfterSeconds: SENTIMENT_STALE_AFTER_SECONDS,
           error: null,
           nowMs,
         })
       : buildSourceHealth(null, null, {
           provider: "unavailable",
-          staleAfterSeconds: HEALTHY_STALE_AFTER_SECONDS,
+          staleAfterSeconds: SENTIMENT_STALE_AFTER_SECONDS,
           error: null,
           nowMs,
         }),
@@ -574,6 +584,19 @@ async function buildDashboard(env: Env): Promise<DashboardData> {
 }
 
 export default {
+  async scheduled(controller: ScheduledController, env: Env): Promise<void> {
+    const scheduledTime = new Date(controller.scheduledTime);
+    if (controller.cron === MARKET_CRON) {
+      await runMarketContextJob(env, scheduledTime);
+      return;
+    }
+    if (controller.cron === SENTIMENT_CRON) {
+      await runSentimentJob(env, scheduledTime);
+      return;
+    }
+    console.warn("unknown cron trigger", controller.cron);
+  },
+
   async fetch(request: Request, env: Env): Promise<Response> {
     const { pathname } = new URL(request.url);
 
@@ -589,13 +612,14 @@ export default {
     }
     if (pathname === "/api/status") {
       try {
-        const [dashboard, briefing, sentiment] = await Promise.all([
+        const [dashboard, briefing, marketContext] = await Promise.all([
           buildDashboard(env),
           readBriefingStatus(env.DB),
-          readSentiment(env),
+          readMarketContext(env.DB),
         ]);
-        const sources = await buildSources(env, { briefing, dashboard, sentiment });
-        return json({ ...dashboard, briefing, sources, sentiment });
+        const marketData = { ...dashboard.marketData, indices: marketContext.indices };
+        const sources = await buildSources(env, { briefing, dashboard, marketContext });
+        return json({ ...dashboard, marketData, briefing, sources, sentiment: marketContext.sentiment });
       } catch (err) {
         console.error("status error", err);
         try {
@@ -676,6 +700,9 @@ export default {
         console.error("market data error", err);
         return json(emptyMarketData);
       }
+    }
+    if (pathname === "/api/market-context") {
+      return json(await readMarketContext(env.DB));
     }
     const stockMatch = pathname.match(/^\/api\/stocks\/([A-Za-z0-9.-]+)$/);
     if (stockMatch) {

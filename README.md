@@ -34,6 +34,28 @@ Canonical timezone: `America/New_York`.
 - pre-market: `08:30 ET` on valid market sessions;
 - post-close: `16:30 ET` on valid market sessions.
 
+## Cloudflare market context
+
+Market indices and Fear & Greed are collected by the Worker Cron Triggers and
+stored in D1. The public API composes those rows with the screening read model;
+the VPS publisher does not write market-context data.
+
+The index adapter currently uses Financial Modeling Prep's documented HTTP
+quote endpoint for `^GSPC`, `^NDX`, `^DJI` and `^VIX`. Configure its key only as
+a Cloudflare secret:
+
+```bash
+cd apps/web
+npx --yes wrangler@4 secret put FMP_API_KEY
+```
+
+The adapter is isolated behind `MarketDataProvider` so the provider can be
+changed without changing D1, the API, or the frontend. FMP's free tier is
+limited and may be end-of-day only; the 15-minute schedule therefore requires
+an account/plan that grants the needed intraday index access. Until the secret
+is configured, the Worker returns `Not available` rather than presenting old
+data as current.
+
 ## Development
 
 Requires Node 20+ (Node 22 recommended).

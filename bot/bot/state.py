@@ -97,15 +97,6 @@ class StateStore:
             ).fetchone()
         return dict(row) if row else None
 
-    def has_finished_job_detail(self, job_name: str, detail_substring: str) -> bool:
-        """True when any completed run of the job carries the detail marker."""
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT 1 FROM job_runs WHERE job_name = ? AND finished_at IS NOT NULL AND detail LIKE ? ORDER BY id DESC LIMIT 1",
-                (job_name, f"%{detail_substring}%"),
-            ).fetchone()
-        return row is not None
-
     def recent_events(self, limit: int = 20) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(

@@ -26,7 +26,6 @@ const EVENT_TYPES = [
   "SHADOW_POSITION_CLOSED",
   "EARNINGS_UPDATED",
   "MARKET_DATA_UPDATED",
-  "SENTIMENT_UPDATED",
   "SYSTEM_STATUS",
 ] as const;
 
@@ -137,13 +136,6 @@ const marketIndexSchema = z.object({
   value: z.number().finite().positive(),
   change: z.number().finite(),
   updatedAt: isoTimestampSchema,
-});
-
-const sentimentSchema = z.object({
-  provider: z.string().min(1).max(64),
-  score: z.number().int().min(0).max(100),
-  rating: z.enum(["extreme_fear", "fear", "neutral", "greed", "extreme_greed"]),
-  asOf: isoTimestampSchema,
 });
 
 const marketDataSchema = z.object({
@@ -302,13 +294,12 @@ const eventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("SHADOW_POSITION_CLOSED"), event_id: z.string().min(8).max(80), timestamp: isoTimestampSchema, payload: z.object({ symbol: z.string().regex(/^[A-Za-z0-9.-]{1,12}$/), strategy: z.string().min(1).max(64), closedAt: isoTimestampSchema, exitReason: z.string().max(200) }) }),
   z.object({ type: z.literal("EARNINGS_UPDATED"), event_id: z.string().min(8).max(80), timestamp: isoTimestampSchema, payload: z.object({ items: z.array(earningsSchema).max(500) }) }),
   z.object({ type: z.literal("MARKET_DATA_UPDATED"), event_id: z.string().min(8).max(80), timestamp: isoTimestampSchema, payload: marketDataSchema }),
-  z.object({ type: z.literal("SENTIMENT_UPDATED"), event_id: z.string().min(8).max(80), timestamp: isoTimestampSchema, payload: sentimentSchema }),
   z.object({ type: z.literal("SYSTEM_STATUS"), event_id: z.string().min(8).max(80), timestamp: isoTimestampSchema, payload: systemStatusSchema }),
 ]);
 
 type IngestEvent = z.infer<typeof eventSchema>;
 
-export { eventSchema, marketDataSchema, sentimentSchema, dashboardReadSchema };
+export { eventSchema, marketDataSchema, dashboardReadSchema };
 export const dailyBriefingPublishedEventSchema = eventSchema.options[0];
 export type { IngestEvent };
 
@@ -318,39 +309,6 @@ const JSON_HEADERS = {
 };
 
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: JSON_HEADERS });
-
-/**
- * Merge a MARKET_DATA_UPDATED payload into the stored snapshot instead of
- * replacing it wholesale: the hourly screening job publishes the universe and
- * benchmark bars while the intraday job publishes the live index context.
- * Each must preserve what the other owns rather than erasing it.
- */
-async function mergeMarketDataSnapshot(
-  db: D1Database,
-  incoming: z.infer<typeof marketDataSchema>,
-): Promise<z.infer<typeof marketDataSchema>> {
-  try {
-    const row = await db.prepare("SELECT value FROM app_meta WHERE key = 'marketData'").first<{ value: string | null }>();
-    if (!row?.value) return incoming;
-    const existing = marketDataSchema.safeParse(JSON.parse(row.value));
-    if (!existing.success) return incoming;
-    const prev = existing.data;
-    const universe = incoming.universe.total === 0 && prev.universe.total > 0 ? prev.universe : incoming.universe;
-    const benchmarks = incoming.benchmarks.length === 0 && prev.benchmarks.length > 0 ? prev.benchmarks : incoming.benchmarks;
-    const indices = incoming.indices && incoming.indices.length > 0 ? incoming.indices : prev.indices;
-    // Component health: a healthy index event must not mask a screening
-    // outage. When this event does not carry its own universe and the
-    // preserved screening universe is degraded, the aggregate stays degraded
-    // (with the screening warning) until the screening pipeline renews it.
-    const screeningDegraded =
-      incoming.universe.total === 0 && prev.universe.total > 0 && prev.status === "degraded";
-    const status = screeningDegraded ? "degraded" : incoming.status;
-    const warnings = screeningDegraded && prev.warnings.length > 0 ? prev.warnings : incoming.warnings;
-    return { ...incoming, universe, benchmarks, indices, status, warnings };
-  } catch {
-    return incoming;
-  }
-}
 
 async function hmacHex(secret: string, timestamp: string, body: string): Promise<string> {
   const key = await crypto.subtle.importKey(
@@ -486,21 +444,14 @@ function buildStatements(event: IngestEvent): [string, unknown[]][] {
     }
     case "MARKET_DATA_UPDATED": {
       const snapshot = event.payload;
+      // Index observations have their own D1 owner. Keep accepting the
+      // optional legacy field for old publishers, but never let screening
+      // publication write or replace market-context rows.
+      const screeningSnapshot = { ...snapshot };
+      delete screeningSnapshot.indices;
       stmts.push(
-        ["INSERT INTO app_meta (key, value) VALUES ('marketData', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", [JSON.stringify(snapshot)]],
-        insertBotEvent("MARKET_DATA_UPDATED", `Market data ${snapshot.status}: ${snapshot.universe.eligible}/${snapshot.universe.total} eligible`, null),
-      );
-      break;
-    }
-    case "SENTIMENT_UPDATED": {
-      // Normalize asOf to UTC before storing: the anti-regression guard
-      // compares json_extract strings, which is only chronological when both
-      // sides share the same offset/format (e.g. 09:00-04:00 vs 12:46+00:00).
-      const sentiment = { ...event.payload, asOf: new Date(event.payload.asOf).toISOString() };
-      // Never regress: a delayed older reading must not overwrite a newer one.
-      stmts.push(
-        ["INSERT INTO app_meta (key, value) VALUES ('sentiment', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value WHERE json_extract(excluded.value, '$.asOf') > json_extract(app_meta.value, '$.asOf')", [JSON.stringify(sentiment)]],
-        insertBotEvent("SENTIMENT_UPDATED", `Sentiment ${sentiment.rating}: ${sentiment.score}`, null),
+        ["INSERT INTO app_meta (key, value) VALUES ('marketData', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", [JSON.stringify(screeningSnapshot)]],
+        insertBotEvent("MARKET_DATA_UPDATED", `Screening data ${snapshot.status}: ${snapshot.universe.eligible}/${snapshot.universe.total} eligible`, null),
       );
       break;
     }
@@ -620,10 +571,6 @@ export async function handleIngest(request: Request, env: Env): Promise<Response
     }
 
     try {
-      if (event.type === "MARKET_DATA_UPDATED") {
-        const merged = await mergeMarketDataSnapshot(env.DB, event.payload);
-        event = { ...event, payload: merged } as IngestEvent;
-      }
       const stmts = buildStatements(event);
       if (stmts.length > 0) {
         await env.DB.batch(stmts.map(([sql, args]) => env.DB.prepare(sql).bind(...args)));

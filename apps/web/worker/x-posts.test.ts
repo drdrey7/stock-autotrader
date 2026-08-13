@@ -722,193 +722,28 @@ describe("ingest X_POSTS_COLLECTED", () => {
     expect(db.meta.get("earningsUpdatedAt")).toBe("2026-08-13T12:00:00.000Z");
   });
 
-  it("merges the index context with the screening snapshot instead of replacing it", async () => {
+  it("keeps screening publication out of the market-context ownership boundary", async () => {
     const db = new FakeD1();
-    const scanSnapshot = {
+    const snapshot = {
       provider: "csv",
       status: "healthy" as const,
       asOf: "2026-08-13",
       lastSuccessfulUpdate: "2026-08-13T15:00:00Z",
-      universe: { total: 100, eligible: 80, excluded: 20 },
+      universe: { total: 2, eligible: 2, excluded: 0 },
       benchmarks: [
         { symbol: "SPY", date: "2026-08-13", open: 1, high: 2, low: 0.9, close: 1.5, adjustedClose: 1.5, volume: 1000 },
         { symbol: "QQQ", date: "2026-08-13", open: 2, high: 3, low: 1.9, close: 2.5, adjustedClose: 2.5, volume: 900 },
       ],
+      indices: [{ symbol: "SPX", name: "S&P 500", value: 6427.18, change: 0.62, updatedAt: "2026-08-13T15:00:00Z" }],
       warnings: [],
       updatedAt: "2026-08-13T15:00:00Z",
     };
-    const scanResponse = await handleIngest(await signedRequest({
-      events: [{ type: "MARKET_DATA_UPDATED", event_id: "mkt-scan-0001", timestamp: new Date().toISOString(), payload: scanSnapshot }],
+    const response = await handleIngest(await signedRequest({
+      events: [{ type: "MARKET_DATA_UPDATED", event_id: "mkt-screen-0001", timestamp: new Date().toISOString(), payload: snapshot }],
     }), env(db));
-    expect(((await scanResponse.json()) as { applied: string[] }).applied).toEqual(["mkt-scan-0001"]);
-    expect(JSON.parse(db.meta.get("marketData")!).universe).toEqual({ total: 100, eligible: 80, excluded: 20 });
-
-    // The intraday index-context snapshot carries no universe of its own; it
-    // must keep the screening universe and add the live indices.
-    const indexSnapshot = {
-      provider: "yfinance",
-      status: "healthy" as const,
-      asOf: "2026-08-13",
-      lastSuccessfulUpdate: "2026-08-13T15:30:00Z",
-      universe: { total: 0, eligible: 0, excluded: 0 },
-      benchmarks: [
-        { symbol: "SPY", date: "2026-08-13", open: 1, high: 2, low: 0.9, close: 1.5, adjustedClose: 1.5, volume: 1000 },
-        { symbol: "QQQ", date: "2026-08-13", open: 2, high: 3, low: 1.9, close: 2.5, adjustedClose: 2.5, volume: 900 },
-      ],
-      indices: [
-        { symbol: "SPX", name: "S&P 500", value: 6427.18, change: 0.62, updatedAt: "2026-08-13T15:30:00Z" },
-        { symbol: "NDX", name: "Nasdaq", value: 23724.31, change: 0.78, updatedAt: "2026-08-13T15:30:00Z" },
-        { symbol: "DJI", name: "Dow Jones", value: 45118.26, change: 0.48, updatedAt: "2026-08-13T15:30:00Z" },
-        { symbol: "VIX", name: "VIX", value: 15.41, change: -1.26, updatedAt: "2026-08-13T15:30:00Z" },
-      ],
-      warnings: [],
-      updatedAt: "2026-08-13T15:30:00Z",
-    };
-    const indexResponse = await handleIngest(await signedRequest({
-      events: [{ type: "MARKET_DATA_UPDATED", event_id: "mkt-idx-0002", timestamp: new Date().toISOString(), payload: indexSnapshot }],
-    }), env(db));
-    expect(((await indexResponse.json()) as { applied: string[] }).applied).toEqual(["mkt-idx-0002"]);
-    const merged = JSON.parse(db.meta.get("marketData")!);
-    expect(merged.universe).toEqual({ total: 100, eligible: 80, excluded: 20 });
-    expect(merged.indices).toHaveLength(4);
-    expect(merged.provider).toBe("yfinance");
-
-    // And the other way around: a later screening snapshot without indices
-    // must not erase the live index context.
-    const secondScan = { ...scanSnapshot, lastSuccessfulUpdate: "2026-08-13T16:00:00Z", updatedAt: "2026-08-13T16:00:00Z" };
-    const scan2Response = await handleIngest(await signedRequest({
-      events: [{ type: "MARKET_DATA_UPDATED", event_id: "mkt-scan-0003", timestamp: new Date().toISOString(), payload: secondScan }],
-    }), env(db));
-    expect(((await scan2Response.json()) as { applied: string[] }).applied).toEqual(["mkt-scan-0003"]);
-    const afterScan = JSON.parse(db.meta.get("marketData")!);
-    expect(afterScan.universe).toEqual({ total: 100, eligible: 80, excluded: 20 });
-    expect(afterScan.indices).toHaveLength(4);
-  });
-
-  it("keeps the aggregate degraded when screening is degraded and only indices refresh", async () => {
-    const db = new FakeD1();
-    const degradedScan = {
-      provider: "csv",
-      status: "degraded" as const,
-      asOf: "2026-08-13",
-      lastSuccessfulUpdate: "2026-08-13T14:00:00Z",
-      universe: { total: 100, eligible: 80, excluded: 20 },
-      benchmarks: [
-        { symbol: "SPY", date: "2026-08-13", open: 1, high: 2, low: 0.9, close: 1.5, adjustedClose: 1.5, volume: 1000 },
-        { symbol: "QQQ", date: "2026-08-13", open: 2, high: 3, low: 1.9, close: 2.5, adjustedClose: 2.5, volume: 900 },
-      ],
-      warnings: ["csv source failed"],
-      updatedAt: "2026-08-13T14:00:00Z",
-    };
-    await handleIngest(await signedRequest({
-      events: [{ type: "MARKET_DATA_UPDATED", event_id: "mkt-deg-0001", timestamp: new Date().toISOString(), payload: degradedScan }],
-    }), env(db));
-
-    // A healthy index-context event must not flip the aggregate to healthy
-    // while the preserved screening universe is still degraded.
-    const indexSnapshot = {
-      provider: "yfinance",
-      status: "healthy" as const,
-      asOf: "2026-08-13",
-      lastSuccessfulUpdate: "2026-08-13T15:30:00Z",
-      universe: { total: 0, eligible: 0, excluded: 0 },
-      benchmarks: [
-        { symbol: "SPY", date: "2026-08-13", open: 1, high: 2, low: 0.9, close: 1.5, adjustedClose: 1.5, volume: 1000 },
-        { symbol: "QQQ", date: "2026-08-13", open: 2, high: 3, low: 1.9, close: 2.5, adjustedClose: 2.5, volume: 900 },
-      ],
-      indices: [
-        { symbol: "SPX", name: "S&P 500", value: 6427.18, change: 0.62, updatedAt: "2026-08-13T15:30:00Z" },
-        { symbol: "NDX", name: "Nasdaq", value: 23724.31, change: 0.78, updatedAt: "2026-08-13T15:30:00Z" },
-        { symbol: "DJI", name: "Dow Jones", value: 45118.26, change: 0.48, updatedAt: "2026-08-13T15:30:00Z" },
-        { symbol: "VIX", name: "VIX", value: 15.41, change: -1.26, updatedAt: "2026-08-13T15:30:00Z" },
-      ],
-      warnings: [],
-      updatedAt: "2026-08-13T15:30:00Z",
-    };
-    await handleIngest(await signedRequest({
-      events: [{ type: "MARKET_DATA_UPDATED", event_id: "mkt-idx-0004", timestamp: new Date().toISOString(), payload: indexSnapshot }],
-    }), env(db));
-    const merged = JSON.parse(db.meta.get("marketData")!);
-    expect(merged.status).toBe("degraded");
-    expect(merged.warnings).toEqual(["csv source failed"]);
-    expect(merged.indices).toHaveLength(4);
-    expect(merged.universe).toEqual({ total: 100, eligible: 80, excluded: 20 });
-  });
-
-  it("stores sentiment and never regresses on an older reading", async () => {
-    const db = new FakeD1();
-    const first = await signedRequest({
-      events: [{
-        type: "SENTIMENT_UPDATED",
-        event_id: "sent-0001",
-        timestamp: "2026-08-13T13:00:00Z",
-        payload: { provider: "cnn-fear-greed", score: 62, rating: "greed", asOf: "2026-08-13T12:46:16+00:00" },
-      }],
-    });
-    const firstResponse = await handleIngest(first, env(db));
-    expect(((await firstResponse.json()) as { applied: string[] }).applied).toEqual(["sent-0001"]);
-    expect(JSON.parse(db.meta.get("sentiment")!).score).toBe(62);
-
-    // An older reading (same day, earlier asOf) must not overwrite the newer one.
-    db.sqls.length = 0;
-    const older = await signedRequest({
-      events: [{
-        type: "SENTIMENT_UPDATED",
-        event_id: "sent-0002",
-        timestamp: "2026-08-13T12:00:00Z",
-        payload: { provider: "cnn-fear-greed", score: 40, rating: "fear", asOf: "2026-08-13T11:00:00Z" },
-      }],
-    });
-    const olderResponse = await handleIngest(older, env(db));
-    expect(((await olderResponse.json()) as { applied: string[] }).applied).toEqual(["sent-0002"]);
-    expect(JSON.parse(db.meta.get("sentiment")!).score).toBe(62);
-    expect(JSON.parse(db.meta.get("sentiment")!).rating).toBe("greed");
-
-    // A newer reading advances.
-    db.sqls.length = 0;
-    const nowIso = new Date().toISOString();
-    const newer = await signedRequest({
-      events: [{
-        type: "SENTIMENT_UPDATED",
-        event_id: "sent-0003",
-        timestamp: nowIso,
-        payload: { provider: "cnn-fear-greed", score: 55, rating: "neutral", asOf: new Date(Date.now() + 60_000).toISOString() },
-      }],
-    });
-    const newerResponse = await handleIngest(newer, env(db));
-    expect(((await newerResponse.json()) as { applied: string[] }).applied).toEqual(["sent-0003"]);
-    expect(JSON.parse(db.meta.get("sentiment")!).score).toBe(55);
-  });
-
-  it("compares sentiment asOf chronologically across offsets", async () => {
-    const db = new FakeD1();
-    const first = await signedRequest({
-      events: [{
-        type: "SENTIMENT_UPDATED",
-        event_id: "sent-off-1",
-        timestamp: "2026-08-13T12:00:00Z",
-        payload: { provider: "cnn-fear-greed", score: 60, rating: "greed", asOf: "2026-08-13T12:00:00+00:00" },
-      }],
-    });
-    const firstResponse = await handleIngest(first, env(db));
-    expect(((await firstResponse.json()) as { applied: string[] }).applied).toEqual(["sent-off-1"]);
-
-    // 09:00-04:00 is 13:00Z — chronologically NEWER than 12:00Z, even though
-    // the raw string "09:00-04:00" compares lower than "12:00+00:00".
-    db.sqls.length = 0;
-    const offset = await signedRequest({
-      events: [{
-        type: "SENTIMENT_UPDATED",
-        event_id: "sent-off-2",
-        timestamp: "2026-08-13T13:30:00Z",
-        payload: { provider: "cnn-fear-greed", score: 70, rating: "extreme_greed", asOf: "2026-08-13T09:00:00-04:00" },
-      }],
-    });
-    const offsetResponse = await handleIngest(offset, env(db));
-    expect(((await offsetResponse.json()) as { applied: string[] }).applied).toEqual(["sent-off-2"]);
-    const stored = JSON.parse(db.meta.get("sentiment")!);
-    expect(stored.score).toBe(70);
-    // The stored asOf is normalized to UTC so the guard stays chronological.
-    expect(stored.asOf).toBe("2026-08-13T13:00:00.000Z");
+    expect(((await response.json()) as { applied: string[] }).applied).toEqual(["mkt-screen-0001"]);
+    const stored = JSON.parse(db.meta.get("marketData")!);
+    expect(stored.universe).toEqual({ total: 2, eligible: 2, excluded: 0 });
+    expect(stored.indices).toBeUndefined();
   });
 });

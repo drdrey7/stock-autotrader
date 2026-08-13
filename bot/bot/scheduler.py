@@ -16,7 +16,6 @@ from zoneinfo import ZoneInfo
 from .config import Settings
 from .state import StateStore
 from .jobs.health import health_job
-from .jobs.market_context import market_indices_job, sentiment_job
 from .jobs.market_data import market_data_job
 
 log = logging.getLogger(__name__)
@@ -73,23 +72,6 @@ def build_scheduler(settings: Settings, store: StateStore, blocking: bool = Fals
         args=[settings, store],
         id="data_refresh",
         name="Data refresh",
-        replace_existing=True,
-    )
-    # Market context (PR #11): live indices intraday + daily sentiment.
-    sched.add_job(
-        market_indices_job,
-        _cron(settings.market_indices_cron, settings.timezone),
-        args=[settings, store],
-        id="market_indices",
-        name="Market indices (15min session)",
-        replace_existing=True,
-    )
-    sched.add_job(
-        sentiment_job,
-        _cron(settings.sentiment_cron, settings.timezone),
-        args=[settings, store],
-        id="sentiment",
-        name="Market sentiment (daily)",
         replace_existing=True,
     )
     return sched

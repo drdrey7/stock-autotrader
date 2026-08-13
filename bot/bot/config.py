@@ -44,11 +44,6 @@ class Settings(BaseSettings):
     post_close_scan_cron: str = "30 16 * * mon-fri"   # 16:30 ET Mon-Fri (after close)
     data_refresh_cron: str = "15 * * * *"         # hourly data refresh
     health_check_cron: str = "*/5 * * * *"        # every 5 minutes
-    # Market context: indices every 15 min during the session window
-    # (09:00-16:45 ET; the job itself gates to 09:30-16:00 plus one close
-    # snapshot) and sentiment once per trading day.
-    market_indices_cron: str = "*/15 9-16 * * mon-fri"
-    sentiment_cron: str = "0 9 * * mon-fri"       # 09:00 ET Mon-Fri
 
     # --- publishing (PR #3 ingest endpoint) ---
     ingest_url: str = "https://stock-autotrader-web.barroso-labs.workers.dev/ingest/events"

@@ -8,6 +8,12 @@
     "binding": "ASSETS",
     "not_found_handling": "single-page-application"
   },
+  "triggers": {
+    "crons": [
+      "*/15 * * * mon-fri",
+      "0 14,19 * * mon-fri"
+    ]
+  },
   "d1_databases": [
     {
       "binding": "DB",

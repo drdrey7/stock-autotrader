@@ -56,7 +56,7 @@ describe("buildSourceHealth (honest freshness boundary)", () => {
     // All six bars are from the previous session (weekday holiday): the
     // collection just happened, but the data is ~30h old and must not be Live.
     const health = buildMarketSourceHealth({
-      provider: "yfinance",
+      provider: "market-provider",
       status: "healthy",
       asOf: "2026-08-12",
       lastSuccessfulUpdate: "2026-08-13T11:00:00Z",
@@ -257,58 +257,6 @@ describe("ingest event schema (publication contract)", () => {
     expect(() => eventSchema.parse({ ...base, type: "MARKET_DATA_UPDATED", payload: { ...payload, lastSuccessfulUpdate: "not-a-timestamp" } })).toThrow();
     expect(() => eventSchema.parse({ ...base, type: "MARKET_DATA_UPDATED", payload: { ...payload, benchmarks: [{ ...payload.benchmarks[0], volume: 0 }, payload.benchmarks[1]] } })).toThrow();
     expect(marketDataSchema.safeParse({ ...payload, universe: { total: 2, eligible: 1, excluded: 0 } }).success).toBe(false);
-  });
-
-  it("accepts MARKET_DATA_UPDATED with live index context", () => {
-    const payload = {
-      provider: "yfinance",
-      status: "healthy" as const,
-      asOf: "2026-08-13",
-      lastSuccessfulUpdate: "2026-08-13T15:30:00Z",
-      universe: { total: 2, eligible: 2, excluded: 0 },
-      benchmarks: [
-        { symbol: "SPY", date: "2026-08-13", open: 1, high: 2, low: 0.9, close: 1.5, adjustedClose: 1.5, volume: 1000 },
-        { symbol: "QQQ", date: "2026-08-13", open: 2, high: 3, low: 1.9, close: 2.5, adjustedClose: 2.5, volume: 900 },
-      ],
-      indices: [
-        { symbol: "SPX", name: "S&P 500", value: 6427.18, change: 0.62, updatedAt: "2026-08-13T15:30:00Z" },
-        { symbol: "NDX", name: "Nasdaq", value: 23724.31, change: 0.78, updatedAt: "2026-08-13T15:30:00Z" },
-        { symbol: "DJI", name: "Dow Jones", value: 45118.26, change: 0.48, updatedAt: "2026-08-13T15:30:00Z" },
-        { symbol: "VIX", name: "VIX", value: 15.41, change: -1.26, updatedAt: "2026-08-13T15:30:00Z" },
-      ],
-      warnings: [],
-      updatedAt: "2026-08-13T15:30:00Z",
-    };
-    const parsed = eventSchema.parse({ ...base, type: "MARKET_DATA_UPDATED", payload });
-    expect(parsed.type).toBe("MARKET_DATA_UPDATED");
-    expect((parsed.payload as { indices?: unknown[] }).indices).toHaveLength(4);
-    // Unknown index symbols are rejected.
-    expect(eventSchema.safeParse({
-      ...base,
-      type: "MARKET_DATA_UPDATED",
-      payload: { ...payload, indices: [{ symbol: "FAKE", name: "X", value: 1, change: 0, updatedAt: "2026-08-13T15:30:00Z" }] },
-    }).success).toBe(false);
-    // Non-finite or non-positive index values are rejected.
-    expect(eventSchema.safeParse({
-      ...base,
-      type: "MARKET_DATA_UPDATED",
-      payload: { ...payload, indices: [{ symbol: "SPX", name: "S&P 500", value: Number.NaN, change: 0, updatedAt: "2026-08-13T15:30:00Z" }] },
-    }).success).toBe(false);
-  });
-
-  it("accepts SENTIMENT_UPDATED with bounded score and rating", () => {
-    const payload = {
-      provider: "cnn-fear-greed",
-      score: 62,
-      rating: "greed" as const,
-      asOf: "2026-08-13T12:46:16+00:00",
-    };
-    const parsed = eventSchema.parse({ ...base, type: "SENTIMENT_UPDATED", payload });
-    expect(parsed.type).toBe("SENTIMENT_UPDATED");
-    expect(eventSchema.safeParse({ ...base, type: "SENTIMENT_UPDATED", payload: { ...payload, score: 101 } }).success).toBe(false);
-    expect(eventSchema.safeParse({ ...base, type: "SENTIMENT_UPDATED", payload: { ...payload, score: -1 } }).success).toBe(false);
-    expect(eventSchema.safeParse({ ...base, type: "SENTIMENT_UPDATED", payload: { ...payload, rating: "panic" } }).success).toBe(false);
-    expect(eventSchema.safeParse({ ...base, type: "SENTIMENT_UPDATED", payload: { ...payload, asOf: "not-a-timestamp" } }).success).toBe(false);
   });
 
   it("accepts a real DailyBriefing publication event and rejects Example Data", () => {
