@@ -39,7 +39,7 @@ export interface Env {
   DB: D1Database;
   ASSETS: Fetcher;
   INGEST_SECRET?: string;
-  FMP_API_KEY?: string;
+  ENVIRONMENT?: string;
 }
 
 const json = (data: unknown, status = 200) =>
@@ -612,6 +612,10 @@ async function buildDashboard(env: Env): Promise<DashboardData> {
 
 export default {
   async scheduled(controller: ScheduledController, env: Env): Promise<void> {
+    if (env.ENVIRONMENT !== "production") {
+      console.info("scheduled job ignored outside production", env.ENVIRONMENT ?? "unset");
+      return;
+    }
     const scheduledTime = new Date(controller.scheduledTime);
     if (controller.cron === MARKET_CRON) {
       await runMarketContextJob(env, scheduledTime);

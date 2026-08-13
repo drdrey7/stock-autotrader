@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Env } from "./index";
+import worker from "./index";
 import {
   CnnSentimentProvider,
-  FmpMarketDataProvider,
+  YahooFinanceMarketDataProvider,
   INDEX_DEFINITIONS,
+  MARKET_CRON,
   isUsMarketHoliday,
   marketCollectionWindow,
   readMarketContext,
@@ -89,18 +91,22 @@ const response = (payload: unknown, status = 200) => new Response(JSON.stringify
   headers: { "content-type": "application/json" },
 });
 
-const providerRows: Record<string, { price: number; changePercentage: number; timestamp: number }> = {
-  "^GSPC": { price: 6427.18, changePercentage: 0.62, timestamp: 1786635000 },
-  "^NDX": { price: 23724.31, changePercentage: 0.78, timestamp: 1786635000 },
-  "^DJI": { price: 45118.26, changePercentage: 0.48, timestamp: 1786635000 },
-  "^VIX": { price: 15.41, changePercentage: -1.26, timestamp: 1786635000 },
+const providerRows: Record<string, { regularMarketPrice: number; chartPreviousClose: number; regularMarketTime: number }> = {
+  "^GSPC": { regularMarketPrice: 6427.18, chartPreviousClose: 6387.59, regularMarketTime: 1786635000 },
+  "^NDX": { regularMarketPrice: 23724.31, chartPreviousClose: 23540.77, regularMarketTime: 1786635000 },
+  "^DJI": { regularMarketPrice: 45118.26, chartPreviousClose: 44903.77, regularMarketTime: 1786635000 },
+  "^VIX": { regularMarketPrice: 15.41, chartPreviousClose: 15.61, regularMarketTime: 1786635000 },
 };
 
+const yahooResponse = (row: Record<string, unknown>) => response({
+  chart: { result: [{ meta: row }], error: null },
+});
+
 describe("market context providers and persistence", () => {
-  it("normalizes all four FMP index quotes and preserves source timestamps", async () => {
-    const provider = new FmpMarketDataProvider("test-key", async (input) => {
-      const symbol = new URL(input.toString()).searchParams.get("symbol")!;
-      return response([providerRows[symbol]]);
+  it("normalizes all four free Yahoo chart quotes and preserves source timestamps", async () => {
+    const provider = new YahooFinanceMarketDataProvider(async (input) => {
+      const symbol = decodeURIComponent(new URL(input.toString()).pathname.split("/").pop()!);
+      return yahooResponse(providerRows[symbol]!);
     });
 
     const result = await provider.collect("2026-08-13T14:45:00.000Z");
@@ -110,16 +116,18 @@ describe("market context providers and persistence", () => {
     expect(result.observations[0]).toMatchObject({
       name: "S&P 500",
       value: 6427.18,
-      changePct: 0.62,
+      changePct: expect.closeTo(0.6195, 3),
       sourceTimestamp: new Date(1786635000 * 1000).toISOString(),
-      provider: "financial-modeling-prep",
+      provider: "yahoo-finance-chart",
     });
   });
 
   it("rejects invalid quotes without preventing valid symbols from being saved", async () => {
-    const provider = new FmpMarketDataProvider("test-key", async (input) => {
-      const symbol = new URL(input.toString()).searchParams.get("symbol")!;
-      return response(symbol === "^VIX" ? [{ price: 0, changePercentage: 1, timestamp: 1786635000 }] : [providerRows[symbol]]);
+    const provider = new YahooFinanceMarketDataProvider(async (input) => {
+      const symbol = decodeURIComponent(new URL(input.toString()).pathname.split("/").pop()!);
+      return yahooResponse(symbol === "^VIX"
+        ? { regularMarketPrice: 0, chartPreviousClose: 15, regularMarketTime: 1786635000 }
+        : providerRows[symbol]!);
     });
     const result = await provider.collect("2026-08-13T14:45:00.000Z");
     expect(result.observations).toHaveLength(3);
@@ -133,8 +141,9 @@ describe("market context providers and persistence", () => {
         observations: INDEX_DEFINITIONS.map((definition) => ({
           symbol: definition.symbol,
           name: definition.name,
-          value: providerRows[definition.providerSymbol]!.price,
-          changePct: providerRows[definition.providerSymbol]!.changePercentage,
+          value: providerRows[definition.providerSymbol]!.regularMarketPrice,
+          changePct: ((providerRows[definition.providerSymbol]!.regularMarketPrice - providerRows[definition.providerSymbol]!.chartPreviousClose)
+            / providerRows[definition.providerSymbol]!.chartPreviousClose) * 100,
           sourceTimestamp: "2026-08-13T15:30:00.000Z",
           collectedAt,
           provider: "test-provider",
@@ -174,6 +183,25 @@ describe("market context providers and persistence", () => {
     await runMarketContextJob(envFor(db), new Date("2026-08-13T19:45:00Z"), provider);
     expect(db.indices.size).toBe(4);
     expect(db.sql.filter((sql) => sql.includes("INSERT OR IGNORE INTO market_indices"))).toHaveLength(8);
+  });
+
+  it("never lets an older source observation replace a newer one", async () => {
+    const db = new MemoryD1();
+    const collect = (sourceTimestamp: string) => async (collectedAt: string) => ({
+      observations: INDEX_DEFINITIONS.map((definition) => ({
+        symbol: definition.symbol,
+        name: definition.name,
+        value: sourceTimestamp.endsWith("30:00.000Z") ? 200 : 100,
+        changePct: 1,
+        sourceTimestamp,
+        collectedAt,
+        provider: "test-provider",
+      })),
+      warnings: [],
+    });
+    await runMarketContextJob(envFor(db), new Date("2026-08-13T19:30:00Z"), { collect: collect("2026-08-13T15:30:00.000Z") });
+    await runMarketContextJob(envFor(db), new Date("2026-08-13T19:45:00Z"), { collect: collect("2026-08-13T15:15:00.000Z") });
+    expect((await readMarketContext(db as unknown as D1Database)).indices[0]).toMatchObject({ value: 200, updatedAt: "2026-08-13T15:30:00.000Z" });
   });
 
   it("keeps each read model area available when the other query fails", async () => {
@@ -236,6 +264,18 @@ describe("market context providers and persistence", () => {
     warningSpy.mockRestore();
     expect(result.status).toBe("degraded");
     expect((await readMarketContext(db as unknown as D1Database)).indices).toEqual([]);
+  });
+});
+
+describe("preview cron safety", () => {
+  it("does not run scheduled jobs outside production", async () => {
+    const db = new Proxy({} as D1Database, {
+      get: () => { throw new Error("preview attempted a D1 write"); },
+    });
+    await expect(worker.scheduled(
+      { cron: MARKET_CRON, scheduledTime: Date.parse("2026-08-13T14:00:00Z") } as ScheduledController,
+      { DB: db, ASSETS: {} as Fetcher, ENVIRONMENT: "preview" },
+    )).resolves.toBeUndefined();
   });
 });
 

@@ -126,23 +126,17 @@ async function fetchWithTimeout(fetcher: Fetcher, input: RequestInfo | URL, init
 }
 
 /**
- * FMP's documented index quote endpoint supports ^GSPC, ^NDX, ^DJI and ^VIX.
- * The adapter intentionally exposes only the small normalized contract used by
- * D1 and the UI, so changing provider does not change either boundary.
+ * Yahoo Finance's public chart endpoint is used as a temporary zero-cost
+ * adapter. It is not an official public API and has no published SLA or
+ * guaranteed quota. The normalized contract keeps this limitation isolated:
+ * replacing it must not change D1, the Worker API, or the UI.
  */
-export class FmpMarketDataProvider implements MarketDataProvider {
-  readonly name = "financial-modeling-prep";
+export class YahooFinanceMarketDataProvider implements MarketDataProvider {
+  readonly name = "yahoo-finance-chart";
 
-  constructor(
-    private readonly apiKey: string,
-    private readonly fetcher: Fetcher = fetch,
-  ) {}
+  constructor(private readonly fetcher: Fetcher = fetch) {}
 
   async collect(collectedAt: string): Promise<{ observations: MarketIndexObservation[]; warnings: string[] }> {
-    if (!this.apiKey) {
-      return { observations: [], warnings: ["FMP_API_KEY is not configured."] };
-    }
-
     const results = await Promise.all(INDEX_DEFINITIONS.map(async (definition) => {
       try {
         return { observation: await this.fetchOne(definition, collectedAt), warning: null };
@@ -161,32 +155,37 @@ export class FmpMarketDataProvider implements MarketDataProvider {
   }
 
   private async fetchOne(definition: IndexDefinition, collectedAt: string): Promise<MarketIndexObservation> {
-    const url = new URL("https://financialmodelingprep.com/stable/quote");
-    url.searchParams.set("symbol", definition.providerSymbol);
-    const response = await fetchWithTimeout(this.fetcher, url, { headers: { Accept: "application/json", apikey: this.apiKey } });
+    const url = new URL(`https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(definition.providerSymbol)}`);
+    url.searchParams.set("range", "1d");
+    url.searchParams.set("interval", "15m");
+    url.searchParams.set("includePrePost", "false");
+    const response = await fetchWithTimeout(this.fetcher, url, { headers: { Accept: "application/json" } });
     if (!response.ok) throw new Error(`provider HTTP ${response.status}`);
 
     const payload = await response.json() as unknown;
-    const row = Array.isArray(payload) ? payload[0] : payload;
-    if (!row || typeof row !== "object") throw new Error("provider returned no quote");
-    const record = row as Record<string, unknown>;
-    if (typeof record.error === "string" || typeof record["Error Message"] === "string") {
-      throw new Error(String(record.error ?? record["Error Message"]));
-    }
-
-    const value = finiteNumber(record.price);
-    const changePct = finiteNumber(record.changePercentage ?? record.changesPercentage);
-    const sourceTimestamp = toIsoTimestamp(record.timestamp, "seconds");
+    const chart = payload && typeof payload === "object" ? (payload as Record<string, unknown>).chart : null;
+    const result = chart && typeof chart === "object" ? (chart as Record<string, unknown>).result : null;
+    const row = Array.isArray(result) ? result[0] : null;
+    if (!row || typeof row !== "object") throw new Error("provider returned no chart");
+    const meta = (row as Record<string, unknown>).meta;
+    if (!meta || typeof meta !== "object") throw new Error("provider returned no metadata");
+    const record = meta as Record<string, unknown>;
+    const value = finiteNumber(record.regularMarketPrice);
+    const previousClose = finiteNumber(record.chartPreviousClose ?? record.previousClose);
+    const regularMarketTime = toIsoTimestamp(record.regularMarketTime, "seconds");
+    const changePct = value !== null && previousClose !== null && previousClose > 0
+      ? ((value - previousClose) / previousClose) * 100
+      : null;
     if (value === null || value <= 0) throw new Error("invalid price");
-    if (changePct === null) throw new Error("invalid daily change");
-    if (!sourceTimestamp) throw new Error("missing source timestamp");
+    if (changePct === null || !Number.isFinite(changePct)) throw new Error("invalid daily change");
+    if (!regularMarketTime) throw new Error("missing source timestamp");
 
     return {
       symbol: definition.symbol,
       name: definition.name,
       value,
       changePct,
-      sourceTimestamp,
+      sourceTimestamp: regularMarketTime,
       collectedAt,
       provider: this.name,
     };
@@ -486,7 +485,7 @@ export async function readMarketContext(db: D1Database): Promise<MarketContextRe
 export async function runMarketContextJob(
   env: Env,
   scheduledTime: Date,
-  provider: MarketDataProvider = new FmpMarketDataProvider(env.FMP_API_KEY ?? ""),
+  provider: MarketDataProvider = new YahooFinanceMarketDataProvider(),
 ): Promise<{ status: "ok" | "degraded" | "skipped"; detail: string }> {
   const window = marketCollectionWindow(scheduledTime);
   if (!window) return { status: "skipped", detail: "outside_market_collection_window" };
