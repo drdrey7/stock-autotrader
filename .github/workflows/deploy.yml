@@ -6,27 +6,13 @@ on:
     tags-ignore: ["**"]
   pull_request_target:
     types: [opened, synchronize, reopened]
-  workflow_dispatch:
-    inputs:
-      preview_branch:
-        description: "Feature branch to preview"
-        required: true
-        type: string
-      preview_sha:
-        description: "Commit SHA to deploy"
-        required: true
-        type: string
-      pr_number:
-        description: "PR number to update"
-        required: true
-        type: string
 
 permissions:
   contents: read
   pull-requests: write
 
 concurrency:
-  group: deploy-${{ github.ref }}
+  group: deploy-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -38,7 +24,7 @@ jobs:
         with:
           # Preview deploys use the PR source, while the workflow itself is
           # loaded from the trusted base branch via pull_request_target.
-          ref: ${{ github.event.pull_request.head.sha || inputs.preview_sha || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -54,36 +40,33 @@ jobs:
           npm run typecheck
           npm test
       - name: Apply remote D1 migrations (production only)
-        if: github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         working-directory: apps/web
         run: npm run db:migrate
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       - name: Deploy preview (pull requests)
-        if: github.event_name == 'pull_request_target' || github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name == github.repository
         id: preview
         working-directory: apps/web
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          PREVIEW_BRANCH: ${{ github.event.pull_request.head.ref || inputs.preview_branch || github.ref_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          BRANCH_SLUG="$(printf '%s' "${PREVIEW_BRANCH}" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9-' '-')"
-          if (( ${#BRANCH_SLUG} > 29 )); then
-            BRANCH_HASH="$(printf '%s' "${PREVIEW_BRANCH}" | sha256sum | cut -c1-6)"
-            BRANCH_SLUG="${BRANCH_SLUG:0:22}"
-            BRANCH_SLUG="${BRANCH_SLUG%-}-${BRANCH_HASH}"
-          fi
-          WORKER="stock-autotrader-preview-${BRANCH_SLUG}"
+          WORKER="stock-autotrader-preview-pr-${PR_NUMBER}"
           npx --yes wrangler@4 deploy --config wrangler.preview.jsonc --name "${WORKER}"
           echo "url=https://${WORKER}.barroso-labs.workers.dev" >> "$GITHUB_OUTPUT"
+      - name: Preview skipped for fork PR
+        if: github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name != github.repository
+        run: echo "preview skipped for security"
       - name: Comment preview URL on PR
-        if: github.event_name == 'pull_request_target' || github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name == github.repository
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PREVIEW_URL: ${{ steps.preview.outputs.url }}
-          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           if [ -n "$PR_NUMBER" ] && [ "$PR_NUMBER" != "null" ]; then
             ID="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments?per_page=100" --jq '[.[] | select(.user.login == "github-actions[bot]" and (.body | contains("Preview live"))) | .id][0]' 2>/dev/null || echo '')"
@@ -94,7 +77,7 @@ jobs:
             fi
           fi
       - name: Deploy production (main only)
-        if: github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         working-directory: apps/web
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

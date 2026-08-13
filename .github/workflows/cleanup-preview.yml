@@ -12,20 +12,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - name: Preview cleanup skipped for fork PR
+        if: github.event.pull_request.head.repo.full_name != github.repository
+        run: echo "preview cleanup skipped for fork PR"
       - name: Delete preview Worker for merged/closed PR
+        if: github.event.pull_request.head.repo.full_name == github.repository
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          PREVIEW_BRANCH: ${{ github.head_ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          BRANCH_SLUG="$(printf '%s' "${PREVIEW_BRANCH}" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9-' '-')"
-          if (( ${#BRANCH_SLUG} > 29 )); then
-            BRANCH_HASH="$(printf '%s' "${PREVIEW_BRANCH}" | sha256sum | cut -c1-6)"
-            BRANCH_SLUG="${BRANCH_SLUG:0:22}"
-            BRANCH_SLUG="${BRANCH_SLUG%-}-${BRANCH_HASH}"
-          fi
-          WORKER="stock-autotrader-preview-${BRANCH_SLUG}"
+          WORKER="stock-autotrader-preview-pr-${PR_NUMBER}"
           echo "Deleting preview Worker: ${WORKER}"
           if [[ "${WORKER}" == "stock-autotrader-web" ]] || [[ "${WORKER}" != "stock-autotrader-preview-"* ]]; then
             echo "Refusing to delete non-preview Worker" >&2
