@@ -189,6 +189,10 @@ class MarketContextJobTests(unittest.TestCase):
                     self.assertEqual(publish.call_count, 1)
                     market_indices_job(settings, store, now=datetime(2026, 8, 13, 16, 20))
                     self.assertEqual(publish.call_count, 1)
+                    # A skipped close_already_published run must not clear the
+                    # marker for the next run of the day.
+                    market_indices_job(settings, store, now=datetime(2026, 8, 13, 16, 35))
+                    self.assertEqual(publish.call_count, 1)
                 status = self._status(store, "market_indices")
                 self.assertEqual(status["status"], "skipped")
                 self.assertEqual(status["detail"], "close_already_published")

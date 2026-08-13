@@ -319,6 +319,31 @@ const JSON_HEADERS = {
 
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: JSON_HEADERS });
 
+/**
+ * Merge a MARKET_DATA_UPDATED payload into the stored snapshot instead of
+ * replacing it wholesale: the hourly screening job publishes the universe and
+ * benchmark bars while the intraday job publishes the live index context.
+ * Each must preserve what the other owns rather than erasing it.
+ */
+async function mergeMarketDataSnapshot(
+  db: D1Database,
+  incoming: z.infer<typeof marketDataSchema>,
+): Promise<z.infer<typeof marketDataSchema>> {
+  try {
+    const row = await db.prepare("SELECT value FROM app_meta WHERE key = 'marketData'").first<{ value: string | null }>();
+    if (!row?.value) return incoming;
+    const existing = marketDataSchema.safeParse(JSON.parse(row.value));
+    if (!existing.success) return incoming;
+    const prev = existing.data;
+    const universe = incoming.universe.total === 0 && prev.universe.total > 0 ? prev.universe : incoming.universe;
+    const benchmarks = incoming.benchmarks.length === 0 && prev.benchmarks.length > 0 ? prev.benchmarks : incoming.benchmarks;
+    const indices = incoming.indices && incoming.indices.length > 0 ? incoming.indices : prev.indices;
+    return { ...incoming, universe, benchmarks, indices };
+  } catch {
+    return incoming;
+  }
+}
+
 async function hmacHex(secret: string, timestamp: string, body: string): Promise<string> {
   const key = await crypto.subtle.importKey(
     "raw",
@@ -586,6 +611,10 @@ export async function handleIngest(request: Request, env: Env): Promise<Response
     }
 
     try {
+      if (event.type === "MARKET_DATA_UPDATED") {
+        const merged = await mergeMarketDataSnapshot(env.DB, event.payload);
+        event = { ...event, payload: merged } as IngestEvent;
+      }
       const stmts = buildStatements(event);
       if (stmts.length > 0) {
         await env.DB.batch(stmts.map(([sql, args]) => env.DB.prepare(sql).bind(...args)));

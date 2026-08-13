@@ -8,7 +8,7 @@ Cadence (approved with André):
 from __future__ import annotations
 
 import json
-from datetime import datetime, time
+from datetime import datetime, time, timezone
 from zoneinfo import ZoneInfo
 
 from ..config import Settings
@@ -56,14 +56,15 @@ def market_indices_job(
             store.finish_job(run_id, "skipped", "after_close_window")
             return
 
-        # Post-close: publish the final snapshot exactly once per day.
+        # Post-close: publish the final snapshot exactly once per day. Any
+        # earlier completed run of today may carry the marker — a skipped
+        # close_already_published run must not clear it.
         if ny.time() >= _SESSION_END:
-            last = store.last_finished_job_status("market_indices")
-            if last and f"close_published:{ny.date().isoformat()}" in str(last.get("detail") or ""):
+            if store.has_finished_job_detail("market_indices", f"close_published:{ny.date().isoformat()}"):
                 store.finish_job(run_id, "skipped", "close_already_published")
                 return
 
-        snapshot = YfinanceMarketContextProvider().build_snapshot(now=datetime.now())
+        snapshot = YfinanceMarketContextProvider().build_snapshot(now=datetime.now(timezone.utc))
         detail = json.dumps(snapshot.public_dict(), sort_keys=True)
         if snapshot.status == "healthy":
             store.record_event("INFO", "market_indices", f"Indices healthy: {len(snapshot.benchmarks)} benchmarks, {len(snapshot.indices)} indices")
@@ -97,7 +98,7 @@ def sentiment_job(
             store.finish_job(run_id, "skipped", "weekend")
             return
 
-        reading = CnnFearGreedProvider().fetch(now=datetime.now())
+        reading = CnnFearGreedProvider().fetch(now=datetime.now(timezone.utc))
         detail = json.dumps({
             "provider": reading.provider,
             "score": reading.score,

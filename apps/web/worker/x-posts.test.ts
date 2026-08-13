@@ -35,6 +35,11 @@ class FakeStatement {
       const eventId = String(this.args[0]);
       return this.db.events.has(eventId) ? ({ event_id: eventId } as T) : null;
     }
+    if (this.sql.includes("FROM app_meta")) {
+      const match = this.sql.match(/key = '([^']+)'/);
+      const value = match ? this.db.meta.get(match[1]!) : undefined;
+      return (value === undefined ? null : { value }) as T | null;
+    }
     throw new Error(`Unhandled SELECT: ${this.sql}`);
   }
 
@@ -715,6 +720,69 @@ describe("ingest X_POSTS_COLLECTED", () => {
     const laterResponse = await handleIngest(laterLexically, env(db));
     expect(((await laterResponse.json()) as { applied: string[] }).applied).toEqual(["earn-offset-0002"]);
     expect(db.meta.get("earningsUpdatedAt")).toBe("2026-08-13T12:00:00.000Z");
+  });
+
+  it("merges the index context with the screening snapshot instead of replacing it", async () => {
+    const db = new FakeD1();
+    const scanSnapshot = {
+      provider: "csv",
+      status: "healthy" as const,
+      asOf: "2026-08-13",
+      lastSuccessfulUpdate: "2026-08-13T15:00:00Z",
+      universe: { total: 100, eligible: 80, excluded: 20 },
+      benchmarks: [
+        { symbol: "SPY", date: "2026-08-13", open: 1, high: 2, low: 0.9, close: 1.5, adjustedClose: 1.5, volume: 1000 },
+        { symbol: "QQQ", date: "2026-08-13", open: 2, high: 3, low: 1.9, close: 2.5, adjustedClose: 2.5, volume: 900 },
+      ],
+      warnings: [],
+      updatedAt: "2026-08-13T15:00:00Z",
+    };
+    const scanResponse = await handleIngest(await signedRequest({
+      events: [{ type: "MARKET_DATA_UPDATED", event_id: "mkt-scan-0001", timestamp: new Date().toISOString(), payload: scanSnapshot }],
+    }), env(db));
+    expect(((await scanResponse.json()) as { applied: string[] }).applied).toEqual(["mkt-scan-0001"]);
+    expect(JSON.parse(db.meta.get("marketData")!).universe).toEqual({ total: 100, eligible: 80, excluded: 20 });
+
+    // The intraday index-context snapshot carries no universe of its own; it
+    // must keep the screening universe and add the live indices.
+    const indexSnapshot = {
+      provider: "yfinance",
+      status: "healthy" as const,
+      asOf: "2026-08-13",
+      lastSuccessfulUpdate: "2026-08-13T15:30:00Z",
+      universe: { total: 0, eligible: 0, excluded: 0 },
+      benchmarks: [
+        { symbol: "SPY", date: "2026-08-13", open: 1, high: 2, low: 0.9, close: 1.5, adjustedClose: 1.5, volume: 1000 },
+        { symbol: "QQQ", date: "2026-08-13", open: 2, high: 3, low: 1.9, close: 2.5, adjustedClose: 2.5, volume: 900 },
+      ],
+      indices: [
+        { symbol: "SPX", name: "S&P 500", value: 6427.18, change: 0.62, updatedAt: "2026-08-13T15:30:00Z" },
+        { symbol: "NDX", name: "Nasdaq", value: 23724.31, change: 0.78, updatedAt: "2026-08-13T15:30:00Z" },
+        { symbol: "DJI", name: "Dow Jones", value: 45118.26, change: 0.48, updatedAt: "2026-08-13T15:30:00Z" },
+        { symbol: "VIX", name: "VIX", value: 15.41, change: -1.26, updatedAt: "2026-08-13T15:30:00Z" },
+      ],
+      warnings: [],
+      updatedAt: "2026-08-13T15:30:00Z",
+    };
+    const indexResponse = await handleIngest(await signedRequest({
+      events: [{ type: "MARKET_DATA_UPDATED", event_id: "mkt-idx-0002", timestamp: new Date().toISOString(), payload: indexSnapshot }],
+    }), env(db));
+    expect(((await indexResponse.json()) as { applied: string[] }).applied).toEqual(["mkt-idx-0002"]);
+    const merged = JSON.parse(db.meta.get("marketData")!);
+    expect(merged.universe).toEqual({ total: 100, eligible: 80, excluded: 20 });
+    expect(merged.indices).toHaveLength(4);
+    expect(merged.provider).toBe("yfinance");
+
+    // And the other way around: a later screening snapshot without indices
+    // must not erase the live index context.
+    const secondScan = { ...scanSnapshot, lastSuccessfulUpdate: "2026-08-13T16:00:00Z", updatedAt: "2026-08-13T16:00:00Z" };
+    const scan2Response = await handleIngest(await signedRequest({
+      events: [{ type: "MARKET_DATA_UPDATED", event_id: "mkt-scan-0003", timestamp: new Date().toISOString(), payload: secondScan }],
+    }), env(db));
+    expect(((await scan2Response.json()) as { applied: string[] }).applied).toEqual(["mkt-scan-0003"]);
+    const afterScan = JSON.parse(db.meta.get("marketData")!);
+    expect(afterScan.universe).toEqual({ total: 100, eligible: 80, excluded: 20 });
+    expect(afterScan.indices).toHaveLength(4);
   });
 
   it("stores sentiment and never regresses on an older reading", async () => {
