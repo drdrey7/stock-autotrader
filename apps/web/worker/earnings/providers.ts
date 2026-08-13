@@ -384,9 +384,9 @@ function parseSecMasterIndex(
     const match = line.match(/^(\d+)\|([^|]*)\|([^|]+)\|(\d{4}-\d{2}-\d{2})\|(.+)$/);
     if (!match) continue;
     const cik = padCik(match[1]);
-    const form = match[3].trim();
-    const filedDate = dateKey(match[4]);
-    const filename = match[5].trim();
+    const form = match[3]!.trim();
+    const filedDate = dateKey(match[4]!);
+    const filename = match[5]!.trim();
     const accession = filename.match(/(\d{10}-\d{2}-\d{6})/)?.[1] ?? null;
     if (!cik || !filedDate || filedDate < range.from || filedDate > range.to || !accession) continue;
     if (!SEC_CALENDAR_FORMS.has(form.replace(/\/A$/, "")) || seen.has(accession)) continue;
