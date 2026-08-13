@@ -3,6 +3,7 @@ name: Deploy
 on:
   push:
     branches: [main]
+    tags-ignore: ["**"]
   pull_request_target:
     types: [opened, synchronize, reopened]
   workflow_dispatch:
@@ -19,8 +20,6 @@ on:
         description: "PR number to update"
         required: true
         type: string
-    tags-ignore: ["**"]
-  workflow_dispatch:
 
 permissions:
   contents: read
