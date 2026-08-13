@@ -473,6 +473,66 @@ it("drops previous Live health when a later status response omits sources", asyn
   expect(view.container.querySelectorAll(".market-card .data-source.live")).toHaveLength(0);
 });
 
+it("does not let an older refreshX overwrite newer posts after its status fetch", async () => {
+  let postsCalls = 0;
+  let statusCalls = 0;
+  let releaseFirstPosts: ((response: Response) => void) | null = null;
+  let releaseOldStatus: ((response: Response) => void) | null = null;
+  const liveXSource = {
+    provider: "x-search collector", state: "Live", asOf: "2026-08-12T21:00:00Z",
+    ageSeconds: 5400, staleAfterSeconds: 604800,
+    lastSuccess: "2026-08-12T21:00:00Z", lastAttempt: "2026-08-12T21:00:00Z", error: null,
+  };
+  const staleXSource = {
+    provider: "x-search collector", state: "Stale", asOf: "2026-08-10T09:00:00Z",
+    ageSeconds: 172800, staleAfterSeconds: 604800,
+    lastSuccess: "2026-08-10T09:00:00Z", lastAttempt: "2026-08-10T09:00:00Z", error: null,
+  };
+  const statusPayload = (sources: Record<string, unknown>) => ({
+    candidates: [],
+    briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt },
+    sources,
+  });
+  const post = (id: string, text: string, created_at: string) => ({
+    id, author: "@nolimitgains", text, created_at, url: `https://x.com/nolimitgains/status/${id}`,
+    symbol: null, company: null, price: null, change: null,
+  });
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === "/api/briefs/latest") return new Response(JSON.stringify(briefing), { status: 200 });
+    if (url === "/api/earnings") return new Response(JSON.stringify([]), { status: 200 });
+    if (url.startsWith("/api/x/posts")) {
+      postsCalls += 1;
+      if (postsCalls === 1) {
+        return new Promise<Response>((resolve) => { releaseFirstPosts = resolve; });
+      }
+      return new Response(JSON.stringify({ posts: [post("newer", "Post B", "2026-08-12T20:30:00Z")], count: 1 }), { status: 200 });
+    }
+    if (url === "/api/status") {
+      statusCalls += 1;
+      // The status fetch that follows the FIRST posts call belongs to the old
+      // refreshX invocation; hold it until the newer one has completed.
+      if (statusCalls === 3) {
+        return new Promise<Response>((resolve) => { releaseOldStatus = resolve; });
+      }
+      return new Response(JSON.stringify(statusPayload({ x: liveXSource })), { status: 200 });
+    }
+    return new Response(null, { status: 404 });
+  });
+
+  const view = renderApp();
+  await waitFor(() => expect(postsCalls).toBe(1));
+  releaseFirstPosts!(new Response(JSON.stringify({ posts: [post("older", "Post A", "2026-08-12T21:00:00Z")], count: 1 }), { status: 200 }));
+  await waitFor(() => expect(statusCalls).toBe(3));
+  document.dispatchEvent(new Event("visibilitychange"));
+  await waitFor(() => expect(view.container.querySelector(".x-preview .section-title .data-source.live")).not.toBeNull());
+  releaseOldStatus!(new Response(JSON.stringify(statusPayload({ x: staleXSource })), { status: 200 }));
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(screen.getByText("Post B")).toBeInTheDocument();
+  expect(screen.queryByText("Post A")).not.toBeInTheDocument();
+  expect(view.container.querySelector(".x-preview .section-title .data-source.live")).not.toBeNull();
+});
+
 it("does not show mock X posts after a successful empty feed", async () => {
   const originalFetch = vi.mocked(fetch).getMockImplementation()!;
   vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {

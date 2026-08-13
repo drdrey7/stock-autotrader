@@ -183,7 +183,7 @@ export function buildMarketSourceHealth(market: MarketDataSnapshot, nowMs = Date
   });
 }
 
-async function buildSources(
+export async function buildSources(
   env: Env,
   options: {
     briefing: BriefingStatus;
@@ -198,9 +198,10 @@ async function buildSources(
   let xLastSuccess: string | null = null;
   let xError: string | null = null;
   try {
-    const rows = await readXPosts(env.DB, { limit: 1 });
-    const latest = rows[0];
-    xLastSuccess = latest?.collected_at ? new Date(latest.collected_at).toISOString() : null;
+    // Freshness follows the latest collection, not the newest-created post:
+    // posts collected/backfilled out of creation order must not keep X stale.
+    const row = await env.DB.prepare("SELECT MAX(collected_at) AS collected_at FROM x_posts").first<{ collected_at: string | null }>();
+    xLastSuccess = row?.collected_at ? new Date(row.collected_at).toISOString() : null;
   } catch {
     xError = "X store is unavailable.";
   }
@@ -215,10 +216,16 @@ async function buildSources(
   }
 
   const lastDataUpdate = options.dashboard.status.lastDataUpdate;
+  const scanCompletedAt = options.dashboard.status.latestScan;
   const scanCandidateUpdatedAt = options.dashboard.candidates
     .map((candidate) => parseSafeTimestamp(candidate.updatedAt))
     .filter((value): value is number => value !== null)
     .reduce<number | null>((latest, value) => latest === null || value > latest ? value : latest, null);
+  // A completed scan with zero qualifying candidates is a successful run, not
+  // an error: fall back to the scan completion time for freshness.
+  const scanSuccessAt = scanCandidateUpdatedAt !== null
+    ? new Date(scanCandidateUpdatedAt).toISOString()
+    : scanCompletedAt;
 
   const sources = {
     briefing: buildSourceHealth(brief.publishedAt, brief.publishedAt, {
@@ -228,10 +235,10 @@ async function buildSources(
       nowMs,
     }),
     market: buildMarketSourceHealth(market, nowMs),
-    opportunities: buildSourceHealth(scanCandidateUpdatedAt ? new Date(scanCandidateUpdatedAt).toISOString() : null, lastDataUpdate, {
+    opportunities: buildSourceHealth(scanSuccessAt, lastDataUpdate, {
       provider: "scan engine",
       staleAfterSeconds: HEALTHY_STALE_AFTER_SECONDS,
-      error: scanCandidateUpdatedAt === null ? "No fresh scan candidates are available." : null,
+      error: scanSuccessAt === null ? "No scan has completed." : null,
       nowMs,
     }),
     x: buildSourceHealth(xLastSuccess, xLastSuccess, {

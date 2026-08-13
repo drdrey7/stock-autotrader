@@ -2,8 +2,9 @@ import { describe, expect, it } from "vitest";
 import { demoData } from "@stock-autotrader/contracts/src/demo-data";
 import { exampleDailyBriefing } from "../src/daily-briefing-example";
 import { dashboardReadSchema, eventSchema, marketDataSchema } from "./ingest";
-import { buildMarketSourceHealth, buildSourceHealth, normalizeDirection, validateSourceHealth } from "./index";
-import { publicSourceHealthSchema, sourceHealthSchema, type SourceHealth } from "@stock-autotrader/contracts";
+import { buildMarketSourceHealth, buildSourceHealth, buildSources, normalizeDirection, validateSourceHealth } from "./index";
+import { publicSourceHealthSchema, sourceHealthSchema, type DashboardData, type SourceHealth } from "@stock-autotrader/contracts";
+import type { Env } from "./index";
 
 const base = {
   event_id: "scan-test-0001",
@@ -296,5 +297,79 @@ describe("ingest event schema (publication contract)", () => {
       payload: { items: Array.from({ length: 501 }, (_, i) => ({ symbol: `S${i}`, company: "X", date: "2026-01-01", timing: "BMO", eventSignal: "Confirmed", engineRelevant: false, signal: null, strategy: null, hasPosition: false, tracked: false, updatedAt: "2026-01-01T00:00:00Z" })) },
     })).toThrow();
     expect(() => eventSchema.parse({ ...base, type: "SIGNAL_SURFACED", payload: { symbol: "DROP TABLE;", company: "X", quantScore: 50, strategyId: "s", strategyVersion: "1", strategy: "S", trend: "Strong", status: "Watch", direction: "Long", riskFlags: [], updatedAt: "x" } })).toThrow();
+  });
+});
+
+describe("buildSources (source health assembly)", () => {
+  const nowMs = Date.parse("2026-08-13T12:00:00Z");
+  const briefing = {
+    available: true,
+    freshness: "fresh" as const,
+    editionDate: "2026-08-13",
+    editionType: "pre_market" as const,
+    preparedAt: "2026-08-13T10:00:00Z",
+    publishedAt: "2026-08-13T10:00:00Z",
+    ageSeconds: 120,
+  };
+  const envFor = (firsts: Record<string, unknown>, seenSql: string[] = []) => ({
+    DB: {
+      prepare(sql: string) {
+        seenSql.push(sql);
+        return {
+          bind() { return this; },
+          async first<T>(): Promise<T | null> {
+            if (sql.includes("FROM x_posts")) return (firsts.x ?? null) as T | null;
+            if (sql.includes("FROM earnings")) return (firsts.earnings ?? null) as T | null;
+            throw new Error(`Unhandled SELECT: ${sql}`);
+          },
+        };
+      },
+    },
+  });
+
+  it("treats a completed empty scan as a successful opportunities source", async () => {
+    const dashboard = {
+      ...demoData,
+      status: {
+        ...demoData.status,
+        latestScan: "2026-08-13T11:00:00Z",
+        lastDataUpdate: "2026-08-13T11:00:00Z",
+      },
+      candidates: [],
+    };
+    const sources = await buildSources(envFor({}) as unknown as Env, { briefing, dashboard: dashboard as unknown as DashboardData, nowMs });
+    expect(sources.opportunities.state).toBe("Live");
+    expect(sources.opportunities.error).toBeNull();
+    expect(sources.opportunities.lastSuccess).toBe("2026-08-13T11:00:00.000Z");
+  });
+
+  it("marks opportunities Error only when no scan has ever completed", async () => {
+    const dashboard = {
+      ...demoData,
+      status: { ...demoData.status, latestScan: null, lastDataUpdate: null },
+      candidates: [],
+    };
+    const sources = await buildSources(envFor({}) as unknown as Env, { briefing, dashboard: dashboard as unknown as DashboardData, nowMs });
+    expect(sources.opportunities.state).toBe("Error");
+    expect(sources.opportunities.error).toContain("No scan has completed");
+  });
+
+  it("derives X freshness from the latest collection time", async () => {
+    const seenSql: string[] = [];
+    const sources = await buildSources(
+      envFor({ x: { collected_at: "2026-08-13T11:30:00Z" } }, seenSql) as unknown as Env,
+      { briefing, dashboard: demoData, nowMs },
+    );
+    expect(seenSql.some((sql) => sql.includes("MAX(collected_at)") && sql.includes("FROM x_posts"))).toBe(true);
+    expect(sources.x.state).toBe("Live");
+    expect(sources.x.lastSuccess).toBe("2026-08-13T11:30:00.000Z");
+  });
+
+  it("classifies an old collection as Stale, not Live", async () => {
+    const sources = await buildSources(
+      envFor({ x: { collected_at: "2026-08-01T00:00:00Z" } }) as unknown as Env,
+      { briefing, dashboard: demoData, nowMs },
+    );
+    expect(sources.x.state).toBe("Stale");
   });
 });

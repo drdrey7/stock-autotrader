@@ -445,6 +445,9 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
       if (cancelled || currentRequest !== xRequestId) return;
       const liveX = response && Array.isArray(response.posts) ? xPostsFromApi(response.posts) : null;
       const status = await fetchJson<StatusResponse>("/api/status");
+      // Re-check after the second await: a newer invocation may have started
+      // while this one was fetching status, and must not be overwritten.
+      if (cancelled || currentRequest !== xRequestId) return;
       setData((previous) => {
         const cached = recentCachedPosts([...readStoredXPosts(), ...previous.xPosts]);
         const liveHandles = new Set((liveX ?? []).map((post) => post.handle.toLowerCase()));
@@ -481,6 +484,9 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
       if (cancelled || currentRequest !== earningsRequestId) return;
       const apiEarnings = Array.isArray(response) ? earningsFromApi(response) : null;
       const status = await fetchJson<StatusResponse>("/api/status");
+      // Re-check after the second await: a newer invocation may have started
+      // while this one was fetching status, and must not be overwritten.
+      if (cancelled || currentRequest !== earningsRequestId) return;
       setData((previous) => {
         const sources = mergeSources(status?.sources);
         if (apiEarnings === null) sources.earnings = unavailableSource("Backend is unreachable.");
