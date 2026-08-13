@@ -192,18 +192,34 @@ function marketFromSnapshot(snapshot: MarketDataSnapshot | null | undefined): Ma
   const publishedAt = Date.parse(snapshot.lastSuccessfulUpdate ?? "");
   const ageMs = Date.now() - publishedAt;
   if (!Number.isFinite(publishedAt) || ageMs < -5 * 60_000 || ageMs > 26 * 60 * 60_000) return null;
-  const mapped = snapshot.benchmarks.map((benchmark) => {
-    const isQqq = benchmark.symbol.toUpperCase().includes("QQQ");
+  // The market-data pipeline currently publishes ETF proxies (SPY/QQQ).
+  // Never label those dollar prices as index levels: only accept explicit
+  // index symbols here. The cards remain visible with Not available until
+  // the backend publishes a matching index benchmark.
+  const benchmarkNames: Record<string, { name: string; symbol: string }> = {
+    SPX: { name: "S&P 500", symbol: "SPX" },
+    "^GSPC": { name: "S&P 500", symbol: "SPX" },
+    NDX: { name: "Nasdaq", symbol: "NDX" },
+    "^NDX": { name: "Nasdaq", symbol: "NDX" },
+    DJI: { name: "Dow Jones", symbol: "DJI" },
+    "^DJI": { name: "Dow Jones", symbol: "DJI" },
+    VIX: { name: "VIX", symbol: "VIX" },
+    "^VIX": { name: "VIX", symbol: "VIX" },
+  };
+  const mapped = snapshot.benchmarks.flatMap((benchmark) => {
+    const symbol = benchmark.symbol.toUpperCase().split(":").at(-1) ?? benchmark.symbol.toUpperCase();
+    const identity = benchmarkNames[symbol];
+    if (!identity || !Number.isFinite(benchmark.close)) return [];
     const change = benchmark.open ? ((benchmark.close - benchmark.open) / benchmark.open) * 100 : 0;
-    return {
-      name: isQqq ? "Nasdaq" : "S&P 500",
-      symbol: benchmark.symbol,
+    return [{
+      ...identity,
       value: benchmark.close,
       decimals: 2,
       change,
       source: "live" as const,
-    };
+    }];
   });
+  if (mapped.length === 0) return null;
   return mapped.slice(0, 4);
 }
 

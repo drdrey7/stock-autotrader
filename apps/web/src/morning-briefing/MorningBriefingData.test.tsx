@@ -90,7 +90,12 @@ it("starts financially actionable sections empty when the backend has no data", 
   const view = renderApp();
 
   expect(await screen.findByText("Market data")).toBeInTheDocument();
-  expect(view.container.querySelectorAll(".market-card")).toHaveLength(0);
+  expect(view.container.querySelectorAll(".market-card")).toHaveLength(4);
+  expect(view.container.querySelector(".market-grid")).toHaveTextContent("S&P 500");
+  expect(view.container.querySelector(".market-grid")).toHaveTextContent("Nasdaq");
+  expect(view.container.querySelector(".market-grid")).toHaveTextContent("Dow Jones");
+  expect(view.container.querySelector(".market-grid")).toHaveTextContent("VIX");
+  expect(view.container.querySelector(".market-grid")).toHaveTextContent("Not available");
   expect(view.container.querySelectorAll(".opportunity-row")).toHaveLength(0);
   expect(view.container.querySelector(".opportunities-card .empty-state")).toHaveTextContent("No qualified opportunities");
   expect(view.container).not.toHaveTextContent("6,427.18");
@@ -130,17 +135,18 @@ it("preserves a Unicode minus when rendering negative moves", async () => {
   expect(screen.queryByText("+-1.25%")).not.toBeInTheDocument();
 });
 
-it("does not add an unsupported Dow benchmark to a live briefing", async () => {
+it("keeps every benchmark card visible while unsupported values stay unavailable", async () => {
   const view = renderApp();
-  await waitFor(() => expect(view.container.querySelectorAll(".market-card")).toHaveLength(3));
+  await waitFor(() => expect(view.container.querySelectorAll(".market-card")).toHaveLength(4));
   expect(view.container.querySelector(".market-card")).toHaveTextContent("S&P 500");
-  expect(view.container).not.toHaveTextContent("Dow Jones");
+  expect(view.container).toHaveTextContent("Dow Jones");
+  expect(view.container.querySelectorAll(".market-card")[2]).toHaveTextContent("Not available");
   expect(view.container).not.toHaveTextContent("45,118.26");
 });
 
 it("does not fill a live market snapshot with unsupported mock benchmarks", async () => {
   const snapshot = {
-    provider: "market-api", status: "healthy", asOf: "2026-08-12T20:00:00Z",
+    provider: "market-api", status: "healthy", asOf: "2026-08-12",
     lastSuccessfulUpdate: "2026-08-12T20:00:00Z",
     universe: { total: 2, eligible: 2, excluded: 0 },
     benchmarks: [
@@ -157,9 +163,42 @@ it("does not fill a live market snapshot with unsupported mock benchmarks", asyn
   });
 
   const view = renderApp();
-  await waitFor(() => expect(view.container.querySelectorAll(".market-card")).toHaveLength(2));
-  expect(view.container).not.toHaveTextContent("Dow Jones");
-  expect(view.container).not.toHaveTextContent("VIX");
+  await waitFor(() => expect(view.container.querySelectorAll(".market-card")).toHaveLength(4));
+  expect(view.container.querySelectorAll(".market-card")[0]).toHaveTextContent("Not available");
+  expect(view.container.querySelectorAll(".market-card")[1]).toHaveTextContent("Not available");
+  expect(view.container).toHaveTextContent("Dow Jones");
+  expect(view.container).toHaveTextContent("VIX");
+  expect(view.container.querySelectorAll(".market-card")[2]).toHaveTextContent("Not available");
+  expect(view.container.querySelectorAll(".market-card")[3]).toHaveTextContent("Not available");
+  expect(view.container).not.toHaveTextContent("642.00");
+  expect(view.container).not.toHaveTextContent("573.00");
+});
+
+it("uses an API snapshot only when it contains explicit index benchmarks", async () => {
+  const snapshot = {
+    provider: "market-api", status: "healthy", asOf: "2026-08-12",
+    lastSuccessfulUpdate: "2026-08-12T20:00:00Z",
+    universe: { total: 2, eligible: 2, excluded: 0 },
+    benchmarks: [
+      { symbol: "SP:SPX", date: "2026-08-12", open: 6400, high: 6450, low: 6390, close: 6420, adjustedClose: 6420, volume: 1 },
+      { symbol: "NASDAQ:NDX", date: "2026-08-12", open: 23700, high: 23800, low: 23600, close: 23750, adjustedClose: 23750, volume: 1 },
+    ],
+    warnings: [], updatedAt: "2026-08-12T20:00:00Z",
+  };
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === "/api/status") return new Response(JSON.stringify({ candidates: [] }), { status: 200 });
+    if (url === "/api/market-data") return new Response(JSON.stringify(snapshot), { status: 200 });
+    return new Response(null, { status: 404 });
+  });
+
+  const view = renderApp();
+  await waitFor(() => expect(view.container.querySelectorAll(".market-card")[0]).not.toHaveTextContent("Not available"));
+  expect(view.container.querySelectorAll(".market-card")[0]).toHaveTextContent("SPX");
+  expect(view.container.querySelectorAll(".market-card")[1]).toHaveTextContent("NDX");
+  expect(view.container.querySelectorAll(".market-card")[1]).not.toHaveTextContent("Not available");
+  expect(view.container.querySelectorAll(".market-card")[2]).toHaveTextContent("Not available");
+  expect(view.container.querySelectorAll(".market-card")[3]).toHaveTextContent("Not available");
 });
 
 it("clears opportunities when the healthy candidate snapshot is explicitly empty", async () => {
@@ -357,7 +396,8 @@ it("rejects an old briefing even when its status still says fresh", async () => 
 
   const view = renderApp();
   await waitFor(() => expect(view.container.querySelector(".market-status")).toHaveTextContent("Not available"));
-  expect(view.container.querySelectorAll(".market-card")).toHaveLength(0);
+  expect(view.container.querySelectorAll(".market-card")).toHaveLength(4);
+  expect(view.container.querySelector(".market-grid")).toHaveTextContent("Not available");
   expect(view.container.querySelector(".opportunity-row")).toBeNull();
   expect(screen.getByText("WEDNESDAY · 12 AUGUST")).toBeInTheDocument();
 });
@@ -389,7 +429,7 @@ it("clears expired financial data after the backend stops publishing", async () 
   coreAvailable = false;
   vi.mocked(Date.now).mockReturnValue(Date.parse("2026-08-14T01:00:00Z"));
   document.dispatchEvent(new Event("visibilitychange"));
-  await waitFor(() => expect(view.container.querySelectorAll(".market-card")).toHaveLength(0));
+  await waitFor(() => expect(view.container.querySelectorAll(".market-card")).toHaveLength(4));
   expect(view.container.querySelector(".opportunity-row")).toBeNull();
   expect(view.container.querySelector(".market-status")).toHaveTextContent("Not available");
 });
@@ -463,7 +503,7 @@ it("renders zero market movement as flat without an upward arrow", async () => {
 
 it("rejects a degraded market snapshot instead of labelling stale prices live", async () => {
   const degradedSnapshot = {
-    provider: "cache", status: "degraded", asOf: "2026-08-10T16:00:00Z",
+    provider: "cache", status: "degraded", asOf: "2026-08-10",
     lastSuccessfulUpdate: "2026-08-10T16:00:00Z",
     universe: { total: 1, eligible: 1, excluded: 0 },
     benchmarks: [{ symbol: "SPY", date: "2026-08-10", open: 9000, high: 10000, low: 8900, close: 9999, adjustedClose: 9999, volume: 1 }],

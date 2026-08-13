@@ -6,7 +6,7 @@ import {
   Check, ChevronLeft, ChevronRight, ExternalLink, Heart, MessageCircle, Moon,
   Repeat2, Sun, TrendingUp, X,
 } from "lucide-react";
-import { quickStats } from "./data/market";
+import { marketIndexes as marketCardDefinitions, quickStats } from "./data/market";
 import { type Opportunity } from "./data/opportunities";
 import { trackedXAccounts, type XPost } from "./data/xSurge";
 import { takeaways, type EarningsCompany } from "./data/earnings";
@@ -82,8 +82,22 @@ function AnimatedValue({ value, decimals = 2 }: { value: number; decimals?: numb
 }
 
 function MarketCards() {
-  const { marketIndexes } = useMorningBriefingData();
-  return <div className="market-grid" aria-label="Market overview">{marketIndexes.map(item => <Card key={item.symbol} className="market-card"><div><span>{item.name}</span><small>{item.symbol}</small></div><strong><AnimatedValue value={item.value}/></strong><em className={item.change > 0 ? "positive" : item.change < 0 ? "negative" : "neutral"}>{item.change > 0 ? <ArrowUpRight/> : item.change < 0 ? <ArrowDownRight/> : null}{item.change > 0 ? "+" : ""}{item.change.toFixed(2)}%</em></Card>)}</div>;
+  const { marketIndexes: liveIndexes } = useMorningBriefingData();
+  const aliases: Record<string, string[]> = {
+    "S&P 500": ["SPX", "S&P 500"],
+    Nasdaq: ["NDX", "NASDAQ", "NASDAQ-100"],
+    "Dow Jones": ["DJI", "DIA", "DOW JONES"],
+    VIX: ["VIX"],
+  };
+  const findLive = (name: string) => liveIndexes.find((item) => {
+    const itemName = item.name.toUpperCase();
+    const itemSymbol = item.symbol.toUpperCase();
+    return itemName === name.toUpperCase() || (aliases[name] ?? []).some((alias) => alias === itemName || alias === itemSymbol);
+  });
+  return <div className="market-grid" aria-label="Market overview">{marketCardDefinitions.map(({ name, symbol }) => {
+    const item = findLive(name);
+    return <Card key={symbol} className="market-card"><div><span>{name}</span><small>{item?.symbol ?? symbol}</small></div>{item ? <><strong><AnimatedValue value={item.value}/></strong><em className={item.change > 0 ? "positive" : item.change < 0 ? "negative" : "neutral"}>{item.change > 0 ? <ArrowUpRight/> : item.change < 0 ? <ArrowDownRight/> : null}{item.change > 0 ? "+" : ""}{item.change.toFixed(2)}%</em></> : <><strong className="neutral">Not available</strong><em className="neutral" aria-hidden="true">—</em></>}</Card>;
+  })}</div>;
 }
 
 function OpportunityMove({ change }: { change: number | null }) {
@@ -215,8 +229,15 @@ function MorningBriefingShell() {
   const setPage = (next: Page) => navigate(pagePaths[next]); const [theme, setTheme] = useState<Theme>("light");
   const [selectedOpportunity, setSelectedOpportunity] = useState<Opportunity | null>(null); const [selectedEarnings, setSelectedEarnings] = useState<EarningsCompany | null>(null);
   useEffect(() => { const stored = localStorage.getItem("morning-briefing-theme") as Theme | null; const preferred = typeof window.matchMedia === "function" && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"; const timer = window.setTimeout(() => setTheme(stored || preferred), 0); return () => window.clearTimeout(timer); }, []);
-  useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem("morning-briefing-theme", theme); }, [theme]);
-  useEffect(() => { window.scrollTo({ top: 0, behavior: "smooth" }); }, [page]);
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem("morning-briefing-theme", theme);
+    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", theme === "dark" ? "#0b0d10" : "#f7f8f7");
+  }, [theme]);
+  useEffect(() => {
+    const reduced = typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    window.scrollTo({ top: 0, behavior: reduced ? "auto" : "smooth" });
+  }, [page]);
   useEffect(() => { setSelectedOpportunity(null); setSelectedEarnings(null); }, [page]);
   return <div className="mb-demo app-shell"><AppHeader page={page} setPage={setPage} theme={theme} setTheme={setTheme}/><AnimatePresence mode="wait"><motion.main key={page} initial={{opacity:0,y:8}} animate={{opacity:1,y:0}} exit={{opacity:0,y:-4}} transition={spring}>{page === "briefing" && <MorningBriefing setPage={setPage} selectOpportunity={setSelectedOpportunity} selectEarnings={setSelectedEarnings}/>} {page === "surge" && <XPulsePage/>} {page === "earnings" && <EarningsPage onSelect={setSelectedEarnings}/>}</motion.main></AnimatePresence><footer><span>Morning Briefing</span><p>Public, read-only market intelligence.</p></footer><AnimatePresence>{selectedOpportunity && <OpportunityModal item={selectedOpportunity} onClose={() => setSelectedOpportunity(null)}/>} {selectedEarnings && <EarningsDetail item={selectedEarnings} onClose={() => setSelectedEarnings(null)}/>}</AnimatePresence></div>;
 }
