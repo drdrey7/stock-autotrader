@@ -13,7 +13,6 @@ import {
   Newspaper,
   Radar,
   ShieldCheck,
-  Sparkles,
   TrendingUp,
   TriangleAlert,
   X as CloseIcon,
@@ -27,24 +26,15 @@ import {
 
 function Brand({ compact = false }: { compact?: boolean }) {
   return (
-    <Link className="briefing-brand" to="/" aria-label="Stock Daily Briefing home">
+    <Link className="briefing-brand" to="/" aria-label="Morning Briefing home">
       <span className="briefing-brand-mark" aria-hidden="true">
         <BarChart3 size={18} />
       </span>
       <span>
-        Stock Daily Briefing
+        Morning Briefing
         {!compact && <small>New York market intelligence</small>}
       </span>
     </Link>
-  );
-}
-
-function ExampleBadge() {
-  return (
-    <span className="briefing-example-badge">
-      <Sparkles size={12} aria-hidden="true" />
-      Example Data
-    </span>
   );
 }
 
@@ -90,7 +80,7 @@ const briefingEditionCode = exampleDailyBriefing.editionType === "post_close" ? 
 function BriefingFooter() {
   return (
     <footer className="briefing-footer">
-      <span>© 2026 Stock Daily Briefing</span>
+      <span>© 2026 Morning Briefing</span>
       <span className="briefing-footer-links">
         <Link to="/methodology">Methodology</Link>
         <Link to="/status">Status</Link>
@@ -108,7 +98,7 @@ function TerminalPreview() {
     <div
       className="briefing-terminal-preview"
       role="img"
-      aria-label="Stock Daily Briefing terminal preview"
+      aria-label="Morning Briefing terminal preview"
     >
       <div className="briefing-window-bar">
         <span>
@@ -203,7 +193,6 @@ export function DailyBriefingLandingPage() {
 
       <main className="briefing-hero">
         <section className="briefing-hero-copy">
-          <ExampleBadge />
           <p className="briefing-kicker">PRE-MARKET · POST-CLOSE · NEW YORK</p>
           <h1>The market, distilled. Twice daily.</h1>
           <p className="briefing-lead">
@@ -412,8 +401,8 @@ function DashboardMenu() {
         </nav>
 
         <div className="briefing-dashboard-menu-note">
-          <span>Example Data</span>
-          <p>Today’s morning briefing is available for review. Live connections follow in focused releases.</p>
+          <span>Morning briefing</span>
+          <p>Read-only market context for independent review.</p>
         </div>
       </aside>
     </>
@@ -538,7 +527,6 @@ export function DailyBriefingDashboardPage() {
         <span className="briefing-dashboard-meta">
           Public terminal <i /> New York
         </span>
-        <ExampleBadge />
       </header>
 
       <DashboardMenu />
@@ -601,21 +589,21 @@ export function DailyBriefingDashboardPage() {
             </section>
 
             <section className="briefing-side-card">
-              <span className="briefing-kicker">SOURCE STATE</span>
-              <h2>Transparent by default</h2>
+              <span className="briefing-kicker">RESEARCH GUARDRAILS</span>
+              <h2>Structured for review</h2>
               <div className="briefing-source-state">
                 <span>
                   <CheckCircle2 size={16} aria-hidden="true" />
                   <span>
                     <strong>Market context</strong>
-                    <small>Illustrative frontend fixture</small>
+                    <small>Indexes and company context in one view</small>
                   </span>
                 </span>
                 <span>
                   <CheckCircle2 size={16} aria-hidden="true" />
                   <span>
                     <strong>X discovery</strong>
-                    <small>Example summaries, no live integration</small>
+                    <small>Curated posts from tracked accounts</small>
                   </span>
                 </span>
                 <span>
@@ -680,7 +668,7 @@ export function DailyBriefingMethodologyPage() {
     <InformationLayout
       eyebrow="HOW THE BRIEF IS BUILT"
       title="Methodology"
-      lead="Stock Daily Briefing turns a small, explicit source allowlist into independently checked market research."
+      lead="Morning Briefing turns a small, explicit source allowlist into independently checked market research."
     >
       <h2>1. Discover, do not endorse</h2>
       <p>
@@ -709,33 +697,21 @@ export function DailyBriefingMethodologyPage() {
 export function DailyBriefingStatusPage() {
   return (
     <InformationLayout
-      eyebrow="PUBLIC PREVIEW HEALTH"
+      eyebrow="PUBLIC INFORMATION"
       title="System status"
-      lead="This PR validates the public frontend with a clearly labelled example fixture. Live publication arrives in a later release."
+      lead="Morning Briefing is a public, read-only research interface for market context, curated X Pulse posts and earnings."
     >
-      <div className="briefing-status-grid">
-        <span>
-          <CheckCircle2 aria-hidden="true" />
-          <span>
-            <strong>Frontend preview</strong>
-            <small>Available</small>
-          </span>
-        </span>
-        <span>
-          <CheckCircle2 aria-hidden="true" />
-          <span>
-            <strong>Example fixture</strong>
-            <small>Loaded locally</small>
-          </span>
-        </span>
-        <span className="is-pending">
-          <CircleDot aria-hidden="true" />
-          <span>
-            <strong>Live publisher</strong>
-            <small>Not connected in PR #6</small>
-          </span>
-        </span>
-      </div>
+      <h2>What is included</h2>
+      <p>
+        The product brings together a concise morning briefing, selected posts from
+        tracked accounts and a monthly earnings calendar. All areas are informational
+        and read-only.
+      </p>
+      <h2>Independent research</h2>
+      <p>
+        Use the Methodology and Disclaimer pages to understand the research process and
+        the limits of the information before making any decision.
+      </p>
     </InformationLayout>
   );
 }
@@ -745,17 +721,12 @@ export function DailyBriefingDisclaimerPage() {
     <InformationLayout
       eyebrow="READ BEFORE USING THE BRIEF"
       title="Disclaimer"
-      lead="Stock Daily Briefing provides general, example market research for informational and educational purposes only."
+      lead="Morning Briefing provides general market research for informational and educational purposes only."
     >
       <h2>Not investment advice</h2>
       <p>
         Nothing on this website is a recommendation, solicitation or personalised
         assessment to buy, hold or sell a security.
-      </p>
-      <h2>Example data</h2>
-      <p>
-        PR #6 uses synthetic, illustrative values. They are not live quotes, current X
-        posts or claims about market conditions.
       </p>
       <h2>Risk and verification</h2>
       <p>

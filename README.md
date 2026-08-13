@@ -1,76 +1,49 @@
-# Stock Daily Briefing
+# Morning Briefing
 
 Public, read-only market intelligence for S&P 500 and Nasdaq-100 investors.
-The product publishes focused pre-market and post-close briefings with market
-context, curated stock ideas, independent qualification, risks and provenance.
 
-## PR #6 — frontend preview
+## Current frontend
 
-This release validates the product experience before any new backend or private
-runtime integration:
+The approved **Morning Briefing** interface is the public product shell:
 
-- short public landing page at `/`;
-- local terminal preview and exact **View Live Dashboard** CTA;
-- single public terminal at `/dashboard` with a fixed desktop menu and mobile hamburger;
-- three dashboard views: **Morning briefing**, **X search** and **Earnings**;
-- Today’s Morning briefing information is available as frontend-only `Example Data`;
-- planned X search and Earnings views are non-clickable **Coming soon** entries;
-- informational verdicts: **Potential Entry**, **Watch**, **Avoid** and
-  **Insufficient Data**;
-- public Methodology, Status and Disclaimer pages;
-- safe redirects from legacy product routes to `/dashboard`;
-- responsive mobile and desktop layouts.
+- Morning Briefing consumes the published briefing, market/status and candidate APIs;
+- X Pulse consumes curated posts from the tracked X accounts;
+- Earnings consumes the D1 earnings schedule;
+- missing backend fields use conservative fallback data internally;
+- stale or invalid backend values are never presented as live;
+- the frontend refreshes silently while the backend controls publication cadence;
+- there is no login, portfolio, watchlist, chat or trading action.
 
-All values shown in PR #6 come from the frontend-only
-`apps/web/src/daily-briefing-example.ts` fixture and are labelled
-**Example Data**. They are synthetic and are not live quotes, current X posts or
-claims about market conditions.
+Routes: `/`, `/dashboard`, `/x` and `/earnings`. The public Methodology, Status
+and Disclaimer routes remain available.
 
-## Deliberately not included in PR #6
+## Historical frontend work
 
-- live X Search or TradingView MCP calls;
-- a new public API, D1 schema or migration;
-- briefing ingestion or publishing;
-- cron or market-session scheduling;
-- authentication;
-- broker, order, paper-trading or live-trading functionality.
-
-The existing Worker/D1 and private Python foundations remain unchanged for
-compatibility. PR #7 now adds the shared, runtime-validated `DailyBriefing` v1
-contract plus its append-only D1/API read model:
-
-- signed `DAILY_BRIEFING_PUBLISHED` ingestion through the existing HMAC endpoint;
-- content hashing, idempotent replay handling and same-edition conflict rejection;
-- `GET /api/briefs/latest` and `GET /api/briefs/:date/:editionType`;
-- `/api/status` freshness metadata with honest no-brief responses;
-- local D1 migration and unit/integration coverage.
-
-PR #7 still does not add external X/TradingView collection, a publisher, a
-scheduler or a frontend live-data adapter. Those remain separate PR8/PR9 work.
-The public preview continues to render the synthetic `Example Data` fixture until
-that adapter is deliberately introduced.
+PR #6 introduced the first synthetic, frontend-only product demo. PR #7 added
+the validated `DailyBriefing` contract and D1 read model. PR #8 added curated X
+post ingestion. PR #9 replaces that demo shell with the current live-aware
+Morning Briefing frontend while retaining conservative mock fallbacks for fields
+whose APIs do not yet exist. Source-refresh mechanics are kept out of the main
+product UI; values can still be delayed or illustrative when no backend field is
+available.
 
 ## Briefing rhythm
 
-The planned canonical timezone is `America/New_York`:
+Canonical timezone: `America/New_York`.
 
 - pre-market: `08:30 ET` on valid market sessions;
 - post-close: `16:30 ET` on valid market sessions.
 
-PR #6 displays this schedule only. It does not create a scheduler.
-
 ## Development
 
-Prerequisites: Node 20+ (Node 22 recommended) and npm.
+Requires Node 20+ (Node 22 recommended).
 
 ```bash
 npm ci
 npm run dev
 ```
 
-The Vite app opens at `http://localhost:5173`.
-
-## Quality gates
+Quality gates:
 
 ```bash
 npm run lint
@@ -80,26 +53,23 @@ npm run build
 npx wrangler deploy --dry-run
 ```
 
-The repository also retains Python runtime tests under `bot/tests` to protect
-existing foundations from frontend regressions.
-
 ## Project structure
 
 ```text
-apps/web/src/daily-briefing-pages.tsx   Public landing, terminal and information pages
-apps/web/src/daily-briefing-example.ts  Single synthetic PR #6 fixture
-apps/web/src/daily-briefing.css         Isolated responsive product styling
-apps/web/worker                         Worker routes, signed ingest and DailyBriefing read model
-apps/web/worker/daily-briefings.ts      Idempotent D1 publication/read helpers
-apps/web/migrations/0004_daily_briefings.sql  Append-only DailyBriefing D1 table
-bot/bot                                 Existing private runtime foundation
-packages/contracts/src/daily-briefing.ts  Shared validated DailyBriefing v1 contract
-packages/contracts                      Existing shared contracts and schemas
+apps/web/src/morning-briefing/             Current Morning Briefing product UI
+apps/web/src/morning-briefing/data/        Mock fallbacks separated from UI
+apps/web/src/daily-briefing-pages.tsx       Retained public information pages
+apps/web/worker                             Worker APIs, signed ingest and D1 read models
+apps/web/worker/daily-briefings.ts          DailyBriefing publication/read helpers
+apps/web/worker/x-posts.ts                  Curated X post publication/read helpers
+apps/web/migrations                         D1 schema migrations
+bot/bot                                     Private runtime foundation
+packages/contracts                          Shared validated contracts and schemas
 ```
 
 ## Disclaimer
 
-Stock Daily Briefing provides general market research for informational and
+Morning Briefing provides general market research for informational and
 educational purposes only. Nothing on the website is a recommendation,
 solicitation or personalised assessment to buy, hold or sell a security. Verify
-all data and sources independently.
+all data and primary sources independently.
