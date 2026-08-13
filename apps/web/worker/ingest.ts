@@ -417,7 +417,11 @@ function buildStatements(event: IngestEvent): [string, unknown[]][] {
             [e.symbol, e.company, e.date, e.timing, e.eventSignal, e.engineRelevant ? 1 : 0, e.signal, e.strategy, e.hasPosition ? 1 : 0, e.tracked ? 1 : 0, e.updatedAt]],
         );
       }
-      stmts.push(insertBotEvent("EARNINGS_UPDATED", `Earnings updated: ${items.length} events`, null));
+      // Publication metadata keeps freshness even for a valid empty calendar.
+      stmts.push(
+        ["INSERT INTO app_meta (key, value) VALUES ('earningsUpdatedAt', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", [event.timestamp]],
+        insertBotEvent("EARNINGS_UPDATED", `Earnings updated: ${items.length} events`, null),
+      );
       break;
     }
     case "MARKET_DATA_UPDATED": {

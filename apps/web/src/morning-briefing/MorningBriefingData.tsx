@@ -181,6 +181,15 @@ const backendStateFromSources = (sources: BackendSources): MorningBriefingData["
   return "partial";
 };
 
+// Fail-closed overrides survive across parallel refresh loops: each loop owns
+// the health of its own endpoints and re-applies the overrides on every write,
+// so completion order can never resurrect a Live badge for a failing endpoint.
+const applyFailClosed = (sources: BackendSources, failed: Set<keyof BackendSources>): BackendSources => {
+  const next = { ...sources };
+  for (const key of failed) next[key] = unavailableSource("Backend is unreachable.");
+  return next;
+};
+
 function marketFromBriefing(briefing: DailyBriefing): MarketIndex[] | null {
   const live = briefing.market.flatMap((item) => {
     const value = numberFrom(item.value); const change = changeFrom(item.change);
@@ -377,6 +386,7 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
     let earningsRequestId = 0;
     let lastEarningsAttemptAt = 0;
     let lastEarningsAttemptDate: string | null = null;
+    const failedSources = new Set<keyof BackendSources>();
 
     const refreshCore = async () => {
       const currentRequest = ++coreRequestId;
@@ -407,22 +417,25 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
           : null
         : null;
 
+      // Fail closed: if the briefing endpoint itself is unreachable, the
+      // sections that depend on it must not keep a Live badge from an
+      // earlier status response. The override is registered so parallel
+      // loops cannot resurrect it, and cleared once the briefing returns.
+      if (briefing === null) {
+        failedSources.add("briefing");
+        failedSources.add("market");
+        failedSources.add("opportunities");
+      } else {
+        failedSources.delete("briefing");
+        failedSources.delete("market");
+        failedSources.delete("opportunities");
+      }
+
       setData((previous) => {
         const retainBriefing = isRecentTimestamp(previous.lastPublishedAt);
         const nextMarketIndexes = liveMarket ?? [];
         const nextOpportunities = liveOpportunities ?? [];
-        const parsedSources = mergeSources(status?.sources);
-        // Fail closed: if the briefing endpoint itself is unreachable, the
-        // sections that depend on it must not keep a Live badge from an
-        // earlier status response.
-        const sources: BackendSources = briefing === null
-          ? {
-              ...parsedSources,
-              briefing: unavailableSource("Backend is unreachable."),
-              market: unavailableSource("Backend is unreachable."),
-              opportunities: unavailableSource("Backend is unreachable."),
-            }
-          : parsedSources;
+        const sources = applyFailClosed(mergeSources(status?.sources), failedSources);
         return {
           ...previous,
           marketIndexes: nextMarketIndexes,
@@ -455,7 +468,7 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
         const nextPosts = liveX === null
           ? cached
           : [...liveX, ...retained].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
-        const sources = mergeSources(status?.sources);
+        const sources = applyFailClosed(mergeSources(status?.sources), failedSources);
         writeStoredXPosts(nextPosts);
         return {
           ...previous,
@@ -487,9 +500,13 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
       // Re-check after the second await: a newer invocation may have started
       // while this one was fetching status, and must not be overwritten.
       if (cancelled || currentRequest !== earningsRequestId) return;
+      if (apiEarnings === null) {
+        failedSources.add("earnings");
+      } else {
+        failedSources.delete("earnings");
+      }
       setData((previous) => {
-        const sources = mergeSources(status?.sources);
-        if (apiEarnings === null) sources.earnings = unavailableSource("Backend is unreachable.");
+        const sources = applyFailClosed(mergeSources(status?.sources), failedSources);
         return {
           ...previous,
           earnings: apiEarnings ?? previous.earnings.map((item) => ({ ...item, source: "cached" as const })),

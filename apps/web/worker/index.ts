@@ -209,23 +209,20 @@ export async function buildSources(
   let earningsLastSuccess: string | null = null;
   let earningsError: string | null = null;
   try {
-    const row = await env.DB.prepare("SELECT updated_at FROM earnings ORDER BY updated_at DESC LIMIT 1").first<{ updated_at: string }>();
-    earningsLastSuccess = row?.updated_at ? new Date(row.updated_at).toISOString() : null;
+    // Publication metadata records a successful empty calendar too: a valid
+    // EARNINGS_UPDATED with zero rows must not make the source Unavailable.
+    const row = await env.DB.prepare(
+      "SELECT COALESCE((SELECT value FROM app_meta WHERE key = 'earningsUpdatedAt'), (SELECT MAX(updated_at) FROM earnings)) AS ts",
+    ).first<{ ts: string | null }>();
+    earningsLastSuccess = row?.ts ? new Date(row.ts).toISOString() : null;
   } catch {
     earningsError = "Earnings store is unavailable.";
   }
 
   const lastDataUpdate = options.dashboard.status.lastDataUpdate;
-  const scanCompletedAt = options.dashboard.status.latestScan;
-  const scanCandidateUpdatedAt = options.dashboard.candidates
-    .map((candidate) => parseSafeTimestamp(candidate.updatedAt))
-    .filter((value): value is number => value !== null)
-    .reduce<number | null>((latest, value) => latest === null || value > latest ? value : latest, null);
-  // A completed scan with zero qualifying candidates is a successful run, not
-  // an error: fall back to the scan completion time for freshness.
-  const scanSuccessAt = scanCandidateUpdatedAt !== null
-    ? new Date(scanCandidateUpdatedAt).toISOString()
-    : scanCompletedAt;
+  // The scan completion timestamp is the authoritative success evidence,
+  // whether the scan yielded zero or many candidates.
+  const scanSuccessAt = options.dashboard.status.latestScan;
 
   const sources = {
     briefing: buildSourceHealth(brief.publishedAt, brief.publishedAt, {

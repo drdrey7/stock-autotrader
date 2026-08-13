@@ -533,6 +533,47 @@ it("does not let an older refreshX overwrite newer posts after its status fetch"
   expect(view.container.querySelector(".x-preview .section-title .data-source.live")).not.toBeNull();
 });
 
+it("keeps an endpoint fail-closed when a parallel refresh reports it healthy", async () => {
+  let statusCalls = 0;
+  let releaseXStatus: ((response: Response) => void) | null = null;
+  const liveEarningsSource = {
+    provider: "earnings calendar", state: "Live", asOf: briefing.preparedAt,
+    ageSeconds: 120, staleAfterSeconds: 93600,
+    lastSuccess: briefing.preparedAt, lastAttempt: briefing.preparedAt, error: null,
+  };
+  const statusPayload = {
+    candidates: [],
+    briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt },
+    sources: { earnings: liveEarningsSource },
+  };
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === "/api/briefs/latest") return new Response(JSON.stringify(briefing), { status: 200 });
+    if (url === "/api/earnings") return new Response(null, { status: 503 });
+    if (url.startsWith("/api/x/posts")) return new Response(JSON.stringify({ posts: [], count: 0 }), { status: 200 });
+    if (url === "/api/status") {
+      statusCalls += 1;
+      // Hold the refreshX status fetch: it completes last and would resurrect
+      // the earnings Live badge without the centralized fail-closed override.
+      if (statusCalls === 3) {
+        return new Promise<Response>((resolve) => { releaseXStatus = resolve; });
+      }
+      return new Response(JSON.stringify(statusPayload), { status: 200 });
+    }
+    return new Response(null, { status: 404 });
+  });
+
+  const view = renderApp();
+  await waitFor(() => expect(statusCalls).toBe(3));
+  await waitFor(() => expect(view.container.querySelector(".earnings-summary .data-source.unavailable")).not.toBeNull());
+  releaseXStatus!(new Response(JSON.stringify(statusPayload), { status: 200 }));
+  // The released refreshX continuation applies its setData in a microtask;
+  // give it a tick, then assert the fail-closed badge survived.
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(view.container.querySelector(".earnings-summary .data-source.live")).toBeNull();
+  expect(view.container.querySelector(".earnings-summary .data-source.unavailable")).not.toBeNull();
+});
+
 it("does not show mock X posts after a successful empty feed", async () => {
   const originalFetch = vi.mocked(fetch).getMockImplementation()!;
   vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {

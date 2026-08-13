@@ -82,6 +82,18 @@ class FakeStatement {
       });
       return { meta: { changes: 1 } };
     }
+    if (this.sql.includes("INSERT INTO bot_events")) {
+      return { meta: { changes: 1 } };
+    }
+    if (this.sql.includes("INSERT INTO app_meta")) {
+      const keyMatch = this.sql.match(/VALUES \('([^']+)', \?\)/);
+      if (keyMatch) {
+        this.db.meta.set(keyMatch[1]!, String(this.args[0]));
+      } else {
+        this.db.meta.set(String(this.args[0]), String(this.args[1]));
+      }
+      return { meta: { changes: 1 } };
+    }
     if (this.sql.includes("DELETE FROM ingest_events")) {
       this.db.events.delete(String(this.args[0]));
       return { meta: { changes: 1 } };
@@ -113,6 +125,7 @@ class FakeStatement {
 class FakeD1 {
   readonly events = new Map<string, IngestEventRow>();
   readonly posts = new Map<string, PostRow>();
+  readonly meta = new Map<string, string>();
 
   prepare(sql: string): FakeStatement {
     return new FakeStatement(this, sql);
@@ -467,5 +480,24 @@ describe("ingest X_POSTS_COLLECTED", () => {
     const response = await handleIngest(request, env(db));
     expect(response.status).toBe(401);
     expect(db.posts.size).toBe(0);
+  });
+
+  it("records publication metadata for a valid empty earnings calendar", async () => {
+    const db = new FakeD1();
+    const timestamp = new Date().toISOString();
+    const request = await signedRequest({
+      events: [{
+        type: "EARNINGS_UPDATED",
+        event_id: "earn-empty-0001",
+        timestamp,
+        payload: { items: [] },
+      }],
+    });
+    const response = await handleIngest(request, env(db));
+    const body = (await response.json()) as { applied: string[] };
+    expect(response.status).toBe(200);
+    expect(body.applied).toEqual(["earn-empty-0001"]);
+    expect(db.meta.get("earningsUpdatedAt")).toBe(timestamp);
+    expect(db.events.size).toBe(1);
   });
 });

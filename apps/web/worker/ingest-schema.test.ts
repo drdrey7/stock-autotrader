@@ -319,7 +319,9 @@ describe("buildSources (source health assembly)", () => {
           bind() { return this; },
           async first<T>(): Promise<T | null> {
             if (sql.includes("FROM x_posts")) return (firsts.x ?? null) as T | null;
-            if (sql.includes("FROM earnings")) return (firsts.earnings ?? null) as T | null;
+            // The earnings freshness query is a single COALESCE over app_meta
+            // and the latest row; the fake returns its resolved result.
+            if (sql.includes("FROM app_meta")) return (firsts.earningsTs ?? null) as T | null;
             throw new Error(`Unhandled SELECT: ${sql}`);
           },
         };
@@ -371,5 +373,23 @@ describe("buildSources (source health assembly)", () => {
       { briefing, dashboard: demoData, nowMs },
     );
     expect(sources.x.state).toBe("Stale");
+  });
+
+  it("derives earnings freshness from publication metadata", async () => {
+    const sources = await buildSources(
+      envFor({ earningsTs: { ts: "2026-08-13T11:45:00Z" } }) as unknown as Env,
+      { briefing, dashboard: demoData, nowMs },
+    );
+    expect(sources.earnings.state).toBe("Live");
+    expect(sources.earnings.lastSuccess).toBe("2026-08-13T11:45:00.000Z");
+  });
+
+  it("falls back to the latest earnings row when publication metadata is absent", async () => {
+    const sources = await buildSources(
+      envFor({ earningsTs: { ts: "2026-08-13T11:20:00Z" } }) as unknown as Env,
+      { briefing, dashboard: demoData, nowMs },
+    );
+    expect(sources.earnings.state).toBe("Live");
+    expect(sources.earnings.lastSuccess).toBe("2026-08-13T11:20:00.000Z");
   });
 });
