@@ -421,8 +421,10 @@ function buildStatements(event: IngestEvent): [string, unknown[]][] {
         );
       }
       // Publication metadata keeps freshness even for a valid empty calendar.
+      // Never regress: an out-of-order older event must not overwrite a newer
+      // publication timestamp (same guard as xPostsUpdatedAt in x-posts.ts).
       stmts.push(
-        ["INSERT INTO app_meta (key, value) VALUES ('earningsUpdatedAt', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", [event.timestamp]],
+        ["INSERT INTO app_meta (key, value) VALUES ('earningsUpdatedAt', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value WHERE excluded.value > app_meta.value", [event.timestamp]],
         insertBotEvent("EARNINGS_UPDATED", `Earnings updated: ${items.length} events`, null),
       );
       break;

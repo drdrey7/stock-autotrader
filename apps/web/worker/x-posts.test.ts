@@ -96,7 +96,16 @@ class FakeStatement {
     if (this.sql.includes("INSERT INTO app_meta")) {
       const keyValues = this.sql.match(/VALUES \('([^']+)', \?\)/);
       if (keyValues) {
-        this.db.meta.set(keyValues[1]!, String(this.args[0]));
+        const key = keyValues[1]!;
+        const value = String(this.args[0]);
+        // Mirror the real SQL contract: an upsert carrying
+        // `WHERE excluded.value > app_meta.value` must never regress
+        // an existing newer timestamp.
+        if (this.sql.includes("excluded.value > app_meta.value")) {
+          const existing = this.db.meta.get(key);
+          if (existing !== undefined && existing >= value) return { meta: { changes: 0 } };
+        }
+        this.db.meta.set(key, value);
         return { meta: { changes: 1 } };
       }
       const keySelect = this.sql.match(/SELECT '([^']+)', \?/);
@@ -631,5 +640,40 @@ describe("ingest X_POSTS_COLLECTED", () => {
     expect(db.meta.get("earningsUpdatedAt")).toBe(t2);
     expect(db.sqls.some((sql) => sql.includes("DELETE FROM earnings"))).toBe(true);
     expect(db.sqls.some((sql) => sql.includes("INSERT INTO earnings"))).toBe(false);
+  });
+
+  it("does not regress earningsUpdatedAt on an out-of-order older event", async () => {
+    const db = new FakeD1();
+    const t2 = new Date().toISOString();
+    const newer = await signedRequest({
+      events: [{
+        type: "EARNINGS_UPDATED",
+        event_id: "earn-ooo-0002",
+        timestamp: t2,
+        payload: { items: [{
+          symbol: "MSFT", company: "Microsoft Corp.", date: "2026-08-21", timing: "AMC",
+          eventSignal: "Confirmed", engineRelevant: false, signal: null, strategy: null,
+          hasPosition: false, tracked: false, updatedAt: t2,
+        }] },
+      }],
+    });
+    const newerResponse = await handleIngest(newer, env(db));
+    expect(((await newerResponse.json()) as { applied: string[] }).applied).toEqual(["earn-ooo-0002"]);
+    expect(db.meta.get("earningsUpdatedAt")).toBe(t2);
+
+    const t1 = new Date(Date.now() - 60_000).toISOString();
+    db.sqls.length = 0;
+    const older = await signedRequest({
+      events: [{
+        type: "EARNINGS_UPDATED",
+        event_id: "earn-ooo-0001",
+        timestamp: t1,
+        payload: { items: [] },
+      }],
+    });
+    const olderResponse = await handleIngest(older, env(db));
+    expect(((await olderResponse.json()) as { applied: string[] }).applied).toEqual(["earn-ooo-0001"]);
+    // Metadata keeps the newer timestamp; the older event cannot regress freshness.
+    expect(db.meta.get("earningsUpdatedAt")).toBe(t2);
   });
 });
