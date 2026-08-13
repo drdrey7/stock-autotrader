@@ -23,6 +23,15 @@ type StatusResponse = {
       updatedAt: string;
     }>;
   };
+  market?: {
+    indices?: Array<{
+      symbol: "SPX" | "NDX" | "DJI" | "VIX";
+      name: string;
+      value: number;
+      change: number;
+      updatedAt: string;
+    }>;
+  };
   sentiment?: {
     provider: string;
     score: number;
@@ -113,10 +122,6 @@ const relativeTime = (iso: string): string => {
 const REQUEST_TIMEOUT_MS = 8_000;
 const EARNINGS_REFRESH_INTERVAL_MS = 60 * 60_000;
 const X_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
-// Market data is the only section that must never show stale numbers as
-// today's: a fresh briefing (status freshness "fresh") published within this
-// window is the gate for market cards.
-const MARKET_DATA_MAX_AGE_MS = 26 * 60 * 60_000;
 // Everything else (opportunities, earnings) is a daily publication: hours or
 // even a couple of days of age are fine as long as the edition date is shown.
 const BRIEFING_MAX_AGE_MS = 72 * 60 * 60_000;
@@ -138,35 +143,19 @@ async function fetchJson<T>(path: string): Promise<T | null> {
 function isWithinWindow(value: string | null | undefined, maxAgeMs: number): boolean {
   const timestamp = Date.parse(value ?? "");
   const ageMs = Date.now() - timestamp;
-  return Number.isFinite(timestamp) && ageMs >= -5 * 60_000 && ageMs <= maxAgeMs;
+  return Number.isFinite(timestamp) && ageMs >= 0 && ageMs <= maxAgeMs;
 }
 
-function marketFromBriefing(briefing: DailyBriefing): MarketIndex[] | null {
-  const live = briefing.market.flatMap((item) => {
-    const value = numberFrom(item.value); const change = changeFrom(item.change);
-    if (value === null || change === null) return [];
-    return [{
-      name: item.name === "Nasdaq-100" ? "Nasdaq" : item.name,
-      symbol: item.symbol.split(":").at(-1) ?? item.symbol,
-      value,
-      decimals: 2,
-      change,
-      source: "live" as const,
-    }];
-  });
-  const findBenchmark = (name: string, symbol: string) => live.find((item) =>
-    item.name.toLowerCase().includes(name) || item.symbol.toUpperCase() === symbol
-  );
-  const sp500 = findBenchmark("s&p", "SPX");
-  const ordered: MarketIndex[] = [];
-  if (sp500) ordered.push(sp500);
-  const nasdaq = findBenchmark("nasdaq", "NDX");
-  if (nasdaq) ordered.push(nasdaq);
-  const vix = findBenchmark("vix", "VIX");
-  if (vix) ordered.push(vix);
-  return sp500
-    ? [...ordered, ...live.filter((item) => !ordered.includes(item))].slice(0, 4)
-    : null;
+function isCurrentNewYorkDate(value: string | null | undefined): boolean {
+  const timestamp = Date.parse(value ?? "");
+  if (!Number.isFinite(timestamp)) return false;
+  const date = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(timestamp));
+  return date === marketTodayKey();
 }
 
 function opportunitiesFromBriefing(
@@ -198,12 +187,12 @@ function opportunitiesFromBriefing(
 const INDEX_GATE_MS = 26 * 60 * 60_000;
 
 function indicesFromStatus(status: StatusResponse | null): { indexes: MarketIndex[]; updatedAt: string } | null {
-  const indices = status?.marketData?.indices;
+  const indices = status?.market?.indices ?? status?.marketData?.indices;
   if (!Array.isArray(indices) || indices.length === 0) return null;
   let latestUpdatedAt = "";
   const fresh: MarketIndex[] = [];
   for (const index of indices) {
-    if (!isWithinWindow(index.updatedAt, INDEX_GATE_MS)) continue;
+    if (!isWithinWindow(index.updatedAt, INDEX_GATE_MS) || !isCurrentNewYorkDate(index.updatedAt)) continue;
     fresh.push({
       name: index.name,
       symbol: index.symbol,
@@ -303,8 +292,6 @@ function recentCachedPosts(posts: XPost[]): XPost[] {
   return [...byCreatedAt.values()].filter((post) => isWithinXCacheWindow(post.createdAt));
 }
 
-const isRecentTimestamp = isWithinWindow;
-
 export function marketTodayKey(): string {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: "America/New_York",
@@ -362,27 +349,17 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
       const briefingUpdatedAt = briefing
         ? status?.briefing?.publishedAt ?? briefing.preparedAt
         : null;
-      // Market data: only today's fresh edition may fill the market cards.
-      // Never present stale numbers as today's market data.
-      const marketBriefing = briefing
-        && status?.briefing?.freshness === "fresh"
-        && isRecentTimestamp(briefingUpdatedAt, MARKET_DATA_MAX_AGE_MS)
-        ? briefing
-        : null;
       // Opportunities: a daily publication may be hours old (even 1-2 days)
       // and still be shown, labelled with its analysis date.
       const analysisBriefing = briefing
         && isWithinWindow(briefingUpdatedAt, BRIEFING_MAX_AGE_MS)
         ? briefing
         : null;
-      const liveMarket = marketBriefing ? marketFromBriefing(marketBriefing) : null;
       const liveOpportunities = analysisBriefing ? opportunitiesFromBriefing(analysisBriefing) : null;
-      // Real index context (PR #11): when no fresh briefing exists, the market
-      // cards can still show the live index read model while it is fresh.
+      // Market cards have one owner: the Worker market-context read model.
+      // Briefing market summaries are analysis text and cannot substitute for
+      // a source-timestamped index observation.
       const liveIndices = indicesFromStatus(status);
-      // The market label always reflects what is actually displayed.
-      const marketUpdatedAt = liveIndices?.updatedAt
-        ?? (liveMarket && briefingUpdatedAt ? briefingUpdatedAt : null);
       const sentiment = sentimentFromStatus(status);
 
       setData((previous) => {
@@ -391,6 +368,17 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
         // inside the 72h window.
         const retained = isWithinWindow(previous.opportunitiesUpdatedAt, BRIEFING_MAX_AGE_MS);
         const nextOpportunities = liveOpportunities ?? (retained ? previous.opportunities : []);
+        const retainedIndices = previous.marketUpdatedAt
+          && isWithinWindow(previous.marketUpdatedAt, INDEX_GATE_MS)
+          && isCurrentNewYorkDate(previous.marketUpdatedAt)
+          ? previous.marketIndexes
+          : [];
+        const nextMarketIndexes = liveIndices?.indexes ?? retainedIndices;
+        const marketUpdatedAt = liveIndices?.updatedAt
+          ?? (nextMarketIndexes.length > 0 ? previous.marketUpdatedAt : null);
+        const retainedSentiment = previous.sentiment && isWithinWindow(previous.sentiment.asOf, SENTIMENT_GATE_MS)
+          ? previous.sentiment
+          : null;
         // The welcome card's date/edition label only describes what is being
         // shown: expire it together with the analysis instead of keeping an
         // old date under a post-close greeting for a cleared section. The
@@ -399,13 +387,13 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
         const nextEditionDate = analysisBriefing?.editionDate ?? (retained ? previous.editionDate : null);
         return {
           ...previous,
-          marketIndexes: liveIndices?.indexes ?? liveMarket ?? [],
+          marketIndexes: nextMarketIndexes,
           opportunities: nextOpportunities,
           marketUpdatedAt,
           opportunitiesUpdatedAt: liveOpportunities !== null && briefingUpdatedAt ? briefingUpdatedAt : previous.opportunitiesUpdatedAt,
           editionDate: nextEditionDate,
           editionType: nextEditionDate !== null ? (analysisBriefing?.editionType ?? previous.editionType) : null,
-          sentiment,
+          sentiment: sentiment ?? retainedSentiment,
         };
       });
     };

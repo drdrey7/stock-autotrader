@@ -6,7 +6,7 @@ export type MarketIndex = {
 
 export const marketIndexes: MarketIndex[] = [
   { name: "S&P 500", symbol: "SPX", value: 6427.18, decimals: 2, change: 0.62 },
-  { name: "Nasdaq", symbol: "NDX", value: 23724.31, decimals: 2, change: 0.78 },
+  { name: "Nasdaq-100", symbol: "NDX", value: 23724.31, decimals: 2, change: 0.78 },
   { name: "Dow Jones", symbol: "DJI", value: 45118.26, decimals: 2, change: 0.48 },
   { name: "VIX", symbol: "VIX", value: 15.41, decimals: 2, change: -1.26 },
 ];

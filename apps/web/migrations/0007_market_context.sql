@@ -28,17 +28,19 @@ CREATE INDEX IF NOT EXISTS idx_market_sentiment_latest
 -- Preserve any valid PR11 reading already written to app_meta during rollout.
 INSERT OR IGNORE INTO market_sentiment (score, rating, source_timestamp, collected_at, provider)
 SELECT
-  CAST(json_extract(value, '$.score') AS INTEGER),
-  json_extract(value, '$.rating'),
-  datetime(json_extract(value, '$.asOf')) || 'Z',
-  datetime(json_extract(value, '$.asOf')) || 'Z',
-  json_extract(value, '$.provider')
+  CAST(json_extract(CASE WHEN json_valid(value) THEN value ELSE '{}' END, '$.score') AS INTEGER),
+  json_extract(CASE WHEN json_valid(value) THEN value ELSE '{}' END, '$.rating'),
+  strftime('%Y-%m-%dT%H:%M:%fZ', json_extract(CASE WHEN json_valid(value) THEN value ELSE '{}' END, '$.asOf')),
+  strftime('%Y-%m-%dT%H:%M:%fZ', json_extract(CASE WHEN json_valid(value) THEN value ELSE '{}' END, '$.asOf')),
+  json_extract(CASE WHEN json_valid(value) THEN value ELSE '{}' END, '$.provider')
 FROM app_meta
 WHERE key = 'sentiment'
-  AND json_extract(value, '$.score') BETWEEN 0 AND 100
-  AND json_extract(value, '$.rating') IN ('extreme_fear', 'fear', 'neutral', 'greed', 'extreme_greed')
-  AND json_extract(value, '$.asOf') IS NOT NULL
-  AND json_extract(value, '$.provider') IS NOT NULL;
+  AND json_valid(value)
+  AND json_extract(CASE WHEN json_valid(value) THEN value ELSE '{}' END, '$.score') BETWEEN 0 AND 100
+  AND json_extract(CASE WHEN json_valid(value) THEN value ELSE '{}' END, '$.rating') IN ('extreme_fear', 'fear', 'neutral', 'greed', 'extreme_greed')
+  AND json_extract(CASE WHEN json_valid(value) THEN value ELSE '{}' END, '$.asOf') IS NOT NULL
+  AND strftime('%Y-%m-%dT%H:%M:%fZ', json_extract(CASE WHEN json_valid(value) THEN value ELSE '{}' END, '$.asOf')) IS NOT NULL
+  AND json_extract(CASE WHEN json_valid(value) THEN value ELSE '{}' END, '$.provider') IS NOT NULL;
 
 -- Backfill index rows from the legacy snapshot when it contains PR11 data.
 INSERT OR IGNORE INTO market_indices
@@ -51,8 +53,16 @@ SELECT
   json_extract(index_row.value, '$.updatedAt'),
   COALESCE(json_extract(snapshot.value, '$.updatedAt'), json_extract(index_row.value, '$.updatedAt')),
   COALESCE(json_extract(snapshot.value, '$.provider'), 'legacy-market-context')
-FROM app_meta AS snapshot, json_each(json_extract(snapshot.value, '$.indices')) AS index_row
+FROM app_meta AS snapshot,
+     json_each(CASE
+       WHEN json_type(CASE WHEN json_valid(snapshot.value) THEN snapshot.value ELSE '{}' END, '$.indices') = 'array'
+       THEN json_extract(CASE WHEN json_valid(snapshot.value) THEN snapshot.value ELSE '{}' END, '$.indices')
+       ELSE '[]'
+     END) AS index_row
 WHERE snapshot.key = 'marketData'
-  AND json_extract(index_row.value, '$.symbol') IN ('SPX', 'NDX', 'DJI', 'VIX')
-  AND json_extract(index_row.value, '$.value') > 0
-  AND json_extract(index_row.value, '$.updatedAt') IS NOT NULL;
+  AND json_extract(CASE WHEN json_valid(index_row.value) THEN index_row.value ELSE '{}' END, '$.symbol') IN ('SPX', 'NDX', 'DJI', 'VIX')
+  AND json_extract(CASE WHEN json_valid(index_row.value) THEN index_row.value ELSE '{}' END, '$.name') IS NOT NULL
+  AND json_extract(CASE WHEN json_valid(index_row.value) THEN index_row.value ELSE '{}' END, '$.value') > 0
+  AND json_extract(CASE WHEN json_valid(index_row.value) THEN index_row.value ELSE '{}' END, '$.change') IS NOT NULL
+  AND json_extract(CASE WHEN json_valid(index_row.value) THEN index_row.value ELSE '{}' END, '$.updatedAt') IS NOT NULL
+  AND strftime('%Y-%m-%dT%H:%M:%fZ', json_extract(CASE WHEN json_valid(index_row.value) THEN index_row.value ELSE '{}' END, '$.updatedAt')) IS NOT NULL;

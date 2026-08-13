@@ -202,7 +202,8 @@ export function buildMarketSourceHealth(market: MarketDataSnapshot, nowMs = Date
 }
 
 export function buildMarketContextHealth(context: MarketContextReadModel, nowMs = Date.now()): SourceHealth {
-  if (!context.latestSourceTimestamp) {
+  const latestSourceMs = parseSafeTimestamp(context.latestSourceTimestamp);
+  if (latestSourceMs === null) {
     return buildSourceHealth(null, null, {
       provider: "unavailable",
       staleAfterSeconds: MARKET_CONTEXT_STALE_AFTER_SECONDS,
@@ -210,10 +211,36 @@ export function buildMarketContextHealth(context: MarketContextReadModel, nowMs 
       nowMs,
     });
   }
-  return buildSourceHealth(context.latestSourceTimestamp, context.latestCollectedAt ?? context.latestSourceTimestamp, {
+  const expectedSymbols = new Set(["SPX", "NDX", "DJI", "VIX"]);
+  const complete = context.indices.length === expectedSymbols.size
+    && context.indices.every((index) => expectedSymbols.has(index.symbol));
+  const latestDate = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(latestSourceMs));
+  const currentDate = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(nowMs));
+  const indexDates = new Set(context.indices.flatMap((index) => {
+    const timestamp = parseSafeTimestamp(index.updatedAt);
+    return timestamp === null ? [] : [new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/New_York",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date(timestamp))];
+  }));
+  return buildSourceHealth(new Date(latestSourceMs).toISOString(), context.latestCollectedAt ?? context.latestSourceTimestamp, {
     provider: context.provider ?? "unavailable",
     staleAfterSeconds: MARKET_CONTEXT_STALE_AFTER_SECONDS,
-    error: null,
+    error: complete && indexDates.size === 1 && latestDate === currentDate
+      ? null
+      : "Market index set is incomplete or from a prior session.",
     nowMs,
   });
 }
@@ -617,9 +644,19 @@ export default {
           readBriefingStatus(env.DB),
           readMarketContext(env.DB),
         ]);
-        const marketData = { ...dashboard.marketData, indices: marketContext.indices };
         const sources = await buildSources(env, { briefing, dashboard, marketContext });
-        return json({ ...dashboard, marketData, briefing, sources, sentiment: marketContext.sentiment });
+        return json({
+          ...dashboard,
+          market: {
+            indices: marketContext.indices,
+            provider: marketContext.provider,
+            latestSourceTimestamp: marketContext.latestSourceTimestamp,
+            latestCollectedAt: marketContext.latestCollectedAt,
+          },
+          briefing,
+          sources,
+          sentiment: marketContext.sentiment,
+        });
       } catch (err) {
         console.error("status error", err);
         try {

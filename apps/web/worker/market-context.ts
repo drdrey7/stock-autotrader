@@ -5,6 +5,7 @@ export const SENTIMENT_CRON = "0 14,19 * * mon-fri";
 
 export const MARKET_CONTEXT_STALE_AFTER_SECONDS = 26 * 60 * 60;
 export const SENTIMENT_STALE_AFTER_SECONDS = 72 * 60 * 60;
+const MAX_SOURCE_FUTURE_SKEW_MS = 5 * 60 * 1000;
 
 export type MarketIndexSymbol = "SPX" | "NDX" | "DJI" | "VIX";
 export type SentimentRating = "extreme_fear" | "fear" | "neutral" | "greed" | "extreme_greed";
@@ -58,6 +59,27 @@ export interface MarketContextReadModel {
   latestCollectedAt: string | null;
 }
 
+const validIsoTimestamp = (value: string): boolean => {
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) && parsed <= Date.now() + MAX_SOURCE_FUTURE_SKEW_MS;
+};
+
+const validMarketObservation = (observation: MarketIndexObservation): boolean =>
+  INDEX_DEFINITIONS.some((definition) => definition.symbol === observation.symbol)
+  && observation.name.length > 0
+  && Number.isFinite(observation.value) && observation.value > 0
+  && Number.isFinite(observation.changePct)
+  && validIsoTimestamp(observation.sourceTimestamp)
+  && validIsoTimestamp(observation.collectedAt)
+  && observation.provider.length > 0;
+
+const validSentimentObservation = (observation: SentimentObservation): boolean =>
+  Number.isInteger(observation.score) && observation.score >= 0 && observation.score <= 100
+  && Object.values(RATING_ALIASES).includes(observation.rating)
+  && validIsoTimestamp(observation.sourceTimestamp)
+  && validIsoTimestamp(observation.collectedAt)
+  && observation.provider.length > 0;
+
 interface IndexDefinition {
   symbol: MarketIndexSymbol;
   name: string;
@@ -91,6 +113,17 @@ const toIsoTimestamp = (value: unknown, unit: "seconds" | "auto" = "auto"): stri
 };
 
 const errorMessage = (error: unknown): string => error instanceof Error ? error.message : String(error);
+const PROVIDER_TIMEOUT_MS = 8_000;
+
+async function fetchWithTimeout(fetcher: Fetcher, input: RequestInfo | URL, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), PROVIDER_TIMEOUT_MS);
+  try {
+    return await fetcher(input, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 /**
  * FMP's documented index quote endpoint supports ^GSPC, ^NDX, ^DJI and ^VIX.
@@ -130,8 +163,7 @@ export class FmpMarketDataProvider implements MarketDataProvider {
   private async fetchOne(definition: IndexDefinition, collectedAt: string): Promise<MarketIndexObservation> {
     const url = new URL("https://financialmodelingprep.com/stable/quote");
     url.searchParams.set("symbol", definition.providerSymbol);
-    url.searchParams.set("apikey", this.apiKey);
-    const response = await this.fetcher(url, { headers: { Accept: "application/json" } });
+    const response = await fetchWithTimeout(this.fetcher, url, { headers: { Accept: "application/json", apikey: this.apiKey } });
     if (!response.ok) throw new Error(`provider HTTP ${response.status}`);
 
     const payload = await response.json() as unknown;
@@ -176,7 +208,7 @@ export class CnnSentimentProvider implements SentimentProvider {
   constructor(private readonly fetcher: Fetcher = fetch) {}
 
   async collect(collectedAt: string): Promise<SentimentObservation> {
-    const response = await this.fetcher(CNN_URL, {
+    const response = await fetchWithTimeout(this.fetcher, CNN_URL, {
       headers: {
         Accept: "application/json, text/plain, */*",
         "Accept-Language": "en-US,en;q=0.9",
@@ -286,6 +318,7 @@ export function isUsMarketHoliday(instant: Date): boolean {
   const current = dateKey(year, month, day);
   const holidays = new Set([
     observedFixedHoliday(year, 1, 1), // New Year's Day
+    observedFixedHoliday(year + 1, 1, 1), // New Year's Day observed on prior Dec 31
     nthWeekday(year, 1, 1, 3), // Martin Luther King Jr. Day
     nthWeekday(year, 2, 1, 3), // Presidents' Day
     goodFriday(year),
@@ -303,9 +336,27 @@ export function marketCollectionWindow(scheduledTime: Date): "regular" | "post_c
   const parts = localNewYorkParts(scheduledTime);
   if (!parts || parts.weekday === "Sat" || parts.weekday === "Sun" || isUsMarketHoliday(scheduledTime)) return null;
   const minutes = parts.hour * 60 + parts.minute;
-  if (minutes >= 9 * 60 + 30 && minutes < 16 * 60) return "regular";
-  if (parts.hour === 16 && parts.minute === 15) return "post_close";
+  const closeMinutes = isEarlyClose(parts) ? 13 * 60 : 16 * 60;
+  if (minutes >= 9 * 60 + 30 && minutes < closeMinutes) return "regular";
+  if (minutes === closeMinutes + 15) return "post_close";
   return null;
+}
+
+function isEarlyClose(parts: NewYorkParts): boolean {
+  const current = dateKey(parts.year, parts.month, parts.day);
+  const thanksgiving = nthWeekday(parts.year, 11, 4, 4);
+  const thanksgivingFriday = new Date(`${thanksgiving}T00:00:00Z`);
+  thanksgivingFriday.setUTCDate(thanksgivingFriday.getUTCDate() + 1);
+  const christmasWeekday = new Date(Date.UTC(parts.year, 11, 25)).getUTCDay();
+  const independenceWeekday = new Date(Date.UTC(parts.year, 6, 4)).getUTCDay();
+  const thanksgivingFridayKey = dateKey(
+    thanksgivingFriday.getUTCFullYear(),
+    thanksgivingFriday.getUTCMonth() + 1,
+    thanksgivingFriday.getUTCDate(),
+  );
+  return current === thanksgivingFridayKey
+    || (current === dateKey(parts.year, 12, 24) && christmasWeekday >= 1 && christmasWeekday <= 5)
+    || (current === dateKey(parts.year, 7, 3) && independenceWeekday >= 1 && independenceWeekday <= 5);
 }
 
 export function isNewYorkWeekday(instant: Date): boolean {
@@ -314,8 +365,9 @@ export function isNewYorkWeekday(instant: Date): boolean {
 }
 
 export async function writeMarketIndices(db: D1Database, observations: MarketIndexObservation[]): Promise<void> {
-  if (observations.length === 0) return;
-  await db.batch(observations.map((observation) => db.prepare(
+  const valid = observations.filter(validMarketObservation);
+  if (valid.length === 0) return;
+  await db.batch(valid.map((observation) => db.prepare(
     `INSERT OR IGNORE INTO market_indices
       (symbol, name, value, change_pct, source_timestamp, collected_at, provider)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -331,6 +383,7 @@ export async function writeMarketIndices(db: D1Database, observations: MarketInd
 }
 
 export async function writeSentiment(db: D1Database, observation: SentimentObservation): Promise<void> {
+  if (!validSentimentObservation(observation)) throw new Error("invalid sentiment observation");
   await db.prepare(
     `INSERT OR IGNORE INTO market_sentiment
       (score, rating, source_timestamp, collected_at, provider)
@@ -362,59 +415,72 @@ interface SentimentRow {
   provider: string;
 }
 
-export async function readMarketContext(db: D1Database): Promise<MarketContextReadModel> {
+async function readMarketIndices(db: D1Database): Promise<MarketIndexRow[]> {
   try {
-    const [indicesResult, sentimentResult] = await Promise.all([
-      db.prepare(
-        `SELECT symbol, name, value, change_pct, source_timestamp, collected_at, provider
-           FROM market_indices AS current
-          WHERE NOT EXISTS (
-            SELECT 1
-              FROM market_indices AS newer
-             WHERE newer.symbol = current.symbol
-               AND (
-                 newer.source_timestamp > current.source_timestamp
-                 OR (newer.source_timestamp = current.source_timestamp AND newer.collected_at > current.collected_at)
-                 OR (newer.source_timestamp = current.source_timestamp AND newer.collected_at = current.collected_at AND newer.provider > current.provider)
-               )
-          )
-          ORDER BY CASE symbol WHEN 'SPX' THEN 1 WHEN 'NDX' THEN 2 WHEN 'DJI' THEN 3 WHEN 'VIX' THEN 4 ELSE 5 END`,
-      ).all<MarketIndexRow>(),
-      db.prepare(
-        `SELECT score, rating, source_timestamp, collected_at, provider
-           FROM market_sentiment
-          ORDER BY source_timestamp DESC
-          LIMIT 1`,
-      ).first<SentimentRow>(),
-    ]);
-    const rows = indicesResult.results ?? [];
-    const indices = rows.map((row) => ({
-      symbol: row.symbol,
-      name: row.name,
-      value: Number(row.value),
-      change: Number(row.change_pct),
-      updatedAt: row.source_timestamp,
-    }));
-    const latestIndex = rows.reduce<MarketIndexRow | null>(
-      (latest, row) => !latest || row.source_timestamp > latest.source_timestamp ? row : latest,
-      null,
-    );
-    return {
-      indices,
-      sentiment: sentimentResult ? {
-        provider: sentimentResult.provider,
-        score: Number(sentimentResult.score),
-        rating: sentimentResult.rating,
-        asOf: sentimentResult.source_timestamp,
-      } : null,
-      provider: latestIndex?.provider ?? null,
-      latestSourceTimestamp: latestIndex?.source_timestamp ?? null,
-      latestCollectedAt: latestIndex?.collected_at ?? null,
-    };
+    const result = await db.prepare(
+      `SELECT symbol, name, value, change_pct, source_timestamp, collected_at, provider
+         FROM market_indices AS current
+        WHERE NOT EXISTS (
+          SELECT 1
+            FROM market_indices AS newer
+           WHERE newer.symbol = current.symbol
+             AND (
+               newer.source_timestamp > current.source_timestamp
+               OR (newer.source_timestamp = current.source_timestamp AND newer.collected_at > current.collected_at)
+               OR (newer.source_timestamp = current.source_timestamp AND newer.collected_at = current.collected_at AND newer.provider > current.provider)
+             )
+        )
+        ORDER BY CASE symbol WHEN 'SPX' THEN 1 WHEN 'NDX' THEN 2 WHEN 'DJI' THEN 3 WHEN 'VIX' THEN 4 ELSE 5 END`,
+    ).all<MarketIndexRow>();
+    return result.results ?? [];
   } catch (error) {
-    console.error("market context read failed", errorMessage(error));
-    return { indices: [], sentiment: null, provider: null, latestSourceTimestamp: null, latestCollectedAt: null };
+    console.error("market indices read failed", errorMessage(error));
+    return [];
   }
+}
+
+async function readMarketSentiment(db: D1Database): Promise<SentimentRow | null> {
+  try {
+    return await db.prepare(
+      `SELECT score, rating, source_timestamp, collected_at, provider
+         FROM market_sentiment
+        ORDER BY source_timestamp DESC, collected_at DESC, id DESC
+        LIMIT 1`,
+    ).first<SentimentRow>();
+  } catch (error) {
+    console.error("market sentiment read failed", errorMessage(error));
+    return null;
+  }
+}
+
+export async function readMarketContext(db: D1Database): Promise<MarketContextReadModel> {
+  const [rows, sentimentResult] = await Promise.all([readMarketIndices(db), readMarketSentiment(db)]);
+  const indices = rows.map((row) => ({
+    symbol: row.symbol,
+    name: row.name,
+    value: Number(row.value),
+    change: Number(row.change_pct),
+    updatedAt: row.source_timestamp,
+  }));
+  const latestIndex = rows.reduce<MarketIndexRow | null>(
+    (latest, row) => !latest || row.source_timestamp > latest.source_timestamp
+      || (row.source_timestamp === latest.source_timestamp && row.collected_at > latest.collected_at)
+      ? row
+      : latest,
+    null,
+  );
+  return {
+    indices,
+    sentiment: sentimentResult ? {
+      provider: sentimentResult.provider,
+      score: Number(sentimentResult.score),
+      rating: sentimentResult.rating,
+      asOf: sentimentResult.source_timestamp,
+    } : null,
+    provider: latestIndex?.provider ?? null,
+    latestSourceTimestamp: latestIndex?.source_timestamp ?? null,
+    latestCollectedAt: latestIndex?.collected_at ?? null,
+  };
 }
 
 export async function runMarketContextJob(
@@ -427,10 +493,22 @@ export async function runMarketContextJob(
   const collectedAt = new Date().toISOString();
   try {
     const result = await provider.collect(collectedAt);
-    await writeMarketIndices(env.DB, result.observations);
-    const status = result.observations.length === INDEX_DEFINITIONS.length && result.warnings.length === 0 ? "ok" : "degraded";
-    if (result.warnings.length > 0) console.warn("market context degraded", result.warnings);
-    return { status, detail: `${window}:${result.observations.length}/${INDEX_DEFINITIONS.length}` };
+    const scheduleParts = localNewYorkParts(scheduledTime);
+    const warnings = [...result.warnings];
+    const observations = result.observations.filter((observation) => {
+      const sourceParts = localNewYorkParts(new Date(observation.sourceTimestamp));
+      const sameDate = Boolean(sourceParts && scheduleParts
+        && dateKey(sourceParts.year, sourceParts.month, sourceParts.day)
+          === dateKey(scheduleParts.year, scheduleParts.month, scheduleParts.day));
+      if (!sameDate) warnings.push(`${observation.symbol}: source quote is not from the current New York session date`);
+      return sameDate;
+    });
+    const validObservations = observations.filter(validMarketObservation);
+    if (validObservations.length !== observations.length) warnings.push("provider returned invalid market observations");
+    await writeMarketIndices(env.DB, validObservations);
+    const status = validObservations.length === INDEX_DEFINITIONS.length && warnings.length === 0 ? "ok" : "degraded";
+    if (warnings.length > 0) console.warn("market context degraded", warnings);
+    return { status, detail: `${window}:${validObservations.length}/${INDEX_DEFINITIONS.length}` };
   } catch (error) {
     console.error("market context collection failed", errorMessage(error));
     return { status: "degraded", detail: errorMessage(error).slice(0, 200) };

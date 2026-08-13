@@ -101,7 +101,7 @@ function MarketCards() {
   const { marketIndexes: liveIndexes, marketUpdatedAt } = useMorningBriefingData();
   const aliases: Record<string, string[]> = {
     "S&P 500": ["SPX", "S&P 500"],
-    Nasdaq: ["NDX", "NASDAQ", "NASDAQ-100"],
+    "Nasdaq-100": ["NDX", "NASDAQ", "NASDAQ-100"],
     "Dow Jones": ["DJI", "DIA", "DOW JONES"],
     VIX: ["VIX"],
   };
@@ -148,14 +148,15 @@ const GAUGE_ARC_LENGTH = Math.PI * 65;
 function Sentiment() {
   const { sentiment } = useMorningBriefingData();
   if (!sentiment) {
-    return <Card className="sentiment-card"><SectionTitle title="Market Sentiment"/><div className="gauge gauge-unavailable"><svg viewBox="0 0 160 86" aria-hidden="true"><path className="gauge-bg" d="M15 75 A65 65 0 0 1 145 75"/></svg><div className="gauge-mask"><strong>Not available</strong><span>Sentiment</span></div></div><h3>Momentum <span className="neutral">Not available</span></h3><p><i/> Risk appetite <span className="neutral">Not available</span></p></Card>;
+    return <Card className="sentiment-card"><SectionTitle title="Fear & Greed"/><div className="gauge gauge-unavailable"><svg viewBox="0 0 160 86" aria-hidden="true"><path className="gauge-bg" d="M15 75 A65 65 0 0 1 145 75"/></svg><div className="gauge-mask"><strong>Not available</strong><span>Fear & Greed</span></div></div><h3>Momentum <span className="neutral">Not available</span></h3><p><i/> Risk appetite <span className="neutral">Not available</span></p></Card>;
   }
   const meta = SENTIMENT_META[sentiment.rating] ?? { label: "Neutral", color: "#8b8d98" };
   const dash = (sentiment.score / 100) * GAUGE_ARC_LENGTH;
   const riskAppetite = sentiment.score >= 50 ? "Risk-on" : "Risk-off";
   return (
     <Card className="sentiment-card">
-      <SectionTitle title="Market Sentiment"/>
+      <SectionTitle title="Fear & Greed"/>
+      <p className="card-subtitle">Updated {formatUpdatedAt(sentiment.asOf)}</p>
       <div className="gauge">
         <svg viewBox="0 0 160 86" aria-hidden="true">
           <path className="gauge-bg" d="M15 75 A65 65 0 0 1 145 75"/>

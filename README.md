@@ -40,6 +40,13 @@ Market indices and Fear & Greed are collected by the Worker Cron Triggers and
 stored in D1. The public API composes those rows with the screening read model;
 the VPS publisher does not write market-context data.
 
+The Worker schedules are UTC because Cloudflare Cron Triggers are UTC: indices
+run every 15 minutes on weekdays and are accepted only inside the New York
+regular session (including the supported 13:00 ET early-close calendar) plus
+one post-close run; Fear & Greed runs at 14:00 and 19:00 UTC on weekdays. The
+Worker applies `America/New_York` conversion, weekends, holidays, DST and
+source-date validation before writing.
+
 The index adapter currently uses Financial Modeling Prep's documented HTTP
 quote endpoint for `^GSPC`, `^NDX`, `^DJI` and `^VIX`. Configure its key only as
 a Cloudflare secret:
@@ -51,10 +58,19 @@ npx --yes wrangler@4 secret put FMP_API_KEY
 
 The adapter is isolated behind `MarketDataProvider` so the provider can be
 changed without changing D1, the API, or the frontend. FMP's free tier is
-limited and may be end-of-day only; the 15-minute schedule therefore requires
-an account/plan that grants the needed intraday index access. Until the secret
-is configured, the Worker returns `Not available` rather than presenting old
-data as current.
+limited and may be end-of-day only (the free Basic tier is intended for
+development/EOD usage); the 15-minute schedule therefore requires an
+account/plan that grants the needed intraday index access. FMP currently lists
+paid real-time tiers from roughly $22/month when billed annually, subject to
+change. FMP's terms also
+require an appropriate Data Display/Licensing Agreement for public display;
+the production secret must not be provisioned until that permission is in
+place. The current adapter is therefore deliberately replaceable: if the
+commercial terms are not acceptable, only this provider adapter changes.
+Until the secret is configured, the Worker returns `Not available` rather than
+presenting old data as current. Fear & Greed is separately isolated behind
+`SentimentProvider` and retains the last valid D1 observation after a temporary
+provider failure.
 
 ## Development
 

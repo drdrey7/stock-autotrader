@@ -19,6 +19,8 @@ class MemoryD1 {
   readonly indices = new Map<string, StoredIndex>();
   readonly sentiments: SentimentObservation[] = [];
   readonly sql: string[] = [];
+  failIndices = false;
+  failSentiment = false;
 
   prepare(sql: string) {
     this.sql.push(sql);
@@ -43,21 +45,25 @@ class MemoryD1 {
         }
         return { success: true, meta: { changes: 1 } };
       },
-      all: async <T>() => ({
-        results: [...this.indices.values()]
-          .sort((a, b) => a.sourceTimestamp.localeCompare(b.sourceTimestamp))
-          .filter((row, index, rows) => rows.map((candidate) => candidate.symbol).lastIndexOf(row.symbol) === index)
-          .map((row) => ({
-            symbol: row.symbol,
-            name: row.name,
-            value: row.value,
-            change_pct: row.changePct,
-            source_timestamp: row.sourceTimestamp,
-            collected_at: row.collectedAt,
-            provider: row.provider,
-          })) as T[],
-      }),
+      all: async <T>() => {
+        if (this.failIndices) throw new Error("indices read failed");
+        return {
+          results: [...this.indices.values()]
+            .sort((a, b) => a.sourceTimestamp.localeCompare(b.sourceTimestamp))
+            .filter((row, index, rows) => rows.map((candidate) => candidate.symbol).lastIndexOf(row.symbol) === index)
+            .map((row) => ({
+              symbol: row.symbol,
+              name: row.name,
+              value: row.value,
+              change_pct: row.changePct,
+              source_timestamp: row.sourceTimestamp,
+              collected_at: row.collectedAt,
+              provider: row.provider,
+            })) as T[],
+        };
+      },
       first: async <T>() => {
+        if (this.failSentiment) throw new Error("sentiment read failed");
         const row = [...this.sentiments].sort((a, b) => b.sourceTimestamp.localeCompare(a.sourceTimestamp))[0];
         return (row ? {
           score: row.score,
@@ -169,6 +175,68 @@ describe("market context providers and persistence", () => {
     expect(db.indices.size).toBe(4);
     expect(db.sql.filter((sql) => sql.includes("INSERT OR IGNORE INTO market_indices"))).toHaveLength(8);
   });
+
+  it("keeps each read model area available when the other query fails", async () => {
+    const db = new MemoryD1();
+    const provider = {
+      collect: async (collectedAt: string) => ({
+        observations: INDEX_DEFINITIONS.map((definition) => ({
+          symbol: definition.symbol,
+          name: definition.name,
+          value: 100,
+          changePct: 1,
+          sourceTimestamp: "2026-08-13T15:30:00.000Z",
+          collectedAt,
+          provider: "test-provider",
+        })),
+        warnings: [],
+      }),
+    };
+    await runMarketContextJob(envFor(db), new Date("2026-08-13T19:30:00Z"), provider);
+    await runSentimentJob(envFor(db), new Date("2026-08-13T19:30:00Z"), {
+      collect: async () => ({
+        score: 62,
+        rating: "greed",
+        sourceTimestamp: "2026-08-13T12:00:00.000Z",
+        collectedAt: new Date().toISOString(),
+        provider: "test-sentiment",
+      }),
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    db.failSentiment = true;
+    const sentimentFailure = await readMarketContext(db as unknown as D1Database);
+    expect(sentimentFailure.indices).toHaveLength(4);
+    expect(sentimentFailure.sentiment).toBeNull();
+    db.failSentiment = false;
+    db.failIndices = true;
+    const indexFailure = await readMarketContext(db as unknown as D1Database);
+    errorSpy.mockRestore();
+    expect(indexFailure.indices).toEqual([]);
+    expect(indexFailure.sentiment).toMatchObject({ score: 62, rating: "greed" });
+  });
+
+  it("does not publish a prior-day quote as the current session", async () => {
+    const db = new MemoryD1();
+    const provider = {
+      collect: async (collectedAt: string) => ({
+        observations: INDEX_DEFINITIONS.map((definition) => ({
+          symbol: definition.symbol,
+          name: definition.name,
+          value: 100,
+          changePct: 1,
+          sourceTimestamp: "2026-08-12T20:00:00.000Z",
+          collectedAt,
+          provider: "eod-provider",
+        })),
+        warnings: [],
+      }),
+    };
+    const warningSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const result = await runMarketContextJob(envFor(db), new Date("2026-08-13T19:30:00Z"), provider);
+    warningSpy.mockRestore();
+    expect(result.status).toBe("degraded");
+    expect((await readMarketContext(db as unknown as D1Database)).indices).toEqual([]);
+  });
 });
 
 describe("sentiment provider and schedules", () => {
@@ -184,6 +252,8 @@ describe("sentiment provider and schedules", () => {
     });
     const invalid = new CnnSentimentProvider(async () => response({ fear_and_greed: { score: 101, rating: "panic" } }));
     await expect(invalid.collect("2026-08-13T14:00:00.000Z")).rejects.toThrow("invalid score");
+    const missingTimestamp = new CnnSentimentProvider(async () => response({ fear_and_greed: { score: 62, rating: "Greed" } }));
+    await expect(missingTimestamp.collect("2026-08-13T14:00:00.000Z")).rejects.toThrow("missing source timestamp");
   });
 
   it("requires a source timestamp and preserves the last valid sentiment on failure", async () => {
@@ -205,6 +275,9 @@ describe("sentiment provider and schedules", () => {
     expect(marketCollectionWindow(new Date("2026-07-13T13:15:00Z"))).toBeNull();
     expect(marketCollectionWindow(new Date("2026-07-11T14:30:00Z"))).toBeNull();
     expect(isUsMarketHoliday(new Date("2026-07-03T14:30:00Z"))).toBe(true); // observed Independence Day
+    expect(isUsMarketHoliday(new Date("2021-12-31T15:00:00Z"))).toBe(true); // 2022 New Year's Day observed
     expect(marketCollectionWindow(new Date("2026-11-26T15:00:00Z"))).toBeNull(); // Thanksgiving
+    expect(marketCollectionWindow(new Date("2026-11-27T18:00:00Z"))).toBeNull(); // 13:00 ET early close
+    expect(marketCollectionWindow(new Date("2026-11-27T18:15:00Z"))).toBe("post_close");
   });
 });

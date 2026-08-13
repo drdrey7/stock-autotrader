@@ -64,7 +64,7 @@ describe("buildSourceHealth (honest freshness boundary)", () => {
       benchmarks: [],
       indices: [
         { symbol: "SPX", name: "S&P 500", value: 6427.18, change: 0.62, updatedAt: "2026-08-12T04:00:00Z" },
-        { symbol: "NDX", name: "Nasdaq", value: 23724.31, change: 0.78, updatedAt: "2026-08-12T04:00:00Z" },
+        { symbol: "NDX", name: "Nasdaq-100", value: 23724.31, change: 0.78, updatedAt: "2026-08-12T04:00:00Z" },
         { symbol: "DJI", name: "Dow Jones", value: 45118.26, change: 0.48, updatedAt: "2026-08-12T04:00:00Z" },
         { symbol: "VIX", name: "VIX", value: 15.41, change: -1.26, updatedAt: "2026-08-12T04:00:00Z" },
       ],

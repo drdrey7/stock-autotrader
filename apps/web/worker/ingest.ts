@@ -43,6 +43,35 @@ const directionSchema = z.enum(["Bullish", "Neutral", "Bearish"]).or(
 
 export const isoTimestampSchema = z.string().datetime({ offset: true });
 const MAX_EVENT_CLOCK_SKEW_MS = 5 * 60 * 1000;
+const MAX_INGEST_BODY_BYTES = 1_000_000;
+
+async function readBodyWithinLimit(request: Request): Promise<string | null> {
+  if (!request.body) return "";
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_INGEST_BODY_BYTES) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
+}
 
 export const marketDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
   const parsed = new Date(`${value}T00:00:00Z`);
@@ -489,7 +518,14 @@ export async function handleIngest(request: Request, env: Env): Promise<Response
   const secret = env.INGEST_SECRET;
   if (!secret) return json({ error: "Ingest not configured" }, 503);
 
-  const raw = await request.text();
+  const contentLength = Number(request.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > MAX_INGEST_BODY_BYTES) {
+    return json({ error: "Payload too large" }, 413);
+  }
+  const raw = await readBodyWithinLimit(request);
+  if (raw === null) {
+    return json({ error: "Payload too large" }, 413);
+  }
   if (!raw) return json({ error: "Empty body" }, 400);
   if (!(await verifyRequest(request, raw, secret))) return json({ error: "Unauthorized" }, 401);
 
