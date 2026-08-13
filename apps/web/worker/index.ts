@@ -206,6 +206,7 @@ export async function buildSources(
   options: {
     briefing: BriefingStatus;
     dashboard: DashboardData;
+    sentiment?: PublicSentiment | null;
     nowMs?: number;
   },
 ): Promise<PublicSourceHealth> {
@@ -280,12 +281,19 @@ export async function buildSources(
       error: earningsError,
       nowMs,
     }),
-    sentiment: buildSourceHealth(null, null, {
-      provider: "unavailable",
-      staleAfterSeconds: HEALTHY_STALE_AFTER_SECONDS,
-      error: null,
-      nowMs,
-    }),
+    sentiment: options.sentiment
+      ? buildSourceHealth(options.sentiment.asOf, options.sentiment.asOf, {
+          provider: options.sentiment.provider,
+          staleAfterSeconds: HEALTHY_STALE_AFTER_SECONDS,
+          error: null,
+          nowMs,
+        })
+      : buildSourceHealth(null, null, {
+          provider: "unavailable",
+          staleAfterSeconds: HEALTHY_STALE_AFTER_SECONDS,
+          error: null,
+          nowMs,
+        }),
     quickStats: buildSourceHealth(null, null, {
       provider: "unavailable",
       staleAfterSeconds: HEALTHY_STALE_AFTER_SECONDS,
@@ -579,7 +587,7 @@ export default {
           readBriefingStatus(env.DB),
           readSentiment(env),
         ]);
-        const sources = await buildSources(env, { briefing, dashboard });
+        const sources = await buildSources(env, { briefing, dashboard, sentiment });
         return json({ ...dashboard, briefing, sources, sentiment });
       } catch (err) {
         console.error("status error", err);

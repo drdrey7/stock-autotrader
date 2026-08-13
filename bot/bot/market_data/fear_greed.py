@@ -73,11 +73,11 @@ class CnnFearGreedProvider:
         raw_score = block.get("score")
         if not isinstance(raw_score, (int, float)):
             raise DataValidationError("CNN Fear & Greed score is missing or not numeric")
-        if isinstance(raw_score, float) and not raw_score.is_integer():
-            raise DataValidationError(f"CNN Fear & Greed score is not an integer: {raw_score}")
-        score = int(raw_score)
+        # CNN routinely serves fractional scores (e.g. 62.5); the worker
+        # contract is an integer 0-100, so normalize by rounding.
+        score = int(round(raw_score))
         if score < 0 or score > 100:
-            raise DataValidationError(f"CNN Fear & Greed score out of range: {score}")
+            raise DataValidationError(f"CNN Fear & Greed score out of range: {raw_score}")
         raw_rating = str(block.get("rating") or "").strip().lower()
         rating = RATING_ALIASES.get(raw_rating)
         if rating is None:

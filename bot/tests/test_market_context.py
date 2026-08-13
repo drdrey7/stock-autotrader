@@ -24,6 +24,7 @@ def _settings(tmp: str, **overrides) -> Settings:
 def _bar(symbol: str, close: float = 500.0, change: float = 0.5) -> dict:
     return {
         "date": "2026-08-13",
+        "bar_ts": "2026-08-13T00:00:00-04:00",
         "open": close - 1.0,
         "high": close + 2.0,
         "low": close - 3.0,
@@ -90,6 +91,12 @@ class CnnFearGreedTests(unittest.TestCase):
         self.assertEqual(reading.score, 62)
         self.assertEqual(reading.rating, "greed")
         self.assertEqual(reading.as_of, "2026-08-13T12:46:16+00:00")
+
+    def test_normalizes_fractional_score(self):
+        provider = CnnFearGreedProvider(fetch_json=lambda: {
+            "fear_and_greed": {"score": 62.5, "rating": "greed", "timestamp": "2026-08-13T12:00:00Z"},
+        })
+        self.assertEqual(provider.fetch().score, 62)
 
     def test_normalizes_spaced_ratings(self):
         provider = CnnFearGreedProvider(fetch_json=lambda: {
