@@ -305,6 +305,29 @@ export function validateSourceHealth(sources: PublicSourceHealth): PublicSourceH
   };
 }
 
+/**
+ * Fail-closed source health for degraded fallback responses: every source is
+ * Unavailable so the public contract keeps its shape even when the dashboard
+ * read fails.
+ */
+export function unavailableSources(): PublicSourceHealth {
+  const unavailable = (error: string): SourceHealth => buildSourceHealth(null, null, {
+    provider: "unavailable",
+    staleAfterSeconds: HEALTHY_STALE_AFTER_SECONDS,
+    error,
+  });
+  const reason = "Source health is unavailable.";
+  return {
+    briefing: unavailable(reason),
+    market: unavailable(reason),
+    opportunities: unavailable(reason),
+    x: unavailable(reason),
+    earnings: unavailable(reason),
+    sentiment: unavailable(reason),
+    quickStats: unavailable(reason),
+  };
+}
+
 export const normalizeDirection = (value: unknown): Candidate["direction"] =>
   value === "Long" ? "Bullish" : String(value) as Candidate["direction"];
 
@@ -542,7 +565,9 @@ export default {
       } catch (err) {
         console.error("status error", err);
         try {
-          return json({ ...await buildDashboard(env), briefing: unavailableBriefingStatus() });
+          // Keep the public contract shape under degradation: sources stay
+          // present, every source fail-closed to Unavailable.
+          return json({ ...await buildDashboard(env), briefing: unavailableBriefingStatus(), sources: unavailableSources() });
         } catch {
           return json({ error: "Internal error" }, 500);
         }

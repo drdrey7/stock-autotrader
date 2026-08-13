@@ -320,18 +320,26 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
       const liveMarket = marketBriefing ? marketFromBriefing(marketBriefing) : null;
       const liveOpportunities = analysisBriefing ? opportunitiesFromBriefing(analysisBriefing) : null;
 
-      setData((previous) => ({
-        ...previous,
-        marketIndexes: liveMarket ?? [],
+      setData((previous) => {
         // A transient refresh failure must not blank a still-valid daily
         // analysis: retain the previous publication while its timestamp is
         // inside the 72h window.
-        opportunities: liveOpportunities ?? (isWithinWindow(previous.opportunitiesUpdatedAt, BRIEFING_MAX_AGE_MS) ? previous.opportunities : []),
-        marketUpdatedAt: liveMarket && briefingUpdatedAt ? briefingUpdatedAt : null,
-        opportunitiesUpdatedAt: liveOpportunities !== null && briefingUpdatedAt ? briefingUpdatedAt : previous.opportunitiesUpdatedAt,
-        editionDate: analysisBriefing?.editionDate ?? previous.editionDate,
-        editionType: analysisBriefing?.editionType ?? previous.editionType,
-      }));
+        const retainedOpportunities = isWithinWindow(previous.opportunitiesUpdatedAt, BRIEFING_MAX_AGE_MS) ? previous.opportunities : [];
+        const nextOpportunities = liveOpportunities ?? retainedOpportunities;
+        // The welcome card's date/edition label only describes what is being
+        // shown: expire it together with the analysis instead of keeping an
+        // old date under a post-close greeting for a cleared section.
+        const nextEditionDate = analysisBriefing?.editionDate ?? (nextOpportunities.length > 0 ? previous.editionDate : null);
+        return {
+          ...previous,
+          marketIndexes: liveMarket ?? [],
+          opportunities: nextOpportunities,
+          marketUpdatedAt: liveMarket && briefingUpdatedAt ? briefingUpdatedAt : null,
+          opportunitiesUpdatedAt: liveOpportunities !== null && briefingUpdatedAt ? briefingUpdatedAt : previous.opportunitiesUpdatedAt,
+          editionDate: nextEditionDate,
+          editionType: nextEditionDate !== null ? (analysisBriefing?.editionType ?? previous.editionType) : null,
+        };
+      });
     };
 
     const refreshX = async () => {
