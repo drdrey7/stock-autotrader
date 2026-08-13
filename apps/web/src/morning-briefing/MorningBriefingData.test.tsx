@@ -346,7 +346,7 @@ it("does not show static earnings when the first backend request fails", async (
   expect(view.container.querySelector(".earnings-mini")).toHaveTextContent("No upcoming earnings published.");
 });
 
-it("keeps the last earnings when the earnings endpoint fails after a success", async () => {
+it("clears earnings when the endpoint fails after a success", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   vi.setSystemTime(new Date("2026-08-12T16:00:00Z"));
   let earningsCalls = 0;
@@ -363,7 +363,7 @@ it("keeps the last earnings when the earnings endpoint fails after a success", a
   await waitFor(() => expect(view.container.querySelector(".earnings-mini")).toHaveTextContent("Future Corp"));
   await vi.advanceTimersByTimeAsync(60 * 60_000);
   await waitFor(() => expect(earningsCalls).toBeGreaterThanOrEqual(2));
-  expect(view.container.querySelector(".earnings-mini")).toHaveTextContent("Future Corp");
+  expect(view.container.querySelector(".earnings-mini")).toHaveTextContent("No upcoming earnings published.");
   vi.useRealTimers();
 });
 
@@ -526,7 +526,7 @@ it("reclassifies earnings and refreshes once when the New York market date chang
   vi.setSystemTime(new Date("2026-08-13T04:01:00Z"));
   await vi.advanceTimersByTimeAsync(60_000);
   await waitFor(() => expect(view.container.querySelector(".earnings-mini")).not.toHaveTextContent("Rollover Corp"));
-  expect(view.container.querySelector(".recent-results")).toHaveTextContent("Rollover Corp");
+  expect(view.container.querySelector(".recent-results")).toHaveTextContent("No recent earnings published.");
   expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input) === "/api/earnings")).toHaveLength(2);
   vi.useRealTimers();
 });

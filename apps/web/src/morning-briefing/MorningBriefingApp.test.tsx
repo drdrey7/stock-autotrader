@@ -50,7 +50,7 @@ const stubEarningsSchedule = () => {
     }
     if (url === "/api/earnings") {
       return new Response(JSON.stringify([
-        { symbol: "MSFT", company: "Microsoft", date: "2026-08-15", timing: "AMC", eventSignal: "Confirmed" },
+        { symbol: "MSFT", company: "Microsoft", date: "2026-08-15", timing: "AMC", eventSignal: "Confirmed", officialReportUrl: "https://www.microsoft.com/en-us/Investor" },
       ]), { status: 200 });
     }
     return new Response(null, { status: 503 });
@@ -177,7 +177,7 @@ describe("Morning Briefing frontend demo", () => {
 
     expect(await screen.findByRole("dialog", { name: "Earnings Detail" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Back" })).toHaveFocus();
-    expect(screen.getByRole("link", { name: /View Official Earnings Report/ }))
+    expect(screen.getByRole("link", { name: /Official Earnings Report/ }))
       .toHaveAttribute("href", "https://www.microsoft.com/en-us/Investor");
   });
 
@@ -190,5 +190,62 @@ describe("Morning Briefing frontend demo", () => {
     expect(await screen.findByRole("heading", { name: "Good morning." })).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     await waitFor(() => expect(document.body.style.overflow).toBe(""));
+  });
+
+  it("renders reported results, real summary counts and official links", async () => {
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/earnings") {
+        return new Response(JSON.stringify({
+          from: "2026-01-01",
+          to: "2026-10-12",
+          summary: { today: 1, thisWeek: 2, next60Days: 1 },
+          events: [{
+            id: "MSFT-2026-Q1", symbol: "MSFT", company: "Microsoft", cik: "0000789012",
+            fiscalYear: 2026, fiscalQuarter: 1, fiscalPeriod: "Q1", fiscalPeriodEnd: "2026-06-30",
+            scheduledDate: "2026-08-12", scheduledTime: "16:00:00", timing: "AMC", status: "reported",
+            scheduled: false, reported: true, cancelled: false, unknown: false,
+            epsEstimate: 3, epsActual: 3.3, epsSurprise: 0.3, epsSurprisePct: 10, epsResult: "Beat",
+            revenueEstimate: 100, revenueActual: 90, revenueSurprise: -10, revenueSurprisePct: -10, revenueResult: "Miss",
+            overallResult: "Mixed", reportedAt: "2026-08-12T20:10:00.000Z",
+            calendarProvider: "fmp-earnings-calendar", consensusProvider: "fmp-earnings-calendar",
+            providerEventId: "msft-event", providerUpdatedAt: "2026-08-12T20:10:00.000Z",
+            officialReportUrl: "https://example.test/msft-release", investorRelationsUrl: "https://example.test/msft-ir",
+            secFilingUrl: "https://www.sec.gov/Archives/edgar/data/789012/000078901226000001/msft8k.htm",
+            secAccession: "0000789012-26-000001", secForm: "8-K", secFiledAt: "2026-08-12T00:00:00.000Z",
+            createdAt: "2026-08-12T20:00:00.000Z", updatedAt: "2026-08-12T20:10:00.000Z", lastCheckedAt: "2026-08-12T20:15:00.000Z",
+          }, {
+            id: "AAPL-2026-Q3", symbol: "AAPL", company: "Apple", cik: null,
+            fiscalYear: 2026, fiscalQuarter: 3, fiscalPeriod: "Q3", fiscalPeriodEnd: null,
+            scheduledDate: "2026-08-20", scheduledTime: null, timing: "BMO", status: "scheduled",
+            scheduled: true, reported: false, cancelled: false, unknown: false,
+            epsEstimate: null, epsActual: null, epsSurprise: null, epsSurprisePct: null, epsResult: "Not Available",
+            revenueEstimate: null, revenueActual: null, revenueSurprise: null, revenueSurprisePct: null, revenueResult: "Not Available",
+            overallResult: "Not Available", reportedAt: null,
+            calendarProvider: "fmp-earnings-calendar", consensusProvider: "fmp-earnings-calendar",
+            providerEventId: "aapl-event", providerUpdatedAt: "2026-08-12T20:10:00.000Z",
+            officialReportUrl: null, investorRelationsUrl: null, secFilingUrl: null, secAccession: null, secForm: null, secFiledAt: null,
+            createdAt: "2026-08-12T20:00:00.000Z", updatedAt: "2026-08-12T20:10:00.000Z", lastCheckedAt: null,
+          }],
+        }), { status: 200 });
+      }
+      return new Response(null, { status: 503 });
+    });
+    const view = renderApp("/earnings");
+    const summary = await screen.findByLabelText("Earnings summary");
+    expect(summary).toHaveTextContent(/TODAY\s*1/);
+    expect(summary).toHaveTextContent(/THIS WEEK\s*1/);
+    expect(summary).toHaveTextContent(/NEXT 60 DAYS\s*2/);
+    expect(view.container).toHaveTextContent("Mixed");
+    const ticker = (await screen.findAllByText("MSFT")).find((element) => element.tagName === "B");
+    expect(ticker).toBeDefined();
+    fireEvent.click(ticker!.closest("button")!);
+    const drawer = await screen.findByRole("dialog", { name: "Earnings Detail" });
+    expect(drawer).toHaveTextContent("3.3");
+    expect(drawer).toHaveTextContent("+10.00%");
+    expect(drawer).toHaveTextContent("Mixed");
+    expect(screen.getByRole("link", { name: /Official Earnings Report/ })).toHaveAttribute("href", "https://example.test/msft-release");
+    expect(screen.getByRole("link", { name: /SEC Filing/ })).toHaveAttribute("href", expect.stringContaining("sec.gov"));
+    expect(screen.getByRole("link", { name: /Investor Relations/ })).toHaveAttribute("href", "https://example.test/msft-ir");
+    expect(view.container.querySelector(".earnings-table")).toHaveTextContent("Mixed");
   });
 });

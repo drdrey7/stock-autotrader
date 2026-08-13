@@ -73,6 +73,71 @@ export interface EarningsEvent {
   updatedAt: string;
 }
 
+export type EarningsStatus = "scheduled" | "reported" | "cancelled" | "unknown";
+export type EarningsMetricResult = "Beat" | "In Line" | "Miss" | "Not Available";
+export type EarningsOverallResult = "Beat" | "In Line" | "Miss" | "Mixed" | "Not Available";
+
+/**
+ * Cloudflare-owned earnings read model. This is intentionally provider-neutral:
+ * consumers must not depend on FMP, SEC, or another adapter's field names.
+ */
+export interface EarningsEngineEvent {
+  id: string;
+  symbol: string;
+  company: string;
+  cik: string | null;
+  fiscalYear: number | null;
+  fiscalQuarter: number | null;
+  fiscalPeriod: string | null;
+  fiscalPeriodEnd: string | null;
+  scheduledDate: string | null;
+  scheduledTime: string | null;
+  timing: "BMO" | "AMC" | "TBD";
+  status: EarningsStatus;
+  scheduled: boolean;
+  reported: boolean;
+  cancelled: boolean;
+  unknown: boolean;
+  epsEstimate: number | null;
+  epsActual: number | null;
+  epsSurprise: number | null;
+  epsSurprisePct: number | null;
+  epsResult: EarningsMetricResult;
+  revenueEstimate: number | null;
+  revenueActual: number | null;
+  revenueSurprise: number | null;
+  revenueSurprisePct: number | null;
+  revenueResult: EarningsMetricResult;
+  overallResult: EarningsOverallResult;
+  reportedAt: string | null;
+  calendarProvider: string | null;
+  consensusProvider: string | null;
+  providerEventId: string | null;
+  providerUpdatedAt: string | null;
+  officialReportUrl: string | null;
+  investorRelationsUrl: string | null;
+  secFilingUrl: string | null;
+  secAccession: string | null;
+  secForm: string | null;
+  secFiledAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  lastCheckedAt: string | null;
+}
+
+export interface EarningsApiSummary {
+  today: number;
+  thisWeek: number;
+  next60Days: number;
+}
+
+export interface EarningsApiResponse {
+  events: EarningsEngineEvent[];
+  summary: EarningsApiSummary;
+  from: string;
+  to: string;
+}
+
 export interface ShadowPosition {
   symbol: string;
   strategy: string;

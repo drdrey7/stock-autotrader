@@ -28,6 +28,13 @@ import {
   runSentimentJob,
   type MarketContextReadModel,
 } from "./market-context";
+import {
+  EARNINGS_CALENDAR_CRON,
+  EARNINGS_MONITOR_CRON,
+  EarningsQueryError,
+  readEarningsApi,
+  runEarningsJob,
+} from "./earnings";
 
 /**
  * Stock Autotrader public read-only API (PR #2).
@@ -40,6 +47,8 @@ export interface Env {
   ASSETS: Fetcher;
   INGEST_SECRET?: string;
   ENVIRONMENT?: string;
+  FMP_API_KEY?: string;
+  SEC_USER_AGENT?: string;
 }
 
 const json = (data: unknown, status = 200) =>
@@ -278,7 +287,7 @@ export async function buildSources(
     // Publication metadata records a successful empty calendar too: a valid
     // EARNINGS_UPDATED with zero rows must not make the source Unavailable.
     const row = await env.DB.prepare(
-      "SELECT COALESCE((SELECT value FROM app_meta WHERE key = 'earningsUpdatedAt'), (SELECT MAX(updated_at) FROM earnings)) AS ts",
+      "SELECT COALESCE((SELECT value FROM app_meta WHERE key = 'earningsEngineUpdatedAt'), (SELECT MAX(updated_at) FROM earnings_events)) AS ts",
     ).first<{ ts: string | null }>();
     earningsLastSuccess = row?.ts ? new Date(row.ts).toISOString() : null;
   } catch {
@@ -625,6 +634,14 @@ export default {
       await runSentimentJob(env, scheduledTime);
       return;
     }
+    if (controller.cron === EARNINGS_CALENDAR_CRON) {
+      await runEarningsJob(env, scheduledTime, "calendar");
+      return;
+    }
+    if (controller.cron === EARNINGS_MONITOR_CRON) {
+      await runEarningsJob(env, scheduledTime, "monitor");
+      return;
+    }
     console.warn("unknown cron trigger", controller.cron);
   },
 
@@ -775,10 +792,12 @@ export default {
     }
     if (pathname === "/api/earnings") {
       try {
-        const payload = await buildDashboard(env);
-        return json(payload.earnings);
-      } catch {
-        return json({ error: "Internal error" }, 500);
+        return json(await readEarningsApi(env, new URL(request.url).searchParams));
+      } catch (error) {
+        console.error("earnings api error", error);
+        return error instanceof EarningsQueryError
+          ? json({ error: "invalid_earnings_query" }, 400)
+          : json({ error: "earnings_store_unavailable" }, 503);
       }
     }
     if (pathname === "/api/portfolio/shadow") {

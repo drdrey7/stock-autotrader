@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Env } from "./index";
 import worker from "./index";
+import { EARNINGS_CALENDAR_CRON, EARNINGS_MONITOR_CRON } from "./earnings";
 import {
   CnnSentimentProvider,
   YahooFinanceMarketDataProvider,
@@ -272,10 +273,12 @@ describe("preview cron safety", () => {
     const db = new Proxy({} as D1Database, {
       get: () => { throw new Error("preview attempted a D1 write"); },
     });
-    await expect(worker.scheduled(
-      { cron: MARKET_CRON, scheduledTime: Date.parse("2026-08-13T14:00:00Z") } as ScheduledController,
-      { DB: db, ASSETS: {} as Fetcher, ENVIRONMENT: "preview" },
-    )).resolves.toBeUndefined();
+    for (const cron of [MARKET_CRON, EARNINGS_CALENDAR_CRON, EARNINGS_MONITOR_CRON]) {
+      await expect(worker.scheduled(
+        { cron, scheduledTime: Date.parse("2026-08-13T14:00:00Z") } as ScheduledController,
+        { DB: db, ASSETS: {} as Fetcher, ENVIRONMENT: "preview" },
+      )).resolves.toBeUndefined();
+    }
   });
 });
 

@@ -1,10 +1,10 @@
 /* eslint-disable react-refresh/only-export-components */
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
-import type { DailyBriefing, EarningsEvent } from "@stock-autotrader/contracts";
+import type { DailyBriefing, EarningsApiResponse, EarningsEngineEvent } from "@stock-autotrader/contracts";
 import type { MarketIndex } from "./data/market";
-import { opportunities as mockOpportunities, type Opportunity } from "./data/opportunities";
+import { type Opportunity } from "./data/opportunities";
 import { type XPost } from "./data/xSurge";
-import { earnings as mockEarnings, type EarningsCompany } from "./data/earnings";
+import { eventWithViewMetadata, type EarningsCompany } from "./data/earnings-view";
 
 type BriefingHealth = {
   available: boolean;
@@ -50,6 +50,7 @@ export type MorningBriefingData = {
   opportunities: Opportunity[];
   xPosts: XPost[];
   earnings: EarningsCompany[];
+  earningsAvailable: boolean;
   // The published edition shown, with the timestamps that label the data.
   editionDate: string | null;
   editionType: DailyBriefing["editionType"] | null;
@@ -58,20 +59,14 @@ export type MorningBriefingData = {
   sentiment: NonNullable<StatusResponse["sentiment"]> | null;
 };
 
-function normaliseEarnings(items: EarningsCompany[], today = marketTodayKey()): EarningsCompany[] {
-  return items.map((item) => item.result === "Upcoming" && item.date < today
-    ? { ...item, result: "Pending" as const }
-    : item);
-}
-
 const initialData: MorningBriefingData = {
   // Financially actionable sections stay empty until the backend publishes
-  // validated data. Static fixtures remain available internally for colours
-  // and development, but are never presented as current market information.
+  // validated data. Earnings has no financial fixture fallback.
   marketIndexes: [],
   opportunities: [],
   xPosts: [],
   earnings: [],
+  earningsAvailable: false,
   editionDate: null,
   editionType: null,
   marketUpdatedAt: null,
@@ -91,10 +86,10 @@ const numberFrom = (value: string | number | null | undefined): number | null =>
 const changeFrom = (value: string | null | undefined): number | null => numberFrom(value);
 
 const tickerColour = (ticker: string): string => {
-  const known = [...mockOpportunities, ...mockEarnings].find((item) =>
-    "ticker" in item && item.ticker === ticker
-  );
-  return known?.color ?? "#176b47";
+  let hash = 0;
+  for (const character of ticker) hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
+  const colors = ["#176b47", "#4385f5", "#a8730b", "#7c3aed", "#1675d1", "#dc3f48", "#0f766e"];
+  return colors[hash % colors.length] ?? colors[0]!;
 };
 
 const relativeTime = (iso: string): string => {
@@ -293,26 +288,9 @@ export function marketTodayKey(): string {
   return parts.replace(/-/g, "-");
 }
 
-function earningsFromApi(events: EarningsEvent[]): EarningsCompany[] {
-  const today = marketTodayKey();
-  return events.map<EarningsCompany>((event) => {
-    const known = mockEarnings.find((item) => item.ticker === event.symbol);
-    const isUpcoming = /^\d{4}-\d{2}-\d{2}$/.test(event.date) && event.date >= today;
-    return {
-      ticker: event.symbol,
-      company: event.company,
-      date: event.date,
-      timing: event.timing,
-      result: isUpcoming ? "Upcoming" : "Pending",
-      epsExpected: "Not published",
-      revenueExpected: "Not published",
-      guidance: "Pending",
-      officialUrl: known?.officialUrl,
-      color: known?.color ?? tickerColour(event.symbol),
-      source: "live",
-      eventSignal: event.eventSignal,
-    };
-  });
+function earningsFromApi(payload: EarningsApiResponse | EarningsEngineEvent[]): EarningsCompany[] {
+  const events = Array.isArray(payload) ? payload : payload.events;
+  return events.map((event) => eventWithViewMetadata(event));
 }
 
 export function MorningBriefingDataProvider({ children }: { children: React.ReactNode }) {
@@ -416,7 +394,7 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
       const today = marketTodayKey();
       setData((previous) => ({
         ...previous,
-        earnings: normaliseEarnings(previous.earnings, today),
+        earnings: previous.earnings,
       }));
       const now = Date.now();
       const refreshDue = force
@@ -426,14 +404,15 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
       lastEarningsAttemptAt = now;
       lastEarningsAttemptDate = today;
       const currentRequest = ++earningsRequestId;
-      const response = await fetchJson<EarningsEvent[]>("/api/earnings");
+      const response = await fetchJson<EarningsApiResponse | EarningsEngineEvent[]>("/api/earnings");
       if (cancelled || currentRequest !== earningsRequestId) return;
-      const apiEarnings = Array.isArray(response) ? earningsFromApi(response) : null;
+      const apiEarnings = response ? earningsFromApi(response) : null;
       setData((previous) => ({
         ...previous,
-        // A failed or empty fetch keeps the last known calendar usable;
-        // earnings are a daily publication, not realtime quotes.
-        earnings: apiEarnings ?? previous.earnings,
+        // A failed fetch must not present yesterday's schedule as current.
+        // Empty is a valid publication; failure is explicitly unavailable.
+        earnings: apiEarnings ?? [],
+        earningsAvailable: apiEarnings !== null,
       }));
     };
 
