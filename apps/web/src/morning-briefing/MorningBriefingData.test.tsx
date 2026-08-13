@@ -613,6 +613,12 @@ it("renders the fear & greed number and gauge from the status sentiment", async 
   await waitFor(() => expect(view.container.querySelector(".sentiment-card")).toHaveTextContent("Greed"));
   expect(view.container.querySelector(".sentiment-card .gauge-mask strong")).toHaveTextContent("62");
   expect(view.container.querySelector(".sentiment-card .gauge-value")).not.toBeNull();
+  // The gauge arc must reflect the score (62/100 of the semicircle), not the
+  // full circle: π·65 ≈ 204.2 is the arc length, 62% ≈ 126.6.
+  expect(view.container.querySelector(".sentiment-card .gauge-value")).toHaveAttribute(
+    "stroke-dasharray",
+    expect.stringMatching(/^126\.\d+/),
+  );
   expect(view.container.querySelector(".sentiment-card")).toHaveTextContent("Risk-on");
   expect(view.container.querySelector(".sentiment-card")).not.toHaveTextContent("Not available");
 });

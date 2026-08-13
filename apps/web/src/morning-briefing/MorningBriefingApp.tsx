@@ -159,7 +159,7 @@ function Sentiment() {
       <div className="gauge">
         <svg viewBox="0 0 160 86" aria-hidden="true">
           <path className="gauge-bg" d="M15 75 A65 65 0 0 1 145 75"/>
-          <path className="gauge-value" d="M15 75 A65 65 0 0 1 145 75" stroke={meta.color} strokeDasharray={`${dash} ${GAUGE_ARC_LENGTH}`}/>
+          <path className="gauge-value gauge-live" d="M15 75 A65 65 0 0 1 145 75" stroke={meta.color} strokeDasharray={`${dash} ${GAUGE_ARC_LENGTH}`}/>
         </svg>
         <div className="gauge-mask">
           <strong style={{ color: meta.color }}>{sentiment.score}</strong>
