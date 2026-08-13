@@ -19,9 +19,11 @@ type Sleeper = (milliseconds: number) => Promise<void>;
 const FMP_URL = "https://financialmodelingprep.com/stable/earnings-calendar";
 const SEC_TICKERS_URL = "https://www.sec.gov/files/company_tickers_exchange.json";
 const SEC_SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK";
+const SEC_FULL_INDEX_URL = "https://www.sec.gov/Archives/edgar/full-index";
 const PROVIDER_TIMEOUT_MS = 8_000;
 const MAX_PROVIDER_ATTEMPTS = 2;
 const SEC_MIN_REQUEST_INTERVAL_MS = 125;
+const SEC_CALENDAR_FORMS = new Set(["10-Q", "10-K", "6-K"]);
 
 const defaultSleep: Sleeper = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -105,14 +107,14 @@ function rowsFromPayload(payload: unknown): Record<string, unknown>[] {
   throw new Error("malformed earnings provider response");
 }
 
-async function fetchJsonWithRetry(
+async function fetchWithRetry(
   fetcher: Fetcher,
   url: URL,
   init: RequestInit,
   sleeper: Sleeper = defaultSleep,
   timeoutMs = PROVIDER_TIMEOUT_MS,
   beforeAttempt?: () => Promise<void>,
-): Promise<unknown> {
+): Promise<Response> {
   let lastError: unknown = new Error("provider request failed");
   for (let attempt = 0; attempt < MAX_PROVIDER_ATTEMPTS; attempt += 1) {
     await beforeAttempt?.();
@@ -120,7 +122,7 @@ async function fetchJsonWithRetry(
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await fetcher(url, { ...init, signal: controller.signal });
-      if (response.ok) return await response.json();
+      if (response.ok) return response;
       const retryAfter = response.headers.get("Retry-After");
       const retryAfterMs = retryAfter && /^\d+(?:\.\d+)?$/.test(retryAfter)
         ? Number(retryAfter) * 1000
@@ -139,6 +141,30 @@ async function fetchJsonWithRetry(
     if (attempt + 1 < MAX_PROVIDER_ATTEMPTS) await sleeper(100 * (attempt + 1));
   }
   throw lastError;
+}
+
+async function fetchJsonWithRetry(
+  fetcher: Fetcher,
+  url: URL,
+  init: RequestInit,
+  sleeper: Sleeper = defaultSleep,
+  timeoutMs = PROVIDER_TIMEOUT_MS,
+  beforeAttempt?: () => Promise<void>,
+): Promise<unknown> {
+  const response = await fetchWithRetry(fetcher, url, init, sleeper, timeoutMs, beforeAttempt);
+  return response.json();
+}
+
+async function fetchTextWithRetry(
+  fetcher: Fetcher,
+  url: URL,
+  init: RequestInit,
+  sleeper: Sleeper = defaultSleep,
+  timeoutMs = PROVIDER_TIMEOUT_MS,
+  beforeAttempt?: () => Promise<void>,
+): Promise<string> {
+  const response = await fetchWithRetry(fetcher, url, init, sleeper, timeoutMs, beforeAttempt);
+  return response.text();
 }
 
 function normalizedFmpRow(
@@ -327,9 +353,84 @@ function filingPriority(filing: OfficialFiling): number {
   return 9;
 }
 
-export class SecEdgarProvider implements OfficialFilingsProvider {
+function secIndexQuarters(range: EarningsDateRange): string[] {
+  const from = new Date(`${range.from}T12:00:00.000Z`);
+  const to = new Date(`${range.to}T12:00:00.000Z`);
+  const quarters: string[] = [];
+  let year = from.getUTCFullYear();
+  let quarter = Math.floor(from.getUTCMonth() / 3) + 1;
+  const endYear = to.getUTCFullYear();
+  const endQuarter = Math.floor(to.getUTCMonth() / 3) + 1;
+  while (year < endYear || (year === endYear && quarter <= endQuarter)) {
+    quarters.push(`${year}/QTR${quarter}`);
+    quarter += 1;
+    if (quarter === 5) {
+      quarter = 1;
+      year += 1;
+    }
+  }
+  return quarters;
+}
+
+function parseSecMasterIndex(
+  payload: string,
+  range: EarningsDateRange,
+  metadataByCik: ReadonlyMap<string, CompanyMetadata>,
+  universe: ReadonlySet<string>,
+): EarningsCalendarObservation[] {
+  const observations: EarningsCalendarObservation[] = [];
+  const seen = new Set<string>();
+  for (const line of payload.split(/\r?\n/)) {
+    const match = line.match(/^(\d+)\|([^|]*)\|([^|]+)\|(\d{4}-\d{2}-\d{2})\|(.+)$/);
+    if (!match) continue;
+    const cik = padCik(match[1]);
+    const form = match[3].trim();
+    const filedDate = dateKey(match[4]);
+    const filename = match[5].trim();
+    const accession = filename.match(/(\d{10}-\d{2}-\d{6})/)?.[1] ?? null;
+    if (!cik || !filedDate || filedDate < range.from || filedDate > range.to || !accession) continue;
+    if (!SEC_CALENDAR_FORMS.has(form.replace(/\/A$/, "")) || seen.has(accession)) continue;
+    const company = metadataByCik.get(cik);
+    if (!company || !universe.has(company.symbol) || !isInEarningsUniverse(company.symbol)) continue;
+    const url = filingUrl(cik, accession, null);
+    if (!url) continue;
+    const filing: OfficialFiling = {
+      url,
+      accession,
+      form,
+      filedAt: `${filedDate}T00:00:00.000Z`,
+      reportDate: null,
+      items: [],
+    };
+    seen.add(accession);
+    observations.push({
+      symbol: company.symbol,
+      company: company.company,
+      scheduledDate: filedDate,
+      scheduledTime: null,
+      timing: "TBD",
+      fiscalYear: null,
+      fiscalQuarter: null,
+      fiscalPeriod: null,
+      fiscalPeriodEnd: null,
+      epsEstimate: null,
+      revenueEstimate: null,
+      epsActual: null,
+      revenueActual: null,
+      providerEventId: accession,
+      providerUpdatedAt: filing.filedAt,
+      officialReportUrl: url,
+      officialFiling: filing,
+      cancelled: false,
+    });
+  }
+  return observations;
+}
+
+export class SecEdgarProvider implements OfficialFilingsProvider, EarningsCalendarProvider, EarningsConsensusProvider {
   readonly name = "sec-edgar";
   private lastRequestAt = 0;
+  private readonly metadataByCik = new Map<string, CompanyMetadata>();
 
   constructor(
     private readonly userAgent = "StockAutotrader/1.0 (+https://github.com/drdrey7/stock-autotrader)",
@@ -338,8 +439,8 @@ export class SecEdgarProvider implements OfficialFilingsProvider {
     private readonly timeoutMs = PROVIDER_TIMEOUT_MS,
   ) {}
 
-  private headers(): HeadersInit {
-    return { Accept: "application/json", "User-Agent": this.userAgent };
+  private headers(accept = "application/json"): HeadersInit {
+    return { Accept: accept, "User-Agent": this.userAgent };
   }
 
   private async waitForSecRequestSlot(): Promise<void> {
@@ -351,7 +452,59 @@ export class SecEdgarProvider implements OfficialFilingsProvider {
   async fetchCompanyMetadata(collectedAt: string): Promise<EarningsProviderResult<CompanyMetadata>> {
     const payload = await fetchJsonWithRetry(this.fetcher, new URL(SEC_TICKERS_URL), { headers: this.headers() }, this.sleeper, this.timeoutMs, () => this.waitForSecRequestSlot());
     const observations = parseSecMetadata(payload);
+    for (const observation of observations) {
+      if (observation.cik) this.metadataByCik.set(observation.cik, observation);
+    }
     return { provider: this.name, observations, warnings: [], updatedAt: collectedAt };
+  }
+
+  async fetchCalendar(
+    range: EarningsDateRange,
+    universe: ReadonlySet<string>,
+    collectedAt: string,
+  ): Promise<EarningsProviderResult<EarningsCalendarObservation>> {
+    if (this.metadataByCik.size === 0) await this.fetchCompanyMetadata(collectedAt);
+    const observations: EarningsCalendarObservation[] = [];
+    const warnings: string[] = [];
+    let successfulIndexes = 0;
+    for (const quarter of secIndexQuarters(range)) {
+      try {
+        const payload = await fetchTextWithRetry(
+          this.fetcher,
+          new URL(`${SEC_FULL_INDEX_URL}/${quarter}/master.idx`),
+          { headers: this.headers("text/plain") },
+          this.sleeper,
+          this.timeoutMs,
+          () => this.waitForSecRequestSlot(),
+        );
+        successfulIndexes += 1;
+        observations.push(...parseSecMasterIndex(payload, range, this.metadataByCik, universe));
+      } catch (error) {
+        warnings.push(`${quarter}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    if (successfulIndexes === 0 && secIndexQuarters(range).length > 0) {
+      throw new Error(`SEC full index unavailable${warnings[0] ? `: ${warnings[0]}` : ""}`);
+    }
+    return {
+      provider: this.name,
+      observations: deduplicateCalendarRows(observations),
+      warnings,
+      updatedAt: collectedAt,
+    };
+  }
+
+  async fetchConsensus(
+    _range: EarningsDateRange,
+    _universe: ReadonlySet<string>,
+    collectedAt: string,
+  ): Promise<EarningsProviderResult<EarningsConsensusObservation>> {
+    return {
+      provider: this.name,
+      observations: [],
+      warnings: ["SEC EDGAR does not publish analyst consensus estimates"],
+      updatedAt: collectedAt,
+    };
   }
 
   async findRelevantFiling(
@@ -393,10 +546,14 @@ export class SecEdgarProvider implements OfficialFilingsProvider {
 }
 
 export function createDefaultEarningsProviders(apiKey: string | undefined, secUserAgent?: string): EarningsProviderBundle {
-  const fmp = new FmpEarningsCalendarProvider(apiKey ?? "");
+  const sec = new SecEdgarProvider(secUserAgent);
+  if (!apiKey?.trim()) {
+    return { calendar: sec, consensus: sec, official: sec };
+  }
+  const fmp = new FmpEarningsCalendarProvider(apiKey);
   return {
     calendar: fmp,
     consensus: fmp,
-    official: new SecEdgarProvider(secUserAgent),
+    official: sec,
   };
 }

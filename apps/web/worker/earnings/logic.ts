@@ -1,5 +1,5 @@
 import type { EarningsMetricResult, EarningsOverallResult, EarningsStatus } from "@stock-autotrader/contracts";
-import type { EarningsCalendarObservation, EarningsConsensusObservation, EarningsDateRange, NormalizedEarningsEvent } from "./types";
+import type { EarningsCalendarObservation, EarningsConsensusObservation, EarningsDateRange, NormalizedEarningsEvent, OfficialFiling } from "./types";
 import { normalizeSymbol } from "./universe";
 
 export const EPS_RESULT_TOLERANCE = 0.005;
@@ -143,13 +143,14 @@ export function normalizeEvent(
   today: string,
   collectedAt: string,
   metadata: { company?: string | null; cik?: string | null; investorRelationsUrl?: string | null } = {},
-  official: { url: string; accession: string; form: string; filedAt: string } | null = null,
+  official: OfficialFiling | null = null,
 ): NormalizedEarningsEvent {
   const symbol = normalizeSymbol(observation.symbol);
   const eps = calculateMetric(observation.epsActual, observation.epsEstimate, EPS_RESULT_TOLERANCE);
   const revenue = calculateMetric(observation.revenueActual, observation.revenueEstimate, REVENUE_RESULT_TOLERANCE);
   const hasActual = isFiniteNumber(observation.epsActual) || isFiniteNumber(observation.revenueActual);
-  const status = classifyStatus(observation.scheduledDate, today, hasActual, official !== null, observation.cancelled === true);
+  const effectiveOfficial = official ?? observation.officialFiling ?? null;
+  const status = classifyStatus(observation.scheduledDate, today, hasActual, effectiveOfficial !== null, observation.cancelled === true);
   const reported = status === "reported";
   const fiscalPeriod = canonicalFiscalPeriod(observation.fiscalQuarter, observation.fiscalPeriod);
   const company = metadata.company?.trim() || observation.company?.trim() || symbol;
@@ -181,17 +182,17 @@ export function normalizeEvent(
     revenueSurprisePct: revenue.surprisePct,
     revenueResult: revenue.result,
     overallResult: calculateOverallResult(eps.result, revenue.result),
-    reportedAt: official?.filedAt ?? (reported ? observation.providerUpdatedAt : null),
+    reportedAt: effectiveOfficial?.filedAt ?? (reported ? observation.providerUpdatedAt : null),
     calendarProvider: "fmp-earnings-calendar",
     consensusProvider: "fmp-earnings-calendar",
     providerEventId: observation.providerEventId,
     providerUpdatedAt: observation.providerUpdatedAt ?? collectedAt,
-    officialReportUrl: observation.officialReportUrl,
+    officialReportUrl: observation.officialReportUrl ?? effectiveOfficial?.url ?? null,
     investorRelationsUrl: metadata.investorRelationsUrl ?? null,
-    secFilingUrl: official?.url ?? null,
-    secAccession: official?.accession ?? null,
-    secForm: official?.form ?? null,
-    secFiledAt: official?.filedAt ?? null,
+    secFilingUrl: effectiveOfficial?.url ?? null,
+    secAccession: effectiveOfficial?.accession ?? null,
+    secForm: effectiveOfficial?.form ?? null,
+    secFiledAt: effectiveOfficial?.filedAt ?? null,
     createdAt: collectedAt,
     updatedAt: collectedAt,
     lastCheckedAt: collectedAt,

@@ -8,7 +8,6 @@ import {
   mergeCalendarAndConsensus,
   newYorkDate,
   normalizeEvent,
-  rollingEarningsRange,
   shouldPollEarnings,
   startOfWeek,
   validDateKey,
@@ -40,9 +39,10 @@ import {
 
 export const EARNINGS_CALENDAR_CRON = "0 6 * * *";
 export const EARNINGS_MONITOR_CRON = "*/15 * * * *";
+export const EARNINGS_BACKFILL_DAYS = 90;
 export const EARNINGS_WINDOW_DAYS = 60;
 export const EARNINGS_QUERY_MAX_DAYS = 450;
-// Keeps FMP + SEC + D1 work below Workers Free's 50-subrequest ceiling. The
+// Keeps the provider + SEC + D1 work below Workers Free's 50-subrequest ceiling. The
 // next Cron invocation continues enrichment for remaining events.
 export const MAX_SEC_FILING_LOOKUPS_PER_JOB = 24;
 
@@ -164,7 +164,8 @@ async function normalizeObservation(
   const member = metadata.get(observation.symbol);
   const base = normalizeEvent(observation, today, collectedAt, member, null);
   const withProviderNames = applyProviderNames(base, providers);
-  const canLookupFiling = filingLookups.used < filingLookups.limit
+  const canLookupFiling = !observation.officialFiling
+    && filingLookups.used < filingLookups.limit
     && withProviderNames.scheduledDate !== null
     && (withProviderNames.status === "reported" || withProviderNames.scheduledDate <= today);
   const filing = canLookupFiling ? await findFiling(providers, withProviderNames, today) : null;
@@ -213,10 +214,11 @@ async function readProviderCalendar(
 async function runCalendarSync(env: Env, scheduledTime: Date, providers: EarningsProviderBundle): Promise<{ status: "ok" | "degraded"; detail: string }> {
   const collectedAt = scheduledTime.toISOString();
   const today = newYorkDate(scheduledTime);
-  const range = rollingEarningsRange(today, EARNINGS_WINDOW_DAYS);
-  // Include a short look-back so a late provider print or filing can repair a
-  // row that crossed from scheduled to unknown after yesterday's window.
-  const providerRange = { from: addDays(today, -3), to: range.to };
+  const range = { from: addDays(today, -EARNINGS_BACKFILL_DAYS), to: addDays(today, EARNINGS_WINDOW_DAYS) };
+  // The daily sync owns the initial historical backfill as well as the
+  // rolling future window. Providers may return fewer rows when they do not
+  // publish forward schedules; missing values remain NULL/Not Available.
+  const providerRange = range;
   const metadata = await syncUniverse(env, providers, collectedAt);
   const calendar = await readProviderCalendar(providers, providerRange, collectedAt);
   if (!calendar.success) {

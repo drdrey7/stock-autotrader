@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { EarningsQueryError, readEarningsApi, runEarningsJob } from "./earnings";
+import { EARNINGS_BACKFILL_DAYS, EarningsQueryError, readEarningsApi, runEarningsJob } from "./earnings";
 import {
   addDays,
   buildEventId,
@@ -10,6 +10,7 @@ import {
   shouldPollEarnings,
 } from "./earnings/logic";
 import {
+  createDefaultEarningsProviders,
   FmpEarningsCalendarProvider,
   SecEdgarProvider,
 } from "./earnings/providers";
@@ -140,7 +141,7 @@ class MemoryStatement {
       }
       return { success: true, meta: { changes: old ? 1 : 0 } };
     }
-    if (this.sql.includes("UPDATE earnings_events SET status = 'unknown'")) {
+    if (this.sql.includes("UPDATE earnings_events") && this.sql.includes("status = 'unknown'")) {
       const updatedAt = String(this.args[0]);
       const cutoff = String(this.args[2]);
       const upper = this.sql.includes("scheduled_date >= ?") ? String(this.args[3]) : null;
@@ -254,6 +255,23 @@ describe("earnings calendar and result logic", () => {
     expect(calculateOverallResult("Beat", "Not Available")).toBe("Not Available");
   });
 
+  it("treats an official filing with missing metrics as reported without inventing a result", () => {
+    const event = normalizeEvent(eventObservation({
+      epsEstimate: null,
+      revenueEstimate: null,
+      officialFiling: {
+        url: "https://www.sec.gov/Archives/edgar/data/789012/000078901226000010/0000789012-26-000010-index.html",
+        accession: "0000789012-26-000010",
+        form: "10-Q",
+        filedAt: "2026-08-12T13:00:00.000Z",
+        reportDate: null,
+        items: [],
+      },
+    }), "2026-08-13", "2026-08-13T12:00:00.000Z", { cik: "0000789012" });
+    expect(event).toMatchObject({ status: "reported", epsResult: "Not Available", revenueResult: "Not Available", overallResult: "Not Available" });
+    expect(event.secAccession).toBe("0000789012-26-000010");
+  });
+
   it("polls BMO, AMC and TBD only during their ET windows", () => {
     expect(shouldPollEarnings("BMO", new Date("2026-08-13T11:00:00.000Z"))).toBe(true);
     expect(shouldPollEarnings("BMO", new Date("2026-08-13T16:00:00.000Z"))).toBe(false);
@@ -264,6 +282,13 @@ describe("earnings calendar and result logic", () => {
 });
 
 describe("free provider adapters", () => {
+  it("uses SEC as the default when FMP is not configured", () => {
+    const providers = createDefaultEarningsProviders(undefined, "StockAutotraderTest/1.0");
+    expect(providers.calendar).toBe(providers.official);
+    expect(providers.consensus).toBe(providers.official);
+    expect(providers.calendar.name).toBe("sec-edgar");
+  });
+
   it("normalizes FMP rows, filters the universe and keeps the newest duplicate", async () => {
     const provider = new FmpEarningsCalendarProvider("test-key", async () => jsonResponse([
       { symbol: "MSFT", date: "2026-08-20", fiscalYear: 2026, fiscalQuarter: 1, epsEstimated: 3, revenueEstimated: 100, id: "event-1", lastUpdated: "2026-08-13T11:00:00Z" },
@@ -354,9 +379,58 @@ describe("free provider adapters", () => {
     } } }));
     await expect(provider.findRelevantFiling({ cik: "0000789012", scheduledDate: "2026-08-12", fiscalPeriodEnd: "2026-06-30" }, "2026-08-13")).resolves.toBeNull();
   });
+
+  it("backfills official SEC calendar filings from the quarterly full index", async () => {
+    const provider = new SecEdgarProvider("StockAutotraderTest/1.0", async (input) => {
+      const url = input.toString();
+      if (url.includes("company_tickers_exchange")) {
+        return jsonResponse({ fields: ["cik", "name", "ticker", "exchange"], data: [[789012, "Microsoft Corporation", "MSFT", "Nasdaq"]] });
+      }
+      if (url.includes("full-index")) {
+        return new Response([
+          "CIK|Company Name|Form Type|Date Filed|Filename",
+          "789012|Microsoft Corporation|10-Q|2026-06-30|edgar/data/789012/0000789012-26-000010.txt",
+          "789012|Microsoft Corporation|10-Q/A|2026-08-01|edgar/data/789012/0000789012-26-000011.txt",
+          "789012|Microsoft Corporation|8-K|2026-08-02|edgar/data/789012/0000789012-26-000012.txt",
+        ].join("\n"));
+      }
+      throw new Error(`unexpected SEC URL: ${url}`);
+    }, async () => undefined);
+    await provider.fetchCompanyMetadata("2026-08-13T14:00:00.000Z");
+    const result = await provider.fetchCalendar({ from: "2026-05-15", to: "2026-10-12" }, new Set(["MSFT"]), "2026-08-13T14:00:00.000Z");
+    expect(result.observations).toHaveLength(2);
+    expect(result.observations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ symbol: "MSFT", scheduledDate: "2026-06-30", providerEventId: "0000789012-26-000010" }),
+      expect.objectContaining({ scheduledDate: "2026-08-01", officialFiling: expect.objectContaining({ form: "10-Q/A" }) }),
+    ]));
+    expect(result.observations.every((observation) => observation.epsEstimate === null && observation.revenueEstimate === null)).toBe(true);
+  });
 });
 
 describe("earnings D1 write model and API", () => {
+  it("requests the 90-day historical backfill plus the 60-day forward window", async () => {
+    expect(EARNINGS_BACKFILL_DAYS).toBe(90);
+    let requestedRange: { from: string; to: string } | null = null;
+    const calendar: EarningsCalendarProvider = {
+      name: "test-calendar",
+      fetchCalendar: async (range) => {
+        requestedRange = range;
+        return { provider: "test-calendar", observations: [], warnings: [], updatedAt: "2026-08-13T06:00:00.000Z" };
+      },
+    };
+    const official: OfficialFilingsProvider = {
+      name: "test-sec",
+      fetchCompanyMetadata: async () => ({ provider: "test-sec", observations: [], warnings: [], updatedAt: "2026-08-13T06:00:00.000Z" }),
+      findRelevantFiling: async () => null,
+    };
+    await expect(runEarningsJob({ DB: new MemoryD1() } as never, new Date("2026-08-13T06:00:00.000Z"), "calendar", {
+      calendar,
+      consensus: calendar as never,
+      official,
+    })).resolves.toMatchObject({ status: "ok" });
+    expect(requestedRange).toEqual({ from: "2026-05-15", to: "2026-10-12" });
+  });
+
   it("upserts by fiscal identity when the provider moves the scheduled date", async () => {
     const db = new MemoryD1();
     const first = await upsertEarningsEvent(db, normalizedEvent());

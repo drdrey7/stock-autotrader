@@ -10,6 +10,15 @@ export interface EarningsDateRange {
   to: string;
 }
 
+export interface OfficialFiling {
+  url: string;
+  accession: string;
+  form: string;
+  filedAt: string;
+  reportDate: string | null;
+  items: string[];
+}
+
 export interface EarningsCalendarObservation {
   symbol: string;
   company: string | null;
@@ -27,6 +36,7 @@ export interface EarningsCalendarObservation {
   providerEventId: string | null;
   providerUpdatedAt: string | null;
   officialReportUrl: string | null;
+  officialFiling?: OfficialFiling;
   cancelled?: boolean;
 }
 
@@ -76,15 +86,6 @@ export interface CompanyMetadata {
   cik: string | null;
   exchange: string | null;
   investorRelationsUrl?: string | null;
-}
-
-export interface OfficialFiling {
-  url: string;
-  accession: string;
-  form: string;
-  filedAt: string;
-  reportDate: string | null;
-  items: string[];
 }
 
 export interface OfficialFilingsProvider {

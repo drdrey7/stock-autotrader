@@ -4,12 +4,11 @@ on:
   push:
     branches: [main]
     tags-ignore: ["**"]
-  pull_request_target:
+  pull_request:
     types: [opened, synchronize, reopened]
 
 permissions:
   contents: read
-  pull-requests: write
 
 concurrency:
   group: deploy-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
@@ -22,8 +21,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Preview deploys use the PR source, while the workflow itself is
-          # loaded from the trusted base branch via pull_request_target.
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - uses: actions/setup-node@v4
@@ -31,7 +28,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci --ignore-scripts
-      - name: Validate and build (API mode — reads from D1 via the public API)
+      - name: Validate and build (PR validation only; no preview deployment)
         run: npm run build
         env:
           VITE_DEMO_MODE: "false"
@@ -54,36 +51,6 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      - name: Deploy preview (pull requests)
-        if: github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name == github.repository
-        id: preview
-        working-directory: apps/web
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          WORKER="stock-autotrader-preview-pr-${PR_NUMBER}"
-          npx --yes wrangler@4.122.0 deploy --config wrangler.preview.jsonc --name "${WORKER}"
-          echo "url=https://${WORKER}.barroso-labs.workers.dev" >> "$GITHUB_OUTPUT"
-      - name: Preview skipped for fork PR
-        if: github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name != github.repository
-        run: echo "preview skipped for security"
-      - name: Comment preview URL on PR
-        if: github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name == github.repository
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PREVIEW_URL: ${{ steps.preview.outputs.url }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          if [ -n "$PR_NUMBER" ] && [ "$PR_NUMBER" != "null" ]; then
-            ID="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments?per_page=100" --jq '[.[] | select(.user.login == "github-actions[bot]" and (.body | contains("Preview live"))) | .id][0]' 2>/dev/null || echo '')"
-            if [ -n "$ID" ] && [ "$ID" != "null" ]; then
-              gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${ID}" -f body="🚀 **Preview live**: ${PREVIEW_URL}" > /dev/null
-            else
-              gh pr comment "$PR_NUMBER" --body "🚀 **Preview live**: ${PREVIEW_URL}" > /dev/null
-            fi
-          fi
       - name: Deploy production (main only)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         working-directory: apps/web
@@ -94,10 +61,6 @@ jobs:
           FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
           SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
         run: |
-          if [ -z "$FMP_API_KEY" ]; then
-            echo "::error::FMP_API_KEY repository secret is required for the zero-cost Earnings calendar adapter."
-            exit 1
-          fi
           npx --yes wrangler@4.122.0 deploy
           printf '%s' "$INGEST_SECRET" | npx --yes wrangler@4.122.0 secret put INGEST_SECRET
           if [ -n "$FMP_API_KEY" ]; then

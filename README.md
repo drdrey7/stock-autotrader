@@ -76,15 +76,16 @@ versioned S&P 500 and Nasdaq-100 resources in `apps/publisher/data`; it is
 stored in `earnings_universe` so the resource can be replaced without editing
 React components.
 
-The calendar and consensus contracts are provider-neutral; the current
-zero-cost adapter is Financial Modeling Prep's documented HTTP earnings
-calendar. It supplies schedule, estimates and actuals when its free API key is
-available. The official-filings adapter uses SEC EDGAR submissions, with a
-descriptive `User-Agent`, retry/timeout handling and prioritization of 8-K Item
-2.02, 10-Q, 10-K and 6-K filings. FMP access and free-tier limits can change,
-so the adapter is isolated and replaceable; no paid provider is required.
+The calendar and consensus contracts are provider-neutral. SEC EDGAR is the
+default zero-cost adapter: its quarterly full indexes backfill filed 10-Q,
+10-K and 6-K events, while submissions enrich relevant 8-K Item 2.02, 10-Q,
+10-K and 6-K links. SEC does not publish future earnings schedules or analyst
+consensus, so those fields remain `NULL`/`Not published` unless the optional
+FMP calendar adapter is configured. No synthetic dates, estimates or Beat/Miss
+values are created. FMP is isolated behind the same adapter interfaces and is
+never a required dependency; its free-tier access can change.
 
-Production must store the free provider key as a Cloudflare Worker secret:
+An optional calendar/consensus key may be stored as a Cloudflare Worker secret:
 
 ```bash
 npx wrangler secret put FMP_API_KEY
@@ -93,10 +94,11 @@ npx wrangler secret put SEC_USER_AGENT
 ```
 
 No key, token or contact secret belongs in Git. Preview Cron is disabled by the
-Worker whenever `ENVIRONMENT` is not `production`.
+Worker whenever `ENVIRONMENT` is not `production`; PR validation runs without
+Cloudflare credentials, and the preview config intentionally has no D1 binding.
+Full staging/preview deployment is a follow-up and is outside PR #12.
 
-The daily Cron refreshes `today → today + 60 days` (with a three-day look-back
-for late results); the 15-minute Cron polls only scheduled events inside the
+The daily Cron refreshes `today - 90 days → today + 60 days`; the 15-minute Cron polls only scheduled events inside the
 BMO/AMC/TBD New York-time windows and also detects a provider event newly moved
 onto today. Fiscal
 identity (`symbol + fiscal year + normalized fiscal period`, using `Qn` when
