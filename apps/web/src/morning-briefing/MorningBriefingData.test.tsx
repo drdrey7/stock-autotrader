@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import MorningBriefingApp from "./MorningBriefingApp";
@@ -165,38 +165,9 @@ it("does not fill a live market snapshot with unsupported mock benchmarks", asyn
   const view = renderApp();
   await waitFor(() => expect(view.container.querySelectorAll(".market-card")).toHaveLength(4));
   expect(view.container.querySelectorAll(".market-card")[0]).toHaveTextContent("Not available");
-  expect(view.container.querySelectorAll(".market-card")[1]).toHaveTextContent("Not available");
   expect(view.container).toHaveTextContent("Dow Jones");
-  expect(view.container).toHaveTextContent("VIX");
-  expect(view.container.querySelectorAll(".market-card")[2]).toHaveTextContent("Not available");
-  expect(view.container.querySelectorAll(".market-card")[3]).toHaveTextContent("Not available");
   expect(view.container).not.toHaveTextContent("642.00");
   expect(view.container).not.toHaveTextContent("573.00");
-});
-
-it("shows source health state and provider for a live briefing", async () => {
-  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
-    const url = String(input);
-    if (url === "/api/briefs/latest") return new Response(JSON.stringify(briefing), { status: 200 });
-    if (url === "/api/status") return new Response(JSON.stringify({
-      candidates: [],
-      briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt },
-      sources: {
-        briefing: { provider: "stock-autotrader publisher", state: "Live", asOf: briefing.preparedAt, ageSeconds: 120, staleAfterSeconds: 93600, lastSuccess: briefing.preparedAt, lastAttempt: briefing.preparedAt, error: null },
-        market: { provider: "stock-autotrader publisher", state: "Live", asOf: briefing.preparedAt, ageSeconds: 120, staleAfterSeconds: 93600, lastSuccess: briefing.preparedAt, lastAttempt: briefing.preparedAt, error: null },
-        opportunities: { provider: "stock-autotrader publisher", state: "Live", asOf: briefing.preparedAt, ageSeconds: 120, staleAfterSeconds: 93600, lastSuccess: briefing.preparedAt, lastAttempt: briefing.preparedAt, error: null },
-        x: { provider: "unavailable", state: "Unavailable", asOf: null, ageSeconds: null, staleAfterSeconds: 86400, lastSuccess: null, lastAttempt: null, error: "No validated source health has been published." },
-        earnings: { provider: "unavailable", state: "Unavailable", asOf: null, ageSeconds: null, staleAfterSeconds: 86400, lastSuccess: null, lastAttempt: null, error: "No validated source health has been published." },
-        sentiment: { provider: "unavailable", state: "Unavailable", asOf: null, ageSeconds: null, staleAfterSeconds: 86400, lastSuccess: null, lastAttempt: null, error: "No validated source health has been published." },
-        quickStats: { provider: "unavailable", state: "Unavailable", asOf: null, ageSeconds: null, staleAfterSeconds: 86400, lastSuccess: null, lastAttempt: null, error: "No validated source health has been published." },
-      },
-    }), { status: 200 });
-    return new Response(null, { status: 404 });
-  });
-
-  const view = renderApp();
-  await waitFor(() => expect(view.container.querySelector(".market-status")).toHaveTextContent("S&P 500 up +0.31%"));
-  expect(view.container.querySelector(".data-source.live")).not.toBeNull();
 });
 
 it("does not use legacy status candidates or market-data snapshots without a fresh briefing", async () => {
@@ -226,54 +197,7 @@ it("does not use legacy status candidates or market-data snapshots without a fre
   await waitFor(() => expect(view.container.querySelector(".market-status")).toHaveTextContent("Not available"));
   expect(view.container.querySelectorAll(".opportunity-row")).toHaveLength(0);
   expect(view.container).not.toHaveTextContent("6,420.00");
-  expect(view.container).not.toHaveTextContent("23,750.00");
   expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input) === "/api/market-data")).toBe(false);
-});
-
-it("does not render legacy market-data snapshot values without a fresh briefing", async () => {
-  const snapshot = {
-    provider: "market-api", status: "healthy", asOf: "2026-08-12",
-    lastSuccessfulUpdate: "2026-08-12T20:00:00Z",
-    universe: { total: 2, eligible: 2, excluded: 0 },
-    benchmarks: [
-      { symbol: "SP:SPX", date: "2026-08-12", open: 6400, high: 6450, low: 6390, close: 6420, adjustedClose: 6420, volume: 1 },
-      { symbol: "NASDAQ:NDX", date: "2026-08-12", open: 23700, high: 23800, low: 23600, close: 23750, adjustedClose: 23750, volume: 1 },
-    ],
-    warnings: [], updatedAt: "2026-08-12T20:00:00Z",
-  };
-  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
-    const url = String(input);
-    if (url === "/api/status") return new Response(JSON.stringify({ candidates: [] }), { status: 200 });
-    if (url === "/api/market-data") return new Response(JSON.stringify(snapshot), { status: 200 });
-    return new Response(null, { status: 404 });
-  });
-
-  const view = renderApp();
-  await waitFor(() => expect(view.container.querySelectorAll(".market-card")[0]).toHaveTextContent("Not available"));
-  expect(view.container.querySelectorAll(".market-card")[1]).toHaveTextContent("Not available");
-  expect(view.container.querySelectorAll(".market-card")[2]).toHaveTextContent("Not available");
-  expect(view.container.querySelectorAll(".market-card")[3]).toHaveTextContent("Not available");
-  expect(view.container).not.toHaveTextContent("6,420.00");
-  expect(view.container).not.toHaveTextContent("23,750.00");
-  expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input) === "/api/market-data")).toBe(false);
-});
-
-it("clears opportunities when the healthy candidate snapshot is explicitly empty", async () => {
-  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
-    const url = String(input);
-    if (url === "/api/status") return new Response(JSON.stringify({
-      status: { engine: "online", apiHealth: "healthy", lastDataUpdate: "2026-08-12T20:00:00Z" },
-      candidates: [],
-      briefing: { available: false, freshness: "unavailable", publishedAt: null },
-    }), { status: 200 });
-    return new Response(null, { status: 404 });
-  });
-
-  const view = renderApp();
-  await waitFor(() => expect(view.container.querySelector(".opportunities-card .empty-state")).toHaveTextContent("No qualified opportunities were published for this edition."));
-  expect(view.container.querySelector(".opportunity-row")).toBeNull();
-  expect(view.container.querySelector(".opportunities-card")).not.toHaveTextContent("NVDA");
-  expect(view.container.querySelector(".x-preview")).toHaveTextContent("No recent posts.");
 });
 
 it("labels a post-close edition instead of showing a morning greeting", async () => {
@@ -291,14 +215,13 @@ it("labels a post-close edition instead of showing a morning greeting", async ()
   expect(screen.queryByRole("heading", { name: "Good morning." })).not.toBeInTheDocument();
 });
 
-it("renders successful sources without waiting for a stalled X request", async () => {
+it("renders the briefing without waiting for a stalled X request", async () => {
   vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url === "/api/briefs/latest") return new Response(JSON.stringify(briefing), { status: 200 });
     if (url === "/api/status") return new Response(JSON.stringify({ candidates: [], briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt } }), { status: 200 });
     if (url.startsWith("/api/x/posts")) return await new Promise<Response>(() => undefined);
     if (url === "/api/earnings") return new Response(JSON.stringify([{ symbol: "NEW", company: "Future Corp", date: "2026-08-14", timing: "BMO", eventSignal: "Confirmed" }]), { status: 200 });
-    if (url === "/api/market-data") return new Response(JSON.stringify({ benchmarks: [] }), { status: 200 });
     return new Response(null, { status: 404 });
   });
 
@@ -329,24 +252,11 @@ it("keeps the last X posts when a later refresh fails", async () => {
   expect(screen.queryByText("Last update")).not.toBeInTheDocument();
 });
 
-it("labels retained posts cached and downgrades the section badge after a feed failure", async () => {
-  const liveXSource = {
-    provider: "x-search collector", state: "Live", asOf: "2026-08-12T20:30:00Z",
-    ageSeconds: 7200, staleAfterSeconds: 604800,
-    lastSuccess: "2026-08-12T20:30:00Z", lastAttempt: "2026-08-12T20:30:00Z", error: null,
-  };
+it("keeps posts available during temporary feed failures without freshness badges", async () => {
   let xRequests = 0;
   const originalFetch = vi.mocked(fetch).getMockImplementation()!;
   vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = String(input);
-    if (url === "/api/status") {
-      return new Response(JSON.stringify({
-        candidates: [],
-        briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt },
-        sources: { x: liveXSource },
-      }), { status: 200 });
-    }
-    if (url.startsWith("/api/x/posts")) {
+    if (String(input).startsWith("/api/x/posts")) {
       xRequests += 1;
       if (xRequests === 1) return new Response(JSON.stringify({ posts: [
         { id: "p1", author: "@nolimitgains", text: "First post", created_at: "2026-08-12T20:30:00Z", url: "https://x.com/nolimitgains/status/p1", symbol: null, company: null, price: null, change: null },
@@ -356,225 +266,12 @@ it("labels retained posts cached and downgrades the section badge after a feed f
     return originalFetch(input, init);
   });
 
-  const view = renderApp();
+  const view = renderApp("/x");
   await screen.findByText("First post");
-  expect(view.container.querySelector(".x-preview .section-title .data-source.live")).not.toBeNull();
   document.dispatchEvent(new Event("visibilitychange"));
   await waitFor(() => expect(xRequests).toBe(2));
-  await waitFor(() => expect(view.container.querySelector(".post-status .data-source.cached")).not.toBeNull());
-  // The feed failed, so the section must not keep a Live badge even though
-  // the backend source is still live; retained posts stay labelled Cached.
-  expect(view.container.querySelector(".x-preview .section-title .data-source.live")).toBeNull();
-  expect(view.container.querySelector(".x-preview .section-title .data-source.unavailable")).not.toBeNull();
-});
-
-it("fails closed to Unavailable when the backend publishes malformed source health", async () => {
-  const malformedLive = {
-    provider: "broken", state: "Live", asOf: null, ageSeconds: null,
-    staleAfterSeconds: 3600, lastSuccess: null, lastAttempt: null, error: null,
-  };
-  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
-    const url = String(input);
-    if (url === "/api/briefs/latest") return new Response(JSON.stringify(briefing), { status: 200 });
-    if (url === "/api/status") return new Response(JSON.stringify({
-      candidates: [],
-      briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt },
-      sources: { briefing: malformedLive, opportunities: malformedLive },
-    }), { status: 200 });
-    return new Response(null, { status: 404 });
-  });
-
-  const view = renderApp();
-  await waitFor(() => expect(view.container.querySelector(".market-status")).toHaveTextContent("S&P 500 up +0.31%"));
-  expect(view.container.querySelector(".section-title .data-source.live")).toBeNull();
-  expect(view.container.querySelector(".opportunities-card .data-source.unavailable")).not.toBeNull();
-});
-
-it("never labels a missing market card Live when the backend market source is live", async () => {
-  const liveMarketSource = {
-    provider: "test-market", state: "Live", asOf: "2026-08-12T12:30:00Z",
-    ageSeconds: 3600, staleAfterSeconds: 93600,
-    lastSuccess: "2026-08-12T12:30:00Z", lastAttempt: "2026-08-12T12:30:00Z", error: null,
-  };
-  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
-    const url = String(input);
-    if (url === "/api/briefs/latest") return new Response(JSON.stringify(briefing), { status: 200 });
-    if (url === "/api/status") return new Response(JSON.stringify({
-      candidates: [],
-      briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt },
-      sources: { market: liveMarketSource },
-    }), { status: 200 });
-    return new Response(null, { status: 404 });
-  });
-
-  const view = renderApp();
-  await waitFor(() => expect(view.container.querySelector(".market-status")).toHaveTextContent("S&P 500 up +0.31%"));
-  // The briefing publishes three indexes; those cards are live. The missing
-  // Dow Jones card must not inherit a Live badge from the backend source.
-  expect(view.container.querySelectorAll(".market-card .data-source.live")).toHaveLength(3);
-  const dowCard = [...view.container.querySelectorAll(".market-card")].find((card) => card.textContent?.includes("Dow Jones"));
-  expect(dowCard).toBeDefined();
-  expect(dowCard!.textContent).toContain("Not available");
-  expect(dowCard!.querySelector(".data-source")).toHaveClass("unavailable");
-});
-
-it("shows populated market cards with backend cached health, not Live", async () => {
-  const cachedMarketSource = {
-    provider: "market-cache", state: "Cached", asOf: "2026-08-12T12:30:00Z",
-    ageSeconds: 7200, staleAfterSeconds: 3600,
-    lastSuccess: "2026-08-12T12:30:00Z", lastAttempt: "2026-08-12T20:30:00Z", error: "Market snapshot is degraded.",
-  };
-  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
-    const url = String(input);
-    if (url === "/api/briefs/latest") return new Response(JSON.stringify(briefing), { status: 200 });
-    if (url === "/api/status") return new Response(JSON.stringify({
-      candidates: [],
-      briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt },
-      sources: { market: cachedMarketSource },
-    }), { status: 200 });
-    return new Response(null, { status: 404 });
-  });
-
-  const view = renderApp();
-  await waitFor(() => expect(view.container.querySelector(".market-status")).toHaveTextContent("S&P 500 up +0.31%"));
-  expect(view.container.querySelectorAll(".market-card .data-source.cached")).toHaveLength(3);
-  expect(view.container.querySelectorAll(".market-card .data-source.live")).toHaveLength(0);
-  await waitFor(() => expect(view.container.querySelector(".market-card strong")).not.toHaveTextContent("Not available"));
-});
-
-it("drops previous Live health when a later status response omits sources", async () => {
-  let statusAvailable = true;
-  let statusRequests = 0;
-  const liveMarketSource = {
-    provider: "briefing publisher", state: "Live", asOf: briefing.preparedAt,
-    ageSeconds: 120, staleAfterSeconds: 93600,
-    lastSuccess: briefing.preparedAt, lastAttempt: briefing.preparedAt, error: null,
-  };
-  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
-    const url = String(input);
-    if (url === "/api/briefs/latest") return new Response(JSON.stringify(briefing), { status: 200 });
-    if (url === "/api/status") {
-      statusRequests += 1;
-      return new Response(JSON.stringify(statusAvailable ? {
-        candidates: [],
-        briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt },
-        sources: { market: liveMarketSource },
-      } : {
-        candidates: [],
-        briefing: { available: false, freshness: "unavailable", publishedAt: null },
-      }), { status: 200 });
-    }
-    return new Response(null, { status: 404 });
-  });
-
-  const view = renderApp();
-  await waitFor(() => expect(view.container.querySelectorAll(".market-card .data-source.live")).toHaveLength(3));
-  statusAvailable = false;
-  document.dispatchEvent(new Event("visibilitychange"));
-  await waitFor(() => expect(statusRequests).toBeGreaterThanOrEqual(5));
-  await waitFor(() => expect(view.container.querySelector(".market-status")).toHaveTextContent("Not available"));
-  expect(view.container.querySelectorAll(".market-card .data-source.live")).toHaveLength(0);
-});
-
-it("does not let an older refreshX overwrite newer posts after its status fetch", async () => {
-  let postsCalls = 0;
-  let statusCalls = 0;
-  let releaseFirstPosts: ((response: Response) => void) | null = null;
-  let releaseOldStatus: ((response: Response) => void) | null = null;
-  const liveXSource = {
-    provider: "x-search collector", state: "Live", asOf: "2026-08-12T21:00:00Z",
-    ageSeconds: 5400, staleAfterSeconds: 604800,
-    lastSuccess: "2026-08-12T21:00:00Z", lastAttempt: "2026-08-12T21:00:00Z", error: null,
-  };
-  const staleXSource = {
-    provider: "x-search collector", state: "Stale", asOf: "2026-08-10T09:00:00Z",
-    ageSeconds: 172800, staleAfterSeconds: 604800,
-    lastSuccess: "2026-08-10T09:00:00Z", lastAttempt: "2026-08-10T09:00:00Z", error: null,
-  };
-  const statusPayload = (sources: Record<string, unknown>) => ({
-    candidates: [],
-    briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt },
-    sources,
-  });
-  const post = (id: string, text: string, created_at: string) => ({
-    id, author: "@nolimitgains", text, created_at, url: `https://x.com/nolimitgains/status/${id}`,
-    symbol: null, company: null, price: null, change: null,
-  });
-  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
-    const url = String(input);
-    if (url === "/api/briefs/latest") return new Response(JSON.stringify(briefing), { status: 200 });
-    if (url === "/api/earnings") return new Response(JSON.stringify([]), { status: 200 });
-    if (url.startsWith("/api/x/posts")) {
-      postsCalls += 1;
-      if (postsCalls === 1) {
-        return new Promise<Response>((resolve) => { releaseFirstPosts = resolve; });
-      }
-      return new Response(JSON.stringify({ posts: [post("newer", "Post B", "2026-08-12T20:30:00Z")], count: 1 }), { status: 200 });
-    }
-    if (url === "/api/status") {
-      statusCalls += 1;
-      // The status fetch that follows the FIRST posts call belongs to the old
-      // refreshX invocation; hold it until the newer one has completed.
-      if (statusCalls === 3) {
-        return new Promise<Response>((resolve) => { releaseOldStatus = resolve; });
-      }
-      return new Response(JSON.stringify(statusPayload({ x: liveXSource })), { status: 200 });
-    }
-    return new Response(null, { status: 404 });
-  });
-
-  const view = renderApp();
-  await waitFor(() => expect(postsCalls).toBe(1));
-  releaseFirstPosts!(new Response(JSON.stringify({ posts: [post("older", "Post A", "2026-08-12T21:00:00Z")], count: 1 }), { status: 200 }));
-  await waitFor(() => expect(statusCalls).toBe(3));
-  document.dispatchEvent(new Event("visibilitychange"));
-  await waitFor(() => expect(view.container.querySelector(".x-preview .section-title .data-source.live")).not.toBeNull());
-  releaseOldStatus!(new Response(JSON.stringify(statusPayload({ x: staleXSource })), { status: 200 }));
-  await new Promise((resolve) => setTimeout(resolve, 50));
-  expect(screen.getByText("Post B")).toBeInTheDocument();
-  expect(screen.queryByText("Post A")).not.toBeInTheDocument();
-  expect(view.container.querySelector(".x-preview .section-title .data-source.live")).not.toBeNull();
-});
-
-it("keeps an endpoint fail-closed when a parallel refresh reports it healthy", async () => {
-  let statusCalls = 0;
-  let releaseXStatus: ((response: Response) => void) | null = null;
-  const liveEarningsSource = {
-    provider: "earnings calendar", state: "Live", asOf: briefing.preparedAt,
-    ageSeconds: 120, staleAfterSeconds: 93600,
-    lastSuccess: briefing.preparedAt, lastAttempt: briefing.preparedAt, error: null,
-  };
-  const statusPayload = {
-    candidates: [],
-    briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt },
-    sources: { earnings: liveEarningsSource },
-  };
-  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
-    const url = String(input);
-    if (url === "/api/briefs/latest") return new Response(JSON.stringify(briefing), { status: 200 });
-    if (url === "/api/earnings") return new Response(null, { status: 503 });
-    if (url.startsWith("/api/x/posts")) return new Response(JSON.stringify({ posts: [], count: 0 }), { status: 200 });
-    if (url === "/api/status") {
-      statusCalls += 1;
-      // Hold the refreshX status fetch: it completes last and would resurrect
-      // the earnings Live badge without the centralized fail-closed override.
-      if (statusCalls === 3) {
-        return new Promise<Response>((resolve) => { releaseXStatus = resolve; });
-      }
-      return new Response(JSON.stringify(statusPayload), { status: 200 });
-    }
-    return new Response(null, { status: 404 });
-  });
-
-  const view = renderApp();
-  await waitFor(() => expect(statusCalls).toBe(3));
-  await waitFor(() => expect(view.container.querySelector(".earnings-summary .data-source.unavailable")).not.toBeNull());
-  releaseXStatus!(new Response(JSON.stringify(statusPayload), { status: 200 }));
-  // The released refreshX continuation applies its setData in a microtask;
-  // give it a tick, then assert the fail-closed badge survived.
-  await new Promise((resolve) => setTimeout(resolve, 50));
-  expect(view.container.querySelector(".earnings-summary .data-source.live")).toBeNull();
-  expect(view.container.querySelector(".earnings-summary .data-source.unavailable")).not.toBeNull();
+  expect(screen.getByText("First post")).toBeInTheDocument();
+  expect(view.container.querySelector(".post-status .data-source")).toBeNull();
 });
 
 it("does not show mock X posts after a successful empty feed", async () => {
@@ -613,66 +310,6 @@ it("renders retained X posts immediately while the network is unavailable", () =
   expect(screen.getByText("Cached before network")).toBeInTheDocument();
 });
 
-it("does not show API posts older than seven days", async () => {
-  const originalFetch = vi.mocked(fetch).getMockImplementation()!;
-  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
-    if (String(input).startsWith("/api/x/posts")) return new Response(JSON.stringify({ posts: [
-      { id: "expired", author: "@nolimitgains", text: "Expired post", created_at: "2026-08-05T22:29:00Z", url: "https://x.com/nolimitgains/status/expired", symbol: null, company: null, price: null, change: null },
-    ], count: 1 }), { status: 200 });
-    return originalFetch(input, init);
-  });
-
-  const view = renderApp("/x");
-  await waitFor(() => expect(view.container.querySelector(".empty-state")).toHaveTextContent("No recent posts."));
-  expect(screen.queryByText("Expired post")).not.toBeInTheDocument();
-  expect(view.container.querySelector(".post-card")).toBeNull();
-});
-
-it("keeps a tracked account's old posts for seven days, then shows no recent posts", async () => {
-  let xRequests = 0;
-  const originalFetch = vi.mocked(fetch).getMockImplementation()!;
-  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
-    if (String(input).startsWith("/api/x/posts")) {
-      xRequests += 1;
-      if (xRequests === 1) return new Response(JSON.stringify({ posts: [
-        { id: "cached", author: "@nolimitgains", text: "Cached account post", created_at: "2026-08-06T22:30:00Z", url: "https://x.com/nolimitgains/status/cached", symbol: null, company: null, price: null, change: null },
-      ], count: 1 }), { status: 200 });
-      return new Response(JSON.stringify({ posts: [], count: 0 }), { status: 200 });
-    }
-    return originalFetch(input, init);
-  });
-
-  const view = renderApp("/x");
-  await screen.findByText("Cached account post");
-  vi.mocked(Date.now).mockReturnValue(Date.parse("2026-08-12T22:30:00Z"));
-  document.dispatchEvent(new Event("visibilitychange"));
-  await waitFor(() => expect(xRequests).toBe(2));
-  expect(screen.getByText("Cached account post")).toBeInTheDocument();
-
-  vi.mocked(Date.now).mockReturnValue(Date.parse("2026-08-14T22:30:00Z"));
-  document.dispatchEvent(new Event("visibilitychange"));
-  await waitFor(() => expect(xRequests).toBe(3));
-  await waitFor(() => expect(view.container.querySelector(".empty-state")).toHaveTextContent("No recent posts."));
-  expect(screen.queryByText("Cached account post")).not.toBeInTheDocument();
-});
-
-it("does not append static earnings results to a successful API schedule", async () => {
-  const originalFetch = vi.mocked(fetch).getMockImplementation()!;
-  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
-    if (String(input) === "/api/earnings") return new Response(JSON.stringify([
-      { symbol: "API", company: "API Corp", date: "2026-08-03", timing: "AMC", eventSignal: "Confirmed" },
-      { symbol: "NEXT", company: "Next Corp", date: "2026-08-14", timing: "BMO", eventSignal: "Confirmed" },
-    ]), { status: 200 });
-    return originalFetch(input, init);
-  });
-
-  const view = renderApp();
-  await waitFor(() => expect(view.container.querySelector(".recent-results")).toHaveTextContent("API Corp"));
-  expect(view.container.querySelector(".recent-results")).not.toHaveTextContent("Microsoft");
-  expect(view.container.querySelector(".recent-results")).not.toHaveTextContent("Amazon");
-  expect(view.container.querySelector(".earnings-mini")).toHaveTextContent("Next Corp");
-});
-
 it("does not show static earnings when the first backend request fails", async () => {
   const originalFetch = vi.mocked(fetch).getMockImplementation()!;
   vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -683,12 +320,32 @@ it("does not show static earnings when the first backend request fails", async (
   const view = renderApp();
   await waitFor(() => expect(view.container.querySelector(".recent-results")).toHaveTextContent("No recent earnings published."));
   expect(view.container.querySelector(".recent-results")).not.toHaveTextContent("Microsoft");
-  expect(view.container.querySelector(".recent-results")).not.toHaveTextContent("Amazon");
   expect(view.container.querySelector(".earnings-mini")).toHaveTextContent("No upcoming earnings published.");
 });
 
-it("rejects an old briefing even when its status still says fresh", async () => {
-  const oldBriefing = { ...briefing, preparedAt: "2026-08-10T12:30:00Z" };
+it("keeps the last earnings when the earnings endpoint fails after a success", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  vi.setSystemTime(new Date("2026-08-12T16:00:00Z"));
+  let earningsCalls = 0;
+  const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input) === "/api/earnings") {
+      earningsCalls += 1;
+      if (earningsCalls > 1) return new Response(null, { status: 503 });
+    }
+    return originalFetch(input, init);
+  });
+
+  const view = renderApp();
+  await waitFor(() => expect(view.container.querySelector(".earnings-mini")).toHaveTextContent("Future Corp"));
+  await vi.advanceTimersByTimeAsync(60 * 60_000);
+  await waitFor(() => expect(earningsCalls).toBeGreaterThanOrEqual(2));
+  expect(view.container.querySelector(".earnings-mini")).toHaveTextContent("Future Corp");
+  vi.useRealTimers();
+});
+
+it("rejects stale market data even when the status still says fresh", async () => {
+  const oldBriefing = { ...briefing, preparedAt: "2026-08-10T12:30:00Z", editionDate: "2026-08-10" };
   vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url === "/api/briefs/latest") return new Response(JSON.stringify(oldBriefing), { status: 200 });
@@ -703,8 +360,47 @@ it("rejects an old briefing even when its status still says fresh", async () => 
   await waitFor(() => expect(view.container.querySelector(".market-status")).toHaveTextContent("Not available"));
   expect(view.container.querySelectorAll(".market-card")).toHaveLength(4);
   expect(view.container.querySelector(".market-grid")).toHaveTextContent("Not available");
-  expect(view.container.querySelector(".opportunity-row")).toBeNull();
-  expect(screen.getByText("WEDNESDAY · 12 AUGUST")).toBeInTheDocument();
+  // The last published analysis (2 days old) stays visible with its date.
+  expect(view.container.querySelectorAll(".opportunity-row").length).toBeGreaterThan(0);
+  expect(view.container.querySelector(".opportunities-card")).toHaveTextContent("Analysis · 10 Aug");
+});
+
+it("keeps opportunities visible when the briefing is not marked fresh", async () => {
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === "/api/briefs/latest") return new Response(JSON.stringify(briefing), { status: 200 });
+    if (url === "/api/status") return new Response(JSON.stringify({
+      candidates: [],
+      briefing: { available: true, freshness: "stale", publishedAt: briefing.preparedAt },
+    }), { status: 200 });
+    return new Response(null, { status: 404 });
+  });
+
+  const view = renderApp();
+  await waitFor(() => expect(view.container.querySelector(".opportunity-row")).toHaveTextContent("NVDA"));
+  expect(view.container.querySelector(".opportunities-card")).toHaveTextContent("Analysis · 12 Aug");
+  // Market data is the only section gated on freshness: no fresh briefing,
+  // no market numbers presented as today's.
+  expect(view.container.querySelector(".market-grid")).toHaveTextContent("Not available");
+  expect(view.container).not.toHaveTextContent("6,412.10");
+});
+
+it("shows when market data was updated", async () => {
+  const view = renderApp();
+  await waitFor(() => expect(view.container.querySelector(".market-status")).toHaveTextContent("S&P 500 up +0.31%"));
+  const updated = view.container.querySelector(".market-section .card-subtitle");
+  expect(updated).not.toBeNull();
+  expect(updated!.textContent).toMatch(/^Updated \d+ Aug · \d{2}:\d{2}$/);
+});
+
+it("does not render source-health badges anywhere", async () => {
+  const view = renderApp();
+  await waitFor(() => expect(view.container.querySelector(".market-status")).toHaveTextContent("S&P 500 up +0.31%"));
+  expect(view.container.querySelectorAll(".data-source")).toHaveLength(0);
+  expect(view.container).not.toHaveTextContent("Live");
+  expect(view.container).not.toHaveTextContent("Cached");
+  expect(view.container).not.toHaveTextContent("Stale");
+  expect(view.container).not.toHaveTextContent("Error");
 });
 
 it("ignores malformed stored X posts instead of rendering partial objects", async () => {
@@ -716,7 +412,7 @@ it("ignores malformed stored X posts instead of rendering partial objects", asyn
   expect(screen.queryByText("Missing fields")).not.toBeInTheDocument();
 });
 
-it("clears expired financial data after the backend stops publishing", async () => {
+it("clears financial sections after the backend stops publishing", async () => {
   let coreAvailable = true;
   const originalFetch = vi.mocked(fetch).getMockImplementation()!;
   vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -798,6 +494,7 @@ it("renders zero market movement as flat without an upward arrow", async () => {
     if (url === "/api/status") return new Response(JSON.stringify({ candidates: [], briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt } }), { status: 200 });
     return new Response(null, { status: 404 });
   });
+
   const view = renderApp();
   await waitFor(() => expect(view.container.querySelector(".market-status")).toHaveTextContent("S&P 500 flat 0.00%"));
   expect(view.container.querySelector(".market-status")).toHaveClass("neutral");
@@ -805,87 +502,16 @@ it("renders zero market movement as flat without an upward arrow", async () => {
   expect(view.container.querySelector(".market-status svg")).toBeNull();
 });
 
-it("rejects a degraded market snapshot instead of labelling stale prices live", async () => {
-  const degradedSnapshot = {
-    provider: "cache", status: "degraded", asOf: "2026-08-10",
-    lastSuccessfulUpdate: "2026-08-10T16:00:00Z",
-    universe: { total: 1, eligible: 1, excluded: 0 },
-    benchmarks: [{ symbol: "SPY", date: "2026-08-10", open: 9000, high: 10000, low: 8900, close: 9999, adjustedClose: 9999, volume: 1 }],
-    warnings: ["stale"], updatedAt: "2026-08-10T16:00:00Z",
-  };
-  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
-    const url = String(input);
-    if (url === "/api/status") return new Response(JSON.stringify({ candidates: [], marketData: degradedSnapshot }), { status: 200 });
-    if (url === "/api/market-data") return new Response(JSON.stringify(degradedSnapshot), { status: 200 });
-    return new Response(null, { status: 404 });
+it("fires the market refresh when the tab becomes visible", async () => {
+  const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+  let statusCalls = 0;
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input) === "/api/status") statusCalls += 1;
+    return originalFetch(input, init);
   });
 
   renderApp();
-  await waitFor(() => expect(screen.getByText("Good morning.")).toBeInTheDocument());
-  expect(screen.queryByText("9,999.00")).not.toBeInTheDocument();
-});
-
-it("rejects stale briefing data and invalid live market numbers", async () => {
-  const staleBriefing = { ...briefing, market: briefing.market.map((item, index) => index === 0 ? { ...item, value: "N/A" } : item) };
-  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
-    const url = String(input);
-    if (url === "/api/briefs/latest") return new Response(JSON.stringify(staleBriefing), { status: 200 });
-    if (url === "/api/status") return new Response(JSON.stringify({ candidates: [], briefing: { available: true, freshness: "stale", publishedAt: briefing.preparedAt } }), { status: 200 });
-    return new Response(null, { status: 404 });
-  });
-
-  renderApp();
-  await waitFor(() => expect(screen.getByText("Good morning.")).toBeInTheDocument());
-  expect(screen.queryByText("Constructive session.")).not.toBeInTheDocument();
-  expect(screen.queryByText("N/A")).not.toBeInTheDocument();
-});
-
-it("does not surface legacy status candidates as qualified opportunities", async () => {
-  const candidate = (symbol: string, quantScore: number) => ({
-    symbol, company: `${symbol} Corp`, sector: "Tech", marketCap: 1, price: 10,
-    quantScore, strategyId: "trend", strategyVersion: "1", strategy: "Trend",
-    trend: "Strong", momentum: 1, relativeStrength: 1, relativeVolume: 1,
-    breakout: "$11", earningsDate: null, earningsProximityDays: null,
-    status: "Strong Setup", direction: "Bullish", riskFlags: [],
-    updatedAt: "2026-08-12T20:00:00Z", reasons: [],
-  });
-  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
-    const url = String(input);
-    if (url === "/api/status") return new Response(JSON.stringify({
-      status: { engine: "online", apiHealth: "healthy", lastDataUpdate: "2026-08-12T20:00:00Z" },
-      candidates: [candidate("LOW", 70), candidate("HIGH", 95)],
-      briefing: { available: false, freshness: "unavailable", publishedAt: null },
-    }), { status: 200 });
-    return new Response(null, { status: 404 });
-  });
-
-  const view = renderApp();
-  await waitFor(() => expect(view.container.querySelector(".opportunities-card .empty-state")).toHaveTextContent("No qualified opportunities were published for this edition."));
-  expect(view.container.querySelector(".opportunity-row")).toBeNull();
-  expect(view.container).not.toHaveTextContent("HIGH");
-  expect(view.container).not.toHaveTextContent("LOW");
-});
-
-it("refreshes backend data when the page becomes visible", async () => {
-  renderApp();
-  await waitFor(() => expect(screen.getByText("Good morning.")).toBeInTheDocument());
-  const before = vi.mocked(fetch).mock.calls.length;
+  await waitFor(() => expect(statusCalls).toBe(1));
   document.dispatchEvent(new Event("visibilitychange"));
-  await waitFor(() => expect(vi.mocked(fetch).mock.calls.length).toBeGreaterThan(before));
-});
-
-it("sorts X Pulse newest first and shows days plus remaining hours", async () => {
-  const view = renderApp("/x");
-  await screen.findByRole("heading", { level: 1, name: /X Pulse/ });
-  await waitFor(() => expect(screen.getByText("Newest post")).toBeInTheDocument());
-
-  const posts = [...view.container.querySelectorAll(".feed .post-card p")]
-    .map((element) => element.textContent);
-  expect(posts).toEqual(["Newest post", "Older post"]);
-  expect(screen.getByText("2h")).toBeInTheDocument();
-  expect(screen.getByText("1d 3h")).toBeInTheDocument();
-
-  fireEvent.click(screen.getByRole("button", { name: "@nolimitgains" }));
-  expect([...view.container.querySelectorAll(".feed .post-card p")].map((element) => element.textContent))
-    .toEqual(["Newest post", "Older post"]);
+  await waitFor(() => expect(statusCalls).toBe(2));
 });

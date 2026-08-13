@@ -10,7 +10,6 @@ import { marketIndexes as marketCardDefinitions, quickStats } from "./data/marke
 import { type Opportunity } from "./data/opportunities";
 import { trackedXAccounts, type XPost } from "./data/xSurge";
 import { takeaways, type EarningsCompany } from "./data/earnings";
-import { sourceLabel, stateFromHealth, type SourceHealth } from "./data/source";
 import {
   MorningBriefingDataProvider,
   marketTodayKey,
@@ -61,13 +60,28 @@ function TabButtons({ page, setPage }: { page: Page; setPage: (p: Page) => void 
   return <>{tabs.map(tab => <button key={tab.id} aria-current={page === tab.id ? "page" : undefined} className={page === tab.id ? "active" : ""} onClick={() => setPage(tab.id)}>{page === tab.id && <motion.span layoutId="active-tab" className="tab-highlight"/>}<span>{tab.label}</span></button>)}</>;
 }
 
+function formatAnalysisDate(key: string | null): string | null {
+  if (!key || !/^\d{4}-\d{2}-\d{2}$/.test(key)) return null;
+  const date = dateFromKey(key);
+  return `${date.getDate()} ${new Intl.DateTimeFormat("en", { month: "short" }).format(date)}`;
+}
+
+function formatUpdatedAt(iso: string | null): string | null {
+  if (!iso) return null;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+  const day = new Intl.DateTimeFormat("en", { timeZone: "America/New_York", day: "numeric" }).format(date);
+  const month = new Intl.DateTimeFormat("en", { timeZone: "America/New_York", month: "short" }).format(date);
+  const time = new Intl.DateTimeFormat("en", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: false }).format(date);
+  return `${day} ${month} · ${time}`;
+}
+
 function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return <motion.section className={`card ${className}`} whileHover={{ y: -2 }} transition={spring}>{children}</motion.section>;
 }
 
-function SectionTitle({ title, action, onAction, source }: { title: string; action?: string; onAction?: () => void; source?: SourceHealth }) {
-  const state = stateFromHealth(source);
-  return <div className="section-title"><span className="section-title-copy"><h2>{title}</h2>{source && <span className={`data-source ${state}`}>{sourceLabel(state)}</span>}</span>{action && <button onClick={onAction}>{action} <ArrowRight size={14}/></button>}</div>;
+function SectionTitle({ title, action, onAction, meta }: { title: string; action?: string; onAction?: () => void; meta?: string | null }) {
+  return <div className="section-title"><span className="section-title-copy"><h2>{title}</h2>{meta && <span className="section-meta">{meta}</span>}</span>{action && <button onClick={onAction}>{action} <ArrowRight size={14}/></button>}</div>;
 }
 
 function AnimatedValue({ value, decimals = 2 }: { value: number; decimals?: number }) {
@@ -84,7 +98,7 @@ function AnimatedValue({ value, decimals = 2 }: { value: number; decimals?: numb
 }
 
 function MarketCards() {
-  const { marketIndexes: liveIndexes } = useMorningBriefingData();
+  const { marketIndexes: liveIndexes, marketUpdatedAt } = useMorningBriefingData();
   const aliases: Record<string, string[]> = {
     "S&P 500": ["SPX", "S&P 500"],
     Nasdaq: ["NDX", "NASDAQ", "NASDAQ-100"],
@@ -96,12 +110,10 @@ function MarketCards() {
     const itemSymbol = item.symbol.toUpperCase();
     return itemName === name.toUpperCase() || (aliases[name] ?? []).some((alias) => alias === itemName || alias === itemSymbol);
   });
-  const { sources } = useMorningBriefingData();
-  return <div className="market-grid" aria-label="Market overview">{marketCardDefinitions.map(({ name, symbol }) => {
+  return <section className="market-section" aria-label="Market overview">{marketUpdatedAt && <p className="card-subtitle">Updated {formatUpdatedAt(marketUpdatedAt)}</p>}<div className="market-grid">{marketCardDefinitions.map(({ name, symbol }) => {
     const item = findLive(name);
-    const cardState = item ? stateFromHealth(sources.market) : "unavailable" as const;
-    return <Card key={symbol} className="market-card"><div><span>{name}</span><small>{item?.symbol ?? symbol}<span className={`data-source ${cardState}`}>{sourceLabel(cardState)}</span></small></div>{item ? <><strong><AnimatedValue value={item.value}/></strong><em className={item.change > 0 ? "positive" : item.change < 0 ? "negative" : "neutral"}>{item.change > 0 ? <ArrowUpRight/> : item.change < 0 ? <ArrowDownRight/> : null}{item.change > 0 ? "+" : ""}{item.change.toFixed(2)}%</em></> : <><strong className="neutral">Not available</strong><em className="neutral" aria-hidden="true">—</em></>}</Card>;
-  })}</div>;
+    return <Card key={symbol} className="market-card"><div><span>{name}</span><small>{item?.symbol ?? symbol}</small></div>{item ? <><strong><AnimatedValue value={item.value}/></strong><em className={item.change > 0 ? "positive" : item.change < 0 ? "negative" : "neutral"}>{item.change > 0 ? <ArrowUpRight/> : item.change < 0 ? <ArrowDownRight/> : null}{item.change > 0 ? "+" : ""}{item.change.toFixed(2)}%</em></> : <><strong className="neutral">Not available</strong><em className="neutral" aria-hidden="true">—</em></>}</Card>;
+  })}</div></section>;
 }
 
 function OpportunityMove({ change }: { change: number | null }) {
@@ -123,33 +135,31 @@ function OpportunityList({ onSelect, compact = false }: { onSelect: (o: Opportun
 }
 
 function Sentiment() {
-  const { sources } = useMorningBriefingData();
-  return <Card className="sentiment-card"><SectionTitle title="Market Sentiment" source={sources.sentiment}/><div className="gauge gauge-unavailable"><svg viewBox="0 0 160 86" aria-hidden="true"><path className="gauge-bg" d="M15 75 A65 65 0 0 1 145 75"/></svg><div className="gauge-mask"><strong>Not available</strong><span>Sentiment</span></div></div><h3>Momentum <span className="neutral">Not available</span></h3><p><i/> Risk appetite <span className="neutral">Not available</span></p></Card>;
+  return <Card className="sentiment-card"><SectionTitle title="Market Sentiment"/><div className="gauge gauge-unavailable"><svg viewBox="0 0 160 86" aria-hidden="true"><path className="gauge-bg" d="M15 75 A65 65 0 0 1 145 75"/></svg><div className="gauge-mask"><strong>Not available</strong><span>Sentiment</span></div></div><h3>Momentum <span className="neutral">Not available</span></h3><p><i/> Risk appetite <span className="neutral">Not available</span></p></Card>;
 }
 
 function QuickStats() {
-  const { sources } = useMorningBriefingData();
-  return <Card className="quick-card"><SectionTitle title="Quick Market Stats" source={sources.quickStats}/><div className="quick-list">{quickStats.map(item => <div key={item.label}><span><b className="desktop-only">{item.label}</b><b className="mobile-only">{item.short}</b></span><strong className="neutral">Not available</strong><em className="neutral" aria-hidden="true">—</em></div>)}</div></Card>;
+  return <Card className="quick-card"><SectionTitle title="Quick Market Stats"/><div className="quick-list">{quickStats.map(item => <div key={item.label}><span><b className="desktop-only">{item.label}</b><b className="mobile-only">{item.short}</b></span><strong className="neutral">Not available</strong><em className="neutral" aria-hidden="true">—</em></div>)}</div></Card>;
 }
 
 function PostCard({ post, compact = false }: { post: XPost; compact?: boolean }) {
-  return <article className={`post-card ${compact ? "compact" : ""}`}><div className="post-head"><span className="avatar" style={{ "--avatar": post.color } as React.CSSProperties}>{post.name.slice(0,1)}</span><span><strong>{post.name}</strong><small>{post.handle}</small></span><span className="post-status">{post.source === "cached" && <span className="data-source cached">Cached</span>}<time>{post.time}</time></span></div><p>{post.text}</p><div className="post-meta"><span><Heart/> {post.likes}</span><span><Repeat2/> {post.reposts}</span><span><MessageCircle/> {post.replies}</span>{!compact && <a href={post.url} target="_blank" rel="noreferrer">Open on X <ExternalLink/></a>}</div></article>;
+  return <article className={`post-card ${compact ? "compact" : ""}`}><div className="post-head"><span className="avatar" style={{ "--avatar": post.color } as React.CSSProperties}>{post.name.slice(0,1)}</span><span><strong>{post.name}</strong><small>{post.handle}</small></span><span className="post-status"><time>{post.time}</time></span></div><p>{post.text}</p><div className="post-meta"><span><Heart/> {post.likes}</span><span><Repeat2/> {post.reposts}</span><span><MessageCircle/> {post.replies}</span>{!compact && <a href={post.url} target="_blank" rel="noreferrer">Open on X <ExternalLink/></a>}</div></article>;
 }
 
 function EarningsSummary({ goEarnings, onSelect }: { goEarnings: () => void; onSelect: (e: EarningsCompany) => void }) {
-  const { earnings, sources } = useMorningBriefingData();
+  const { earnings } = useMorningBriefingData();
   const upcoming = earnings.filter(e => e.result === "Upcoming").sort((a, b) => a.date.localeCompare(b.date)).slice(0, 3);
   const recent = earnings.filter(e => e.result !== "Upcoming").sort((a, b) => b.date.localeCompare(a.date)).slice(0, 4);
-  return <Card className="earnings-summary"><SectionTitle title="Earnings Summary" action="View Full Calendar" onAction={goEarnings} source={sources.earnings}/><p className="card-subtitle">Upcoming reports and recent results.</p><div className="earnings-mini">{upcoming.length ? upcoming.map(e => <button key={`${e.ticker}-${e.date}`} onClick={() => onSelect(e)}><span className="date-tile"><small>{dateFromKey(e.date).toLocaleDateString("en", { month: "short" })}</small><strong>{Number(e.date.slice(-2))}</strong></span><span className="company-icon" style={{ "--company": e.color } as React.CSSProperties}>{e.ticker.slice(0,1)}</span><span><strong>{e.company}</strong><small>{e.ticker} · {e.timing}</small></span><ChevronRight/></button>) : <p className="empty-state">No upcoming earnings published.</p>}</div><div className="recent-results">{recent.length ? recent.map(e => <button key={`${e.ticker}-${e.date}`} onClick={() => onSelect(e)}><span>{e.company}</span><strong className={e.result === "Beat" ? "positive" : e.result === "Miss" ? "negative" : "mixed"}>{e.result}</strong><small className={e.reaction?.startsWith("+") ? "positive" : e.reaction?.startsWith("-") ? "negative" : "mixed"}>{e.reaction ?? "Not published"}</small></button>) : <p className="empty-state">No recent earnings published.</p>}</div></Card>;
+  return <Card className="earnings-summary"><SectionTitle title="Earnings Summary" action="View Full Calendar" onAction={goEarnings}/><p className="card-subtitle">Upcoming reports and recent results.</p><div className="earnings-mini">{upcoming.length ? upcoming.map(e => <button key={`${e.ticker}-${e.date}`} onClick={() => onSelect(e)}><span className="date-tile"><small>{dateFromKey(e.date).toLocaleDateString("en", { month: "short" })}</small><strong>{Number(e.date.slice(-2))}</strong></span><span className="company-icon" style={{ "--company": e.color } as React.CSSProperties}>{e.ticker.slice(0,1)}</span><span><strong>{e.company}</strong><small>{e.ticker} · {e.timing}</small></span><ChevronRight/></button>) : <p className="empty-state">No upcoming earnings published.</p>}</div><div className="recent-results">{recent.length ? recent.map(e => <button key={`${e.ticker}-${e.date}`} onClick={() => onSelect(e)}><span>{e.company}</span><strong className={e.result === "Beat" ? "positive" : e.result === "Miss" ? "negative" : "mixed"}>{e.result}</strong><small className={e.reaction?.startsWith("+") ? "positive" : e.reaction?.startsWith("-") ? "negative" : "mixed"}>{e.reaction ?? "Not published"}</small></button>) : <p className="empty-state">No recent earnings published.</p>}</div></Card>;
 }
 
 function MorningBriefing({ setPage, selectOpportunity, selectEarnings }: { setPage: (p: Page) => void; selectOpportunity: (o: Opportunity) => void; selectEarnings: (e: EarningsCompany) => void }) {
-  const { xPosts, marketIndexes, editionDate, editionType, sources } = useMorningBriefingData();
+  const { xPosts, marketIndexes, editionDate, editionType, opportunitiesUpdatedAt } = useMorningBriefingData();
   const leadMarket = marketIndexes[0];
   const leadChange = leadMarket?.change ?? 0;
   const postClose = editionType === "post_close";
   const editionLabel = editionType ? ` · ${postClose ? "POST-CLOSE" : "PRE-MARKET"}` : "";
-  return <div className="page-content"><Card className="welcome-card"><div className="welcome-copy"><span className="eyebrow">{formatBriefingDate(editionDate)}{editionLabel}</span><h1>{postClose ? "Market close." : "Good morning."}</h1><p>{postClose ? "Here are today’s closing opportunities." : "Here are today’s top opportunities."}</p>{leadMarket ? <span className={`market-status ${leadChange > 0 ? "positive" : leadChange < 0 ? "negative" : "neutral"}`}>{leadChange > 0 ? <TrendingUp/> : leadChange < 0 ? <ArrowDownRight/> : null} {leadMarket.name} {leadChange > 0 ? "up" : leadChange < 0 ? "down" : "flat"} <strong className={leadChange > 0 ? "positive" : leadChange < 0 ? "negative" : "neutral"}>{leadChange > 0 ? "+" : ""}{leadChange.toFixed(2)}%</strong></span> : <span className="market-status neutral">Market data <strong className="neutral">Not available</strong></span>}</div></Card><MarketCards/><div className="main-grid"><Card className="opportunities-card"><SectionTitle title="Top Opportunities" source={sources.opportunities}/><OpportunityList onSelect={selectOpportunity}/></Card><Sentiment/><QuickStats/></div><div className="lower-grid"><EarningsSummary goEarnings={() => setPage("earnings")} onSelect={selectEarnings}/><Card className="x-preview"><SectionTitle title="X Pulse" action="View More" onAction={() => setPage("surge")} source={sources.x}/><p className="card-subtitle">Curated insights from selected accounts.</p>{xPosts.length ? xPosts.slice(0,3).map(post => <PostCard key={post.url} post={post} compact/>) : <p className="empty-state">No recent posts.</p>}</Card></div></div>;
+  return <div className="page-content"><Card className="welcome-card"><div className="welcome-copy"><span className="eyebrow">{formatBriefingDate(editionDate)}{editionLabel}</span><h1>{postClose ? "Market close." : "Good morning."}</h1><p>{postClose ? "Here are today’s closing opportunities." : "Here are today’s top opportunities."}</p>{leadMarket ? <span className={`market-status ${leadChange > 0 ? "positive" : leadChange < 0 ? "negative" : "neutral"}`}>{leadChange > 0 ? <TrendingUp/> : leadChange < 0 ? <ArrowDownRight/> : null} {leadMarket.name} {leadChange > 0 ? "up" : leadChange < 0 ? "down" : "flat"} <strong className={leadChange > 0 ? "positive" : leadChange < 0 ? "negative" : "neutral"}>{leadChange > 0 ? "+" : ""}{leadChange.toFixed(2)}%</strong></span> : <span className="market-status neutral">Market data <strong className="neutral">Not available</strong></span>}</div></Card><MarketCards/><div className="main-grid"><Card className="opportunities-card"><SectionTitle title="Top Opportunities" meta={opportunitiesUpdatedAt ? `Analysis · ${formatAnalysisDate(editionDate)}` : null}/><OpportunityList onSelect={selectOpportunity}/></Card><Sentiment/><QuickStats/></div><div className="lower-grid"><EarningsSummary goEarnings={() => setPage("earnings")} onSelect={selectEarnings}/><Card className="x-preview"><SectionTitle title="X Pulse" action="View More" onAction={() => setPage("surge")}/><p className="card-subtitle">Curated insights from selected accounts.</p>{xPosts.length ? xPosts.slice(0,3).map(post => <PostCard key={post.url} post={post} compact/>) : <p className="empty-state">No recent posts.</p>}</Card></div></div>;
 }
 
 function XPulsePage() {
