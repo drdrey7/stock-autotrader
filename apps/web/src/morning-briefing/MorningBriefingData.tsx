@@ -211,10 +211,15 @@ function readStoredXPosts(): XPost[] {
     if (!Array.isArray(parsed)) return [];
     return parsed.filter((post): post is XPost => (
       typeof post === "object" && post !== null
+      && typeof (post as XPost).name === "string"
       && typeof (post as XPost).handle === "string"
       && typeof (post as XPost).text === "string"
       && typeof (post as XPost).createdAt === "string"
       && typeof (post as XPost).url === "string"
+      && typeof (post as XPost).likes === "string"
+      && typeof (post as XPost).reposts === "string"
+      && typeof (post as XPost).replies === "string"
+      && typeof (post as XPost).color === "string"
     ));
   } catch {
     return [];
@@ -318,9 +323,12 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
       setData((previous) => ({
         ...previous,
         marketIndexes: liveMarket ?? [],
-        opportunities: liveOpportunities ?? [],
+        // A transient refresh failure must not blank a still-valid daily
+        // analysis: retain the previous publication while its timestamp is
+        // inside the 72h window.
+        opportunities: liveOpportunities ?? (isWithinWindow(previous.opportunitiesUpdatedAt, BRIEFING_MAX_AGE_MS) ? previous.opportunities : []),
         marketUpdatedAt: liveMarket && briefingUpdatedAt ? briefingUpdatedAt : null,
-        opportunitiesUpdatedAt: liveOpportunities !== null && briefingUpdatedAt ? briefingUpdatedAt : null,
+        opportunitiesUpdatedAt: liveOpportunities !== null && briefingUpdatedAt ? briefingUpdatedAt : previous.opportunitiesUpdatedAt,
         editionDate: analysisBriefing?.editionDate ?? previous.editionDate,
         editionType: analysisBriefing?.editionType ?? previous.editionType,
       }));

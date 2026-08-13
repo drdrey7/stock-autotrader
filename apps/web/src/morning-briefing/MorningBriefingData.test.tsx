@@ -393,6 +393,26 @@ it("shows when market data was updated", async () => {
   expect(updated!.textContent).toMatch(/^Updated \d+ Aug · \d{2}:\d{2}$/);
 });
 
+it("keeps opportunities during a transient briefing failure while the analysis is still valid", async () => {
+  let briefRequests = 0;
+  const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input) === "/api/briefs/latest") {
+      briefRequests += 1;
+      if (briefRequests > 1) return new Response(null, { status: 503 });
+    }
+    return originalFetch(input, init);
+  });
+
+  const view = renderApp();
+  await waitFor(() => expect(view.container.querySelector(".opportunity-row")).toHaveTextContent("NVDA"));
+  document.dispatchEvent(new Event("visibilitychange"));
+  await waitFor(() => expect(briefRequests).toBeGreaterThan(1));
+  // A still-valid daily analysis survives the transient failure.
+  expect(view.container.querySelector(".opportunity-row")).toHaveTextContent("NVDA");
+  expect(view.container.querySelector(".opportunities-card")).toHaveTextContent("Analysis · 12 Aug");
+});
+
 it("does not render source-health badges anywhere", async () => {
   const view = renderApp();
   await waitFor(() => expect(view.container.querySelector(".market-status")).toHaveTextContent("S&P 500 up +0.31%"));
@@ -428,7 +448,9 @@ it("clears financial sections after the backend stops publishing", async () => {
   expect(view.container.querySelector(".opportunity-row")).toHaveTextContent("NVDA");
 
   coreAvailable = false;
-  vi.mocked(Date.now).mockReturnValue(Date.parse("2026-08-14T01:00:00Z"));
+  // Advance beyond the 72h analysis window so the retained daily
+  // publication expires and the sections must clear.
+  vi.mocked(Date.now).mockReturnValue(Date.parse("2026-08-16T01:00:00Z"));
   document.dispatchEvent(new Event("visibilitychange"));
   await waitFor(() => expect(view.container.querySelectorAll(".market-card")).toHaveLength(4));
   expect(view.container.querySelector(".opportunity-row")).toBeNull();
