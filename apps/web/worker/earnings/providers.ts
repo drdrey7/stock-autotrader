@@ -217,6 +217,7 @@ function deduplicateCalendarRows(rows: EarningsCalendarObservation[]): EarningsC
 
 export class FmpEarningsCalendarProvider implements EarningsCalendarProvider, EarningsConsensusProvider {
   readonly name = "fmp-earnings-calendar";
+  readonly supportsForwardCalendar = true;
 
   constructor(
     private readonly apiKey: string,
@@ -429,6 +430,7 @@ function parseSecMasterIndex(
 
 export class SecEdgarProvider implements OfficialFilingsProvider, EarningsCalendarProvider, EarningsConsensusProvider {
   readonly name = "sec-edgar";
+  readonly supportsForwardCalendar = false;
   private lastRequestAt = 0;
   private readonly metadataByCik = new Map<string, CompanyMetadata>();
 

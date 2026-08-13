@@ -431,6 +431,27 @@ describe("earnings D1 write model and API", () => {
     expect(requestedRange).toEqual({ from: "2026-05-15", to: "2026-10-12" });
   });
 
+  it("preserves future schedule rows when the provider only reports filed history", async () => {
+    const db = new MemoryD1();
+    await upsertEarningsEvent(db, normalizedEvent({ scheduledDate: "2026-09-20", providerUpdatedAt: "2026-08-12T06:00:00.000Z" }));
+    const calendar: EarningsCalendarProvider = {
+      name: "official-history-only",
+      supportsForwardCalendar: false,
+      fetchCalendar: async () => ({ provider: "official-history-only", observations: [], warnings: [], updatedAt: "2026-08-13T06:00:00.000Z" }),
+    };
+    const official: OfficialFilingsProvider = {
+      name: "test-sec",
+      fetchCompanyMetadata: async () => ({ provider: "test-sec", observations: [], warnings: [], updatedAt: "2026-08-13T06:00:00.000Z" }),
+      findRelevantFiling: async () => null,
+    };
+    await runEarningsJob({ DB: db } as never, new Date("2026-08-13T06:00:00.000Z"), "calendar", {
+      calendar,
+      consensus: calendar as never,
+      official,
+    });
+    expect((await readEarningsEvents(db, { from: "2026-09-20", to: "2026-09-20" }))[0]?.status).toBe("scheduled");
+  });
+
   it("upserts by fiscal identity when the provider moves the scheduled date", async () => {
     const db = new MemoryD1();
     const first = await upsertEarningsEvent(db, normalizedEvent());

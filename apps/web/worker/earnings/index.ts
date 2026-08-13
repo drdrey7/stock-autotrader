@@ -238,7 +238,7 @@ async function runCalendarSync(env: Env, scheduledTime: Date, providers: Earning
     }
   }
   await upsertEarningsEvents(env.DB, normalized);
-  if (calendar.success) {
+  if (calendar.success && providers.calendar.supportsForwardCalendar !== false) {
     await markUnseenScheduledEventsUnknown(env.DB, range.from, range.to, collectedAt, collectedAt);
   }
   await markPastScheduledEventsUnknown(env.DB, today, collectedAt);

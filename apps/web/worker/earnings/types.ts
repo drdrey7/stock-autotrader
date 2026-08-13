@@ -64,6 +64,8 @@ export interface EarningsProviderResult<T> {
 
 export interface EarningsCalendarProvider {
   readonly name: string;
+  /** False when the adapter only knows filed/past events and cannot authoritatively reconcile future dates. */
+  readonly supportsForwardCalendar?: boolean;
   fetchCalendar(
     range: EarningsDateRange,
     universe: ReadonlySet<string>,
