@@ -120,9 +120,10 @@ export type StoreXPostsResult =
 /**
  * Persist collected X posts into the append-only read model.
  *
- * Idempotent by event_id (ingest_events claim) and by post id (INSERT OR
- * IGNORE on the primary key). Duplicate posts inside one event or across
- * events are counted as skipped, never duplicated.
+ * Idempotent by event_id (ingest_events claim) and by post id (ON CONFLICT
+ * upsert on the primary key). Duplicate posts inside one event or across
+ * events never duplicate rows; they refresh collected_at so the read model
+ * keeps recording evidence of successful collections.
  */
 export async function storeXPosts(
   db: D1Database,
@@ -159,12 +160,13 @@ export async function storeXPosts(
   const stmts = posts.map((post) =>
     db
       .prepare(
-        `INSERT OR IGNORE INTO x_posts
-         (id, author, text, created_at, url, symbol, company, universe, collected_at, chart_json, price, change)
-         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-         WHERE EXISTS (
-           SELECT 1 FROM ingest_events WHERE event_id = ? AND status = ?
-         )`,
+        `INSERT INTO x_posts
+        (id, author, text, created_at, url, symbol, company, universe, collected_at, chart_json, price, change)
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        WHERE EXISTS (
+          SELECT 1 FROM ingest_events WHERE event_id = ? AND status = ?
+        )
+        ON CONFLICT (id) DO UPDATE SET collected_at = excluded.collected_at`,
       )
       .bind(
         post.id,
@@ -188,19 +190,32 @@ export async function storeXPosts(
   const finalize = db
     .prepare("UPDATE ingest_events SET status = 'applied' WHERE event_id = ? AND status = ?")
     .bind(eventId, claimStatus);
+  // Collection metadata is written only by the winning claim and only when it
+  // is newer than the stored value: a retried/skipped event or an out-of-order
+  // older delivery must never regress X freshness.
+  const collectionMeta = db
+    .prepare(
+      `INSERT INTO app_meta (key, value)
+       SELECT 'xPostsUpdatedAt', ?
+       WHERE EXISTS (SELECT 1 FROM ingest_events WHERE event_id = ? AND status = ?)
+       ON CONFLICT (key) DO UPDATE SET value = excluded.value
+       WHERE excluded.value > app_meta.value`,
+    )
+    .bind(new Date(receivedAt).toISOString(), eventId, claimStatus);
 
   try {
-    // Claim + conditional post writes + final status update in ONE atomic D1
-    // batch. A crash rolls back the entire transaction; a concurrent loser
-    // has no matching claim token and therefore writes zero posts.
-    const results = await db.batch([claim, ...stmts, finalize]);
+    // Claim + conditional post writes + collection metadata + final status
+    // update in ONE atomic D1 batch. A crash rolls back the entire
+    // transaction; a concurrent loser has no matching claim token and
+    // therefore writes zero posts.
+    const results = await db.batch([claim, ...stmts, collectionMeta, finalize]);
     const claimChanges = results[0]?.meta.changes ?? 0;
     const finalizeChanges = results[results.length - 1]?.meta.changes ?? 0;
     if (claimChanges === 0 || finalizeChanges === 0) {
       return { kind: "skipped", reason: "duplicate event" };
     }
     const applied = results
-      .slice(1, -1)
+      .slice(1, -2)
       .filter((result) => result.meta.changes === 1).length;
     const skipped = posts.length - applied;
     return { kind: "applied", applied, skipped };

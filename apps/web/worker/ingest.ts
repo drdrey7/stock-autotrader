@@ -411,13 +411,24 @@ function buildStatements(event: IngestEvent): [string, unknown[]][] {
     }
     case "EARNINGS_UPDATED": {
       const items = event.payload.items;
+      // The payload is the complete calendar snapshot: superseded rows are
+      // cleared so an empty publication cannot leave stale earnings current.
+      stmts.push(["DELETE FROM earnings", []]);
       for (const e of items) {
         stmts.push(
           ["INSERT INTO earnings (symbol, company, date, timing, event_signal, engine_relevant, signal, strategy, has_position, tracked, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (symbol, date) DO UPDATE SET company = excluded.company, timing = excluded.timing, event_signal = excluded.event_signal, engine_relevant = excluded.engine_relevant, signal = excluded.signal, strategy = excluded.strategy, has_position = excluded.has_position, tracked = excluded.tracked, updated_at = excluded.updated_at",
             [e.symbol, e.company, e.date, e.timing, e.eventSignal, e.engineRelevant ? 1 : 0, e.signal, e.strategy, e.hasPosition ? 1 : 0, e.tracked ? 1 : 0, e.updatedAt]],
         );
       }
-      stmts.push(insertBotEvent("EARNINGS_UPDATED", `Earnings updated: ${items.length} events`, null));
+      // Publication metadata keeps freshness even for a valid empty calendar.
+      // Never regress: an out-of-order older event must not overwrite a newer
+      // publication timestamp (same guard as xPostsUpdatedAt in x-posts.ts),
+      // and the timestamp is normalized to UTC so explicit offsets from
+      // isoTimestampSchema compare chronologically.
+      stmts.push(
+        ["INSERT INTO app_meta (key, value) VALUES ('earningsUpdatedAt', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value WHERE excluded.value > app_meta.value", [new Date(event.timestamp).toISOString()]],
+        insertBotEvent("EARNINGS_UPDATED", `Earnings updated: ${items.length} events`, null),
+      );
       break;
     }
     case "MARKET_DATA_UPDATED": {

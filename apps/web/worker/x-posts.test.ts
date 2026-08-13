@@ -39,6 +39,7 @@ class FakeStatement {
   }
 
   async run(): Promise<{ meta: { changes: number } }> {
+    this.db.sqls.push(this.sql);
     if (this.sql.includes("INSERT OR IGNORE INTO ingest_events")) {
       const eventId = String(this.args[0]);
       if (this.db.events.has(eventId)) return { meta: { changes: 0 } };
@@ -58,14 +59,21 @@ class FakeStatement {
       event.status = "applied";
       return { meta: { changes: 1 } };
     }
-    if (this.sql.includes("INSERT OR IGNORE INTO x_posts")) {
+    if (this.sql.includes("INSERT INTO x_posts")) {
       if (this.sql.includes("WHERE EXISTS")) {
         const eventId = String(this.args[12]);
         const claimStatus = String(this.args[13]);
         if (this.db.events.get(eventId)?.status !== claimStatus) return { meta: { changes: 0 } };
       }
       const id = String(this.args[0]);
-      if (this.db.posts.has(id)) return { meta: { changes: 0 } };
+      if (this.db.posts.has(id)) {
+        // Without the ON CONFLICT upsert the row would be ignored, not
+        // refreshed: mirror the real SQL contract in the fake.
+        if (!this.sql.includes("ON CONFLICT")) return { meta: { changes: 0 } };
+        const existing = this.db.posts.get(id)!;
+        this.db.posts.set(id, { ...existing, collected_at: String(this.args[8]) });
+        return { meta: { changes: 1 } };
+      }
       this.db.posts.set(id, {
         id,
         author: String(this.args[1]),
@@ -80,6 +88,50 @@ class FakeStatement {
         price: this.args[10] === null ? null : String(this.args[10]),
         change: this.args[11] === null ? null : String(this.args[11]),
       });
+      return { meta: { changes: 1 } };
+    }
+    if (this.sql.includes("INSERT INTO bot_events")) {
+      return { meta: { changes: 1 } };
+    }
+    if (this.sql.includes("INSERT INTO app_meta")) {
+      const keyValues = this.sql.match(/VALUES \('([^']+)', \?\)/);
+      if (keyValues) {
+        const key = keyValues[1]!;
+        const value = String(this.args[0]);
+        // Mirror the real SQL contract: an upsert carrying
+        // `WHERE excluded.value > app_meta.value` must never regress
+        // an existing newer timestamp.
+        if (this.sql.includes("excluded.value > app_meta.value")) {
+          const existing = this.db.meta.get(key);
+          if (existing !== undefined && existing >= value) return { meta: { changes: 0 } };
+        }
+        this.db.meta.set(key, value);
+        return { meta: { changes: 1 } };
+      }
+      const keySelect = this.sql.match(/SELECT '([^']+)', \?/);
+      if (!keySelect) throw new Error(`Unhandled app_meta: ${this.sql}`);
+      // The real statement must gate on the claim and only advance to a
+      // newer timestamp; anything else is a contract regression.
+      if (!this.sql.includes("WHERE EXISTS") || !this.sql.includes("excluded.value > app_meta.value")) {
+        throw new Error(`Unhandled app_meta contract: ${this.sql}`);
+      }
+      const key = keySelect[1]!;
+      const value = String(this.args[0]);
+      // The collection-metadata upsert is conditional on the winning claim
+      // and only advances to a newer timestamp, mirroring the real SQL.
+      if (this.db.events.get(String(this.args[1]))?.status !== String(this.args[2])) return { meta: { changes: 0 } };
+      const existing = this.db.meta.get(key);
+      if (existing !== undefined && existing >= value) return { meta: { changes: 0 } };
+      this.db.meta.set(key, value);
+      return { meta: { changes: 1 } };
+    }
+    if (this.sql.includes("INSERT INTO earnings")) {
+      return { meta: { changes: 1 } };
+    }
+    if (this.sql.includes("INSERT INTO ingest_log")) {
+      return { meta: { changes: 1 } };
+    }
+    if (this.sql.includes("DELETE FROM earnings")) {
       return { meta: { changes: 1 } };
     }
     if (this.sql.includes("DELETE FROM ingest_events")) {
@@ -113,6 +165,8 @@ class FakeStatement {
 class FakeD1 {
   readonly events = new Map<string, IngestEventRow>();
   readonly posts = new Map<string, PostRow>();
+  readonly meta = new Map<string, string>();
+  readonly sqls: string[] = [];
 
   prepare(sql: string): FakeStatement {
     return new FakeStatement(this, sql);
@@ -261,10 +315,12 @@ describe("storeXPosts", () => {
     expect(db.posts.size).toBe(2);
   });
 
-  it("skips duplicate post ids within the same event", async () => {
+  it("upserts duplicate post ids within the same event without duplicating rows", async () => {
     const db = new FakeD1();
     const result = await storeXPosts(db as unknown as D1Database, "event-abcdef12", "2026-08-12T12:00:00Z", [postA, { ...postA }]);
-    expect(result).toEqual({ kind: "applied", applied: 1, skipped: 1 });
+    expect(result).toEqual({ kind: "applied", applied: 2, skipped: 0 });
+    expect(db.posts.size).toBe(1);
+    expect(db.posts.get(postA.id)?.collected_at).toBe("2026-08-12T12:00:00Z");
   });
 
   it("rejects future-dated posts before writing the event or feed row", async () => {
@@ -467,5 +523,187 @@ describe("ingest X_POSTS_COLLECTED", () => {
     const response = await handleIngest(request, env(db));
     expect(response.status).toBe(401);
     expect(db.posts.size).toBe(0);
+  });
+
+  it("records publication metadata for a valid empty earnings calendar", async () => {
+    const db = new FakeD1();
+    const timestamp = new Date().toISOString();
+    const request = await signedRequest({
+      events: [{
+        type: "EARNINGS_UPDATED",
+        event_id: "earn-empty-0001",
+        timestamp,
+        payload: { items: [] },
+      }],
+    });
+    const response = await handleIngest(request, env(db));
+    const body = (await response.json()) as { applied: string[] };
+    expect(response.status).toBe(200);
+    expect(body.applied).toEqual(["earn-empty-0001"]);
+    expect(db.meta.get("earningsUpdatedAt")).toBe(timestamp);
+    expect(db.events.size).toBe(1);
+  });
+
+  it("records collection metadata when a run contains only duplicate posts", async () => {
+    const db = new FakeD1();
+    const firstTimestamp = new Date().toISOString();
+    const first = await signedRequest({
+      events: [{
+        type: "X_POSTS_COLLECTED",
+        event_id: "xcollect-dup-0001",
+        timestamp: firstTimestamp,
+        payload: { posts: [postA] },
+      }],
+    });
+    const firstResponse = await handleIngest(first, env(db));
+    expect(((await firstResponse.json()) as { applied: string[] }).applied).toEqual(["xcollect-dup-0001"]);
+    expect(db.posts.size).toBe(1);
+
+    const duplicateTimestamp = new Date(Date.now() + 1_000).toISOString();
+    const duplicate = await signedRequest({
+      events: [{
+        type: "X_POSTS_COLLECTED",
+        event_id: "xcollect-dup-0002",
+        timestamp: duplicateTimestamp,
+        payload: { posts: [postA] },
+      }],
+    });
+    const duplicateResponse = await handleIngest(duplicate, env(db));
+    const body = (await duplicateResponse.json()) as { applied: string[] };
+    expect(duplicateResponse.status).toBe(200);
+    expect(body.applied).toEqual(["xcollect-dup-0002"]);
+    expect(db.posts.size).toBe(1);
+    expect(db.meta.get("xPostsUpdatedAt")).toBe(duplicateTimestamp);
+    expect(db.posts.get(postA.id)?.collected_at).toBe(duplicateTimestamp);
+  });
+
+  it("does not regress X collection metadata on a retried event or an older delivery", async () => {
+    const db = new FakeD1();
+    const firstTimestamp = new Date().toISOString();
+    const first = await signedRequest({
+      events: [{
+        type: "X_POSTS_COLLECTED",
+        event_id: "xcollect-regress-0001",
+        timestamp: firstTimestamp,
+        payload: { posts: [postA] },
+      }],
+    });
+    await handleIngest(first, env(db));
+    expect(db.meta.get("xPostsUpdatedAt")).toBe(firstTimestamp);
+
+    // Retry of the same event with an older timestamp: claim loses, metadata
+    // must not be overwritten.
+    const older = new Date(Date.now() - 60_000).toISOString();
+    const retry = await signedRequest({
+      events: [{
+        type: "X_POSTS_COLLECTED",
+        event_id: "xcollect-regress-0001",
+        timestamp: older,
+        payload: { posts: [postA] },
+      }],
+    });
+    const retryResponse = await handleIngest(retry, env(db));
+    expect(((await retryResponse.json()) as { skipped: string[] }).skipped).toEqual(["xcollect-regress-0001"]);
+    expect(db.meta.get("xPostsUpdatedAt")).toBe(firstTimestamp);
+  });
+
+  it("clears superseded earnings before marking an empty snapshot applied", async () => {
+    const db = new FakeD1();
+    const t1 = new Date().toISOString();
+    const first = await signedRequest({
+      events: [{
+        type: "EARNINGS_UPDATED",
+        event_id: "earn-replace-0001",
+        timestamp: t1,
+        payload: { items: [{
+          symbol: "AAPL", company: "Apple Inc.", date: "2026-08-20", timing: "BMO",
+          eventSignal: "Confirmed", engineRelevant: false, signal: null, strategy: null,
+          hasPosition: false, tracked: false, updatedAt: t1,
+        }] },
+      }],
+    });
+    const firstResponse = await handleIngest(first, env(db));
+    expect(((await firstResponse.json()) as { applied: string[] }).applied).toEqual(["earn-replace-0001"]);
+
+    const t2 = new Date(Date.now() + 1_000).toISOString();
+    db.sqls.length = 0;
+    const second = await signedRequest({
+      events: [{
+        type: "EARNINGS_UPDATED",
+        event_id: "earn-replace-0002",
+        timestamp: t2,
+        payload: { items: [] },
+      }],
+    });
+    const secondResponse = await handleIngest(second, env(db));
+    expect(((await secondResponse.json()) as { applied: string[] }).applied).toEqual(["earn-replace-0002"]);
+    expect(db.meta.get("earningsUpdatedAt")).toBe(t2);
+    expect(db.sqls.some((sql) => sql.includes("DELETE FROM earnings"))).toBe(true);
+    expect(db.sqls.some((sql) => sql.includes("INSERT INTO earnings"))).toBe(false);
+  });
+
+  it("does not regress earningsUpdatedAt on an out-of-order older event", async () => {
+    const db = new FakeD1();
+    const t2 = new Date().toISOString();
+    const newer = await signedRequest({
+      events: [{
+        type: "EARNINGS_UPDATED",
+        event_id: "earn-ooo-0002",
+        timestamp: t2,
+        payload: { items: [{
+          symbol: "MSFT", company: "Microsoft Corp.", date: "2026-08-21", timing: "AMC",
+          eventSignal: "Confirmed", engineRelevant: false, signal: null, strategy: null,
+          hasPosition: false, tracked: false, updatedAt: t2,
+        }] },
+      }],
+    });
+    const newerResponse = await handleIngest(newer, env(db));
+    expect(((await newerResponse.json()) as { applied: string[] }).applied).toEqual(["earn-ooo-0002"]);
+    expect(db.meta.get("earningsUpdatedAt")).toBe(t2);
+
+    const t1 = new Date(Date.now() - 60_000).toISOString();
+    db.sqls.length = 0;
+    const older = await signedRequest({
+      events: [{
+        type: "EARNINGS_UPDATED",
+        event_id: "earn-ooo-0001",
+        timestamp: t1,
+        payload: { items: [] },
+      }],
+    });
+    const olderResponse = await handleIngest(older, env(db));
+    expect(((await olderResponse.json()) as { applied: string[] }).applied).toEqual(["earn-ooo-0001"]);
+    // Metadata keeps the newer timestamp; the older event cannot regress freshness.
+    expect(db.meta.get("earningsUpdatedAt")).toBe(t2);
+  });
+
+  it("normalizes explicit UTC offsets before comparing publication order", async () => {
+    const db = new FakeD1();
+    // 08:00-04:00 == 12:00Z
+    const offset = await signedRequest({
+      events: [{
+        type: "EARNINGS_UPDATED",
+        event_id: "earn-offset-0001",
+        timestamp: "2026-08-13T08:00:00-04:00",
+        payload: { items: [] },
+      }],
+    });
+    const offsetResponse = await handleIngest(offset, env(db));
+    expect(((await offsetResponse.json()) as { applied: string[] }).applied).toEqual(["earn-offset-0001"]);
+    expect(db.meta.get("earningsUpdatedAt")).toBe("2026-08-13T12:00:00.000Z");
+
+    // 11:00Z is earlier than 12:00Z but compares lexically larger than the
+    // raw -04:00 string; the normalized comparison must reject it.
+    const laterLexically = await signedRequest({
+      events: [{
+        type: "EARNINGS_UPDATED",
+        event_id: "earn-offset-0002",
+        timestamp: "2026-08-13T11:00:00Z",
+        payload: { items: [] },
+      }],
+    });
+    const laterResponse = await handleIngest(laterLexically, env(db));
+    expect(((await laterResponse.json()) as { applied: string[] }).applied).toEqual(["earn-offset-0002"]);
+    expect(db.meta.get("earningsUpdatedAt")).toBe("2026-08-13T12:00:00.000Z");
   });
 });
