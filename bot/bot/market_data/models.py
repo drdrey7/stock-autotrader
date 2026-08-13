@@ -82,6 +82,24 @@ class PriceBar:
 
 
 @dataclass(frozen=True)
+class IndexBar:
+    symbol: str
+    name: str
+    value: float
+    change: float
+    updated_at: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "symbol": self.symbol,
+            "name": self.name,
+            "value": self.value,
+            "change": self.change,
+            "updatedAt": self.updated_at,
+        }
+
+
+@dataclass(frozen=True)
 class MarketDataSnapshot:
     provider: str
     status: str
@@ -91,6 +109,7 @@ class MarketDataSnapshot:
     benchmarks: tuple[PriceBar, ...]
     warnings: tuple[str, ...]
     updated_at: str
+    indices: tuple[IndexBar, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -100,6 +119,7 @@ class MarketDataSnapshot:
             "lastSuccessfulUpdate": self.last_successful_update,
             "universe": self.universe.to_dict(),
             "benchmarks": [bar.to_dict() for bar in self.benchmarks],
+            "indices": [index.to_dict() for index in self.indices],
             "warnings": list(self.warnings),
             "updatedAt": self.updated_at,
         }

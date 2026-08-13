@@ -14,6 +14,21 @@ type BriefingHealth = {
 
 type StatusResponse = {
   briefing?: BriefingHealth;
+  marketData?: {
+    indices?: Array<{
+      symbol: "SPX" | "NDX" | "DJI" | "VIX";
+      name: string;
+      value: number;
+      change: number;
+      updatedAt: string;
+    }>;
+  };
+  sentiment?: {
+    provider: string;
+    score: number;
+    rating: "extreme_fear" | "fear" | "neutral" | "greed" | "extreme_greed";
+    asOf: string;
+  } | null;
 };
 
 type XApiPost = {
@@ -40,6 +55,7 @@ export type MorningBriefingData = {
   editionType: DailyBriefing["editionType"] | null;
   marketUpdatedAt: string | null;
   opportunitiesUpdatedAt: string | null;
+  sentiment: NonNullable<StatusResponse["sentiment"]> | null;
 };
 
 function normaliseEarnings(items: EarningsCompany[], today = marketTodayKey()): EarningsCompany[] {
@@ -60,6 +76,7 @@ const initialData: MorningBriefingData = {
   editionType: null,
   marketUpdatedAt: null,
   opportunitiesUpdatedAt: null,
+  sentiment: null,
 };
 
 const MorningBriefingDataContext = createContext<MorningBriefingData>(initialData);
@@ -173,6 +190,47 @@ function opportunitiesFromBriefing(
       source: "live",
     };
   });
+}
+
+// Real index context (PR #11): the worker publishes live index quotes in the
+// market-data snapshot; they may fill the market cards when no fresh briefing
+// exists, gated by the same 26h freshness window as briefing market data.
+const INDEX_GATE_MS = 26 * 60 * 60_000;
+
+function indicesFromStatus(status: StatusResponse | null): { indexes: MarketIndex[]; updatedAt: string } | null {
+  const indices = status?.marketData?.indices;
+  if (!Array.isArray(indices) || indices.length === 0) return null;
+  let latestUpdatedAt = "";
+  const fresh: MarketIndex[] = [];
+  for (const index of indices) {
+    if (!isWithinWindow(index.updatedAt, INDEX_GATE_MS)) continue;
+    fresh.push({
+      name: index.name,
+      symbol: index.symbol,
+      value: index.value,
+      decimals: 2,
+      change: index.change,
+      source: "live" as const,
+    });
+    if (index.updatedAt > latestUpdatedAt) latestUpdatedAt = index.updatedAt;
+  }
+  if (fresh.length === 0) return null;
+  return { indexes: fresh, updatedAt: latestUpdatedAt };
+}
+
+// Market sentiment (PR #11): the CNN Fear & Greed reading published once a
+// day. A daily index may legitimately be a weekend old before the next
+// reading; the 72h window matches the daily-publication sections.
+const SENTIMENT_GATE_MS = 72 * 60 * 60_000;
+
+function sentimentFromStatus(status: StatusResponse | null): MorningBriefingData["sentiment"] {
+  const sentiment = status?.sentiment;
+  if (!sentiment) return null;
+  if (typeof sentiment.score !== "number" || sentiment.score < 0 || sentiment.score > 100) return null;
+  const ratings = ["extreme_fear", "fear", "neutral", "greed", "extreme_greed"] as const;
+  if (!ratings.includes(sentiment.rating)) return null;
+  if (!isWithinWindow(sentiment.asOf, SENTIMENT_GATE_MS)) return null;
+  return sentiment;
 }
 
 function isWithinXCacheWindow(createdAt: string): boolean {
@@ -319,6 +377,16 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
         : null;
       const liveMarket = marketBriefing ? marketFromBriefing(marketBriefing) : null;
       const liveOpportunities = analysisBriefing ? opportunitiesFromBriefing(analysisBriefing) : null;
+      // Real index context (PR #11): when no fresh briefing exists, the market
+      // cards can still show the live index read model while it is fresh.
+      const liveIndices = indicesFromStatus(status);
+      // The market label always reflects what is actually displayed.
+      const marketUpdatedAt = liveMarket && briefingUpdatedAt
+        ? briefingUpdatedAt
+        : liveIndices
+          ? liveIndices.updatedAt
+          : null;
+      const sentiment = sentimentFromStatus(status);
 
       setData((previous) => {
         // A transient refresh failure must not blank a still-valid daily
@@ -334,12 +402,13 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
         const nextEditionDate = analysisBriefing?.editionDate ?? (retained ? previous.editionDate : null);
         return {
           ...previous,
-          marketIndexes: liveMarket ?? [],
+          marketIndexes: liveMarket ?? liveIndices?.indexes ?? [],
           opportunities: nextOpportunities,
-          marketUpdatedAt: liveMarket && briefingUpdatedAt ? briefingUpdatedAt : null,
+          marketUpdatedAt,
           opportunitiesUpdatedAt: liveOpportunities !== null && briefingUpdatedAt ? briefingUpdatedAt : previous.opportunitiesUpdatedAt,
           editionDate: nextEditionDate,
           editionType: nextEditionDate !== null ? (analysisBriefing?.editionType ?? previous.editionType) : null,
+          sentiment,
         };
       });
     };

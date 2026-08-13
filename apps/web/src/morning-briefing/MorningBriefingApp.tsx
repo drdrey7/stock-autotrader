@@ -134,8 +134,42 @@ function OpportunityList({ onSelect, compact = false }: { onSelect: (o: Opportun
   </button>)}</div>;
 }
 
+const SENTIMENT_META: Record<string, { label: string; color: string }> = {
+  extreme_fear: { label: "Extreme Fear", color: "#e5484d" },
+  fear: { label: "Fear", color: "#f76b15" },
+  neutral: { label: "Neutral", color: "#8b8d98" },
+  greed: { label: "Greed", color: "#f5a524" },
+  extreme_greed: { label: "Extreme Greed", color: "#30a46c" },
+};
+
+// Semicircle gauge: length of the arc M15 75 A65 65 0 0 1 145 75 is π·r.
+const GAUGE_ARC_LENGTH = Math.PI * 65;
+
 function Sentiment() {
-  return <Card className="sentiment-card"><SectionTitle title="Market Sentiment"/><div className="gauge gauge-unavailable"><svg viewBox="0 0 160 86" aria-hidden="true"><path className="gauge-bg" d="M15 75 A65 65 0 0 1 145 75"/></svg><div className="gauge-mask"><strong>Not available</strong><span>Sentiment</span></div></div><h3>Momentum <span className="neutral">Not available</span></h3><p><i/> Risk appetite <span className="neutral">Not available</span></p></Card>;
+  const { sentiment } = useMorningBriefingData();
+  if (!sentiment) {
+    return <Card className="sentiment-card"><SectionTitle title="Market Sentiment"/><div className="gauge gauge-unavailable"><svg viewBox="0 0 160 86" aria-hidden="true"><path className="gauge-bg" d="M15 75 A65 65 0 0 1 145 75"/></svg><div className="gauge-mask"><strong>Not available</strong><span>Sentiment</span></div></div><h3>Momentum <span className="neutral">Not available</span></h3><p><i/> Risk appetite <span className="neutral">Not available</span></p></Card>;
+  }
+  const meta = SENTIMENT_META[sentiment.rating] ?? { label: "Neutral", color: "#8b8d98" };
+  const dash = (sentiment.score / 100) * GAUGE_ARC_LENGTH;
+  const riskAppetite = sentiment.score >= 50 ? "Risk-on" : "Risk-off";
+  return (
+    <Card className="sentiment-card">
+      <SectionTitle title="Market Sentiment"/>
+      <div className="gauge">
+        <svg viewBox="0 0 160 86" aria-hidden="true">
+          <path className="gauge-bg" d="M15 75 A65 65 0 0 1 145 75"/>
+          <path className="gauge-value" d="M15 75 A65 65 0 0 1 145 75" stroke={meta.color} strokeDasharray={`${dash} ${GAUGE_ARC_LENGTH}`}/>
+        </svg>
+        <div className="gauge-mask">
+          <strong style={{ color: meta.color }}>{sentiment.score}</strong>
+          <span style={{ color: meta.color }}>{meta.label}</span>
+        </div>
+      </div>
+      <h3>Momentum <span style={{ color: meta.color }}>{meta.label}</span></h3>
+      <p><i style={{ background: meta.color }}/> Risk appetite <span style={{ color: meta.color }}>{riskAppetite}</span></p>
+    </Card>
+  );
 }
 
 function QuickStats() {

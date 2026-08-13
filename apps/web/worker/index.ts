@@ -10,7 +10,7 @@ import {
   type SourceHealth,
   type StrategySummary,
 } from "@stock-autotrader/contracts";
-import { dashboardReadSchema, handleIngest, isoTimestampSchema, marketDataSchema } from "./ingest";
+import { dashboardReadSchema, handleIngest, isoTimestampSchema, marketDataSchema, sentimentSchema } from "./ingest";
 import {
   readBriefingByDateAndType,
   readBriefingStatus,
@@ -52,6 +52,24 @@ const unavailableBriefingStatus = (): BriefingStatus => ({
   publishedAt: null,
   ageSeconds: null,
 });
+
+export interface PublicSentiment {
+  provider: string;
+  score: number;
+  rating: "extreme_fear" | "fear" | "neutral" | "greed" | "extreme_greed";
+  asOf: string;
+}
+
+async function readSentiment(env: Env): Promise<PublicSentiment | null> {
+  try {
+    const row = await env.DB.prepare("SELECT value FROM app_meta WHERE key = 'sentiment'").first<{ value: string | null }>();
+    if (!row?.value) return null;
+    const parsed = sentimentSchema.safeParse(JSON.parse(row.value));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
 
 const int = (v: unknown): number => Number(v) || 0;
 const num = (v: unknown): number => (v === null || v === undefined ? 0 : Number(v));
@@ -556,18 +574,19 @@ export default {
     }
     if (pathname === "/api/status") {
       try {
-        const [dashboard, briefing] = await Promise.all([
+        const [dashboard, briefing, sentiment] = await Promise.all([
           buildDashboard(env),
           readBriefingStatus(env.DB),
+          readSentiment(env),
         ]);
         const sources = await buildSources(env, { briefing, dashboard });
-        return json({ ...dashboard, briefing, sources });
+        return json({ ...dashboard, briefing, sources, sentiment });
       } catch (err) {
         console.error("status error", err);
         try {
           // Keep the public contract shape under degradation: sources stay
           // present, every source fail-closed to Unavailable.
-          return json({ ...await buildDashboard(env), briefing: unavailableBriefingStatus(), sources: unavailableSources() });
+          return json({ ...await buildDashboard(env), briefing: unavailableBriefingStatus(), sources: unavailableSources(), sentiment: null });
         } catch {
           return json({ error: "Internal error" }, 500);
         }

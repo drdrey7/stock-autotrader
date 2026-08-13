@@ -117,6 +117,14 @@ export interface MarketDataSnapshot {
     adjustedClose: number;
     volume: number;
   }>;
+  /** Live index context: S&P 500, Nasdaq-100, Dow Jones, VIX. */
+  indices?: Array<{
+    symbol: "SPX" | "NDX" | "DJI" | "VIX";
+    name: string;
+    value: number;
+    change: number;
+    updatedAt: string;
+  }>;
   warnings: string[];
   updatedAt: string | null;
 }

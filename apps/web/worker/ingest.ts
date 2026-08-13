@@ -26,6 +26,7 @@ const EVENT_TYPES = [
   "SHADOW_POSITION_CLOSED",
   "EARNINGS_UPDATED",
   "MARKET_DATA_UPDATED",
+  "SENTIMENT_UPDATED",
   "SYSTEM_STATUS",
 ] as const;
 
@@ -130,6 +131,21 @@ const marketBarSchema = z.object({
   }
 });
 
+const marketIndexSchema = z.object({
+  symbol: z.enum(["SPX", "NDX", "DJI", "VIX"]),
+  name: z.string().min(1).max(32),
+  value: z.number().finite().positive(),
+  change: z.number().finite(),
+  updatedAt: isoTimestampSchema,
+});
+
+const sentimentSchema = z.object({
+  provider: z.string().min(1).max(64),
+  score: z.number().int().min(0).max(100),
+  rating: z.enum(["extreme_fear", "fear", "neutral", "greed", "extreme_greed"]),
+  asOf: isoTimestampSchema,
+});
+
 const marketDataSchema = z.object({
   provider: z.string().min(1).max(64),
   status: z.enum(["healthy", "degraded", "offline"]),
@@ -141,6 +157,9 @@ const marketDataSchema = z.object({
     excluded: z.number().int().nonnegative(),
   }),
   benchmarks: z.array(marketBarSchema).max(10),
+  // Real-time index context (S&P 500, Nasdaq-100, Dow Jones, VIX). Optional so
+  // snapshots published before the field existed stay valid.
+  indices: z.array(marketIndexSchema).max(8).optional(),
   warnings: z.array(z.string().max(200)).max(20),
   updatedAt: isoTimestampSchema.nullable(),
 }).superRefine((snapshot, ctx) => {
@@ -283,12 +302,13 @@ const eventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("SHADOW_POSITION_CLOSED"), event_id: z.string().min(8).max(80), timestamp: isoTimestampSchema, payload: z.object({ symbol: z.string().regex(/^[A-Za-z0-9.-]{1,12}$/), strategy: z.string().min(1).max(64), closedAt: isoTimestampSchema, exitReason: z.string().max(200) }) }),
   z.object({ type: z.literal("EARNINGS_UPDATED"), event_id: z.string().min(8).max(80), timestamp: isoTimestampSchema, payload: z.object({ items: z.array(earningsSchema).max(500) }) }),
   z.object({ type: z.literal("MARKET_DATA_UPDATED"), event_id: z.string().min(8).max(80), timestamp: isoTimestampSchema, payload: marketDataSchema }),
+  z.object({ type: z.literal("SENTIMENT_UPDATED"), event_id: z.string().min(8).max(80), timestamp: isoTimestampSchema, payload: sentimentSchema }),
   z.object({ type: z.literal("SYSTEM_STATUS"), event_id: z.string().min(8).max(80), timestamp: isoTimestampSchema, payload: systemStatusSchema }),
 ]);
 
 type IngestEvent = z.infer<typeof eventSchema>;
 
-export { eventSchema, marketDataSchema, dashboardReadSchema };
+export { eventSchema, marketDataSchema, sentimentSchema, dashboardReadSchema };
 export const dailyBriefingPublishedEventSchema = eventSchema.options[0];
 export type { IngestEvent };
 
@@ -436,6 +456,17 @@ function buildStatements(event: IngestEvent): [string, unknown[]][] {
       stmts.push(
         ["INSERT INTO app_meta (key, value) VALUES ('marketData', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value", [JSON.stringify(snapshot)]],
         insertBotEvent("MARKET_DATA_UPDATED", `Market data ${snapshot.status}: ${snapshot.universe.eligible}/${snapshot.universe.total} eligible`, null),
+      );
+      break;
+    }
+    case "SENTIMENT_UPDATED": {
+      const sentiment = event.payload;
+      // Never regress: a delayed older reading must not overwrite a newer one.
+      // The stored value is JSON, so the comparison uses json_extract on the
+      // normalized asOf (both sides UTC ISO strings compare chronologically).
+      stmts.push(
+        ["INSERT INTO app_meta (key, value) VALUES ('sentiment', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value WHERE json_extract(excluded.value, '$.asOf') > json_extract(app_meta.value, '$.asOf')", [JSON.stringify(sentiment)]],
+        insertBotEvent("SENTIMENT_UPDATED", `Sentiment ${sentiment.rating}: ${sentiment.score}`, null),
       );
       break;
     }

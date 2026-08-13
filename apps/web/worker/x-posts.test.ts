@@ -105,6 +105,16 @@ class FakeStatement {
           const existing = this.db.meta.get(key);
           if (existing !== undefined && existing >= value) return { meta: { changes: 0 } };
         }
+        // json_extract guard: the stored value is JSON and the upsert only
+        // advances when the incoming asOf is strictly newer.
+        if (this.sql.includes("json_extract")) {
+          const existingRaw = this.db.meta.get(key);
+          if (existingRaw !== undefined) {
+            const incoming = JSON.parse(value) as { asOf: string };
+            const existing = JSON.parse(existingRaw) as { asOf: string };
+            if (incoming.asOf <= existing.asOf) return { meta: { changes: 0 } };
+          }
+        }
         this.db.meta.set(key, value);
         return { meta: { changes: 1 } };
       }
@@ -705,5 +715,50 @@ describe("ingest X_POSTS_COLLECTED", () => {
     const laterResponse = await handleIngest(laterLexically, env(db));
     expect(((await laterResponse.json()) as { applied: string[] }).applied).toEqual(["earn-offset-0002"]);
     expect(db.meta.get("earningsUpdatedAt")).toBe("2026-08-13T12:00:00.000Z");
+  });
+
+  it("stores sentiment and never regresses on an older reading", async () => {
+    const db = new FakeD1();
+    const first = await signedRequest({
+      events: [{
+        type: "SENTIMENT_UPDATED",
+        event_id: "sent-0001",
+        timestamp: "2026-08-13T13:00:00Z",
+        payload: { provider: "cnn-fear-greed", score: 62, rating: "greed", asOf: "2026-08-13T12:46:16+00:00" },
+      }],
+    });
+    const firstResponse = await handleIngest(first, env(db));
+    expect(((await firstResponse.json()) as { applied: string[] }).applied).toEqual(["sent-0001"]);
+    expect(JSON.parse(db.meta.get("sentiment")!).score).toBe(62);
+
+    // An older reading (same day, earlier asOf) must not overwrite the newer one.
+    db.sqls.length = 0;
+    const older = await signedRequest({
+      events: [{
+        type: "SENTIMENT_UPDATED",
+        event_id: "sent-0002",
+        timestamp: "2026-08-13T12:00:00Z",
+        payload: { provider: "cnn-fear-greed", score: 40, rating: "fear", asOf: "2026-08-13T11:00:00Z" },
+      }],
+    });
+    const olderResponse = await handleIngest(older, env(db));
+    expect(((await olderResponse.json()) as { applied: string[] }).applied).toEqual(["sent-0002"]);
+    expect(JSON.parse(db.meta.get("sentiment")!).score).toBe(62);
+    expect(JSON.parse(db.meta.get("sentiment")!).rating).toBe("greed");
+
+    // A newer reading advances.
+    db.sqls.length = 0;
+    const nowIso = new Date().toISOString();
+    const newer = await signedRequest({
+      events: [{
+        type: "SENTIMENT_UPDATED",
+        event_id: "sent-0003",
+        timestamp: nowIso,
+        payload: { provider: "cnn-fear-greed", score: 55, rating: "neutral", asOf: new Date(Date.now() + 60_000).toISOString() },
+      }],
+    });
+    const newerResponse = await handleIngest(newer, env(db));
+    expect(((await newerResponse.json()) as { applied: string[] }).applied).toEqual(["sent-0003"]);
+    expect(JSON.parse(db.meta.get("sentiment")!).score).toBe(55);
   });
 });
