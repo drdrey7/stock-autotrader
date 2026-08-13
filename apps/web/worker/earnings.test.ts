@@ -390,7 +390,7 @@ describe("free provider adapters", () => {
         return new Response([
           "CIK|Company Name|Form Type|Date Filed|Filename",
           "789012|Microsoft Corporation|10-Q|2026-06-30|edgar/data/789012/0000789012-26-000010.txt",
-          "789012|Microsoft Corporation|10-Q/A|2026-08-01|edgar/data/789012/0000789012-26-000011.txt",
+          "789012|Microsoft Corporation|10-K|2026-08-01|edgar/data/789012/0000789012-26-000011.txt",
           "789012|Microsoft Corporation|6-K|2026-08-02|edgar/data/789012/0000789012-26-000013.txt",
           "789012|Microsoft Corporation|8-K|2026-08-02|edgar/data/789012/0000789012-26-000012.txt",
         ].join("\n"));
@@ -402,9 +402,37 @@ describe("free provider adapters", () => {
     expect(result.observations).toHaveLength(2);
     expect(result.observations).toEqual(expect.arrayContaining([
       expect.objectContaining({ symbol: "MSFT", scheduledDate: "2026-06-30", providerEventId: "0000789012-26-000010" }),
-      expect.objectContaining({ scheduledDate: "2026-08-01", officialFiling: expect.objectContaining({ form: "10-Q/A" }) }),
+      expect.objectContaining({ scheduledDate: "2026-08-01", officialFiling: expect.objectContaining({ form: "10-K" }) }),
     ]));
     expect(result.observations.every((observation) => observation.epsEstimate === null && observation.revenueEstimate === null)).toBe(true);
+  });
+
+  it("does not backfill 10-Q/A or 10-K/A as additional calendar events", async () => {
+    const provider = new SecEdgarProvider("StockAutotraderTest/1.0", async (input) => {
+      const url = input.toString();
+      if (url.includes("company_tickers_exchange")) {
+        return jsonResponse({ fields: ["cik", "name", "ticker", "exchange"], data: [[789012, "Microsoft Corporation", "MSFT", "Nasdaq"]] });
+      }
+      if (url.includes("full-index")) {
+        return new Response([
+          "CIK|Company Name|Form Type|Date Filed|Filename",
+          "789012|Microsoft Corporation|10-Q|2026-06-30|edgar/data/789012/0000789012-26-000010.txt",
+          "789012|Microsoft Corporation|10-Q/A|2026-08-01|edgar/data/789012/0000789012-26-000011.txt",
+          "789012|Microsoft Corporation|10-K/A|2026-08-02|edgar/data/789012/0000789012-26-000012.txt",
+        ].join("\n"));
+      }
+      throw new Error(`unexpected SEC URL: ${url}`);
+    }, async () => undefined);
+
+    await provider.fetchCompanyMetadata("2026-08-13T14:00:00.000Z");
+    const result = await provider.fetchCalendar({ from: "2026-05-15", to: "2026-10-12" }, new Set(["MSFT"]), "2026-08-13T14:00:00.000Z");
+
+    expect(result.observations).toHaveLength(1);
+    expect(result.observations[0]).toMatchObject({
+      providerEventId: "0000789012-26-000010",
+      officialFiling: { form: "10-Q" },
+    });
+    expect(result.observations.some((observation) => observation.officialFiling?.form.endsWith("/A"))).toBe(false);
   });
 });
 
