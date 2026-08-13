@@ -676,4 +676,34 @@ describe("ingest X_POSTS_COLLECTED", () => {
     // Metadata keeps the newer timestamp; the older event cannot regress freshness.
     expect(db.meta.get("earningsUpdatedAt")).toBe(t2);
   });
+
+  it("normalizes explicit UTC offsets before comparing publication order", async () => {
+    const db = new FakeD1();
+    // 08:00-04:00 == 12:00Z
+    const offset = await signedRequest({
+      events: [{
+        type: "EARNINGS_UPDATED",
+        event_id: "earn-offset-0001",
+        timestamp: "2026-08-13T08:00:00-04:00",
+        payload: { items: [] },
+      }],
+    });
+    const offsetResponse = await handleIngest(offset, env(db));
+    expect(((await offsetResponse.json()) as { applied: string[] }).applied).toEqual(["earn-offset-0001"]);
+    expect(db.meta.get("earningsUpdatedAt")).toBe("2026-08-13T12:00:00.000Z");
+
+    // 11:00Z is earlier than 12:00Z but compares lexically larger than the
+    // raw -04:00 string; the normalized comparison must reject it.
+    const laterLexically = await signedRequest({
+      events: [{
+        type: "EARNINGS_UPDATED",
+        event_id: "earn-offset-0002",
+        timestamp: "2026-08-13T11:00:00Z",
+        payload: { items: [] },
+      }],
+    });
+    const laterResponse = await handleIngest(laterLexically, env(db));
+    expect(((await laterResponse.json()) as { applied: string[] }).applied).toEqual(["earn-offset-0002"]);
+    expect(db.meta.get("earningsUpdatedAt")).toBe("2026-08-13T12:00:00.000Z");
+  });
 });

@@ -324,12 +324,14 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
         // A transient refresh failure must not blank a still-valid daily
         // analysis: retain the previous publication while its timestamp is
         // inside the 72h window.
-        const retainedOpportunities = isWithinWindow(previous.opportunitiesUpdatedAt, BRIEFING_MAX_AGE_MS) ? previous.opportunities : [];
-        const nextOpportunities = liveOpportunities ?? retainedOpportunities;
+        const retained = isWithinWindow(previous.opportunitiesUpdatedAt, BRIEFING_MAX_AGE_MS);
+        const nextOpportunities = liveOpportunities ?? (retained ? previous.opportunities : []);
         // The welcome card's date/edition label only describes what is being
         // shown: expire it together with the analysis instead of keeping an
-        // old date under a post-close greeting for a cleared section.
-        const nextEditionDate = analysisBriefing?.editionDate ?? (nextOpportunities.length > 0 ? previous.editionDate : null);
+        // old date under a post-close greeting for a cleared section. The
+        // retention is timestamp-based so a valid empty publication (zero
+        // ideas) keeps its edition label too.
+        const nextEditionDate = analysisBriefing?.editionDate ?? (retained ? previous.editionDate : null);
         return {
           ...previous,
           marketIndexes: liveMarket ?? [],
