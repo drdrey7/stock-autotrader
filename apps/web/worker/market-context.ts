@@ -267,18 +267,26 @@ interface NewYorkParts {
   minute: number;
 }
 
+// Constructing an Intl.DateTimeFormat is the expensive part of this call
+// (locale/timezone data resolution) — formatToParts() on an already-built
+// instance is cheap, so this is built once and reused, not per call.
+// marketDataOverdue() in dashboard.ts calls marketCollectionWindow() (and
+// so this) in a tight loop while scanning a multi-hour span; without this,
+// that scan rebuilds the formatter on every sample.
+const NEW_YORK_PARTS_FORMATTER = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  weekday: "short",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+
 function localNewYorkParts(instant: Date): NewYorkParts | null {
   if (!Number.isFinite(instant.getTime())) return null;
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/New_York",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(instant);
+  const parts = NEW_YORK_PARTS_FORMATTER.formatToParts(instant);
   const value = (type: string) => parts.find((part) => part.type === type)?.value;
   const year = Number(value("year"));
   const month = Number(value("month"));
@@ -334,11 +342,16 @@ function goodFriday(year: number): string {
   return dateKey(friday.getUTCFullYear(), friday.getUTCMonth() + 1, friday.getUTCDate());
 }
 
-export function isUsMarketHoliday(instant: Date): boolean {
-  const parts = localNewYorkParts(instant);
-  if (!parts) return false;
-  const { year, month, day } = parts;
-  const current = dateKey(year, month, day);
+// Keyed by year — the holiday set for a given year never changes, and
+// marketDataOverdue() in dashboard.ts calls marketCollectionWindow() (and
+// so this) in a tight loop while scanning a multi-hour span, which would
+// otherwise rebuild the same one or two years' worth of holiday dates
+// (including a Gauss's-algorithm Easter computation) on every sample.
+const holidaySetCache = new Map<number, Set<string>>();
+
+function holidaysForYear(year: number): Set<string> {
+  const cached = holidaySetCache.get(year);
+  if (cached) return cached;
   const holidays = new Set([
     observedFixedHoliday(year, 1, 1), // New Year's Day
     observedFixedHoliday(year + 1, 1, 1), // New Year's Day observed on prior Dec 31
@@ -352,7 +365,15 @@ export function isUsMarketHoliday(instant: Date): boolean {
     nthWeekday(year, 11, 4, 4), // Thanksgiving
     observedFixedHoliday(year, 12, 25), // Christmas Day
   ]);
-  return holidays.has(current);
+  holidaySetCache.set(year, holidays);
+  return holidays;
+}
+
+export function isUsMarketHoliday(instant: Date): boolean {
+  const parts = localNewYorkParts(instant);
+  if (!parts) return false;
+  const { year, month, day } = parts;
+  return holidaysForYear(year).has(dateKey(year, month, day));
 }
 
 export function marketCollectionWindow(scheduledTime: Date): "regular" | "post_close" | null {
@@ -421,24 +442,78 @@ export async function writeSentiment(db: D1Database, observation: SentimentObser
   ).run();
 }
 
+/**
+ * Parses a persisted Market Context health record, throwing when the value is
+ * present but not a readable record (malformed JSON or an unknown shape).
+ * The lenient wrapper below collapses that to null for the public UI, which
+ * treats an unreadable record the same as an absent one; the strict reader
+ * used by /healthz/sources must not conflate the two (fail closed instead).
+ */
+const parseMarketContextHealth = (value: unknown): MarketContextHealthRecord => {
+  if (typeof value !== "string") throw new Error("marketContextHealth value is not a string");
+  const parsed = JSON.parse(value) as Record<string, unknown>;
+  if (!parsed || typeof parsed !== "object" || typeof parsed.provider !== "string") {
+    throw new Error("marketContextHealth record is malformed");
+  }
+  const status = parsed.status;
+  if (typeof status !== "string" || !["running", "ok", "degraded", "skipped"].includes(status)) {
+    throw new Error("marketContextHealth record has an invalid status");
+  }
+  // The runtime always persists the complete shape (nullable timestamps and
+  // error included). Validate the full record instead of filling omitted
+  // fields in: a structurally incomplete record is malformed, and an absent
+  // error must never read as healthy. Non-null timestamps must be strict
+  // ISO instants (what the runtime writes via toISOString) — a garbage or
+  // merely Date.parse-compatible string would otherwise be accepted and
+  // silently fall back to other timestamps downstream. lastError is free
+  // text and must NOT be date-validated.
+  const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
+  const validIsoOrNull = (candidate: unknown): candidate is string | null =>
+    candidate === null
+    || (typeof candidate === "string" && ISO_INSTANT.test(candidate) && Number.isFinite(Date.parse(candidate)));
+  const validErrorOrNull = (candidate: unknown): candidate is string | null =>
+    candidate === null || typeof candidate === "string";
+  const lastAttemptAt = parsed.lastAttemptAt;
+  const lastSuccessfulUpdate = parsed.lastSuccessfulUpdate;
+  const lastError = parsed.lastError;
+  if (!validIsoOrNull(lastAttemptAt) || !validIsoOrNull(lastSuccessfulUpdate) || !validErrorOrNull(lastError)) {
+    throw new Error("marketContextHealth record has invalid timestamp/error fields");
+  }
+  const httpStatuses = parsed.httpStatuses;
+  if (!Array.isArray(httpStatuses) || !httpStatuses.every((s) => Number.isInteger(s) && s >= 100 && s <= 599)) {
+    throw new Error("marketContextHealth record has invalid httpStatuses");
+  }
+  const rowsWritten = parsed.rowsWritten;
+  if (typeof rowsWritten !== "number" || !Number.isFinite(rowsWritten)) {
+    throw new Error("marketContextHealth record has invalid rowsWritten");
+  }
+  const lastKnownGoodPreserved = parsed.lastKnownGoodPreserved;
+  if (typeof lastKnownGoodPreserved !== "boolean") {
+    throw new Error("marketContextHealth record has invalid lastKnownGoodPreserved");
+  }
+  const record: MarketContextHealthRecord = {
+    provider: parsed.provider,
+    status: status as MarketContextHealthRecord["status"],
+    lastAttemptAt,
+    lastSuccessfulUpdate,
+    lastError,
+    httpStatuses: httpStatuses.slice(0, 8),
+    rowsWritten,
+    lastKnownGoodPreserved,
+  };
+  // The runtime always records an error with a degraded status. A degraded
+  // record without one is structurally invalid — normalizing the missing
+  // error to null would let buildMarketContextHealth read Live off a fresh
+  // set while the runtime is actually failing.
+  if (record.status === "degraded" && record.lastError === null) {
+    throw new Error("degraded marketContextHealth record carries no error");
+  }
+  return record;
+};
+
 const marketContextHealthFromValue = (value: unknown): MarketContextHealthRecord | null => {
-  if (typeof value !== "string") return null;
   try {
-    const parsed = JSON.parse(value) as Partial<MarketContextHealthRecord>;
-    if (!parsed || typeof parsed !== "object" || typeof parsed.provider !== "string") return null;
-    if (!parsed.status || !["running", "ok", "degraded", "skipped"].includes(parsed.status)) return null;
-    return {
-      provider: parsed.provider,
-      status: parsed.status,
-      lastAttemptAt: typeof parsed.lastAttemptAt === "string" ? parsed.lastAttemptAt : null,
-      lastSuccessfulUpdate: typeof parsed.lastSuccessfulUpdate === "string" ? parsed.lastSuccessfulUpdate : null,
-      lastError: typeof parsed.lastError === "string" ? parsed.lastError : null,
-      httpStatuses: Array.isArray(parsed.httpStatuses)
-        ? parsed.httpStatuses.filter((status): status is number => Number.isInteger(status) && status >= 100 && status <= 599).slice(0, 8)
-        : [],
-      rowsWritten: Number.isFinite(Number(parsed.rowsWritten)) ? Number(parsed.rowsWritten) : 0,
-      lastKnownGoodPreserved: parsed.lastKnownGoodPreserved === true,
-    };
+    return parseMarketContextHealth(value);
   } catch {
     return null;
   }
@@ -454,6 +529,26 @@ export async function readMarketContextHealth(db: D1Database): Promise<MarketCon
     console.error(JSON.stringify({ job: "market-context", phase: "health-read", status: "failed", error: errorMessage(error).slice(0, 180) }));
     return null;
   }
+}
+
+/**
+ * Strict variant for uptime monitoring. The lenient reader above collapses
+ * "record absent", "read failed" and "record unreadable" into null — fine
+ * for the UI, but /healthz/sources must fail closed when the critical health
+ * record cannot be read or parsed (a persisted provider error would
+ * otherwise be invisible and the endpoint could report healthy during an
+ * active collection outage). This throws on read/parse failure and returns
+ * null only for a genuinely absent record.
+ */
+export async function readMarketContextHealthStrict(db: D1Database): Promise<MarketContextHealthRecord | null> {
+  const row = await db.prepare("SELECT value FROM app_meta WHERE key = ? LIMIT 1")
+    .bind(MARKET_CONTEXT_HEALTH_META_KEY)
+    .first<{ value: string | null }>();
+  // Distinguish a missing row / SQL NULL from an empty stored value: an
+  // empty string is a present-but-unreadable record and must fail closed,
+  // not read as absent.
+  if (row?.value === null || row?.value === undefined) return null;
+  return parseMarketContextHealth(row.value);
 }
 
 async function writeMarketContextHealth(db: D1Database, health: MarketContextHealthRecord): Promise<void> {

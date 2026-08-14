@@ -451,5 +451,11 @@ describe("sentiment provider and schedules", () => {
     expect(marketCollectionWindow(new Date("2026-11-27T18:00:00Z"))).toBeNull(); // 13:00 ET early close
     expect(marketCollectionWindow(new Date("2026-11-27T18:15:00Z"))).toBe("post_close");
     expect(marketCollectionWindow(new Date("2026-11-27T18:45:00Z"))).toBe("post_close");
+    // A holiday falling on a Sunday is observed on Monday with NO early-close
+    // shift on the preceding Friday: July 4, 2027 (Sunday) -> July 5 closed,
+    // July 2, 2027 is a full regular session (NYSE 2021/2027 calendars).
+    expect(marketCollectionWindow(new Date("2027-07-02T18:00:00Z"))).toBe("regular"); // 2:00pm ET, regular
+    expect(marketCollectionWindow(new Date("2027-07-05T14:30:00Z"))).toBeNull(); // observed holiday
+    expect(marketCollectionWindow(new Date("2022-12-23T18:00:00Z"))).toBe("regular"); // Dec 25, 2022 Sunday -> no Dec-23 early close
   });
 });
