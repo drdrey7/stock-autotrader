@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { demoData } from "@stock-autotrader/contracts/src/demo-data";
 import { exampleDailyBriefing } from "../src/daily-briefing-example";
-import { dashboardReadSchema, eventSchema, marketDataSchema } from "./ingest";
-import { buildMarketSourceHealth, buildSourceHealth, buildSources, normalizeDirection, validateSourceHealth } from "./index";
-import { publicSourceHealthSchema, sourceHealthSchema, type DashboardData, type SourceHealth } from "@stock-autotrader/contracts";
+import { eventSchema } from "./ingest";
+import { buildMarketSourceHealth, buildSourceHealth, buildSources, normalizeDirection, validateSourceHealth } from "./dashboard";
+import { dashboardReadSchema, marketDataSchema, publicSourceHealthSchema, sourceHealthSchema, type DashboardData, type SourceHealth } from "@stock-autotrader/contracts";
 import type { Env } from "./index";
 
 const base = {
