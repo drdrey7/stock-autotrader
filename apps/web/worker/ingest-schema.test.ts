@@ -341,11 +341,9 @@ describe("buildSources (source health assembly)", () => {
         return {
           bind() { return this; },
           async first<T>(): Promise<T | null> {
-            // Both freshness queries are COALESCE over app_meta plus a
-            // fallback (MAX(collected_at) / MAX(updated_at)); the fake
-            // returns their resolved { ts } result.
+            // Return the resolved publication metadata used by each source.
             if (sql.includes("FROM x_posts")) return (firsts.x ?? null) as T | null;
-            if (sql.includes("FROM app_meta")) return (firsts.earningsTs ?? null) as T | null;
+            if (sql.includes("earningsEngineUpdatedAt")) return (firsts.earnings ?? null) as T | null;
             throw new Error(`Unhandled SELECT: ${sql}`);
           },
         };
@@ -433,21 +431,38 @@ describe("buildSources (source health assembly)", () => {
     expect(sources.opportunities.error).toContain("degraded");
   });
 
-  it("derives earnings freshness from publication metadata", async () => {
+  it("reports a healthy initialized earnings engine from publication metadata", async () => {
     const sources = await buildSources(
-      envFor({ earningsTs: { ts: "2026-08-13T11:45:00Z" } }) as unknown as Env,
+      envFor({ earnings: { updated_at: "2026-08-13T11:45:00Z", checked_at: "2026-08-13T11:45:00Z", last_error: null, universe_count: 2 } }) as unknown as Env,
       { briefing, dashboard: demoData, nowMs },
     );
     expect(sources.earnings.state).toBe("Live");
     expect(sources.earnings.lastSuccess).toBe("2026-08-13T11:45:00.000Z");
+    expect(sources.earnings.engineState).toBe("HEALTHY");
   });
 
-  it("falls back to the latest earnings row when publication metadata is absent", async () => {
+  it("does not treat an empty filtered range as initialized", async () => {
     const sources = await buildSources(
-      envFor({ earningsTs: { ts: "2026-08-13T11:20:00Z" } }) as unknown as Env,
+      envFor({ earnings: { updated_at: null, checked_at: null, last_error: null, universe_count: 2 } }) as unknown as Env,
       { briefing, dashboard: demoData, nowMs },
     );
-    expect(sources.earnings.state).toBe("Live");
-    expect(sources.earnings.lastSuccess).toBe("2026-08-13T11:20:00.000Z");
+    expect(sources.earnings.engineState).toBe("UNINITIALIZED");
+  });
+
+  it("distinguishes stale and degraded earnings health while retaining safe metadata", async () => {
+    const stale = await buildSources(
+      envFor({ earnings: { updated_at: "2026-08-01T11:20:00Z", checked_at: "2026-08-13T11:20:00Z", last_error: null, universe_count: 2 } }) as unknown as Env,
+      { briefing, dashboard: demoData, nowMs },
+    );
+    expect(stale.earnings.engineState).toBe("STALE");
+    expect(stale.earnings.state).toBe("Stale");
+
+    const degraded = await buildSources(
+      envFor({ earnings: { updated_at: "2026-08-13T11:20:00Z", checked_at: "2026-08-13T11:55:00Z", last_error: "Finnhub request failed", universe_count: 2 } }) as unknown as Env,
+      { briefing, dashboard: demoData, nowMs },
+    );
+    expect(degraded.earnings.engineState).toBe("DEGRADED");
+    expect(degraded.earnings.state).toBe("Cached");
+    expect(degraded.earnings.lastSuccess).toBe("2026-08-13T11:20:00.000Z");
   });
 });

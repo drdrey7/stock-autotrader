@@ -2,8 +2,11 @@ import type { EarningsMetricResult, EarningsOverallResult, EarningsStatus } from
 import type { EarningsCalendarObservation, EarningsConsensusObservation, EarningsDateRange, NormalizedEarningsEvent, OfficialFiling } from "./types";
 import { normalizeSymbol } from "./universe";
 
-export const EPS_RESULT_TOLERANCE = 0.005;
-export const REVENUE_RESULT_TOLERANCE = 0.005;
+// Kept as exported compatibility names for consumers of the PR12 contract.
+// Finnhub values are classified deterministically: only exact equality is
+// considered in line/Met; there is no percentage tolerance.
+export const EPS_RESULT_TOLERANCE = 0;
+export const REVENUE_RESULT_TOLERANCE = 0;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const isFiniteNumber = (value: number | null | undefined): value is number =>
@@ -57,17 +60,17 @@ export function endOfWeek(dateKey: string): string {
 export function calculateMetric(
   actual: number | null,
   estimate: number | null,
-  tolerance = EPS_RESULT_TOLERANCE,
+  _tolerance = EPS_RESULT_TOLERANCE,
 ): { surprise: number | null; surprisePct: number | null; result: EarningsMetricResult } {
+  // Preserve the compatibility parameter while making the exact comparison
+  // rule explicit for new Finnhub observations.
+  void _tolerance;
   if (!isFiniteNumber(actual) || !isFiniteNumber(estimate)) {
     return { surprise: null, surprisePct: null, result: "Not Available" };
   }
   const surprise = actual - estimate;
   const surprisePct = estimate === 0 ? null : (surprise / Math.abs(estimate)) * 100;
-  const inLineThreshold = Math.max(Math.abs(estimate) * tolerance, Number.EPSILON);
-  const result = Math.abs(surprise) <= inLineThreshold
-    ? "In Line"
-    : surprise > 0 ? "Beat" : "Miss";
+  const result = surprise === 0 ? "In Line" : surprise > 0 ? "Beat" : "Miss";
   return {
     surprise,
     surprisePct: surprisePct !== null && Number.isFinite(surprisePct) ? surprisePct : null,
@@ -182,9 +185,14 @@ export function normalizeEvent(
     revenueSurprisePct: revenue.surprisePct,
     revenueResult: revenue.result,
     overallResult: calculateOverallResult(eps.result, revenue.result),
-    reportedAt: effectiveOfficial?.filedAt ?? (reported ? observation.providerUpdatedAt : null),
-    calendarProvider: "fmp-earnings-calendar",
-    consensusProvider: "fmp-earnings-calendar",
+    // A provider collection time is not a report timestamp. Only an SEC
+    // acceptance timestamp is authoritative for reportedAt.
+    reportedAt: effectiveOfficial?.filedAt ?? null,
+    // The engine attaches the concrete adapter names after normalization.
+    // Keeping this neutral prevents direct normalization from claiming FMP
+    // provenance when production is Finnhub + SEC.
+    calendarProvider: null,
+    consensusProvider: null,
     providerEventId: observation.providerEventId,
     providerUpdatedAt: observation.providerUpdatedAt ?? collectedAt,
     officialReportUrl: observation.officialReportUrl ?? effectiveOfficial?.url ?? null,

@@ -11,6 +11,7 @@ import {
 } from "./earnings/logic";
 import {
   createDefaultEarningsProviders,
+  FinnhubEarningsProvider,
   FmpEarningsCalendarProvider,
   SecEdgarProvider,
 } from "./earnings/providers";
@@ -38,6 +39,10 @@ class MemoryStatement {
   }
 
   async first<T>(): Promise<T | null> {
+    if (this.sql.includes("SELECT value FROM app_meta WHERE key = ?")) {
+      const value = this.db.meta.get(String(this.args[0]));
+      return (value === undefined ? null : { value }) as T | null;
+    }
     if (this.sql.includes("FROM earnings_events WHERE id = ?")) {
       const row = this.db.events.get(String(this.args[0]));
       return (row ? (this.sql.includes("SELECT id") ? { id: row.id } : row) : null) as T | null;
@@ -113,6 +118,10 @@ class MemoryStatement {
   }
 
   async run(): Promise<{ success: true; meta: { changes: number } }> {
+    if (this.sql.startsWith("DELETE FROM app_meta")) {
+      this.db.meta.delete(String(this.args[0]));
+      return { success: true, meta: { changes: 1 } };
+    }
     if (this.sql.startsWith("INSERT INTO earnings_events")) {
       const columnsText = this.sql.match(/INSERT INTO earnings_events \(([^)]+)\)/)?.[1];
       if (!columnsText) throw new Error("missing event columns");
@@ -245,7 +254,8 @@ describe("earnings calendar and result logic", () => {
   it("calculates EPS and revenue beat, miss, in-line and unavailable values", () => {
     expect(calculateMetric(1.1, 1)).toMatchObject({ surprise: expect.closeTo(0.1, 10), surprisePct: expect.closeTo(10, 10), result: "Beat" });
     expect(calculateMetric(0.9, 1).result).toBe("Miss");
-    expect(calculateMetric(1.004, 1).result).toBe("In Line");
+    expect(calculateMetric(1.004, 1).result).toBe("Beat");
+    expect(calculateMetric(1, 1).result).toBe("In Line");
     expect(calculateMetric(110, 100).result).toBe("Beat");
     expect(calculateMetric(90, 100).result).toBe("Miss");
     expect(calculateMetric(null, 100)).toEqual({ surprise: null, surprisePct: null, result: "Not Available" });
@@ -272,6 +282,13 @@ describe("earnings calendar and result logic", () => {
     expect(event.secAccession).toBe("0000789012-26-000010");
   });
 
+  it("does not present Finnhub collection time as a genuine report timestamp", () => {
+    const event = normalizeEvent(eventObservation({ epsActual: 3.2, revenueActual: 110 }), "2026-08-13", "2026-08-13T12:00:00.000Z");
+    expect(event.status).toBe("reported");
+    expect(event.reportedAt).toBeNull();
+    expect(event.providerUpdatedAt).toBe("2026-08-13T10:00:00.000Z");
+  });
+
   it("polls BMO, AMC and TBD only during their ET windows", () => {
     expect(shouldPollEarnings("BMO", new Date("2026-08-13T11:00:00.000Z"))).toBe(true);
     expect(shouldPollEarnings("BMO", new Date("2026-08-13T16:00:00.000Z"))).toBe(false);
@@ -282,11 +299,56 @@ describe("earnings calendar and result logic", () => {
 });
 
 describe("free provider adapters", () => {
-  it("uses SEC as the default when FMP is not configured", () => {
+  it("selects Finnhub for calendar data with SEC official enrichment", () => {
     const providers = createDefaultEarningsProviders(undefined, "StockAutotraderTest/1.0");
-    expect(providers.calendar).toBe(providers.official);
-    expect(providers.consensus).toBe(providers.official);
-    expect(providers.calendar.name).toBe("sec-edgar");
+    expect(providers.calendar).not.toBe(providers.official);
+    expect(providers.consensus).toBe(providers.calendar);
+    expect(providers.calendar.name).toBe("finnhub-earnings-calendar");
+    expect(providers.official.name).toBe("sec-edgar");
+  });
+
+  it("normalizes the bulk Finnhub calendar, timing, metrics and universe filter", async () => {
+    const calls: Array<{ url: string; token: string | null }> = [];
+    const provider = new FinnhubEarningsProvider("test-key", async (input, init) => {
+      calls.push({ url: input.toString(), token: new Headers(init?.headers).get("X-Finnhub-Token") });
+      return jsonResponse({ earningsCalendar: [
+        { symbol: "MSFT", date: "2026-08-20", hour: "bmo", quarter: 1, year: 2026, epsEstimate: 3, epsActual: 3.2, revenueEstimate: 100, revenueActual: 110 },
+        { symbol: "AAPL", date: "2026-08-21", hour: "amc", quarter: 3, year: 2026, epsEstimate: 1, epsActual: 0.9, revenueEstimate: 90, revenueActual: 90 },
+        { symbol: "NVDA", date: "2026-08-22", hour: "dmh", quarter: 2, year: 2026, epsEstimate: 0, epsActual: 0 },
+        { symbol: "TSLA", date: "2026-08-23", quarter: 3, year: 2026, epsEstimate: null, epsActual: null, revenueEstimate: null, revenueActual: null },
+        { symbol: "PRIVATE", date: "2026-08-20", hour: "bmo", quarter: 1, year: 2026 },
+      ] });
+    });
+    const result = await provider.fetchCalendar({ from: "2026-08-20", to: "2026-08-23" }, new Set(["MSFT", "AAPL", "NVDA", "TSLA", "PRIVATE"]), "2026-08-13T13:00:00.000Z");
+    expect(calls).toHaveLength(1);
+    expect(new URL(calls[0]!.url).search).toBe("?from=2026-08-20&to=2026-08-23");
+    expect(calls[0]!.token).toBe("test-key");
+    expect(result.observations).toHaveLength(4);
+    expect(result.observations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ symbol: "MSFT", timing: "BMO", scheduledTime: "BMO", epsActual: 3.2, revenueActual: 110 }),
+      expect.objectContaining({ symbol: "AAPL", timing: "AMC", epsActual: 0.9, revenueActual: 90 }),
+      expect.objectContaining({ symbol: "NVDA", timing: "TBD", epsEstimate: 0, epsActual: 0 }),
+      expect.objectContaining({ symbol: "TSLA", timing: "TBD", epsEstimate: null, revenueActual: null }),
+    ]));
+    expect(result.observations.some((row) => row.symbol === "PRIVATE")).toBe(false);
+  });
+
+  it("fails closed on malformed Finnhub rows and retries rate limits without exposing a token", async () => {
+    const malformed = new FinnhubEarningsProvider("test-key", async () => jsonResponse({ earningsCalendar: [null] }));
+    await expect(malformed.fetchCalendar(providerRange, providerUniverse, "2026-08-13T13:00:00.000Z")).rejects.toThrow("malformed");
+
+    let calls = 0;
+    const sleeper = vi.fn(async () => undefined);
+    const rateLimited = new FinnhubEarningsProvider("test-key", async (_input, init) => {
+      expect(new Headers(init?.headers).get("X-Finnhub-Token")).toBe("test-key");
+      calls += 1;
+      return calls === 1
+        ? new Response("busy", { status: 429, headers: { "Retry-After": "1" } })
+        : jsonResponse({ earningsCalendar: [] });
+    }, sleeper);
+    await expect(rateLimited.fetchCalendar(providerRange, providerUniverse, "2026-08-13T13:00:00.000Z")).resolves.toMatchObject({ observations: [] });
+    expect(calls).toBe(2);
+    expect(sleeper).toHaveBeenCalledWith(1000);
   });
 
   it("normalizes FMP rows, filters the universe and keeps the newest duplicate", async () => {
@@ -437,8 +499,8 @@ describe("free provider adapters", () => {
 });
 
 describe("earnings D1 write model and API", () => {
-  it("requests the 90-day historical backfill plus the 60-day forward window", async () => {
-    expect(EARNINGS_BACKFILL_DAYS).toBe(90);
+  it("requests the 30-day historical backfill plus the 60-day forward window", async () => {
+    expect(EARNINGS_BACKFILL_DAYS).toBe(30);
     let requestedRange: { from: string; to: string } | null = null;
     const calendar: EarningsCalendarProvider = {
       name: "test-calendar",
@@ -452,12 +514,73 @@ describe("earnings D1 write model and API", () => {
       fetchCompanyMetadata: async () => ({ provider: "test-sec", observations: [], warnings: [], updatedAt: "2026-08-13T06:00:00.000Z" }),
       findRelevantFiling: async () => null,
     };
-    await expect(runEarningsJob({ DB: new MemoryD1() } as never, new Date("2026-08-13T06:00:00.000Z"), "calendar", {
+    const db = new MemoryD1();
+    await expect(runEarningsJob({ DB: db } as never, new Date("2026-08-13T06:00:00.000Z"), "calendar", {
       calendar,
       consensus: calendar as never,
       official,
     })).resolves.toMatchObject({ status: "ok" });
-    expect(requestedRange).toEqual({ from: "2026-05-15", to: "2026-10-12" });
+    expect(requestedRange).toEqual({ from: "2026-07-14", to: "2026-10-12" });
+    expect(db.universe.size).toBeGreaterThan(0);
+  });
+
+  it("preserves the last valid calendar when Finnhub fails", async () => {
+    const db = new MemoryD1();
+    await upsertEarningsEvent(db, normalizedEvent({ scheduledDate: "2026-09-20" }));
+    const calendar: EarningsCalendarProvider = {
+      name: "finnhub-test",
+      supportsForwardCalendar: true,
+      fetchCalendar: async () => { throw new Error("Finnhub HTTP 503"); },
+    };
+    const official: OfficialFilingsProvider = {
+      name: "test-sec",
+      fetchCompanyMetadata: async () => ({ provider: "test-sec", observations: [], warnings: [], updatedAt: "2026-08-13T06:00:00.000Z" }),
+      findRelevantFiling: async () => null,
+    };
+    await expect(runEarningsJob({ DB: db } as never, new Date("2026-08-13T06:00:00.000Z"), "calendar", {
+      calendar,
+      consensus: calendar as never,
+      official,
+    })).resolves.toMatchObject({ status: "degraded" });
+    expect((await readEarningsEvents(db, { from: "2026-09-20", to: "2026-09-20" }))[0]).toMatchObject({ status: "scheduled", scheduledDate: "2026-09-20" });
+    expect(db.meta.get("earningsEngineUpdatedAt")).toBeUndefined();
+    expect(db.meta.get("earningsEngineLastError")).toContain("Finnhub HTTP 503");
+  });
+
+  it("is idempotent when the same bulk calendar is synced twice", async () => {
+    const db = new MemoryD1();
+    const calendar: EarningsCalendarProvider = {
+      name: "finnhub-test",
+      supportsForwardCalendar: true,
+      fetchCalendar: async () => ({ provider: "finnhub-test", observations: [eventObservation({ scheduledDate: "2026-08-20", providerEventId: "finnhub:MSFT:2026:1:2026-08-20" })], warnings: [], updatedAt: "2026-08-13T06:00:00.000Z" }),
+    };
+    const official: OfficialFilingsProvider = {
+      name: "test-sec",
+      fetchCompanyMetadata: async () => ({ provider: "test-sec", observations: [], warnings: [], updatedAt: "2026-08-13T06:00:00.000Z" }),
+      findRelevantFiling: async () => null,
+    };
+    const providers = { calendar, consensus: calendar as never, official };
+    await runEarningsJob({ DB: db } as never, new Date("2026-08-13T06:00:00.000Z"), "calendar", providers);
+    await runEarningsJob({ DB: db } as never, new Date("2026-08-13T06:00:00.000Z"), "calendar", providers);
+    expect(db.events.size).toBe(1);
+  });
+
+  it("gates empty monitor polls to hourly discovery", async () => {
+    const db = new MemoryD1();
+    let calls = 0;
+    const calendar: EarningsCalendarProvider = {
+      name: "finnhub-test",
+      fetchCalendar: async () => { calls += 1; return { provider: "finnhub-test", observations: [], warnings: [], updatedAt: "2026-08-13T19:00:00.000Z" }; },
+    };
+    const official: OfficialFilingsProvider = {
+      name: "test-sec",
+      fetchCompanyMetadata: async () => ({ provider: "test-sec", observations: [], warnings: [], updatedAt: "2026-08-13T19:00:00.000Z" }),
+      findRelevantFiling: async () => null,
+    };
+    const providers = { calendar, consensus: calendar as never, official };
+    await expect(runEarningsJob({ DB: db } as never, new Date("2026-08-13T19:00:00.000Z"), "monitor", providers)).resolves.toMatchObject({ status: "ok" });
+    await expect(runEarningsJob({ DB: db } as never, new Date("2026-08-13T19:15:00.000Z"), "monitor", providers)).resolves.toMatchObject({ status: "skipped" });
+    expect(calls).toBe(1);
   });
 
   it("preserves future schedule rows when the provider only reports filed history", async () => {

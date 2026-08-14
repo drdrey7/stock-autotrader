@@ -79,7 +79,7 @@ export type EarningsOverallResult = "Beat" | "In Line" | "Miss" | "Mixed" | "Not
 
 /**
  * Cloudflare-owned earnings read model. This is intentionally provider-neutral:
- * consumers must not depend on FMP, SEC, or another adapter's field names.
+ * consumers must not depend on Finnhub, SEC, or another adapter's field names.
  */
 export interface EarningsEngineEvent {
   id: string;

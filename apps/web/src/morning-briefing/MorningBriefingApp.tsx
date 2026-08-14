@@ -10,6 +10,7 @@ import { marketIndexes as marketCardDefinitions, quickStats } from "./data/marke
 import { type Opportunity } from "./data/opportunities";
 import { trackedXAccounts, type XPost } from "./data/xSurge";
 import {
+  displayMetricResult,
   formatMetric,
   formatPercent,
   resultClass,
@@ -234,25 +235,50 @@ function EarningsCalendar({ period, setPeriod, onSelect }: { period: CalendarPer
   const todayKey = marketTodayKey();
   const moveMonth = (offset: number) => { const next = new Date(year, month + offset, 1); setPeriod({ year: next.getFullYear(), month: next.getMonth() }); };
   const goToday = () => { const today = dateFromKey(marketTodayKey()); setPeriod({ year: today.getFullYear(), month: today.getMonth() }); };
-  return <Card className="calendar-card"><div className="calendar-head"><div><span className="eyebrow">MONTHLY CALENDAR</span><h2>{monthName} {year}</h2></div><div><button aria-label="Previous month" onClick={() => moveMonth(-1)}><ChevronLeft/></button><button className="today" onClick={goToday}>Today</button><button aria-label="Next month" onClick={() => moveMonth(1)}><ChevronRight/></button></div></div><div className="weekdays">{["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(d => <span key={d}>{d}</span>)}</div><div className="calendar-grid">{days.map((day, index) => { const date = day ? `${year}-${String(month+1).padStart(2,"0")}-${String(day).padStart(2,"0")}` : ""; const reports = earnings.filter(e => e.scheduledDate === date); return <div key={index} className={!day ? "empty" : date === todayKey ? "is-today" : ""}>{day && <><span className="day-number">{day}</span><div className="calendar-events">{reports.map(e => <button key={e.id} onClick={() => onSelect(e)} title={`${e.company} ${e.timing}`}><i style={{ "--company": e.color } as React.CSSProperties}/><b>{e.symbol}</b><small>{e.status === "scheduled" ? e.timing : e.result}</small></button>)}</div></>}</div>; })}</div></Card>;
+  const eventLabel = (event: EarningsCompany) => event.status === "scheduled"
+    ? `Scheduled · ${event.timing}`
+    : event.status === "reported"
+      ? `Reported · ${event.timing}`
+      : event.status === "cancelled" ? "Cancelled" : `Unknown · ${event.timing}`;
+  return <Card className="calendar-card"><div className="calendar-head"><div><span className="eyebrow">MONTHLY CALENDAR</span><h2>{monthName} {year}</h2></div><div><button aria-label="Previous month" onClick={() => moveMonth(-1)}><ChevronLeft/></button><button className="today" onClick={goToday}>Today</button><button aria-label="Next month" onClick={() => moveMonth(1)}><ChevronRight/></button></div></div><div className="weekdays">{["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(d => <span key={d}>{d}</span>)}</div><div className="calendar-grid">{days.map((day, index) => { const date = day ? `${year}-${String(month+1).padStart(2,"0")}-${String(day).padStart(2,"0")}` : ""; const reports = earnings.filter(e => e.scheduledDate === date); return <div key={index} className={!day ? "empty" : date === todayKey ? "is-today" : ""}>{day && <><span className="day-number">{day}</span><div className="calendar-events">{reports.map(e => <button key={e.id} onClick={() => onSelect(e)} title={`${e.company} · ${eventLabel(e)}`}><i style={{ "--company": e.color } as React.CSSProperties}/><b>{e.symbol}</b><small>{eventLabel(e)}</small></button>)}</div></>}</div>; })}</div></Card>;
 }
 
 function PastEarnings({ year, onSelect }: { year: number; onSelect: (e: EarningsCompany) => void }) {
   const { earnings: storedEarnings, earningsAvailable } = useMorningBriefingData();
   const earnings = earningsAvailable ? storedEarnings : [];
   const [filter, setFilter] = useState("All"); const past = earnings.filter(e => e.scheduledDate?.startsWith(`${year}-`) && e.status !== "scheduled" && (filter === "All" || e.result === filter)).sort((a, b) => (b.scheduledDate ?? "").localeCompare(a.scheduledDate ?? ""));
-  const filters = ["All", "Beat", "Miss", "Mixed", "In Line", "Not published"];
-  return <Card className="past-card"><SectionTitle title={`Recent Earnings — ${year}`}/><div className="filter-row small">{filters.map(item => <button key={item} aria-pressed={filter === item} className={filter === item ? "active" : ""} onClick={() => setFilter(item)}>{item}</button>)}</div><div className="earnings-table"><div className="table-head"><span>Company</span><span>Date</span><span>EPS surprise %</span><span>Revenue surprise %</span><span>Result</span></div>{past.length ? past.map(e => <button key={e.id} onClick={() => onSelect(e)}><span className="table-company"><i style={{ "--company": e.color } as React.CSSProperties}>{e.symbol.slice(0,1)}</i><b>{e.company}</b><small>{e.symbol}</small></span><span>{e.scheduledDate ? dateFromKey(e.scheduledDate).toLocaleDateString("en", {month:"short",day:"numeric"}) : "Not published"}</span><span>{formatPercent(e.epsSurprisePct)}</span><span>{formatPercent(e.revenueSurprisePct)}</span><span><em className={`result ${resultClass(e.result)}`}>{e.result}</em></span><ChevronRight/></button>) : <p className="empty-state">No recent earnings published.</p>}</div></Card>;
+  const filters = ["All", "Beat", "Miss", "Mixed", "Met", "N/A"];
+  const stateLabel = (event: EarningsCompany) => event.status === "reported" ? `Reported · ${event.timing}` : event.status === "cancelled" ? "Cancelled" : `Unknown · ${event.timing}`;
+  return <Card className="past-card"><SectionTitle title={`Recent Earnings — ${year}`}/><div className="filter-row small">{filters.map(item => <button key={item} aria-pressed={filter === item} className={filter === item ? "active" : ""} onClick={() => setFilter(item)}>{item}</button>)}</div><div className="earnings-table"><div className="table-head"><span>Company</span><span>Date / status</span><span>EPS surprise %</span><span>Revenue surprise %</span><span>Result</span></div>{past.length ? past.map(e => <button key={e.id} onClick={() => onSelect(e)}><span className="table-company"><i style={{ "--company": e.color } as React.CSSProperties}>{e.symbol.slice(0,1)}</i><b>{e.company}</b><small>{e.symbol}</small></span><span className="table-date-state">{e.scheduledDate ? dateFromKey(e.scheduledDate).toLocaleDateString("en", {month:"short",day:"numeric"}) : "N/A"}<small>{stateLabel(e)}</small></span><span>{formatPercent(e.epsSurprisePct)}</span><span>{formatPercent(e.revenueSurprisePct)}</span><span><em className={`result ${resultClass(e.result)}`}>{e.result}</em></span><ChevronRight/></button>) : <p className="empty-state">No recent earnings published.</p>}</div></Card>;
 }
 
 function EarningsPage({ onSelect }: { onSelect: (e: EarningsCompany) => void }) {
-  const today = dateFromKey(marketTodayKey()); const [period, setPeriod] = useState<CalendarPeriod>({ year: today.getFullYear(), month: today.getMonth() });
+  const today = dateFromKey(marketTodayKey());
+  const manualPeriod = useRef(false);
+  const initialPeriod = (): CalendarPeriod => {
+    try {
+      const stored = sessionStorage.getItem("earnings-calendar-period");
+      const parsed = stored ? JSON.parse(stored) as Partial<CalendarPeriod> : null;
+      if (parsed && Number.isInteger(parsed.year) && Number.isInteger(parsed.month) && parsed.month! >= 0 && parsed.month! <= 11) {
+        manualPeriod.current = true;
+        return { year: parsed.year!, month: parsed.month! };
+      }
+    } catch { /* unavailable storage should not block the calendar */ }
+    return { year: today.getFullYear(), month: today.getMonth() };
+  };
+  const [period, setPeriod] = useState<CalendarPeriod>(initialPeriod);
+  const setManualPeriod = (next: CalendarPeriod) => {
+    manualPeriod.current = true;
+    setPeriod(next);
+    try { sessionStorage.setItem("earnings-calendar-period", JSON.stringify(next)); } catch { /* best effort */ }
+  };
   const { earnings: storedEarnings, earningsAvailable } = useMorningBriefingData();
   const earnings = earningsAvailable ? storedEarnings : [];
   const todayKey = marketTodayKey();
   useEffect(() => {
     const syncCalendarMonth = () => {
       const current = dateFromKey(marketTodayKey());
+      if (manualPeriod.current) return;
       setPeriod((previous) => previous.year === current.getFullYear() && previous.month === current.getMonth()
         ? previous
         : { year: current.getFullYear(), month: current.getMonth() });
@@ -272,8 +298,8 @@ function EarningsPage({ onSelect }: { onSelect: (e: EarningsCompany) => void }) 
     next60: earnings.filter(e => e.scheduledDate !== null && e.scheduledDate >= todayKey && e.scheduledDate <= offsetDate(60)).length,
   };
   const count = (value: number) => earningsAvailable ? String(value) : "—";
-  const countLabel = earningsAvailable ? "reports" : "Not published";
-  return <div className="page-content inner-page"><div className="page-heading"><span className="eyebrow">REPORTS & CONSENSUS</span><h1>Earnings Calendar</h1><p>Automatic scheduled reports, published results and official filings.</p></div><div className="earnings-top-summary" aria-label="Earnings summary"><Card><span>TODAY</span><strong>{count(counts.today)}</strong><small>{countLabel}</small></Card><Card><span>THIS WEEK</span><strong>{count(counts.week)}</strong><small>{countLabel}</small></Card><Card><span>NEXT 60 DAYS</span><strong>{count(counts.next60)}</strong><small>{countLabel}</small></Card></div><EarningsCalendar period={period} setPeriod={setPeriod} onSelect={onSelect}/><PastEarnings year={period.year} onSelect={onSelect}/></div>;
+  const countLabel = earningsAvailable ? "reports" : "N/A";
+  return <div className="page-content inner-page"><div className="page-heading"><span className="eyebrow">REPORTS & CONSENSUS</span><h1>Earnings Calendar</h1><p>Automatic scheduled reports, published results and official filings.</p></div><div className="earnings-top-summary" aria-label="Earnings summary"><Card><span>TODAY</span><strong>{count(counts.today)}</strong><small>{countLabel}</small></Card><Card><span>THIS WEEK</span><strong>{count(counts.week)}</strong><small>{countLabel}</small></Card><Card><span>NEXT 60 DAYS</span><strong>{count(counts.next60)}</strong><small>{countLabel}</small></Card></div><EarningsCalendar period={period} setPeriod={setManualPeriod} onSelect={onSelect}/><PastEarnings year={period.year} onSelect={onSelect}/></div>;
 }
 
 function useDialogA11y<T extends HTMLElement>(onClose: () => void) {
@@ -310,14 +336,14 @@ function EarningsDetail({ item, onClose }: { item: EarningsCompany; onClose: () 
   const dialogRef = useDialogA11y<HTMLElement>(onClose);
   const formattedDate = item.scheduledDate
     ? new Date(`${item.scheduledDate}T12:00:00`).toLocaleDateString("en", { month: "long", day: "numeric", year: "numeric" })
-    : "Not published";
+    : "N/A";
   const link = (label: string, url: string | null) => url
     ? <a className="official-link" href={url} target="_blank" rel="noreferrer">{label} <ExternalLink/></a>
-    : <span className="official-link disabled">{label} · Not published</span>;
+    : <span className="official-link disabled">{label} · N/A</span>;
   const metric = (name: string, estimate: number | null, actual: number | null, surprisePct: number | null, result: string) => (
-    <section className="earnings-metric"><span>{name}</span><div className="metric-row"><small>Estimate</small><strong>{formatMetric(estimate)}</strong></div><div className="metric-row"><small>Actual</small><strong>{formatMetric(actual)}</strong></div><div className="metric-row"><small>Surprise %</small><strong>{formatPercent(surprisePct)}</strong></div><div className="metric-row"><small>Result</small><strong className={resultClass(result)}>{result === "Not Available" ? "Not published" : result}</strong></div></section>
+    <section className="earnings-metric"><span>{name}</span><div className="metric-row"><small>Estimate</small><strong>{formatMetric(estimate)}</strong></div><div className="metric-row"><small>Actual</small><strong>{formatMetric(actual)}</strong></div><div className="metric-row"><small>Surprise %</small><strong>{formatPercent(surprisePct)}</strong></div><div className="metric-row"><small>Result</small><strong className={resultClass(result)}>{displayMetricResult(result)}</strong></div></section>
   );
-  return <motion.div className="drawer-backdrop" onClick={onClose} initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}><motion.aside ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="earnings-detail-title" className="earnings-drawer" onClick={e=>e.stopPropagation()} initial={{x:"100%"}} animate={{x:0}} exit={{x:"100%"}} transition={spring}><div className="drawer-head"><button data-dialog-initial-focus aria-label="Back" onClick={onClose}><ArrowLeft/></button><span id="earnings-detail-title">Earnings Detail</span><button aria-label="Close earnings detail" onClick={onClose}><X/></button></div><div className="drawer-company"><span className="company-icon large" style={{ "--company": item.color } as React.CSSProperties}>{item.symbol.slice(0,1)}</span><div><h2>{item.company}</h2><p>{item.symbol} · {formattedDate} · {item.timing}</p></div><em className={`result ${resultClass(item.result)}`}>{item.result}</em></div><div className="drawer-metadata"><span>Fiscal quarter<strong>{item.fiscalPeriod ?? "Not published"}</strong></span><span>Status<strong>{item.status}</strong></span></div><div className="report-grid">{metric("EPS", item.epsEstimate, item.epsActual, item.epsSurprisePct, item.epsResult)}{metric("Revenue", item.revenueEstimate, item.revenueActual, item.revenueSurprisePct, item.revenueResult)}</div><div className="detail-metrics"><span>Overall result<strong className={resultClass(item.overallResult)}>{item.overallResult === "Not Available" ? "Not published" : item.overallResult}</strong></span><span>Reported at<strong>{formatUpdatedAt(item.reportedAt) ?? "Not published"}</strong></span></div><div className="drawer-links">{link("Official Earnings Report", item.officialReportUrl)}{link("SEC Filing", item.secFilingUrl)}{link("Investor Relations", item.investorRelationsUrl)}</div></motion.aside></motion.div>;
+  return <motion.div className="drawer-backdrop" onClick={onClose} initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}><motion.aside ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="earnings-detail-title" className="earnings-drawer" onClick={e=>e.stopPropagation()} initial={{x:"100%"}} animate={{x:0}} exit={{x:"100%"}} transition={spring}><div className="drawer-head"><button data-dialog-initial-focus aria-label="Back" onClick={onClose}><ArrowLeft/></button><span id="earnings-detail-title">Earnings Detail</span><button aria-label="Close earnings detail" onClick={onClose}><X/></button></div><div className="drawer-company"><span className="company-icon large" style={{ "--company": item.color } as React.CSSProperties}>{item.symbol.slice(0,1)}</span><div><h2>{item.company}</h2><p>{item.symbol} · {formattedDate} · {item.timing}</p></div><em className={`result ${resultClass(item.result)}`}>{item.result}</em></div><div className="drawer-metadata"><span>Fiscal quarter<strong>{item.fiscalPeriod ?? "N/A"}</strong></span><span>Status<strong>{item.status}</strong></span></div><div className="report-grid">{metric("EPS", item.epsEstimate, item.epsActual, item.epsSurprisePct, item.epsResult)}{metric("Revenue", item.revenueEstimate, item.revenueActual, item.revenueSurprisePct, item.revenueResult)}</div><div className="detail-metrics"><span>Overall result<strong className={resultClass(item.overallResult)}>{displayMetricResult(item.overallResult)}</strong></span><span>Reported at<strong>{formatUpdatedAt(item.reportedAt) ?? "N/A"}</strong></span></div><div className="drawer-links">{link("Official Earnings Report", item.officialReportUrl)}{link("SEC Filing", item.secFilingUrl)}{link("Investor Relations", item.investorRelationsUrl)}</div></motion.aside></motion.div>;
 }
 
 function MorningBriefingShell() {

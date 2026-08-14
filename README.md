@@ -9,7 +9,7 @@ The approved **Morning Briefing** interface is the public product shell:
 - Morning Briefing consumes the published briefing, market/status and candidate APIs;
 - X Pulse consumes curated posts from the tracked X accounts;
 - Earnings consumes the Cloudflare-owned `earnings_events` D1 read model;
-- missing backend fields are rendered as `Not published`;
+- missing Earnings backend fields are rendered as `N/A`;
 - stale or invalid backend values are never presented as live;
 - the frontend refreshes silently while the backend controls publication cadence;
 - there is no login, portfolio, watchlist, chat or trading action.
@@ -23,7 +23,7 @@ PR #6 introduced the first synthetic, frontend-only product demo. PR #7 added
 the validated `DailyBriefing` contract and D1 read model. PR #8 added curated X
 post ingestion. PR #9 replaces that demo shell with the current live-aware
 Morning Briefing frontend. The Earnings route no longer imports financial
-fixtures: it only renders the Worker API response and shows `Not published`
+fixtures: it only renders the Worker API response and shows `N/A`
 when a value is missing. The legacy dashboard/quant read model is intentionally
 outside the ownership boundary of the Earnings Engine and remains unchanged.
 
@@ -53,8 +53,9 @@ The combined 14:00/19:00 invocation is budgeted conservatively below the
 Workers Free 50-external-subrequest limit. With two attempts per request and a
 16-filing lookup cap, the worst SEC-calendar path is `2` metadata + `6` full
 index + `32` filing + `4` Yahoo + `1` CNN = `45` requests, leaving `5` headroom.
-The FMP-calendar path is `39`; the 06:00 calendar-only paths are `40` (SEC)
-or `36` (FMP). D1 reads/writes are not counted as external provider requests.
+The Finnhub-calendar path is `39`; the 06:00 calendar-only path is `36`
+(SEC metadata + one bulk Finnhub request + 16 filing lookups). D1
+reads/writes are not counted as external provider requests.
 
 The temporary zero-cost index adapter uses Yahoo Finance's public Chart HTTP
 endpoint for `^GSPC`, `^NDX`, `^DJI` and `^VIX`. It requires no API key and runs
@@ -70,7 +71,7 @@ rather than presenting old data as current when the source is unavailable.
 Fear & Greed is separately isolated behind `SentimentProvider` and retains the
 last valid D1 observation after a temporary provider failure.
 
-## Automated Earnings Engine (PR #12)
+## Automated Earnings Engine (Issue #19)
 
 The Earnings route is owned by the Cloudflare Worker and follows:
 
@@ -85,41 +86,44 @@ versioned S&P 500 and Nasdaq-100 resources in `apps/publisher/data`; it is
 stored in `earnings_universe` so the resource can be replaced without editing
 React components.
 
-The calendar and consensus contracts are provider-neutral. SEC EDGAR is the
-default zero-cost adapter: its quarterly full indexes backfill filed 10-Q,
-10-K and 6-K events, while submissions enrich relevant 8-K Item 2.02, 10-Q,
-10-K and 6-K links. SEC does not publish future earnings schedules or analyst
-consensus, so those fields remain `NULL`/`Not published` unless the optional
-FMP calendar adapter is configured. No synthetic dates, estimates or Beat/Miss
-values are created. FMP is isolated behind the same adapter interfaces and is
-never a required dependency; its free-tier access can change.
+The calendar and consensus contracts are provider-neutral. Finnhub is the
+production primary for the bulk earnings calendar: scheduled dates, BMO/AMC/
+TBD timing, fiscal quarter/year and EPS/revenue estimates and actuals. SEC
+EDGAR remains the official enrichment provider for company metadata, CIKs,
+filing verification, report links and acceptance timestamps. No synthetic
+dates, estimates or Beat/Miss values are created. The existing FMP adapter is
+optional compatibility code and is not required for production Earnings.
 
-An optional calendar/consensus key may be stored as a Cloudflare Worker secret:
+The Finnhub key is stored only as a Cloudflare production Worker secret:
 
 ```bash
-npx wrangler secret put FMP_API_KEY
-# Optional but recommended for SEC's descriptive contact header:
+npx wrangler secret put FINNHUB_API_KEY
+# SEC also uses this safe configured/default descriptive contact header:
 npx wrangler secret put SEC_USER_AGENT
 ```
 
 No key, token or contact secret belongs in Git. PR previews use one permanent
-`stock-autotrader-preview` Worker with no D1, KV, R2, Durable Object, service or
-secret bindings and no cron triggers. Its same-origin `/api/*` handler proxies
-only public GET/HEAD requests to the production Worker; branch commits are
-uploaded as isolated Worker versions by Cloudflare Workers Builds. Isolated
-backend staging/D1 previews remain a future follow-up and are intentionally
-outside PR #13.
+`stock-autotrader-preview` Worker with no D1, KV, R2, Durable Object or secret
+bindings and no cron triggers. Its only service binding is
+`PRODUCTION_API → stock-autotrader-web`; the same-origin `/api/*` handler
+proxies only public GET/HEAD requests to that production Worker. Branch
+commits are uploaded as isolated Worker versions by Cloudflare Workers Builds.
+Isolated backend staging/D1 previews remain a future follow-up and are
+intentionally outside this issue.
 
-The daily Cron refreshes `today - 90 days → today + 60 days`; the 15-minute Cron polls only scheduled events inside the
-BMO/AMC/TBD New York-time windows and also detects a provider event newly moved
-onto today. Fiscal
+The daily Finnhub request refreshes `today - 30 days → today + 60 days`, matching
+the useful Free-plan historical range while retaining older rows already in
+D1. It uses one bulk date-range request, filters the response to the tracked
+universe, and enriches a bounded number of events through SEC. The 15-minute
+Cron polls only active events inside the BMO/AMC/TBD New York-time windows and
+does at most an hourly empty-calendar discovery poll. Fiscal
 identity (`symbol + fiscal year + normalized fiscal period`, using `Qn` when
 available) prevents a provider date change from creating a duplicate.
 EPS/revenue surprise and overall-result
-rules live in the Worker normalization layer and use `NULL`/`Not published`
-when either side is unavailable. `In Line` uses
-`abs(actual - estimate) <= max(abs(estimate) * 0.5%, Number.EPSILON)`;
-surprise percentage is `NULL` when the estimate is zero.
+rules live in the Worker normalization layer and use `NULL`/`N/A` when either
+side is unavailable. An actual greater than, less than or exactly equal to an
+estimate is a Beat, Miss or Met respectively; surprise percentage is `NULL`
+when the estimate is zero.
 
 Migrations `0008_earnings_engine.sql` and `0009_earnings_identity_scope.sql` are
 applied locally in CI and remotely by

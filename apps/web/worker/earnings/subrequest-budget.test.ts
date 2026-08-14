@@ -21,8 +21,10 @@ describe("Workers Free external subrequest budget", () => {
     expect(MAX_SEC_FILING_REQUESTS).toBe(32);
     expect(MAX_SEC_FULL_INDEX_REQUESTS).toBe(6);
     expect(EXTERNAL_SUBREQUEST_BUDGET).toEqual({
+      monitorWithFinnhub: 39,
       monitorWithFmp: 39,
       monitorWithSec: 45,
+      dailyWithFinnhub: 36,
       dailyWithFmp: 36,
       dailyWithSec: 40,
     });
@@ -38,8 +40,8 @@ describe("Workers Free external subrequest budget", () => {
       from: addDays(today, -EARNINGS_BACKFILL_DAYS),
       to: addDays(today, EARNINGS_WINDOW_DAYS),
     };
-    expect(EARNINGS_BACKFILL_DAYS + EARNINGS_WINDOW_DAYS + 1).toBe(151);
-    expect(secIndexQuarters(dailyRange)).toHaveLength(3);
+    expect(EARNINGS_BACKFILL_DAYS + EARNINGS_WINDOW_DAYS + 1).toBe(91);
+    expect(secIndexQuarters(dailyRange)).toHaveLength(2);
     expect(secIndexQuarters(dailyRange).length).toBeLessThanOrEqual(MAX_SEC_INDEX_QUARTERS_PER_CALENDAR);
   });
 });

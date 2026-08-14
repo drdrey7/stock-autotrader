@@ -10,6 +10,7 @@ import {
   sourceHealthSchema,
   type Candidate,
   type DashboardData,
+  type EarningsEngineState,
   type MarketDataSnapshot,
   type PublicSourceHealth,
   type SourceHealth,
@@ -17,6 +18,7 @@ import {
 } from "@stock-autotrader/contracts";
 import type { Env } from "./index";
 import type { BriefingStatus } from "./daily-briefings";
+import { EARNINGS_ENGINE_STALE_AFTER_SECONDS } from "./earnings";
 import {
   MARKET_CONTEXT_STALE_AFTER_SECONDS,
   SENTIMENT_STALE_AFTER_SECONDS,
@@ -250,17 +252,38 @@ export async function buildSources(
   }
 
   let earningsLastSuccess: string | null = null;
+  let earningsLastAttempt: string | null = null;
   let earningsError: string | null = null;
+  let earningsUniverseCount = 0;
   try {
     // Publication metadata records a successful empty calendar too: a valid
-    // EARNINGS_UPDATED with zero rows must not make the source Unavailable.
+    // update with zero rows is healthy. Universe count is checked separately
+    // so an empty filtered date range is never mistaken for initialization.
     const row = await env.DB.prepare(
-      "SELECT COALESCE((SELECT value FROM app_meta WHERE key = 'earningsEngineUpdatedAt'), (SELECT MAX(updated_at) FROM earnings_events)) AS ts",
-    ).first<{ ts: string | null }>();
-    earningsLastSuccess = row?.ts ? new Date(row.ts).toISOString() : null;
+      "SELECT (SELECT value FROM app_meta WHERE key = 'earningsEngineUpdatedAt') AS updated_at, (SELECT value FROM app_meta WHERE key = 'earningsEngineCheckedAt') AS checked_at, (SELECT value FROM app_meta WHERE key = 'earningsEngineLastError') AS last_error, (SELECT COUNT(*) FROM earnings_universe) AS universe_count",
+    ).first<{ updated_at: string | null; checked_at: string | null; last_error: string | null; universe_count: number | string | null }>();
+    const updatedAt = parseIsoTimestamp(row?.updated_at);
+    const checkedAt = parseIsoTimestamp(row?.checked_at);
+    earningsLastSuccess = updatedAt;
+    earningsLastAttempt = checkedAt ?? updatedAt;
+    earningsError = row?.last_error?.trim() || null;
+    earningsUniverseCount = Number(row?.universe_count ?? 0) || 0;
   } catch {
     earningsError = "Earnings store is unavailable.";
   }
+
+  const earningsUninitialized = earningsUniverseCount <= 0 || earningsLastSuccess === null;
+  const earningsLastSuccessMs = parseSafeTimestamp(earningsLastSuccess);
+  const earningsHasValidSuccess = earningsLastSuccessMs !== null && earningsLastSuccessMs <= nowMs;
+  const earningsEngineState: EarningsEngineState = earningsUninitialized
+    ? "UNINITIALIZED"
+    : earningsError
+      ? "DEGRADED"
+      : earningsHasValidSuccess
+        && earningsLastSuccessMs !== null
+        && nowMs - earningsLastSuccessMs <= EARNINGS_ENGINE_STALE_AFTER_SECONDS * 1000
+        ? "HEALTHY"
+        : "STALE";
 
   const lastDataUpdate = options.dashboard.status.lastDataUpdate;
   // The scan completion timestamp is the authoritative success evidence,
@@ -296,12 +319,17 @@ export async function buildSources(
       error: xError,
       nowMs,
     }),
-    earnings: buildSourceHealth(earningsLastSuccess, earningsLastSuccess, {
-      provider: "earnings calendar",
-      staleAfterSeconds: HEALTHY_STALE_AFTER_SECONDS,
-      error: earningsError,
-      nowMs,
-    }),
+    earnings: {
+      ...buildSourceHealth(earningsLastSuccess, earningsLastAttempt, {
+        provider: "finnhub + sec-edgar",
+        staleAfterSeconds: EARNINGS_ENGINE_STALE_AFTER_SECONDS,
+        error: earningsUninitialized
+          ? earningsError ?? "Earnings engine is not initialized."
+          : earningsError,
+        nowMs,
+      }),
+      engineState: earningsEngineState,
+    },
     sentiment: options.marketContext?.sentiment
       ? buildSourceHealth(options.marketContext.sentiment.asOf, options.marketContext.sentiment.asOf, {
           provider: options.marketContext.sentiment.provider,
@@ -369,7 +397,7 @@ export function unavailableSources(): PublicSourceHealth {
     market: unavailable(reason),
     opportunities: unavailable(reason),
     x: unavailable(reason),
-    earnings: unavailable(reason),
+    earnings: { ...unavailable(reason), engineState: "UNINITIALIZED" },
     sentiment: unavailable(reason),
     quickStats: unavailable(reason),
   };
