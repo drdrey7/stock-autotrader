@@ -116,6 +116,15 @@ const parseSafeTimestamp = (value: string | null): number | null => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+const latestTimestamp = (...values: Array<string | null | undefined>): string | null => {
+  let latestMs: number | null = null;
+  for (const value of values) {
+    const parsed = parseSafeTimestamp(value ?? null);
+    if (parsed !== null && (latestMs === null || parsed > latestMs)) latestMs = parsed;
+  }
+  return latestMs === null ? null : new Date(latestMs).toISOString();
+};
+
 /**
  * Single, honest freshness boundary shared by every public data source.
  * Sources without a validated success stay Unavailable/Error; a success
@@ -260,13 +269,16 @@ export async function buildSources(
     // update with zero rows is healthy. Universe count is checked separately
     // so an empty filtered date range is never mistaken for initialization.
     const row = await env.DB.prepare(
-      "SELECT (SELECT value FROM app_meta WHERE key = 'earningsEngineUpdatedAt') AS updated_at, (SELECT value FROM app_meta WHERE key = 'earningsEngineCheckedAt') AS checked_at, (SELECT value FROM app_meta WHERE key = 'earningsEngineLastError') AS last_error, (SELECT COUNT(*) FROM earnings_universe) AS universe_count",
-    ).first<{ updated_at: string | null; checked_at: string | null; last_error: string | null; universe_count: number | string | null }>();
+      "SELECT (SELECT value FROM app_meta WHERE key = 'earningsEngineUpdatedAt') AS updated_at, (SELECT value FROM app_meta WHERE key = 'earningsEngineCheckedAt') AS checked_at, (SELECT value FROM app_meta WHERE key = 'earningsEngineLastAttemptAt') AS attempt_at, (SELECT value FROM app_meta WHERE key = 'earningsCalendarLastError') AS calendar_error, (SELECT value FROM app_meta WHERE key = 'earningsMonitorLastError') AS monitor_error, (SELECT value FROM app_meta WHERE key = 'earningsEngineLastError') AS last_error, (SELECT COUNT(*) FROM earnings_universe) AS universe_count",
+    ).first<{ updated_at: string | null; checked_at: string | null; attempt_at: string | null; calendar_error: string | null; monitor_error: string | null; last_error: string | null; universe_count: number | string | null }>();
     const updatedAt = parseIsoTimestamp(row?.updated_at);
     const checkedAt = parseIsoTimestamp(row?.checked_at);
     earningsLastSuccess = updatedAt;
-    earningsLastAttempt = checkedAt ?? updatedAt;
-    earningsError = row?.last_error?.trim() || null;
+    earningsLastAttempt = latestTimestamp(updatedAt, checkedAt, parseIsoTimestamp(row?.attempt_at));
+    earningsError = row?.calendar_error?.trim()
+      || row?.monitor_error?.trim()
+      || row?.last_error?.trim()
+      || null;
     earningsUniverseCount = Number(row?.universe_count ?? 0) || 0;
   } catch {
     earningsError = "Earnings store is unavailable.";
@@ -323,9 +335,10 @@ export async function buildSources(
       ...buildSourceHealth(earningsLastSuccess, earningsLastAttempt, {
         provider: "finnhub + sec-edgar",
         staleAfterSeconds: EARNINGS_ENGINE_STALE_AFTER_SECONDS,
-        error: earningsUninitialized
-          ? earningsError ?? "Earnings engine is not initialized."
-          : earningsError,
+        // UNINITIALIZED is an unavailable state, not a synthetic failed job.
+        // Real attempt timestamps remain visible when an actual pre-bootstrap
+        // provider attempt occurred, but a status read creates none.
+        error: earningsUninitialized ? null : earningsError,
         nowMs,
       }),
       engineState: earningsEngineState,

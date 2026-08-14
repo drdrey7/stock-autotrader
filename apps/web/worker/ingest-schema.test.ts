@@ -433,7 +433,7 @@ describe("buildSources (source health assembly)", () => {
 
   it("reports a healthy initialized earnings engine from publication metadata", async () => {
     const sources = await buildSources(
-      envFor({ earnings: { updated_at: "2026-08-13T11:45:00Z", checked_at: "2026-08-13T11:45:00Z", last_error: null, universe_count: 2 } }) as unknown as Env,
+      envFor({ earnings: { updated_at: "2026-08-13T11:45:00Z", checked_at: "2026-08-13T11:45:00Z", attempt_at: "2026-08-13T11:40:00Z", calendar_error: null, monitor_error: null, last_error: null, universe_count: 2 } }) as unknown as Env,
       { briefing, dashboard: demoData, nowMs },
     );
     expect(sources.earnings.state).toBe("Live");
@@ -443,26 +443,63 @@ describe("buildSources (source health assembly)", () => {
 
   it("does not treat an empty filtered range as initialized", async () => {
     const sources = await buildSources(
-      envFor({ earnings: { updated_at: null, checked_at: null, last_error: null, universe_count: 2 } }) as unknown as Env,
+      envFor({ earnings: { updated_at: null, checked_at: null, attempt_at: null, calendar_error: "Finnhub unavailable", monitor_error: null, last_error: "Finnhub unavailable", universe_count: 2 } }) as unknown as Env,
       { briefing, dashboard: demoData, nowMs },
     );
     expect(sources.earnings.engineState).toBe("UNINITIALIZED");
+    expect(sources.earnings.state).toBe("Unavailable");
+    expect(sources.earnings.error).toBeNull();
+    expect(sources.earnings.lastAttempt).toBeNull();
   });
 
   it("distinguishes stale and degraded earnings health while retaining safe metadata", async () => {
     const stale = await buildSources(
-      envFor({ earnings: { updated_at: "2026-08-01T11:20:00Z", checked_at: "2026-08-13T11:20:00Z", last_error: null, universe_count: 2 } }) as unknown as Env,
+      envFor({ earnings: { updated_at: "2026-08-01T11:20:00Z", checked_at: "2026-08-13T11:20:00Z", attempt_at: "2026-08-13T11:10:00Z", calendar_error: null, monitor_error: null, last_error: null, universe_count: 2 } }) as unknown as Env,
       { briefing, dashboard: demoData, nowMs },
     );
     expect(stale.earnings.engineState).toBe("STALE");
     expect(stale.earnings.state).toBe("Stale");
 
     const degraded = await buildSources(
-      envFor({ earnings: { updated_at: "2026-08-13T11:20:00Z", checked_at: "2026-08-13T11:55:00Z", last_error: "Finnhub request failed", universe_count: 2 } }) as unknown as Env,
+      envFor({ earnings: { updated_at: "2026-08-13T11:20:00Z", checked_at: "2026-08-13T11:55:00Z", attempt_at: "2026-08-13T11:55:00Z", calendar_error: "daily calendar failed", monitor_error: null, last_error: "daily calendar failed", universe_count: 2 } }) as unknown as Env,
       { briefing, dashboard: demoData, nowMs },
     );
     expect(degraded.earnings.engineState).toBe("DEGRADED");
     expect(degraded.earnings.state).toBe("Cached");
     expect(degraded.earnings.lastSuccess).toBe("2026-08-13T11:20:00.000Z");
+  });
+
+  it("keeps calendar health degraded after a successful monitor-only update", async () => {
+    const sources = await buildSources(
+      envFor({ earnings: {
+        updated_at: "2026-08-13T06:00:00Z",
+        checked_at: "2026-08-13T19:30:00Z",
+        attempt_at: "2026-08-13T19:30:00Z",
+        calendar_error: "Finnhub HTTP 503",
+        monitor_error: null,
+        last_error: "Finnhub HTTP 503",
+        universe_count: 2,
+      } }) as unknown as Env,
+      { briefing, dashboard: demoData, nowMs: Date.parse("2026-08-13T20:00:00Z") },
+    );
+    expect(sources.earnings.engineState).toBe("DEGRADED");
+    expect(sources.earnings.state).toBe("Cached");
+    expect(sources.earnings.lastAttempt).toBe("2026-08-13T19:30:00.000Z");
+  });
+
+  it("uses the chronologically newest earnings timestamp for lastAttempt", async () => {
+    const sources = await buildSources(
+      envFor({ earnings: {
+        updated_at: "2026-08-13T11:45:00Z",
+        checked_at: "2026-08-13T11:20:00Z",
+        attempt_at: "2026-08-13T11:30:00Z",
+        calendar_error: null,
+        monitor_error: null,
+        last_error: null,
+        universe_count: 2,
+      } }) as unknown as Env,
+      { briefing, dashboard: demoData, nowMs },
+    );
+    expect(sources.earnings.lastAttempt).toBe("2026-08-13T11:45:00.000Z");
   });
 });

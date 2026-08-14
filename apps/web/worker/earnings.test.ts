@@ -323,6 +323,7 @@ describe("free provider adapters", () => {
     expect(calls).toHaveLength(1);
     expect(new URL(calls[0]!.url).search).toBe("?from=2026-08-20&to=2026-08-23");
     expect(calls[0]!.token).toBe("test-key");
+    expect(result.complete).toBe(true);
     expect(result.observations).toHaveLength(4);
     expect(result.observations).toEqual(expect.arrayContaining([
       expect.objectContaining({ symbol: "MSFT", timing: "BMO", scheduledTime: "BMO", epsActual: 3.2, revenueActual: 110 }),
@@ -331,6 +332,17 @@ describe("free provider adapters", () => {
       expect.objectContaining({ symbol: "TSLA", timing: "TBD", epsEstimate: null, revenueActual: null }),
     ]));
     expect(result.observations.some((row) => row.symbol === "PRIVATE")).toBe(false);
+  });
+
+  it("marks a mixed Finnhub payload incomplete without discarding valid rows", async () => {
+    const provider = new FinnhubEarningsProvider("test-key", async () => jsonResponse({ earningsCalendar: [
+      { symbol: "MSFT", date: "2026-08-20", hour: "amc", quarter: 1, year: 2026 },
+      { symbol: "AAPL", date: "not-a-date", hour: "bmo", quarter: 3, year: 2026 },
+    ] }));
+    const result = await provider.fetchCalendar(providerRange, providerUniverse, "2026-08-13T12:00:00.000Z");
+    expect(result.complete).toBe(false);
+    expect(result.warnings[0]).toContain("malformed");
+    expect(result.observations).toEqual([expect.objectContaining({ symbol: "MSFT", scheduledDate: "2026-08-20" })]);
   });
 
   it("fails closed on malformed Finnhub rows and retries rate limits without exposing a token", async () => {
@@ -544,7 +556,83 @@ describe("earnings D1 write model and API", () => {
     })).resolves.toMatchObject({ status: "degraded" });
     expect((await readEarningsEvents(db, { from: "2026-09-20", to: "2026-09-20" }))[0]).toMatchObject({ status: "scheduled", scheduledDate: "2026-09-20" });
     expect(db.meta.get("earningsEngineUpdatedAt")).toBeUndefined();
+    expect(db.meta.get("earningsEngineLastAttemptAt")).toBe("2026-08-13T06:00:00.000Z");
+    expect(db.meta.get("earningsCalendarLastError")).toContain("Finnhub HTTP 503");
     expect(db.meta.get("earningsEngineLastError")).toContain("Finnhub HTTP 503");
+  });
+
+  it("keeps a daily calendar failure degraded after a later successful monitor poll", async () => {
+    const db = new MemoryD1();
+    await upsertEarningsEvent(db, normalizedEvent({ scheduledDate: "2026-08-13", providerEventId: "monitor-msft" }));
+    let failCalendar = true;
+    const calendar: EarningsCalendarProvider = {
+      name: "finnhub-test",
+      supportsForwardCalendar: true,
+      fetchCalendar: async () => {
+        if (failCalendar) throw new Error("Finnhub HTTP 503");
+        return {
+          provider: "finnhub-test",
+          observations: [eventObservation({
+            scheduledDate: "2026-08-13",
+            providerEventId: "monitor-msft",
+            epsActual: 3.2,
+            revenueActual: 110,
+          })],
+          warnings: [],
+          updatedAt: "2026-08-13T19:30:00.000Z",
+        };
+      },
+    };
+    const official: OfficialFilingsProvider = {
+      name: "test-sec",
+      fetchCompanyMetadata: async () => ({ provider: "test-sec", observations: [], warnings: [], updatedAt: "2026-08-13T06:00:00.000Z" }),
+      findRelevantFiling: async () => null,
+    };
+    const providers = { calendar, consensus: calendar as never, official };
+
+    await expect(runEarningsJob({ DB: db } as never, new Date("2026-08-13T06:00:00.000Z"), "calendar", providers))
+      .resolves.toMatchObject({ status: "degraded" });
+    failCalendar = false;
+    await expect(runEarningsJob({ DB: db } as never, new Date("2026-08-13T19:30:00.000Z"), "monitor", providers))
+      .resolves.toMatchObject({ status: "ok" });
+
+    expect(db.meta.get("earningsCalendarLastError")).toContain("Finnhub HTTP 503");
+    expect(db.meta.get("earningsMonitorLastError")).toBeUndefined();
+    expect(db.meta.get("earningsEngineLastError")).toContain("Finnhub HTTP 503");
+    expect(db.meta.get("earningsEngineCheckedAt")).toBe("2026-08-13T19:30:00.000Z");
+    expect(db.meta.get("earningsEngineLastAttemptAt")).toBe("2026-08-13T19:30:00.000Z");
+  });
+
+  it("preserves scheduled events when a calendar payload is only partially parsed", async () => {
+    const db = new MemoryD1();
+    await upsertEarningsEvent(db, normalizedEvent({ symbol: "AAPL", scheduledDate: "2026-08-20", providerEventId: "aapl-existing" }));
+    const calendar: EarningsCalendarProvider = {
+      name: "finnhub-test",
+      supportsForwardCalendar: true,
+      fetchCalendar: async () => ({
+        provider: "finnhub-test",
+        observations: [eventObservation({ providerEventId: "msft-valid", scheduledDate: "2026-08-21" })],
+        warnings: ["ignored 1 malformed Finnhub calendar row(s)"],
+        complete: false,
+        updatedAt: "2026-08-13T06:00:00.000Z",
+      }),
+    };
+    const official: OfficialFilingsProvider = {
+      name: "test-sec",
+      fetchCompanyMetadata: async () => ({ provider: "test-sec", observations: [], warnings: [], updatedAt: "2026-08-13T06:00:00.000Z" }),
+      findRelevantFiling: async () => null,
+    };
+    await expect(runEarningsJob({ DB: db } as never, new Date("2026-08-13T06:00:00.000Z"), "calendar", {
+      calendar,
+      consensus: calendar as never,
+      official,
+    })).resolves.toMatchObject({ status: "degraded" });
+
+    expect((await readEarningsEvents(db, { from: "2026-08-20", to: "2026-08-20" }))[0]).toMatchObject({
+      symbol: "AAPL",
+      status: "scheduled",
+    });
+    expect(db.meta.get("earningsCalendarLastError")).toContain("malformed");
   });
 
   it("is idempotent when the same bulk calendar is synced twice", async () => {

@@ -364,7 +364,7 @@ export class FinnhubEarningsProvider implements EarningsCalendarProvider, Earnin
     range: EarningsDateRange,
     universe: ReadonlySet<string>,
     collectedAt: string,
-  ): Promise<{ observations: EarningsCalendarObservation[]; warnings: string[] }> {
+  ): Promise<{ observations: EarningsCalendarObservation[]; warnings: string[]; complete: boolean }> {
     if (!this.apiKey.trim()) throw new Error("FINNHUB_API_KEY is not configured");
     const url = new URL(FINNHUB_URL);
     url.searchParams.set("from", range.from);
@@ -399,6 +399,7 @@ export class FinnhubEarningsProvider implements EarningsCalendarProvider, Earnin
     return {
       observations: deduplicateCalendarRows(observations),
       warnings: malformedCount > 0 ? [`ignored ${malformedCount} malformed Finnhub calendar row(s)`] : [],
+      complete: malformedCount === 0,
     };
   }
 
@@ -408,7 +409,7 @@ export class FinnhubEarningsProvider implements EarningsCalendarProvider, Earnin
     collectedAt: string,
   ): Promise<EarningsProviderResult<EarningsCalendarObservation>> {
     const result = await this.fetchRows(range, universe, collectedAt);
-    return { provider: this.name, observations: result.observations, warnings: result.warnings, updatedAt: collectedAt };
+    return { provider: this.name, observations: result.observations, warnings: result.warnings, updatedAt: collectedAt, complete: result.complete };
   }
 
   async fetchConsensus(
@@ -435,6 +436,7 @@ export class FinnhubEarningsProvider implements EarningsCalendarProvider, Earnin
       })),
       warnings: result.warnings,
       updatedAt: collectedAt,
+      complete: result.complete,
     };
   }
 }
