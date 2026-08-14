@@ -1,0 +1,23 @@
+# Exact runtime dependency pins for `bot`, generated from the ranges in
+# pyproject.toml against a clean install (Python 3.11).
+#
+# The long-lived VPS process is rebuilt from `bot/Dockerfile`, which installs
+# from pyproject.toml's loose ranges (e.g. "pydantic>=2.7,<3") — a rebuild
+# months apart can silently pick up a different minor/patch release. This
+# file pins the exact versions actually verified against the test suite, so
+# a deploy is reproducible until someone deliberately regenerates it.
+#
+# Regenerate after bumping a range in pyproject.toml:
+#   python3 -m venv /tmp/bot-lock && /tmp/bot-lock/bin/pip install .
+#   /tmp/bot-lock/bin/pip freeze | grep -v '^stock-autotrader-bot' > requirements-lock.txt
+# then re-run the test suite before committing the new pins.
+
+annotated-types==0.8.0
+APScheduler==3.11.3
+pydantic==2.13.4
+pydantic-settings==2.15.0
+pydantic_core==2.46.4
+python-dotenv==1.2.2
+typing-inspection==0.4.4
+typing_extensions==4.16.0
+tzlocal==5.4.4

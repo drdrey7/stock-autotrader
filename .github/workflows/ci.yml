@@ -27,6 +27,9 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
+      - name: Coverage summary (informational, not a gate)
+        working-directory: apps/web
+        run: npm run test:coverage -- --coverage.reporter=text-summary
       - run: npm run build
       - name: Test deferred review policy
         run: node .github/scripts/test-deferred-review-workflow.mjs

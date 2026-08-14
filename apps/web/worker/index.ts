@@ -15,7 +15,6 @@ import { jobsForProductionCron } from "./cron-dispatcher";
 import {
   buildDashboard,
   buildSources,
-  emptyDashboard,
   emptyMarketData,
   readCandidateBySymbol,
   readMarketData,
@@ -126,14 +125,6 @@ export default {
         } catch {
           return json({ error: "Internal error" }, 500);
         }
-      }
-    }
-    if (pathname === "/api/dashboard") {
-      try {
-        return json(await buildDashboard(env));
-      } catch (err) {
-        console.error("dashboard error", err);
-        return json(emptyDashboard);
       }
     }
     if (pathname === "/api/briefs/latest") {
