@@ -73,7 +73,9 @@ export async function proxyPublicApiRequest(
       statusText: upstream.statusText,
       headers: responseHeaders,
     });
-  } catch {
+  } catch (error) {
+    const reason = error instanceof Error ? `${error.name}: ${error.message}` : "unknown upstream fetch error";
+    console.error("preview API upstream fetch failed", reason.slice(0, 240));
     return jsonResponse({ error: "preview_api_unavailable" }, 502);
   }
 }
