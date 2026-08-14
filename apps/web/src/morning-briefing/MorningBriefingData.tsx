@@ -22,6 +22,8 @@ type StatusResponse = {
       change: number;
       updatedAt: string;
     }>;
+    latestSourceTimestamp?: string | null;
+    latestCollectedAt?: string | null;
   };
   sentiment?: {
     provider: string;
@@ -169,10 +171,16 @@ export function isDisplayableMarketIndex(updatedAt: string | null | undefined, n
 function indicesFromStatus(status: StatusResponse | null): { indexes: MarketIndex[]; updatedAt: string } | null {
   const indices = status?.market?.indices;
   if (!Array.isArray(indices) || indices.length === 0) return null;
+  // The source timestamp identifies the latest validated market session, but
+  // providers often timestamp a daily bar at that session's midnight. Use the
+  // Worker read model's collection timestamp for the stale gate so valid
+  // overnight/pre-market data is not hidden merely because its source date is
+  // yesterday in New York. The Worker only publishes validated observations.
+  const latestCollectedAt = status?.market?.latestCollectedAt ?? null;
   let latestUpdatedAt = "";
   const fresh: MarketIndex[] = [];
   for (const index of indices) {
-    if (!isDisplayableMarketIndex(index.updatedAt)) continue;
+    if (!isDisplayableMarketIndex(latestCollectedAt ?? index.updatedAt)) continue;
     fresh.push({
       name: index.name,
       symbol: index.symbol,
@@ -184,7 +192,7 @@ function indicesFromStatus(status: StatusResponse | null): { indexes: MarketInde
     if (index.updatedAt > latestUpdatedAt) latestUpdatedAt = index.updatedAt;
   }
   if (fresh.length === 0) return null;
-  return { indexes: fresh, updatedAt: latestUpdatedAt };
+  return { indexes: fresh, updatedAt: latestCollectedAt ?? latestUpdatedAt };
 }
 
 // Market sentiment (PR #11): the CNN Fear & Greed reading is published once or

@@ -90,6 +90,35 @@ it("accepts current-session indices but rejects genuinely stale observations", (
   expect(isDisplayableMarketIndex("2026-08-12T09:00:00Z", Date.parse("2026-08-13T12:00:00Z"))).toBe(false);
 });
 
+it("keeps the latest validated session visible before the next US open", async () => {
+  vi.mocked(Date.now).mockReturnValue(Date.parse("2026-08-14T08:30:00Z"));
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === "/api/briefs/latest") return new Response(null, { status: 404 });
+    if (url === "/api/status") return new Response(JSON.stringify({
+      briefing: { available: false, freshness: "unavailable", publishedAt: null },
+      market: {
+        // The provider's previous-session bars are midnight-dated, while the
+        // Worker collected and validated them during the session.
+        latestSourceTimestamp: "2026-08-13T00:00:00-04:00",
+        latestCollectedAt: "2026-08-13T16:00:00.000Z",
+        indices: [
+          { symbol: "SPX", name: "S&P 500", value: 7777.69, change: 0.38, updatedAt: "2026-08-13T00:00:00-04:00" },
+          { symbol: "NDX", name: "Nasdaq-100", value: 30004.93, change: 0.88, updatedAt: "2026-08-13T00:00:00-04:00" },
+          { symbol: "DJI", name: "Dow Jones", value: 53659.20, change: -0.21, updatedAt: "2026-08-13T00:00:00-04:00" },
+          { symbol: "VIX", name: "VIX", value: 14.71, change: 1.10, updatedAt: "2026-08-13T00:00:00-05:00" },
+        ],
+      },
+    }), { status: 200 });
+    return new Response(null, { status: 404 });
+  });
+
+  const view = renderApp();
+  await waitFor(() => expect(view.container.querySelectorAll(".market-card")).toHaveLength(4));
+  expect(view.container.querySelector(".market-section")).not.toHaveTextContent("Not available");
+  expect(view.container.querySelector(".market-section")).toHaveTextContent(/Updated 13 Aug/);
+});
+
 it("renders only qualified ideas and classifies scheduled earnings by date", async () => {
   const view = renderApp();
   await waitFor(() => expect(view.container.querySelector(".market-status")).toHaveTextContent("S&P 500 up +0.31%"));
