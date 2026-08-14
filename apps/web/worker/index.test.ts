@@ -12,7 +12,7 @@ type StatusBody = DashboardData & {
   sentiment: unknown;
 };
 type StockBody = { symbol: string; strategy: string; direction: string };
-type PortfolioBody = { portfolio: { riskPolicy: { maxPositions: number; leverage: string } }; positions: unknown[] };
+type PortfolioBody = { portfolio: DashboardData["portfolio"]; positions: DashboardData["positions"] };
 
 /**
  * A minimal, table-aware D1 fake. Each table is seeded independently; any
@@ -128,7 +128,19 @@ const validRiskPolicy = JSON.stringify({
 
 function healthyTables(): Partial<Tables> {
   return {
-    appMeta: { riskPolicy: validRiskPolicy },
+    // Deliberately stale position aggregates: the public read model must
+    // recompute them from the active-filtered shadow positions below.
+    appMeta: {
+      initialCapital: "10000",
+      equity: "10000",
+      returnPct: "0",
+      cash: "1",
+      invested: "9999",
+      openPositions: "99",
+      openRiskPct: "99",
+      grossExposurePct: "99",
+      riskPolicy: validRiskPolicy,
+    },
     scan: {
       id: 7,
       scanned_at: "2026-08-13T11:00:00Z",
@@ -286,6 +298,14 @@ describe("buildDashboard()", () => {
 
     expect(body.positions).toHaveLength(1);
     expect(body.positions[0]).toMatchObject({ symbol: "NVDA", quantity: 10, rMultiple: 1.06 });
+    expect(body.portfolio).toMatchObject({
+      equity: 10000,
+      cash: 8715,
+      invested: 1285,
+      openPositions: 1,
+    });
+    expect(body.portfolio.openRiskPct).toBeCloseTo(0.8);
+    expect(body.portfolio.grossExposurePct).toBeCloseTo(12.85);
 
     expect(body.events).toHaveLength(1);
     expect(body.events[0]).toMatchObject({ id: "evt-1", severity: "success", symbol: "NVDA" });
@@ -394,7 +414,7 @@ describe("narrow endpoints derived from the dashboard read model", () => {
     expect(response.status).toBe(404);
   });
 
-  it("does not surface an inactive universe member on dashboard or stock lookup reads", async () => {
+  it("does not surface an inactive universe member on status or stock lookup reads", async () => {
     const tables = healthyTables();
     tables.universe = [
       ...(tables.universe ?? []),
@@ -410,21 +430,59 @@ describe("narrow endpoints derived from the dashboard read model", () => {
     ];
     tables.shadowPositions = [
       ...(tables.shadowPositions ?? []),
-      { ...tables.shadowPositions![0], id: 43, symbol: "ABNB" },
+      { ...tables.shadowPositions![0], id: 43, symbol: "ABNB", current_price: 999, quantity: 100, risk_amount: 5000 },
     ];
     tables.botEvents = [
       ...(tables.botEvents ?? []),
       { ...tables.botEvents![0], event_id: "evt-abnb", symbol: "ABNB" },
     ];
     const env = envWith(tables);
-    const dashboard = (await (await worker.fetch(new Request("https://example.test/api/dashboard"), env)).json()) as DashboardData;
+    const statusResponse = await worker.fetch(new Request("https://example.test/api/status"), env);
+    expect(statusResponse.status).toBe(200);
+    const dashboard = (await statusResponse.json()) as StatusBody;
     expect(dashboard.candidates.some((candidate) => candidate.symbol === "ABNB")).toBe(false);
     expect(dashboard.earnings.some((event) => event.symbol === "ABNB")).toBe(false);
     expect(dashboard.positions.some((position) => position.symbol === "ABNB")).toBe(false);
     expect(dashboard.events.some((event) => event.symbol === "ABNB")).toBe(false);
+    expect(dashboard.portfolio).toMatchObject({
+      cash: 8715,
+      invested: 1285,
+      openPositions: 1,
+    });
+    expect(dashboard.portfolio.openRiskPct).toBeCloseTo(0.8);
+    expect(dashboard.portfolio.grossExposurePct).toBeCloseTo(12.85);
     const portfolio = (await (await worker.fetch(new Request("https://example.test/api/portfolio/shadow"), env)).json()) as PortfolioBody;
     expect(portfolio.positions.some((position) => (position as { symbol?: string }).symbol === "ABNB")).toBe(false);
+    expect(portfolio.portfolio).toEqual(dashboard.portfolio);
+    expect(portfolio.portfolio).toMatchObject({
+      cash: 8715,
+      invested: 1285,
+      openPositions: 1,
+    });
+    expect(portfolio.portfolio.openRiskPct).toBeCloseTo(0.8);
+    expect(portfolio.portfolio.grossExposurePct).toBeCloseTo(12.85);
+    expect((tables.shadowPositions ?? []).some((position) => position.symbol === "ABNB")).toBe(true);
     expect((await worker.fetch(new Request("https://example.test/api/stocks/abnb"), env)).status).toBe(404);
+  });
+
+  it("excludes an inactive stored position from public portfolio totals", async () => {
+    const tables = healthyTables();
+    tables.universe = [{ symbol: "ABNB", active: 0, source: "core" }];
+    tables.shadowPositions = [{
+      ...tables.shadowPositions![0],
+      symbol: "ABNB",
+      current_price: 999,
+      quantity: 100,
+      risk_amount: 5000,
+    }];
+    const env = envWith(tables);
+    const response = await worker.fetch(new Request("https://example.test/api/portfolio/shadow"), env);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as PortfolioBody;
+
+    expect((tables.shadowPositions ?? []).some((position) => position.symbol === "ABNB")).toBe(true);
+    expect(body.positions).toEqual([]);
+    expect(body.portfolio).toMatchObject({ cash: 10000, invested: 0, openPositions: 0, openRiskPct: 0, grossExposurePct: 0 });
   });
 
   it("GET /api/stocks/:symbol fails closed on a store error", async () => {

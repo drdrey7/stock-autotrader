@@ -495,6 +495,37 @@ function mapPositionRow(p: Record<string, unknown>): DashboardData["positions"][
 }
 
 /**
+ * Derive position-dependent portfolio totals from the same active-universe
+ * positions that are returned publicly. Account-level values such as equity
+ * and return remain published by the private runtime in app_meta; values that
+ * describe the open position set must not come from a broader, stale snapshot.
+ */
+function derivePortfolioFromActivePositions(
+  metaMap: Map<string, string>,
+  positions: DashboardData["positions"],
+) {
+  const equity = num(metaMap.get("equity") ?? 0);
+  const invested = positions.reduce(
+    (total, position) => total + Math.max(position.currentPrice * position.quantity, 0),
+    0,
+  );
+  const openRisk = positions.reduce((total, position) => total + Math.max(position.riskAmount, 0), 0);
+  const equityDenominator = equity > 0 ? equity : 0;
+
+  return {
+    initialCapital: num(metaMap.get("initialCapital") ?? 10000),
+    equity,
+    returnPct: num(metaMap.get("returnPct") ?? 0),
+    cash: Math.max(equity - invested, 0),
+    invested,
+    openPositions: positions.length,
+    openRiskPct: equityDenominator > 0 ? (openRisk / equityDenominator) * 100 : 0,
+    grossExposurePct: equityDenominator > 0 ? (invested / equityDenominator) * 100 : 0,
+    riskPolicy: parseJson(metaMap.get("riskPolicy"), {}),
+  };
+}
+
+/**
  * Parse+validate the published `marketData` app_meta snapshot and apply the
  * shared staleness gate: a "healthy" snapshot whose publish timestamp has
  * gone stale (or is malformed) is degraded rather than presented as current.
@@ -594,17 +625,7 @@ export async function buildDashboard(env: Env): Promise<DashboardData> {
     metrics: parseJson(r.metrics, {}),
   }));
 
-  const portfolio = {
-    initialCapital: num(metaMap.get("initialCapital") ?? 10000),
-    equity: num(metaMap.get("equity") ?? 0),
-    returnPct: num(metaMap.get("returnPct") ?? 0),
-    cash: num(metaMap.get("cash") ?? 0),
-    invested: num(metaMap.get("invested") ?? 0),
-    openPositions: int(metaMap.get("openPositions") ?? 0),
-    openRiskPct: num(metaMap.get("openRiskPct") ?? 0),
-    grossExposurePct: num(metaMap.get("grossExposurePct") ?? 0),
-    riskPolicy: parseJson(metaMap.get("riskPolicy"), {}),
-  };
+  const portfolio = derivePortfolioFromActivePositions(metaMap, positions);
 
   const marketData = deriveMarketData(metaMap.get("marketData"));
 
@@ -684,17 +705,14 @@ export async function readPortfolioAndPositions(
   ]);
   const metaMap = new Map<string, string>((metaRes.results as { key: string; value: string }[]).map((r) => [r.key, r.value]));
 
-  const rawPortfolio = {
-    initialCapital: num(metaMap.get("initialCapital") ?? 10000),
-    equity: num(metaMap.get("equity") ?? 0),
-    returnPct: num(metaMap.get("returnPct") ?? 0),
-    cash: num(metaMap.get("cash") ?? 0),
-    invested: num(metaMap.get("invested") ?? 0),
-    openPositions: int(metaMap.get("openPositions") ?? 0),
-    openRiskPct: num(metaMap.get("openRiskPct") ?? 0),
-    grossExposurePct: num(metaMap.get("grossExposurePct") ?? 0),
-    riskPolicy: parseJson(metaMap.get("riskPolicy"), {}),
-  };
+  const rawPositions = (positionsRes.results as Record<string, unknown>[]).map(mapPositionRow);
+  const validatedPositions = z.array(dashboardPositionSchema).safeParse(rawPositions);
+  if (!validatedPositions.success) {
+    console.error("positions read-model validation failed", validatedPositions.error.issues.length);
+  }
+  const positions = validatedPositions.success ? (validatedPositions.data as DashboardData["positions"]) : [];
+
+  const rawPortfolio = derivePortfolioFromActivePositions(metaMap, positions);
   const validatedPortfolio = dashboardPortfolioSchema.safeParse(rawPortfolio);
   if (!validatedPortfolio.success) {
     console.error("portfolio read-model validation failed", validatedPortfolio.error.issues.length);
@@ -702,13 +720,6 @@ export async function readPortfolioAndPositions(
   const portfolio = validatedPortfolio.success
     ? (validatedPortfolio.data as DashboardData["portfolio"])
     : emptyDashboard.portfolio;
-
-  const rawPositions = (positionsRes.results as Record<string, unknown>[]).map(mapPositionRow);
-  const validatedPositions = z.array(dashboardPositionSchema).safeParse(rawPositions);
-  if (!validatedPositions.success) {
-    console.error("positions read-model validation failed", validatedPositions.error.issues.length);
-  }
-  const positions = validatedPositions.success ? (validatedPositions.data as DashboardData["positions"]) : [];
 
   return { portfolio, positions };
 }
