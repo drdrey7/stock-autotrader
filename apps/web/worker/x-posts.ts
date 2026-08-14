@@ -1,12 +1,11 @@
 import { z } from "zod";
-import { isBriefingSymbolInUniverse } from "@stock-autotrader/contracts";
+import { isBriefingSymbolInUniverse, isoTimestampSchema } from "@stock-autotrader/contracts";
 
 export const X_POSTS_EVENT_TYPE = "X_POSTS_COLLECTED" as const;
 
 /** Source allowlist — mirrors the publisher's accounts registry (v1). */
 export const ALLOWED_X_AUTHORS = ["@nolimitgains"] as const;
 
-const isoTimestampSchema = z.string().datetime({ offset: true });
 const MAX_POST_CLOCK_SKEW_MS = 5 * 60 * 1000;
 const X_POST_HOSTS = new Set(["x.com", "www.x.com"]);
 

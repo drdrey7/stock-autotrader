@@ -194,6 +194,7 @@ export interface MarketDataSnapshot {
   updatedAt: string | null;
 }
 
+export * from "./primitives";
 export * from "./daily-briefing";
 export * from "./briefing-universe";
 export * from "./source-health";

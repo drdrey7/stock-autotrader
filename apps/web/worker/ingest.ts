@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { marketDataSchema, publishedDailyBriefingSchema } from "@stock-autotrader/contracts";
+import {
+  isoTimestampSchema,
+  marketDataSchema,
+  marketDateSchema,
+  publishedDailyBriefingSchema,
+} from "@stock-autotrader/contracts";
 import type { Env } from "./index";
 import { publishDailyBriefing } from "./daily-briefings";
 import { storeXPosts, xPostsCollectedEventSchema } from "./x-posts";
@@ -25,7 +30,6 @@ const directionSchema = z.enum(["Bullish", "Neutral", "Bearish"]).or(
   z.literal("Long").transform(() => "Bullish" as const),
 );
 
-const isoTimestampSchema = z.string().datetime({ offset: true });
 const MAX_EVENT_CLOCK_SKEW_MS = 5 * 60 * 1000;
 const MAX_INGEST_BODY_BYTES = 1_000_000;
 
@@ -56,11 +60,6 @@ async function readBodyWithinLimit(request: Request): Promise<string | null> {
   }
   return new TextDecoder().decode(bytes);
 }
-
-const marketDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
-  const parsed = new Date(`${value}T00:00:00Z`);
-  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
-}, "date must be a valid calendar date");
 
 const candidateSchema = z.object({
   symbol: z.string().regex(/^[A-Za-z0-9.-]{1,12}$/),

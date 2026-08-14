@@ -5,6 +5,7 @@ import {
   dashboardPositionSchema,
   dashboardReadSchema,
   dashboardStrategySchema,
+  isoTimestampSchema,
   marketDataSchema,
   publicSourceHealthSchema,
   sourceHealthSchema,
@@ -30,8 +31,6 @@ import {
  * from D1 for /api/dashboard, /api/status and the narrower endpoints derived
  * from it. index.ts only routes requests here and serializes the result.
  */
-
-const isoTimestampSchema = z.string().datetime({ offset: true });
 
 export const unavailableBriefingStatus = (): BriefingStatus => ({
   available: false,
