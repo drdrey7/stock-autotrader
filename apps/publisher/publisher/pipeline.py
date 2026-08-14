@@ -14,9 +14,8 @@ touches the network.
 """
 from __future__ import annotations
 
-import json
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -57,7 +56,7 @@ def _default_prepared_at(edition_type: str, now: datetime | None = None) -> date
     ``preparedAt`` must never be in the future (false provenance) and must
     never claim an earlier time than the run; the honest anchor is now.
     """
-    return (now or datetime.now(timezone.utc)).astimezone(ZoneInfoNY())
+    return (now or datetime.now(UTC)).astimezone(ZoneInfoNY())
 
 
 def ZoneInfoNY():
@@ -112,8 +111,8 @@ def run_pipeline(
         )
     anchor = prepared_at or _default_prepared_at(edition_type)
     if anchor.tzinfo is None:
-        anchor = anchor.replace(tzinfo=timezone.utc)
-    if publish and not dry_run and anchor.astimezone(timezone.utc) > datetime.now(timezone.utc):
+        anchor = anchor.replace(tzinfo=UTC)
+    if publish and not dry_run and anchor.astimezone(UTC) > datetime.now(UTC):
         return PipelineReport(
             ok=False, publishable=False, published=False,
             counts=counts, rejected=rejected, briefing=None,
@@ -236,7 +235,8 @@ def run_pipeline(
     # 5. Publish (only when explicitly requested and never in dry-run)
     published = False
     if publish and not dry_run:
-        from .client import make_event, publish as publish_events
+        from .client import make_event
+        from .client import publish as publish_events
 
         if not endpoint or not secret:
             return PipelineReport(

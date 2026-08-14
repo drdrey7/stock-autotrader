@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 CONTRACT = Path(__file__).resolve().parents[3] / "packages" / "contracts" / "src" / "briefing-universe.ts"
@@ -46,7 +46,7 @@ def main() -> None:
     }
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    generated_at = datetime.now(timezone.utc).isoformat()
+    generated_at = datetime.now(UTC).isoformat()
     for key, (index_name, symbols) in indexes.items():
         payload = {
             "version": version,

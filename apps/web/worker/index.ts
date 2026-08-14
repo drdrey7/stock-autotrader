@@ -426,6 +426,10 @@ async function buildDashboard(env: Env): Promise<DashboardData> {
     env.DB.prepare("SELECT * FROM strategies ORDER BY id").all(),
     // Surface only the candidates from the latest scan (older scans are history).
     env.DB.prepare("SELECT * FROM scan_candidates WHERE scan_id = (SELECT MAX(id) FROM scans) ORDER BY id").all(),
+    // `earnings` is the legacy quant/screening table, not the Automated
+    // Earnings Engine's read model — see README.md "Automated Earnings
+    // Engine (PR #12)". /api/earnings reads `earnings_events` instead,
+    // via readEarningsApi() in worker/earnings/.
     env.DB.prepare("SELECT * FROM earnings ORDER BY date").all(),
     env.DB.prepare("SELECT * FROM shadow_positions ORDER BY id").all(),
     env.DB.prepare("SELECT * FROM bot_events ORDER BY id").all(),

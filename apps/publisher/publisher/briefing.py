@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -43,7 +43,7 @@ def calendar_date_in_briefing_timezone(timestamp: datetime) -> str:
 
 
 def _iso(timestamp: datetime) -> str:
-    return timestamp.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    return timestamp.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _market_summary(benchmarks: list[BenchmarkItem]) -> str:

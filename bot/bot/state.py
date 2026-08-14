@@ -61,7 +61,7 @@ class StateStore:
     def record_event(self, level: str, source: str, message: str) -> None:
         import datetime as _dt
 
-        ts = _dt.datetime.now(_dt.timezone.utc).isoformat()
+        ts = _dt.datetime.now(_dt.UTC).isoformat()
         with self.tx() as conn:
             conn.execute(
                 "INSERT INTO runtime_events (ts, level, source, message) VALUES (?, ?, ?, ?)",
@@ -71,7 +71,7 @@ class StateStore:
     def start_job(self, job_name: str) -> int:
         import datetime as _dt
 
-        ts = _dt.datetime.now(_dt.timezone.utc).isoformat()
+        ts = _dt.datetime.now(_dt.UTC).isoformat()
         with self.tx() as conn:
             cur = conn.execute(
                 "INSERT INTO job_runs (job_name, started_at) VALUES (?, ?)",
@@ -82,7 +82,7 @@ class StateStore:
     def finish_job(self, run_id: int, status: str, detail: str | None = None) -> None:
         import datetime as _dt
 
-        ts = _dt.datetime.now(_dt.timezone.utc).isoformat()
+        ts = _dt.datetime.now(_dt.UTC).isoformat()
         with self.tx() as conn:
             conn.execute(
                 "UPDATE job_runs SET finished_at = ?, status = ?, detail = ? WHERE id = ?",

@@ -106,7 +106,6 @@ class SchedulerTests(unittest.TestCase):
 
         trigger = _cron("30 7 * * mon-fri")
         now = __import__("datetime").datetime.now(ZoneInfo("America/New_York"))
-        tz = ZoneInfo("America/New_York")
         fires = []
         prev = None
         for _ in range(20):

@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 from apscheduler.triggers.cron import CronTrigger
-from zoneinfo import ZoneInfo
 
 from .config import Settings
 from .state import StateStore
@@ -71,7 +71,7 @@ def health_report(settings: Settings, store: StateStore, sched=None) -> dict:
         try:
             finished = datetime.fromisoformat(last_health["finished_at"])
             if finished.tzinfo is None:
-                finished = finished.replace(tzinfo=timezone.utc)
+                finished = finished.replace(tzinfo=UTC)
             if _missed_health_check(settings, finished):
                 health_failed = True
         except (TypeError, ValueError):

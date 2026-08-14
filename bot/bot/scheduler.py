@@ -7,16 +7,16 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-
-from apscheduler.schedulers.blocking import BlockingScheduler
-from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.cron import CronTrigger
 from zoneinfo import ZoneInfo
 
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.schedulers.blocking import BlockingScheduler
+from apscheduler.triggers.cron import CronTrigger
+
 from .config import Settings
-from .state import StateStore
 from .jobs.health import health_job
 from .jobs.market_data import market_data_job
+from .state import StateStore
 
 log = logging.getLogger(__name__)
 

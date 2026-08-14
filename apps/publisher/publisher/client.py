@@ -11,7 +11,7 @@ import hashlib
 import hmac
 import json
 import urllib.request
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 
@@ -35,7 +35,7 @@ def publish(endpoint: str, secret: str, events: list[dict[str, Any]], timeout: i
     request.add_header("Accept", "application/json, text/plain, */*")
     request.add_header("Accept-Language", "en-US,en;q=0.9")
     request.add_header("Content-Type", "application/json")
-    timestamp = datetime.now(timezone.utc).isoformat()
+    timestamp = datetime.now(UTC).isoformat()
     request.add_header("X-Ingest-Signature", sign(secret, body, timestamp))
     request.add_header("X-Ingest-Timestamp", timestamp)
     with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -46,7 +46,7 @@ def make_event(event_type: str, payload: dict[str, Any], event_id: str | None = 
     """Build a normalized event envelope."""
     return {
         "type": event_type,
-        "event_id": event_id or f"{event_type.lower()}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "event_id": event_id or f"{event_type.lower()}-{datetime.now(UTC).strftime('%Y%m%d%H%M%S%f')}",
+        "timestamp": datetime.now(UTC).isoformat(),
         "payload": payload,
     }

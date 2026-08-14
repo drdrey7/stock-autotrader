@@ -46,6 +46,10 @@ jobs:
       - name: Validate seed against local D1
         working-directory: apps/web
         run: node scripts/seed.mjs --local
+      - name: Lint Python (ruff)
+        run: |
+          pip install --quiet "ruff>=0.15,<1"
+          ruff check .
       - name: Test publisher client (Python)
         run: npm run test -w @stock-autotrader/publisher
       - name: Test VPS runtime (bot, PR #4)

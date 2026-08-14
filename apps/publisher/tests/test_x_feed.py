@@ -3,14 +3,14 @@ from __future__ import annotations
 
 import json
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 from publisher.universe import load_universe
 from publisher.x_feed import XPost, extract_tickers, ingest_posts
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-PREPARED_AT = datetime(2026, 8, 12, 12, 30, tzinfo=timezone.utc)  # 08:30 ET EDT
+PREPARED_AT = datetime(2026, 8, 12, 12, 30, tzinfo=UTC)  # 08:30 ET EDT
 
 
 class XFeedTests(unittest.TestCase):

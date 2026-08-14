@@ -3,13 +3,13 @@ from __future__ import annotations
 
 import json
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from pathlib import Path
 
 from publisher.pipeline import run_pipeline
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-PREPARED_AT = datetime(2026, 8, 12, 12, 30, tzinfo=timezone.utc)  # 08:30 ET EDT
+PREPARED_AT = datetime(2026, 8, 12, 12, 30, tzinfo=UTC)  # 08:30 ET EDT
 
 
 def _load(name: str) -> dict | list:
@@ -162,17 +162,18 @@ class PipelineTests(unittest.TestCase):
 
     def test_default_prepared_at_never_in_future(self) -> None:
         from datetime import timezone as dt_timezone
+
         from publisher.pipeline import _default_prepared_at
 
-        early = datetime(2026, 8, 12, 11, 0, 0, tzinfo=dt_timezone.utc)  # 07:00 ET
-        late = datetime(2026, 8, 12, 14, 0, 0, tzinfo=dt_timezone.utc)  # 10:00 ET
+        early = datetime(2026, 8, 12, 11, 0, 0, tzinfo=UTC)  # 07:00 ET
+        late = datetime(2026, 8, 12, 14, 0, 0, tzinfo=UTC)  # 10:00 ET
         for now in (early, late):
             with self.subTest(now=now):
                 self.assertEqual(_default_prepared_at("pre_market", now=now), now)
 
     def test_future_prepared_at_rejected_before_publish(self) -> None:
         report = self._run(
-            prepared_at=datetime(2099, 1, 1, tzinfo=timezone.utc),
+            prepared_at=datetime(2099, 1, 1, tzinfo=UTC),
             dry_run=False,
             publish=True,
             endpoint="http://127.0.0.1:1/ingest/events",

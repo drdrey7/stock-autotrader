@@ -19,6 +19,7 @@ class SmokeTests(unittest.TestCase):
     def test_market_data_publish_without_secret_fails_cleanly(self):
         from types import SimpleNamespace
         from unittest.mock import patch
+
         from bot.config import Settings
 
         output = io.StringIO()
