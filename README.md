@@ -118,6 +118,11 @@ index-specific features legitimately need them. X/Trending dynamic membership
 is not implemented. A future authenticated Admin page can write the same D1
 `earnings_universe` model while runtime readers remain unchanged.
 
+The local demo seed consumes this same JSON configuration and reconciles the
+Core rows before inserting demo stock data, so the documented
+`npm run db:migrate:local` followed by `npm run db:seed:local` workflow keeps
+Core demo symbols publicly visible without activating non-Core symbols.
+
 Deferred product decision: Legacy bot/trading code is scheduled for deletion
 and full redesign; current PR must not treat it as production architecture.
 

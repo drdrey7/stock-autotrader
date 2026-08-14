@@ -22,6 +22,7 @@ const esbuildBin = existsSync(path.join(webDir, "node_modules/.bin/esbuild"))
   ? path.join(webDir, "node_modules/.bin/esbuild")
   : path.join(repoDir, "node_modules/.bin/esbuild");
 const bundlePath = path.join(cacheDir, "demo-data.cjs");
+const coreBundlePath = path.join(cacheDir, "core-universe.cjs");
 const sqlPath = path.join(cacheDir, "seed.sql");
 const local = process.argv.includes("--local");
 
@@ -37,6 +38,18 @@ execFileSync(esbuildBin, [
 ], { stdio: "inherit" });
 
 const { demoData } = await import(pathToFileURL(bundlePath).href);
+
+// Bundle the validated Core configuration as well. The seed must consume the
+// checked-in source of truth rather than maintain a second ticker list.
+execFileSync(esbuildBin, [
+  path.join(repoDir, "packages/contracts/src/core-universe.ts"),
+  "--bundle",
+  "--format=cjs",
+  "--platform=node",
+  `--outfile=${coreBundlePath}`,
+], { stdio: "inherit" });
+
+const { CORE_UNIVERSE, CORE_UNIVERSE_VERSION } = await import(pathToFileURL(coreBundlePath).href);
 
 const esc = (v) => String(v).replace(/'/g, "''");
 const q = (v) => `'${esc(v)}'`;
@@ -69,8 +82,36 @@ lines.push(
   "DELETE FROM sqlite_sequence;",
 );
 
-// app_meta (portfolio + status extras + risk policy)
 const { status, portfolio, scan } = demoData;
+const seedUpdatedAt = status.lastDataUpdate ?? status.latestScan ?? "2026-08-10T20:15:00Z";
+const coreSymbolsSql = CORE_UNIVERSE.map(q);
+
+// Reconcile the canonical Core baseline before inserting stock-specific demo
+// rows. Existing universe lifecycle rows remain historical; only membership
+// state changes, matching the runtime reconciliation behavior.
+lines.push(
+  `UPDATE earnings_universe
+   SET active = 0,
+       universe_version = ${Number(CORE_UNIVERSE_VERSION)},
+       removed_at = COALESCE(removed_at, ${q(seedUpdatedAt)}),
+       updated_at = ${q(seedUpdatedAt)}
+   WHERE source = 'core'
+     AND symbol NOT IN (${coreSymbolsSql.join(",")})
+     AND (active = 1 OR removed_at IS NULL);`,
+  `INSERT INTO earnings_universe
+    (symbol, company, cik, exchange, investor_relations_url, index_memberships, metadata_provider, active, source, universe_version, added_at, removed_at, updated_at)
+   VALUES
+${CORE_UNIVERSE.map((symbol) => `(${q(symbol)},${q(symbol)},NULL,NULL,NULL,${q("[]")},${q("core-universe")},1,${q("core")},${Number(CORE_UNIVERSE_VERSION)},${q(seedUpdatedAt)},NULL,${q(seedUpdatedAt)})`).join(",\n")}
+   ON CONFLICT(symbol) DO UPDATE SET
+     active = 1,
+     source = 'core',
+     universe_version = excluded.universe_version,
+     added_at = COALESCE(earnings_universe.added_at, excluded.added_at),
+     removed_at = NULL,
+     updated_at = excluded.updated_at;`,
+);
+
+// app_meta (portfolio + status extras + risk policy)
 const metaRows = [
   ["initialCapital", String(portfolio.initialCapital)],
   ["equity", String(portfolio.equity)],
@@ -196,4 +237,5 @@ else args.push("--remote");
 console.log(`Applying seed to ${local ? "local" : "remote"} D1...`);
 execFileSync("npx", ["--yes", "wrangler@4", ...args], { stdio: "inherit", cwd: webDir });
 unlinkSync(bundlePath);
+unlinkSync(coreBundlePath);
 console.log("Seed complete.");
