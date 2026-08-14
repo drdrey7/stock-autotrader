@@ -87,7 +87,7 @@ const dashboardReasonSchema = z.object({
   threshold: z.string().max(200).optional(),
 });
 
-const dashboardCandidateSchema = z.object({
+export const dashboardCandidateSchema = z.object({
   symbol: z.string().regex(/^[A-Za-z0-9.-]{1,12}$/),
   company: z.string().min(1).max(200),
   sector: z.string(),
@@ -125,15 +125,89 @@ const dashboardEarningsSchema = z.object({
   updatedAt: isoTimestampSchema,
 });
 
+export const dashboardStatusSchema = z.object({
+  engine: z.enum(["online", "offline", "delayed"]),
+  latestScan: isoTimestampSchema.nullable(),
+  nextScan: isoTimestampSchema.nullable(),
+  lastDataUpdate: isoTimestampSchema.nullable(),
+  apiHealth: z.enum(["healthy", "degraded"]),
+});
+
+export const dashboardRiskPolicySchema = z.object({
+  riskPerTradePct: z.number().positive(),
+  maxPositions: z.number().int().positive(),
+  maxOpenRiskPct: z.number().positive(),
+  maxSinglePositionPct: z.number().positive(),
+  maxSectorExposurePct: z.number().positive(),
+  maxGrossExposurePct: z.number().positive(),
+  leverage: z.string(),
+  averagingDown: z.boolean(),
+  martingale: z.boolean(),
+});
+
+export const dashboardPortfolioSchema = z.object({
+  initialCapital: z.number().positive(),
+  equity: z.number().nonnegative(),
+  returnPct: z.number(),
+  cash: z.number().nonnegative(),
+  invested: z.number().nonnegative(),
+  openPositions: z.number().int().nonnegative(),
+  openRiskPct: z.number().nonnegative(),
+  grossExposurePct: z.number().nonnegative(),
+  riskPolicy: dashboardRiskPolicySchema,
+});
+
+export const dashboardStrategySchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  version: z.string(),
+  description: z.string(),
+  state: z.enum(["Research", "Validation", "Out-of-Sample", "Shadow", "Live"]),
+  enabled: z.boolean(),
+  universe: z.string(),
+  holdingPeriod: z.string(),
+  signalsToday: z.number(),
+  openPositions: z.number(),
+  parameters: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])),
+});
+
+export const dashboardPositionSchema = z.object({
+  symbol: z.string(),
+  strategy: z.string(),
+  entryPrice: z.number(),
+  currentPrice: z.number(),
+  stopPrice: z.number(),
+  quantity: z.number().int(),
+  riskAmount: z.number(),
+  unrealizedPnl: z.number(),
+  returnPct: z.number(),
+  rMultiple: z.number(),
+  openedAt: isoTimestampSchema,
+});
+
+const dashboardEventSchema = z.object({
+  id: z.string(),
+  type: z.string(),
+  message: z.string(),
+  severity: z.enum(["info", "success", "warning", "error"]),
+  symbol: z.string().optional(),
+  strategyId: z.string().optional(),
+  createdAt: isoTimestampSchema,
+});
+
+const dashboardResearchSchema = z.object({
+  id: z.string(),
+  strategyId: z.string(),
+  strategy: z.string(),
+  stage: z.enum(["Research", "Validation", "Out-of-Sample", "Shadow", "Live"]),
+  period: z.string(),
+  status: z.enum(["Demo", "Pending", "Complete"]),
+  metrics: z.record(z.string(), z.number().nullable()),
+});
+
 export const dashboardReadSchema = z.object({
   demo: z.boolean(),
-  status: z.object({
-    engine: z.enum(["online", "offline", "delayed"]),
-    latestScan: isoTimestampSchema.nullable(),
-    nextScan: isoTimestampSchema.nullable(),
-    lastDataUpdate: isoTimestampSchema.nullable(),
-    apiHealth: z.enum(["healthy", "degraded"]),
-  }),
+  status: dashboardStatusSchema,
   marketData: marketDataSchema,
   scan: z.object({
     universe: z.number().int().nonnegative(),
@@ -142,71 +216,11 @@ export const dashboardReadSchema = z.object({
     setups: z.number().int().nonnegative(),
     watch: z.number().int().nonnegative(),
   }),
-  portfolio: z.object({
-    initialCapital: z.number().positive(),
-    equity: z.number().nonnegative(),
-    returnPct: z.number(),
-    cash: z.number().nonnegative(),
-    invested: z.number().nonnegative(),
-    openPositions: z.number().int().nonnegative(),
-    openRiskPct: z.number().nonnegative(),
-    grossExposurePct: z.number().nonnegative(),
-    riskPolicy: z.object({
-      riskPerTradePct: z.number().positive(),
-      maxPositions: z.number().int().positive(),
-      maxOpenRiskPct: z.number().positive(),
-      maxSinglePositionPct: z.number().positive(),
-      maxSectorExposurePct: z.number().positive(),
-      maxGrossExposurePct: z.number().positive(),
-      leverage: z.string(),
-      averagingDown: z.boolean(),
-      martingale: z.boolean(),
-    }),
-  }),
-  strategies: z.array(z.object({
-    id: z.string(),
-    name: z.string(),
-    version: z.string(),
-    description: z.string(),
-    state: z.enum(["Research", "Validation", "Out-of-Sample", "Shadow", "Live"]),
-    enabled: z.boolean(),
-    universe: z.string(),
-    holdingPeriod: z.string(),
-    signalsToday: z.number(),
-    openPositions: z.number(),
-    parameters: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])),
-  })),
+  portfolio: dashboardPortfolioSchema,
+  strategies: z.array(dashboardStrategySchema),
   candidates: z.array(dashboardCandidateSchema),
-  events: z.array(z.object({
-    id: z.string(),
-    type: z.string(),
-    message: z.string(),
-    severity: z.enum(["info", "success", "warning", "error"]),
-    symbol: z.string().optional(),
-    strategyId: z.string().optional(),
-    createdAt: isoTimestampSchema,
-  })),
+  events: z.array(dashboardEventSchema),
   earnings: z.array(dashboardEarningsSchema),
-  positions: z.array(z.object({
-    symbol: z.string(),
-    strategy: z.string(),
-    entryPrice: z.number(),
-    currentPrice: z.number(),
-    stopPrice: z.number(),
-    quantity: z.number().int(),
-    riskAmount: z.number(),
-    unrealizedPnl: z.number(),
-    returnPct: z.number(),
-    rMultiple: z.number(),
-    openedAt: isoTimestampSchema,
-  })),
-  research: z.array(z.object({
-    id: z.string(),
-    strategyId: z.string(),
-    strategy: z.string(),
-    stage: z.enum(["Research", "Validation", "Out-of-Sample", "Shadow", "Live"]),
-    period: z.string(),
-    status: z.enum(["Demo", "Pending", "Complete"]),
-    metrics: z.record(z.string(), z.number().nullable()),
-  })),
+  positions: z.array(dashboardPositionSchema),
+  research: z.array(dashboardResearchSchema),
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { D1Database } from "@cloudflare/workers-types";
-import worker, { buildMarketContextHealth, unavailableSources, type Env } from "./index";
+import worker, { type Env } from "./index";
+import { buildMarketContextHealth, unavailableSources } from "./dashboard";
 import type { MarketContextReadModel } from "./market-context";
 import type { DashboardData, MarketDataSnapshot, PublicSourceHealth, StrategySummary } from "@stock-autotrader/contracts";
 
@@ -11,7 +12,7 @@ type StatusBody = DashboardData & {
   sentiment: unknown;
 };
 type StockBody = { symbol: string; strategy: string; direction: string };
-type PortfolioBody = { portfolio: unknown; positions: unknown[] };
+type PortfolioBody = { portfolio: { riskPolicy: { maxPositions: number; leverage: string } }; positions: unknown[] };
 
 /**
  * A minimal, table-aware D1 fake. Each table is seeded independently; any
@@ -32,7 +33,7 @@ interface Tables {
   research: Record<string, unknown>[];
 }
 
-type ThrowOn = Partial<Record<"appMeta" | "dailyBriefings", boolean>>;
+type ThrowOn = Partial<Record<"appMeta" | "dailyBriefings" | "scanCandidates" | "marketData", boolean>>;
 
 function createDb(tables: Partial<Tables> = {}, throwOn: ThrowOn = {}) {
   const t: Tables = {
@@ -61,12 +62,27 @@ function createDb(tables: Partial<Tables> = {}, throwOn: ThrowOn = {}) {
             if (throwOn.dailyBriefings) throw new Error("daily_briefings unavailable");
             return null;
           }
+          // readCandidateBySymbol's scoped lookup (WHERE scan_id = ... AND symbol = ?).
+          if (sql.startsWith("SELECT * FROM scan_candidates WHERE scan_id")) {
+            if (throwOn.scanCandidates) throw new Error("scan_candidates unavailable");
+            const symbol = args[0];
+            return (t.scanCandidates.find((row) => row.symbol === symbol) as T | undefined) ?? null;
+          }
+          if (sql === "SELECT value FROM app_meta WHERE key = 'marketData'") {
+            if (throwOn.marketData) throw new Error("marketData unavailable");
+            const value = t.appMeta.marketData;
+            return (value === undefined ? null : ({ value } as T));
+          }
           return null;
         },
         async all<T>(): Promise<{ results: T[] }> {
           if (sql === "SELECT key, value FROM app_meta") {
             if (throwOn.appMeta) throw new Error("app_meta unavailable");
             return { results: Object.entries(t.appMeta).map(([key, value]) => ({ key, value })) as T[] };
+          }
+          if (sql.startsWith("SELECT key, value FROM app_meta WHERE key IN")) {
+            const keys = new Set(args.map(String));
+            return { results: Object.entries(t.appMeta).filter(([key]) => keys.has(key)).map(([key, value]) => ({ key, value })) as T[] };
           }
           if (sql.startsWith("SELECT * FROM decision_reasons")) {
             const ids = new Set(args.map((value) => Number(value)));
@@ -374,17 +390,18 @@ describe("narrow endpoints derived from the dashboard read model", () => {
   });
 
   it("GET /api/stocks/:symbol fails closed on a store error", async () => {
-    const env = envWith({}, { appMeta: true });
+    const env = envWith({}, { scanCandidates: true });
     const response = await worker.fetch(new Request("https://example.test/api/stocks/NVDA"), env);
     expect(response.status).toBe(500);
   });
 
-  it("GET /api/portfolio/shadow returns portfolio + positions only", async () => {
+  it("GET /api/portfolio/shadow returns portfolio + positions only, from the scoped app_meta keys", async () => {
     const env = envWith(healthyTables());
     const response = await worker.fetch(new Request("https://example.test/api/portfolio/shadow"), env);
     expect(response.status).toBe(200);
     const body = (await response.json()) as PortfolioBody;
     expect(Object.keys(body).sort()).toEqual(["portfolio", "positions"]);
+    expect(body.portfolio.riskPolicy).toMatchObject({ maxPositions: 5, leverage: "1x" });
     expect(body.positions).toHaveLength(1);
   });
 
@@ -398,7 +415,15 @@ describe("narrow endpoints derived from the dashboard read model", () => {
   });
 
   it("GET /api/market-data returns the empty snapshot, not an error, on a store failure", async () => {
-    const env = envWith({}, { appMeta: true });
+    const env = envWith({}, { marketData: true });
+    const response = await worker.fetch(new Request("https://example.test/api/market-data"), env);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as MarketDataSnapshot;
+    expect(body.status).toBe("offline");
+  });
+
+  it("GET /api/market-data returns the offline default when no snapshot has ever been published", async () => {
+    const env = envWith({});
     const response = await worker.fetch(new Request("https://example.test/api/market-data"), env);
     expect(response.status).toBe(200);
     const body = (await response.json()) as MarketDataSnapshot;
