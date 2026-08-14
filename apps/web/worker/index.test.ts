@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { D1Database } from "@cloudflare/workers-types";
 import worker, { type Env } from "./index";
-import { buildMarketContextHealth, unavailableSources } from "./dashboard";
+import { buildDashboard, buildMarketContextHealth, unavailableSources } from "./dashboard";
 import type { MarketContextReadModel } from "./market-context";
 import type { DashboardData, MarketDataSnapshot, PublicSourceHealth, StrategySummary } from "@stock-autotrader/contracts";
 
@@ -235,12 +235,10 @@ function healthyTables(): Partial<Tables> {
   };
 }
 
-describe("buildDashboard via /api/dashboard", () => {
+describe("buildDashboard()", () => {
   it("maps every table into the validated dashboard shape", async () => {
     const env = envWith(healthyTables());
-    const response = await worker.fetch(new Request("https://example.test/api/dashboard"), env);
-    expect(response.status).toBe(200);
-    const body = (await response.json()) as DashboardData;
+    const body = await buildDashboard(env);
 
     expect(body.demo).toBe(false);
     expect(body.status).toMatchObject({ engine: "online", apiHealth: "healthy", latestScan: "2026-08-13T11:00:00Z" });
@@ -300,7 +298,7 @@ describe("buildDashboard via /api/dashboard", () => {
       { candidate_id: 43, reason_code: "RVOL_LOW", reason_label: "Below average volume", outcome: "reject" },
     ];
     const env = envWith(tables);
-    const body = (await (await worker.fetch(new Request("https://example.test/api/dashboard"), env)).json()) as DashboardData;
+    const body = await buildDashboard(env);
 
     const nvda = body.candidates.find((c) => c.symbol === "NVDA")!;
     const amd = body.candidates.find((c) => c.symbol === "AMD")!;
@@ -312,7 +310,7 @@ describe("buildDashboard via /api/dashboard", () => {
     const tables = healthyTables();
     tables.appMeta = { ...tables.appMeta, lastDataUpdate: "2020-01-01T00:00:00Z" };
     const env = envWith(tables);
-    const body = (await (await worker.fetch(new Request("https://example.test/api/dashboard"), env)).json()) as DashboardData;
+    const body = await buildDashboard(env);
     expect(body.status.engine).toBe("delayed");
     expect(body.status.apiHealth).toBe("degraded");
   });
@@ -321,7 +319,7 @@ describe("buildDashboard via /api/dashboard", () => {
     const tables = healthyTables();
     tables.scan = { ...tables.scan!, scanned_at: "not-a-timestamp" };
     const env = envWith(tables);
-    const body = (await (await worker.fetch(new Request("https://example.test/api/dashboard"), env)).json()) as DashboardData;
+    const body = await buildDashboard(env);
     expect(body.status.engine).toBe("delayed");
     expect(body.status.apiHealth).toBe("degraded");
   });
@@ -345,7 +343,7 @@ describe("buildDashboard via /api/dashboard", () => {
       }),
     };
     const env = envWith(tables);
-    const body = (await (await worker.fetch(new Request("https://example.test/api/dashboard"), env)).json()) as DashboardData;
+    const body = await buildDashboard(env);
     expect(body.marketData.status).toBe("degraded");
     expect(body.marketData.warnings.some((w) => w.includes("stale"))).toBe(true);
   });
@@ -357,20 +355,16 @@ describe("buildDashboard via /api/dashboard", () => {
     // fail closed to the empty dashboard rather than serve a broken shape.
     tables.scanCandidates = [{ ...tables.scanCandidates![0], trend: "Sideways" }];
     const env = envWith(tables);
-    const body = (await (await worker.fetch(new Request("https://example.test/api/dashboard"), env)).json()) as DashboardData;
+    const body = await buildDashboard(env);
     expect(body.candidates).toEqual([]);
     expect(body.status.engine).toBe("offline");
     expect(errorSpy).toHaveBeenCalled();
     errorSpy.mockRestore();
   });
 
-  it("returns the empty dashboard, not a 500, when the store is entirely unavailable", async () => {
+  it("propagates a store error rather than swallowing it — /api/status's retry logic depends on this", async () => {
     const env = envWith({}, { appMeta: true });
-    const response = await worker.fetch(new Request("https://example.test/api/dashboard"), env);
-    expect(response.status).toBe(200);
-    const body = (await response.json()) as DashboardData;
-    expect(body.status.engine).toBe("offline");
-    expect(body.candidates).toEqual([]);
+    await expect(buildDashboard(env)).rejects.toThrow("app_meta unavailable");
   });
 });
 
@@ -475,7 +469,7 @@ describe("routing", () => {
 
   it("rejects a non-GET/HEAD/OPTIONS method on an API route with 405", async () => {
     const env = envWith(healthyTables());
-    const response = await worker.fetch(new Request("https://example.test/api/dashboard", { method: "POST" }), env);
+    const response = await worker.fetch(new Request("https://example.test/api/status", { method: "POST" }), env);
     expect(response.status).toBe(405);
   });
 

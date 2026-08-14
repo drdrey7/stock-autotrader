@@ -63,3 +63,8 @@ Builds from the repo root (`bot/Dockerfile`) so it can also install
 `apps/publisher` on `PYTHONPATH`; runtime state lives on a bind-mounted
 volume (`bot/data`). No ports are exposed — this is a private, outbound-only
 runtime.
+
+The image installs from `requirements-lock.txt` (exact versions), not
+`pyproject.toml`'s ranges directly, so a rebuild months from now doesn't
+silently pick up a different dependency version — see that file's header for
+how to regenerate it after bumping a range in `pyproject.toml`.

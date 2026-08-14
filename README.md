@@ -157,7 +157,8 @@ npx --yes wrangler@4.122.0 deploy --dry-run
 ```
 
 PR preview setup and its security boundary are documented in
-[`docs/PR13_PR_PREVIEWS.md`](docs/PR13_PR_PREVIEWS.md).
+[`docs/PR13_PR_PREVIEWS.md`](docs/PR13_PR_PREVIEWS.md). The public `/api/*`
+routes are documented in [`docs/api.md`](docs/api.md).
 
 ## Project structure
 
@@ -165,9 +166,11 @@ PR preview setup and its security boundary are documented in
 apps/web/src/morning-briefing/             Current Morning Briefing product UI
 apps/web/src/morning-briefing/data/        UI-only formatting and source adapters
 apps/web/src/daily-briefing-pages.tsx       Retained public information pages
-apps/web/worker                             Worker APIs, signed ingest and D1 read models
+apps/web/worker                             Worker APIs, signed ingest and D1 read models (routing only)
+apps/web/worker/dashboard.ts                Dashboard/source-health read model + scoped table readers
 apps/web/worker/daily-briefings.ts          DailyBriefing publication/read helpers
 apps/web/worker/x-posts.ts                  Curated X post publication/read helpers
+apps/web/worker/earnings/                   Automated Earnings Engine (providers, logic, D1 storage)
 apps/web/migrations                         D1 schema migrations
 bot/bot                                     Private runtime foundation (scan/signal engine not yet wired up — see bot/README.md)
 packages/contracts                          Shared validated contracts and schemas

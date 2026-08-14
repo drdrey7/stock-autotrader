@@ -13,22 +13,6 @@ import { storeXPosts, xPostsCollectedEventSchema } from "./x-posts";
  * - Strict schemas: invalid events are rejected with 400; nothing is passed through.
  */
 
-const EVENT_TYPES = [
-  "DAILY_BRIEFING_PUBLISHED",
-  "X_POSTS_COLLECTED",
-  "SCAN_STARTED",
-  "SCAN_COMPLETED",
-  "SIGNAL_SURFACED",
-  "SIGNAL_UPDATED",
-  "SIGNAL_REJECTED",
-  "SHADOW_POSITION_OPENED",
-  "SHADOW_POSITION_UPDATED",
-  "SHADOW_POSITION_CLOSED",
-  "EARNINGS_UPDATED",
-  "MARKET_DATA_UPDATED",
-  "SYSTEM_STATUS",
-] as const;
-
 const reasonSchema = z.object({
   code: z.string().min(1).max(64),
   label: z.string().min(1).max(200),
@@ -41,7 +25,7 @@ const directionSchema = z.enum(["Bullish", "Neutral", "Bearish"]).or(
   z.literal("Long").transform(() => "Bullish" as const),
 );
 
-export const isoTimestampSchema = z.string().datetime({ offset: true });
+const isoTimestampSchema = z.string().datetime({ offset: true });
 const MAX_EVENT_CLOCK_SKEW_MS = 5 * 60 * 1000;
 const MAX_INGEST_BODY_BYTES = 1_000_000;
 
@@ -73,7 +57,7 @@ async function readBodyWithinLimit(request: Request): Promise<string | null> {
   return new TextDecoder().decode(bytes);
 }
 
-export const marketDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
+const marketDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
   const parsed = new Date(`${value}T00:00:00Z`);
   return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }, "date must be a valid calendar date");
@@ -178,7 +162,6 @@ const eventSchema = z.discriminatedUnion("type", [
 type IngestEvent = z.infer<typeof eventSchema>;
 
 export { eventSchema };
-export const dailyBriefingPublishedEventSchema = eventSchema.options[0];
 export type { IngestEvent };
 
 const JSON_HEADERS = {
@@ -474,5 +457,3 @@ export async function handleIngest(request: Request, env: Env): Promise<Response
 
   return json({ applied, skipped, rejected });
 }
-
-export { EVENT_TYPES };
