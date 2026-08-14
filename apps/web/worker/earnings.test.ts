@@ -5,9 +5,11 @@ import {
   buildEventId,
   calculateMetric,
   calculateOverallResult,
+  endOfWeek,
   normalizeEvent,
   rollingEarningsRange,
   shouldPollEarnings,
+  startOfWeek,
 } from "./earnings/logic";
 import {
   createDefaultEarningsProviders,
@@ -295,6 +297,21 @@ describe("earnings calendar and result logic", () => {
     expect(shouldPollEarnings("AMC", new Date("2026-08-13T19:30:00.000Z"))).toBe(true);
     expect(shouldPollEarnings("AMC", new Date("2026-08-13T13:00:00.000Z"))).toBe(false);
     expect(shouldPollEarnings("TBD", new Date("2026-08-13T17:00:00.000Z"))).toBe(true);
+  });
+
+  it("resolves every weekday of a Mon-Sun span to the same startOfWeek/endOfWeek, including Sunday", () => {
+    // 2026-08-10 is a Monday; 2026-08-16 is the following Sunday. Every date
+    // in that span must resolve to the same week, or a Sunday poll of
+    // summary.thisWeek would silently report the wrong (forward) week.
+    const monday = "2026-08-10";
+    const sunday = "2026-08-16";
+    for (const day of ["2026-08-10", "2026-08-11", "2026-08-12", "2026-08-13", "2026-08-14", "2026-08-15", "2026-08-16"]) {
+      expect(startOfWeek(day)).toBe(monday);
+      expect(endOfWeek(day)).toBe(sunday);
+    }
+    // The week rolls over cleanly on the following Monday.
+    expect(startOfWeek("2026-08-17")).toBe("2026-08-17");
+    expect(endOfWeek("2026-08-17")).toBe("2026-08-23");
   });
 });
 
