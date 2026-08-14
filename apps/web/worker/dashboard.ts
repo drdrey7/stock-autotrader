@@ -495,20 +495,22 @@ function mapPositionRow(p: Record<string, unknown>): DashboardData["positions"][
 }
 
 /**
- * Derive position-dependent portfolio totals from the same active-universe
- * positions that are returned publicly. Account-level values such as equity
- * and return remain published by the private runtime in app_meta; values that
- * describe the open position set must not come from a broader, stale snapshot.
+ * Derive portfolio totals from the same active-universe positions that are
+ * returned publicly. Cash is authoritative from app_meta; active-universe
+ * equity is that real cash plus only the visible holdings. This prevents a
+ * hidden position's value from being reclassified as public cash and keeps
+ * exposure and risk denominators on the same scope as the positions.
  */
 function derivePortfolioFromActivePositions(
   metaMap: Map<string, string>,
   positions: DashboardData["positions"],
 ) {
-  const equity = num(metaMap.get("equity") ?? 0);
+  const cash = Math.max(num(metaMap.get("cash") ?? 0), 0);
   const invested = positions.reduce(
     (total, position) => total + Math.max(position.currentPrice * position.quantity, 0),
     0,
   );
+  const equity = cash + invested;
   const openRisk = positions.reduce((total, position) => total + Math.max(position.riskAmount, 0), 0);
   const equityDenominator = equity > 0 ? equity : 0;
 
@@ -516,7 +518,7 @@ function derivePortfolioFromActivePositions(
     initialCapital: num(metaMap.get("initialCapital") ?? 10000),
     equity,
     returnPct: num(metaMap.get("returnPct") ?? 0),
-    cash: Math.max(equity - invested, 0),
+    cash,
     invested,
     openPositions: positions.length,
     openRiskPct: equityDenominator > 0 ? (openRisk / equityDenominator) * 100 : 0,
@@ -678,8 +680,7 @@ export async function buildDashboard(env: Env): Promise<DashboardData> {
 }
 
 const PORTFOLIO_META_KEYS = [
-  "initialCapital", "equity", "returnPct", "cash", "invested",
-  "openPositions", "openRiskPct", "grossExposurePct", "riskPolicy",
+  "initialCapital", "returnPct", "cash", "riskPolicy",
 ] as const;
 
 /** Scoped read for /api/strategies: only the strategies table. */
@@ -694,7 +695,7 @@ export async function readStrategies(db: D1Database): Promise<StrategySummary[]>
   return validated.data as StrategySummary[];
 }
 
-/** Scoped read for /api/portfolio/shadow: only the portfolio app_meta keys + shadow_positions. */
+/** Scoped read for /api/portfolio/shadow: account metadata + active positions. */
 export async function readPortfolioAndPositions(
   db: D1Database,
 ): Promise<{ portfolio: DashboardData["portfolio"]; positions: DashboardData["positions"] }> {

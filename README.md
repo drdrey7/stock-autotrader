@@ -118,6 +118,9 @@ index-specific features legitimately need them. X/Trending dynamic membership
 is not implemented. A future authenticated Admin page can write the same D1
 `earnings_universe` model while runtime readers remain unchanged.
 
+Deferred product decision: Legacy bot/trading code is scheduled for deletion
+and full redesign; current PR must not treat it as production architecture.
+
 The calendar and consensus contracts are provider-neutral. Finnhub is the
 production primary for the bulk earnings calendar: scheduled dates, BMO/AMC/
 TBD timing, fiscal quarter/year and EPS/revenue estimates and actuals. SEC

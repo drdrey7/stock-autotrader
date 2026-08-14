@@ -128,17 +128,17 @@ const validRiskPolicy = JSON.stringify({
 
 function healthyTables(): Partial<Tables> {
   return {
-    // Deliberately stale position aggregates: the public read model must
-    // recompute them from the active-filtered shadow positions below.
+    // Published account metadata for the one active position. Mixed-universe
+    // tests replace these with a broader runtime snapshot below.
     appMeta: {
       initialCapital: "10000",
       equity: "10000",
       returnPct: "0",
-      cash: "1",
-      invested: "9999",
-      openPositions: "99",
-      openRiskPct: "99",
-      grossExposurePct: "99",
+      cash: "8715",
+      invested: "1285",
+      openPositions: "1",
+      openRiskPct: "0.8",
+      grossExposurePct: "12.85",
       riskPolicy: validRiskPolicy,
     },
     scan: {
@@ -432,6 +432,20 @@ describe("narrow endpoints derived from the dashboard read model", () => {
       ...(tables.shadowPositions ?? []),
       { ...tables.shadowPositions![0], id: 43, symbol: "ABNB", current_price: 999, quantity: 100, risk_amount: 5000 },
     ];
+    // The unfiltered runtime snapshot includes the hidden ABNB position:
+    // total equity = $11,000, real cash = $4,000, total invested = $7,000.
+    // Public active-universe totals must retain $4,000 cash and exclude only
+    // ABNB's invested value/risk/count.
+    tables.appMeta = {
+      ...tables.appMeta,
+      equity: "11000",
+      cash: "4000",
+      invested: "7000",
+      openPositions: "2",
+      openRiskPct: "54.55",
+      grossExposurePct: "63.64",
+      returnPct: "10",
+    };
     tables.botEvents = [
       ...(tables.botEvents ?? []),
       { ...tables.botEvents![0], event_id: "evt-abnb", symbol: "ABNB" },
@@ -445,22 +459,24 @@ describe("narrow endpoints derived from the dashboard read model", () => {
     expect(dashboard.positions.some((position) => position.symbol === "ABNB")).toBe(false);
     expect(dashboard.events.some((event) => event.symbol === "ABNB")).toBe(false);
     expect(dashboard.portfolio).toMatchObject({
-      cash: 8715,
+      cash: 4000,
+      equity: 5285,
       invested: 1285,
       openPositions: 1,
     });
-    expect(dashboard.portfolio.openRiskPct).toBeCloseTo(0.8);
-    expect(dashboard.portfolio.grossExposurePct).toBeCloseTo(12.85);
+    expect(dashboard.portfolio.openRiskPct).toBeCloseTo((80 / 5285) * 100);
+    expect(dashboard.portfolio.grossExposurePct).toBeCloseTo((1285 / 5285) * 100);
     const portfolio = (await (await worker.fetch(new Request("https://example.test/api/portfolio/shadow"), env)).json()) as PortfolioBody;
     expect(portfolio.positions.some((position) => (position as { symbol?: string }).symbol === "ABNB")).toBe(false);
     expect(portfolio.portfolio).toEqual(dashboard.portfolio);
     expect(portfolio.portfolio).toMatchObject({
-      cash: 8715,
+      cash: 4000,
+      equity: 5285,
       invested: 1285,
       openPositions: 1,
     });
-    expect(portfolio.portfolio.openRiskPct).toBeCloseTo(0.8);
-    expect(portfolio.portfolio.grossExposurePct).toBeCloseTo(12.85);
+    expect(portfolio.portfolio.openRiskPct).toBeCloseTo((80 / 5285) * 100);
+    expect(portfolio.portfolio.grossExposurePct).toBeCloseTo((1285 / 5285) * 100);
     expect((tables.shadowPositions ?? []).some((position) => position.symbol === "ABNB")).toBe(true);
     expect((await worker.fetch(new Request("https://example.test/api/stocks/abnb"), env)).status).toBe(404);
   });
@@ -482,7 +498,7 @@ describe("narrow endpoints derived from the dashboard read model", () => {
 
     expect((tables.shadowPositions ?? []).some((position) => position.symbol === "ABNB")).toBe(true);
     expect(body.positions).toEqual([]);
-    expect(body.portfolio).toMatchObject({ cash: 10000, invested: 0, openPositions: 0, openRiskPct: 0, grossExposurePct: 0 });
+    expect(body.portfolio).toMatchObject({ cash: 8715, equity: 8715, invested: 0, openPositions: 0, openRiskPct: 0, grossExposurePct: 0 });
   });
 
   it("GET /api/stocks/:symbol fails closed on a store error", async () => {
