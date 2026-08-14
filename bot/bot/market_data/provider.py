@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import csv
 import re
+from collections.abc import Mapping
 from datetime import date
 from math import isfinite
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from .models import PriceBar
 

@@ -1,12 +1,12 @@
 import tempfile
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from bot.config import Settings
 from bot.health import _health_interval_seconds, _missed_health_check, health_report
 from bot.state import StateStore
-from zoneinfo import ZoneInfo
 
 
 class HealthReportTests(unittest.TestCase):
@@ -15,7 +15,7 @@ class HealthReportTests(unittest.TestCase):
             store = StateStore(Path(tmp) / "state.db")
             run_id = store.start_job("health_check")
             store.finish_job(run_id, "ok")
-            old = (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat()
+            old = (datetime.now(UTC) - timedelta(minutes=20)).isoformat()
             with store.tx() as conn:
                 conn.execute("UPDATE job_runs SET finished_at = ? WHERE id = ?", (old, run_id))
             report = health_report(Settings(bot_env="dev"), store)

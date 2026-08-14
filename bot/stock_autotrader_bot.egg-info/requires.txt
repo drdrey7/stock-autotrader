@@ -1,6 +1,0 @@
-pydantic<3,>=2.7
-pydantic-settings<3,>=2.3
-APScheduler<4,>=3.10
-
-[dev]
-pytest>=8

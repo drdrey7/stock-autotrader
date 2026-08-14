@@ -1,0 +1,14 @@
+# Lint config for the Python packages (bot/, apps/publisher/). Mirrors the
+# strict-but-focused posture of apps/web's ESLint config: catch real bugs
+# (unused imports/vars, undefined names) without forcing a repo-wide reformat.
+include = ["bot/**/*.py", "apps/publisher/**/*.py"]
+extend-exclude = ["bot/stock_autotrader_bot.egg-info", "**/__pycache__"]
+target-version = "py311"
+line-length = 200
+
+[lint]
+select = ["E", "F", "I", "UP"]
+ignore = ["E501"]
+
+[lint.per-file-ignores]
+"**/tests/**" = ["F401"]

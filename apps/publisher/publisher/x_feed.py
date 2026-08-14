@@ -20,10 +20,10 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from ipaddress import ip_address
-from urllib.parse import urlsplit
 from typing import Any
+from urllib.parse import urlsplit
 
 from .universe import UniverseSnapshot, canonical_symbol
 
@@ -190,7 +190,7 @@ class XPost:
     author: str
 
     @classmethod
-    def from_dict(cls, raw: dict[str, Any]) -> "XPost":
+    def from_dict(cls, raw: dict[str, Any]) -> XPost:
         post_id = raw.get("id")
         text = raw.get("text")
         url = raw.get("url")

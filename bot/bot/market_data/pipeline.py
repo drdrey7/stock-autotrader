@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 import re
 import tempfile
-from datetime import date, datetime, timezone
+from collections.abc import Mapping
+from datetime import UTC, date, datetime
 from math import isfinite
 from pathlib import Path
-from typing import Any, Mapping, Protocol
+from typing import Any, Protocol
 
 from .models import MarketDataSnapshot, PriceBar, UniverseConfig, UniverseResult
 from .provider import DataValidationError
@@ -40,7 +41,7 @@ class MarketDataPipeline:
         self.max_staleness_days = max_staleness_days
 
     def run(self, now: datetime | None = None) -> MarketDataSnapshot:
-        current_time = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        current_time = (now or datetime.now(UTC)).astimezone(UTC)
         updated_at = current_time.isoformat()
         try:
             universe = build_universe(self.provider.load_universe(), self.universe_config)

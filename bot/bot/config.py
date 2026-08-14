@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     # a Hermes cron (profile default) to the already-configured Telegram channel.
 
     @model_validator(mode="after")
-    def _market_paths_follow_data_dir(self) -> "Settings":
+    def _market_paths_follow_data_dir(self) -> Settings:
         if "market_data_dir" not in self.model_fields_set:
             self.market_data_dir = self.data_dir / "market"
         if "market_data_cache" not in self.model_fields_set:

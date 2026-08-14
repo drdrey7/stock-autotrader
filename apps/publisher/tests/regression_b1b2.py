@@ -20,12 +20,13 @@ def post(events):
         return json.loads(resp.read())
 
 # B1: EARNINGS_UPDATED twice for same (symbol, date) -> must upsert, not duplicate.
-earn = lambda eid: client.make_event("EARNINGS_UPDATED", {"items": [{
-    "symbol": "AAPL", "company": "Apple Inc.", "date": "2026-08-12", "timing": "AMC",
-    "eventSignal": "Confirmed", "engineRelevant": True, "signal": "Rejected",
-    "strategy": "Trend Breakout", "hasPosition": False, "tracked": True,
-    "updatedAt": "2026-08-10T23:00:00Z",
-}]}, event_id=eid)
+def earn(eid):
+    return client.make_event("EARNINGS_UPDATED", {"items": [{
+        "symbol": "AAPL", "company": "Apple Inc.", "date": "2026-08-12", "timing": "AMC",
+        "eventSignal": "Confirmed", "engineRelevant": True, "signal": "Rejected",
+        "strategy": "Trend Breakout", "hasPosition": False, "tracked": True,
+        "updatedAt": "2026-08-10T23:00:00Z",
+    }]}, event_id=eid)
 print("B1 run 1:", post([earn("earn-b1-1")]))
 print("B1 run 2 (dup symbol+date):", post([earn("earn-b1-2")]))
 

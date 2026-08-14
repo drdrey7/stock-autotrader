@@ -165,7 +165,7 @@ apps/web/worker                             Worker APIs, signed ingest and D1 re
 apps/web/worker/daily-briefings.ts          DailyBriefing publication/read helpers
 apps/web/worker/x-posts.ts                  Curated X post publication/read helpers
 apps/web/migrations                         D1 schema migrations
-bot/bot                                     Private runtime foundation
+bot/bot                                     Private runtime foundation (scan/signal engine not yet wired up — see bot/README.md)
 packages/contracts                          Shared validated contracts and schemas
 ```
 

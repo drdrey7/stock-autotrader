@@ -1,7 +1,7 @@
 import csv
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -99,7 +99,7 @@ class MarketDataJobTests(unittest.TestCase):
                     market_data_dir=root,
                     market_data_cache=data_cache,
                 )
-                market_data_job(settings, store, now=datetime(2026, 8, 11, tzinfo=timezone.utc))
+                market_data_job(settings, store, now=datetime(2026, 8, 11, tzinfo=UTC))
                 self.assertEqual(store.last_job_status("data_refresh")["status"], "ok")
                 self.assertTrue(data_cache.is_file())
                 self.assertIn("Market data healthy", store.recent_events(1)[0]["message"])

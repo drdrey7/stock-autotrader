@@ -2,7 +2,7 @@ import csv
 import json
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from pathlib import Path
 
 from bot.market_data import (
@@ -175,7 +175,7 @@ class MarketDataTests(unittest.TestCase):
             result = MarketDataPipeline(
                 CsvMarketDataProvider(root),
                 cache_path=cache,
-            ).run(now=datetime(2026, 8, 11, tzinfo=timezone.utc))
+            ).run(now=datetime(2026, 8, 11, tzinfo=UTC))
 
             self.assertEqual(result.status, "healthy")
             self.assertEqual(len(result.universe.eligible), 1)
@@ -190,7 +190,7 @@ class MarketDataTests(unittest.TestCase):
             result = MarketDataPipeline(
                 CsvMarketDataProvider(Path(tmp)),
                 cache_path=Path(tmp) / "cache" / "latest.json",
-            ).run(now=datetime(2026, 8, 11, tzinfo=timezone.utc))
+            ).run(now=datetime(2026, 8, 11, tzinfo=UTC))
 
             self.assertEqual(result.status, "degraded")
             self.assertEqual(result.universe.total, 0)
@@ -214,7 +214,7 @@ class MarketDataTests(unittest.TestCase):
                 [{"symbol": "SPY", "date": "2026-08-10", "open": "680", "high": "685", "low": "678", "close": "684", "adjusted_close": "684", "volume": "0"}],
             )
             result = MarketDataPipeline(CsvMarketDataProvider(root)).run(
-                now=datetime(2026, 8, 11, tzinfo=timezone.utc),
+                now=datetime(2026, 8, 11, tzinfo=UTC),
             )
             self.assertEqual(result.status, "degraded")
             self.assertIn("non-positive OHLCV value for SPY", result.warnings[0])
@@ -230,7 +230,7 @@ class MarketDataTests(unittest.TestCase):
                 return [PriceBar("SPY", "20260810", 1, 2, 0.9, 1.5, 1.5, 100)]
 
         result = MarketDataPipeline(InvalidDateProvider()).run(
-            now=datetime(2026, 8, 11, tzinfo=timezone.utc),
+            now=datetime(2026, 8, 11, tzinfo=UTC),
         )
         self.assertEqual(result.status, "degraded")
         self.assertIn("source invalid", result.warnings[0])
@@ -276,7 +276,7 @@ class MarketDataTests(unittest.TestCase):
             result = MarketDataPipeline(
                 CsvMarketDataProvider(root),
                 max_staleness_days=3,
-            ).run(now=datetime(2026, 8, 11, 12, tzinfo=timezone.utc))
+            ).run(now=datetime(2026, 8, 11, 12, tzinfo=UTC))
 
             self.assertEqual(result.status, "degraded")
             self.assertIn("stale benchmark: SPY (2026-08-01)", result.warnings)

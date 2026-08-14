@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 from publisher.briefing import (
@@ -16,7 +16,7 @@ from publisher.universe import load_universe
 from publisher.x_feed import CandidateIdea, XPost
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-PREPARED_AT = datetime(2026, 8, 12, 12, 30, tzinfo=timezone.utc)  # 08:30 ET EDT
+PREPARED_AT = datetime(2026, 8, 12, 12, 30, tzinfo=UTC)  # 08:30 ET EDT
 
 
 def _benchmarks() -> list[BenchmarkItem]:
@@ -81,7 +81,7 @@ def _idea(symbol: str = "NVDA", age_hours: float = 2.0) -> IdeaDraft:
 
 class BriefingTests(unittest.TestCase):
     def test_edition_date_in_new_york(self) -> None:
-        late_utc = datetime(2026, 8, 12, 23, 30, tzinfo=timezone.utc)  # 19:30 ET same day
+        late_utc = datetime(2026, 8, 12, 23, 30, tzinfo=UTC)  # 19:30 ET same day
         self.assertEqual(calendar_date_in_briefing_timezone(late_utc), "2026-08-12")
 
     def test_build_and_validate_ok(self) -> None:
