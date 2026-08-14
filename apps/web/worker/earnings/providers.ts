@@ -18,6 +18,7 @@ type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Respons
 type Sleeper = (milliseconds: number) => Promise<void>;
 
 const FMP_URL = "https://financialmodelingprep.com/stable/earnings-calendar";
+const FINNHUB_URL = "https://finnhub.io/api/v1/calendar/earnings";
 const SEC_TICKERS_URL = "https://www.sec.gov/files/company_tickers_exchange.json";
 const SEC_SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK";
 const SEC_FULL_INDEX_URL = "https://www.sec.gov/Archives/edgar/full-index";
@@ -84,6 +85,17 @@ function timing(value: unknown): "BMO" | "AMC" | "TBD" {
   const normalized = String(value ?? "").trim().toLowerCase();
   if (normalized === "bmo" || normalized === "before market open") return "BMO";
   if (normalized === "amc" || normalized === "after market close") return "AMC";
+  return "TBD";
+}
+
+/**
+ * Finnhub's calendar uses bmo, amc and dmh.  dmh means during market hours,
+ * which is not a precise BMO/AMC window for the monitor, so it stays TBD.
+ */
+export function normalizeFinnhubTiming(value: unknown): "BMO" | "AMC" | "TBD" {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (normalized === "bmo") return "BMO";
+  if (normalized === "amc") return "AMC";
   return "TBD";
 }
 
@@ -278,6 +290,153 @@ export class FmpEarningsCalendarProvider implements EarningsCalendarProvider, Ea
       })),
       warnings: [],
       updatedAt: collectedAt,
+    };
+  }
+}
+
+function finnhubRowsFromPayload(payload: unknown): Record<string, unknown>[] {
+  const object = rowObject(payload);
+  const rows = object?.earningsCalendar;
+  if (!Array.isArray(rows)) throw new Error("malformed Finnhub earnings calendar response");
+  if (rows.some((row) => rowObject(row) === null)) throw new Error("malformed Finnhub earnings calendar rows");
+  return rows.map((row) => {
+    const item = rowObject(row);
+    if (!item) throw new Error("malformed Finnhub earnings calendar row");
+    return item;
+  });
+}
+
+function normalizedFinnhubRow(
+  row: Record<string, unknown>,
+  collectedAt: string,
+  universe: ReadonlySet<string>,
+): { observation: EarningsCalendarObservation | null; malformed: boolean } {
+  const rawSymbol = stringValue(row.symbol);
+  if (!rawSymbol) return { observation: null, malformed: true };
+  const symbol = normalizeSymbol(rawSymbol);
+  // The bulk endpoint deliberately returns the provider's full calendar. The
+  // tracked-universe gate belongs here, after retrieval and before storage.
+  if (!universe.has(symbol) || !isInEarningsUniverse(symbol)) return { observation: null, malformed: false };
+  const scheduledDate = dateKey(row.date);
+  if (!scheduledDate) return { observation: null, malformed: true };
+  const fiscalQuarter = parseQuarter(row.quarter);
+  const fiscalYear = integer(row.year);
+  const timingValue = normalizeFinnhubTiming(row.hour);
+  return {
+    malformed: false,
+    observation: {
+      symbol,
+      company: null,
+      scheduledDate,
+      scheduledTime: timingValue,
+      timing: timingValue,
+      fiscalYear,
+      fiscalQuarter,
+      fiscalPeriod: fiscalQuarter === null ? null : `Q${fiscalQuarter}`,
+      fiscalPeriodEnd: null,
+      epsEstimate: finiteNumber(row.epsEstimate),
+      revenueEstimate: finiteNumber(row.revenueEstimate),
+      epsActual: finiteNumber(row.epsActual),
+      revenueActual: finiteNumber(row.revenueActual),
+      providerEventId: `finnhub:${symbol}:${fiscalYear ?? "unknown"}:${fiscalQuarter ?? "unknown"}:${scheduledDate}`,
+      // Finnhub does not publish a report timestamp in this endpoint. The
+      // collection timestamp is provenance for the provider observation; SEC
+      // acceptance time remains the source for a genuine filing timestamp.
+      providerUpdatedAt: collectedAt,
+      officialReportUrl: null,
+      cancelled: false,
+    },
+  };
+}
+
+export class FinnhubEarningsProvider implements EarningsCalendarProvider, EarningsConsensusProvider {
+  readonly name = "finnhub-earnings-calendar";
+  readonly supportsForwardCalendar = true;
+
+  constructor(
+    private readonly apiKey: string,
+    private readonly fetcher: Fetcher = fetch,
+    private readonly sleeper: Sleeper = defaultSleep,
+    private readonly timeoutMs = PROVIDER_TIMEOUT_MS,
+  ) {}
+
+  private async fetchRows(
+    range: EarningsDateRange,
+    universe: ReadonlySet<string>,
+    collectedAt: string,
+  ): Promise<{ observations: EarningsCalendarObservation[]; warnings: string[]; complete: boolean }> {
+    if (!this.apiKey.trim()) throw new Error("FINNHUB_API_KEY is not configured");
+    const url = new URL(FINNHUB_URL);
+    url.searchParams.set("from", range.from);
+    url.searchParams.set("to", range.to);
+    const payload = await fetchJsonWithRetry(
+      this.fetcher,
+      url,
+      {
+        headers: {
+          Accept: "application/json",
+          // Keep the token out of URLs, logs and downstream request metadata.
+          "X-Finnhub-Token": this.apiKey,
+        },
+      },
+      this.sleeper,
+      this.timeoutMs,
+    );
+    const rawRows = finnhubRowsFromPayload(payload);
+    let malformedCount = 0;
+    const observations = rawRows.flatMap((row) => {
+      const normalized = normalizedFinnhubRow(row, collectedAt, universe);
+      if (normalized.malformed) malformedCount += 1;
+      return normalized.observation && normalized.observation.scheduledDate !== null
+        && normalized.observation.scheduledDate >= range.from
+        && normalized.observation.scheduledDate <= range.to
+        ? [normalized.observation]
+        : [];
+    });
+    if (rawRows.length > 0 && malformedCount === rawRows.length) {
+      throw new Error("malformed Finnhub earnings calendar rows");
+    }
+    return {
+      observations: deduplicateCalendarRows(observations),
+      warnings: malformedCount > 0 ? [`ignored ${malformedCount} malformed Finnhub calendar row(s)`] : [],
+      complete: malformedCount === 0,
+    };
+  }
+
+  async fetchCalendar(
+    range: EarningsDateRange,
+    universe: ReadonlySet<string>,
+    collectedAt: string,
+  ): Promise<EarningsProviderResult<EarningsCalendarObservation>> {
+    const result = await this.fetchRows(range, universe, collectedAt);
+    return { provider: this.name, observations: result.observations, warnings: result.warnings, updatedAt: collectedAt, complete: result.complete };
+  }
+
+  async fetchConsensus(
+    range: EarningsDateRange,
+    universe: ReadonlySet<string>,
+    collectedAt: string,
+  ): Promise<EarningsProviderResult<EarningsConsensusObservation>> {
+    const result = await this.fetchRows(range, universe, collectedAt);
+    return {
+      provider: this.name,
+      observations: result.observations.map((row) => ({
+        symbol: row.symbol,
+        scheduledDate: row.scheduledDate,
+        fiscalYear: row.fiscalYear,
+        fiscalQuarter: row.fiscalQuarter,
+        fiscalPeriodEnd: row.fiscalPeriodEnd,
+        epsEstimate: row.epsEstimate,
+        revenueEstimate: row.revenueEstimate,
+        epsActual: row.epsActual,
+        revenueActual: row.revenueActual,
+        providerEventId: row.providerEventId,
+        providerUpdatedAt: row.providerUpdatedAt,
+        cancelled: row.cancelled,
+      })),
+      warnings: result.warnings,
+      updatedAt: collectedAt,
+      complete: result.complete,
     };
   }
 }
@@ -550,15 +709,12 @@ export class SecEdgarProvider implements OfficialFilingsProvider, EarningsCalend
   }
 }
 
-export function createDefaultEarningsProviders(apiKey: string | undefined, secUserAgent?: string): EarningsProviderBundle {
-  const sec = new SecEdgarProvider(secUserAgent);
-  if (!apiKey?.trim()) {
-    return { calendar: sec, consensus: sec, official: sec };
-  }
-  const fmp = new FmpEarningsCalendarProvider(apiKey);
+export function createDefaultEarningsProviders(finnhubApiKey: string | undefined, secUserAgent?: string): EarningsProviderBundle {
+  const sec = new SecEdgarProvider(secUserAgent?.trim() || undefined);
+  const finnhub = new FinnhubEarningsProvider(finnhubApiKey ?? "");
   return {
-    calendar: fmp,
-    consensus: fmp,
+    calendar: finnhub,
+    consensus: finnhub,
     official: sec,
   };
 }

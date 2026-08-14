@@ -38,7 +38,7 @@ export interface Env {
   ASSETS: Fetcher;
   INGEST_SECRET?: string;
   ENVIRONMENT?: string;
-  FMP_API_KEY?: string;
+  FINNHUB_API_KEY?: string;
   SEC_USER_AGENT?: string;
 }
 

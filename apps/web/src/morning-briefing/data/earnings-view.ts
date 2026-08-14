@@ -3,7 +3,7 @@ import type {
   EarningsOverallResult,
 } from "@stock-autotrader/contracts";
 
-export type EarningsDisplayResult = EarningsOverallResult | "Upcoming" | "Not published";
+export type EarningsDisplayResult = "Beat" | "Met" | "Miss" | "Mixed" | "Upcoming" | "N/A";
 export type EarningsCompany = EarningsEngineEvent & {
   color: string;
   result: EarningsDisplayResult;
@@ -22,8 +22,15 @@ export function tickerColour(ticker: string): string {
 }
 
 export function displayResult(event: Pick<EarningsEngineEvent, "status" | "overallResult">): EarningsDisplayResult {
-  if (event.overallResult !== "Not Available") return event.overallResult;
-  return event.status === "scheduled" ? "Upcoming" : "Not published";
+  if (event.overallResult === "Beat" || event.overallResult === "Miss" || event.overallResult === "Mixed") return event.overallResult;
+  if (event.overallResult === "In Line") return "Met";
+  return event.status === "scheduled" ? "Upcoming" : "N/A";
+}
+
+export function displayMetricResult(value: string): string {
+  if (value === "In Line") return "Met";
+  if (value === "Not Available") return "N/A";
+  return value;
 }
 
 function stringValue(value: unknown): string | null {
@@ -74,7 +81,7 @@ function normalizedOverallResult(value: unknown): EarningsOverallResult {
 /**
  * The API contract is the only production source. The partial input handling
  * keeps older consumers/tests from crashing while they roll onto that
- * contract; missing financial fields remain null and render as Not published.
+ * contract; missing financial fields remain null and render as N/A.
  */
 export function eventWithViewMetadata(input: EarningsInput): EarningsCompany {
   const symbol = stringValue(input.symbol) ?? "";
@@ -83,7 +90,7 @@ export function eventWithViewMetadata(input: EarningsInput): EarningsCompany {
   const event: EarningsEngineEvent = {
     id: stringValue(input.id) ?? `${symbol}-${scheduledDate ?? "unknown"}`,
     symbol,
-    company: (stringValue(input.company) ?? symbol) || "Not published",
+    company: (stringValue(input.company) ?? symbol) || "N/A",
     cik: stringValue(input.cik),
     fiscalYear: typeof input.fiscalYear === "number" ? input.fiscalYear : null,
     fiscalQuarter: typeof input.fiscalQuarter === "number" ? input.fiscalQuarter : null,
@@ -127,18 +134,18 @@ export function eventWithViewMetadata(input: EarningsInput): EarningsCompany {
 }
 
 export function formatMetric(value: number | null, prefix = ""): string {
-  if (value === null || !Number.isFinite(value)) return "Not published";
+  if (value === null || !Number.isFinite(value)) return "N/A";
   return `${prefix}${value.toLocaleString("en-US", { maximumFractionDigits: 4 })}`;
 }
 
 export function formatPercent(value: number | null): string {
-  if (value === null || !Number.isFinite(value)) return "Not published";
+  if (value === null || !Number.isFinite(value)) return "N/A";
   return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
 }
 
 export function resultClass(value: string): string {
   if (value === "Beat") return "beat";
   if (value === "Miss") return "miss";
-  if (value === "Mixed" || value === "In Line") return "mixed";
+  if (value === "Mixed" || value === "In Line" || value === "Met") return "mixed";
   return "pending";
 }

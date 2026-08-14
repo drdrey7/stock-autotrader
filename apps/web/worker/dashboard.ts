@@ -10,6 +10,7 @@ import {
   sourceHealthSchema,
   type Candidate,
   type DashboardData,
+  type EarningsEngineState,
   type MarketDataSnapshot,
   type PublicSourceHealth,
   type SourceHealth,
@@ -17,6 +18,7 @@ import {
 } from "@stock-autotrader/contracts";
 import type { Env } from "./index";
 import type { BriefingStatus } from "./daily-briefings";
+import { EARNINGS_ENGINE_STALE_AFTER_SECONDS } from "./earnings";
 import {
   MARKET_CONTEXT_STALE_AFTER_SECONDS,
   SENTIMENT_STALE_AFTER_SECONDS,
@@ -112,6 +114,15 @@ const parseSafeTimestamp = (value: string | null): number | null => {
   if (!value) return null;
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? parsed : null;
+};
+
+const latestTimestamp = (...values: Array<string | null | undefined>): string | null => {
+  let latestMs: number | null = null;
+  for (const value of values) {
+    const parsed = parseSafeTimestamp(value ?? null);
+    if (parsed !== null && (latestMs === null || parsed > latestMs)) latestMs = parsed;
+  }
+  return latestMs === null ? null : new Date(latestMs).toISOString();
 };
 
 /**
@@ -250,17 +261,41 @@ export async function buildSources(
   }
 
   let earningsLastSuccess: string | null = null;
+  let earningsLastAttempt: string | null = null;
   let earningsError: string | null = null;
+  let earningsUniverseCount = 0;
   try {
     // Publication metadata records a successful empty calendar too: a valid
-    // EARNINGS_UPDATED with zero rows must not make the source Unavailable.
+    // update with zero rows is healthy. Universe count is checked separately
+    // so an empty filtered date range is never mistaken for initialization.
     const row = await env.DB.prepare(
-      "SELECT COALESCE((SELECT value FROM app_meta WHERE key = 'earningsEngineUpdatedAt'), (SELECT MAX(updated_at) FROM earnings_events)) AS ts",
-    ).first<{ ts: string | null }>();
-    earningsLastSuccess = row?.ts ? new Date(row.ts).toISOString() : null;
+      "SELECT (SELECT value FROM app_meta WHERE key = 'earningsEngineUpdatedAt') AS updated_at, (SELECT value FROM app_meta WHERE key = 'earningsEngineCheckedAt') AS checked_at, (SELECT value FROM app_meta WHERE key = 'earningsEngineLastAttemptAt') AS attempt_at, (SELECT value FROM app_meta WHERE key = 'earningsCalendarLastError') AS calendar_error, (SELECT value FROM app_meta WHERE key = 'earningsMonitorLastError') AS monitor_error, (SELECT value FROM app_meta WHERE key = 'earningsEngineLastError') AS last_error, (SELECT COUNT(*) FROM earnings_universe) AS universe_count",
+    ).first<{ updated_at: string | null; checked_at: string | null; attempt_at: string | null; calendar_error: string | null; monitor_error: string | null; last_error: string | null; universe_count: number | string | null }>();
+    const updatedAt = parseIsoTimestamp(row?.updated_at);
+    const checkedAt = parseIsoTimestamp(row?.checked_at);
+    earningsLastSuccess = updatedAt;
+    earningsLastAttempt = latestTimestamp(updatedAt, checkedAt, parseIsoTimestamp(row?.attempt_at));
+    earningsError = row?.calendar_error?.trim()
+      || row?.monitor_error?.trim()
+      || row?.last_error?.trim()
+      || null;
+    earningsUniverseCount = Number(row?.universe_count ?? 0) || 0;
   } catch {
     earningsError = "Earnings store is unavailable.";
   }
+
+  const earningsUninitialized = earningsUniverseCount <= 0 || earningsLastSuccess === null;
+  const earningsLastSuccessMs = parseSafeTimestamp(earningsLastSuccess);
+  const earningsHasValidSuccess = earningsLastSuccessMs !== null && earningsLastSuccessMs <= nowMs;
+  const earningsEngineState: EarningsEngineState = earningsUninitialized
+    ? "UNINITIALIZED"
+    : earningsError
+      ? "DEGRADED"
+      : earningsHasValidSuccess
+        && earningsLastSuccessMs !== null
+        && nowMs - earningsLastSuccessMs <= EARNINGS_ENGINE_STALE_AFTER_SECONDS * 1000
+        ? "HEALTHY"
+        : "STALE";
 
   const lastDataUpdate = options.dashboard.status.lastDataUpdate;
   // The scan completion timestamp is the authoritative success evidence,
@@ -296,12 +331,18 @@ export async function buildSources(
       error: xError,
       nowMs,
     }),
-    earnings: buildSourceHealth(earningsLastSuccess, earningsLastSuccess, {
-      provider: "earnings calendar",
-      staleAfterSeconds: HEALTHY_STALE_AFTER_SECONDS,
-      error: earningsError,
-      nowMs,
-    }),
+    earnings: {
+      ...buildSourceHealth(earningsLastSuccess, earningsLastAttempt, {
+        provider: "finnhub + sec-edgar",
+        staleAfterSeconds: EARNINGS_ENGINE_STALE_AFTER_SECONDS,
+        // UNINITIALIZED is an unavailable state, not a synthetic failed job.
+        // Real attempt timestamps remain visible when an actual pre-bootstrap
+        // provider attempt occurred, but a status read creates none.
+        error: earningsUninitialized ? null : earningsError,
+        nowMs,
+      }),
+      engineState: earningsEngineState,
+    },
     sentiment: options.marketContext?.sentiment
       ? buildSourceHealth(options.marketContext.sentiment.asOf, options.marketContext.sentiment.asOf, {
           provider: options.marketContext.sentiment.provider,
@@ -369,7 +410,7 @@ export function unavailableSources(): PublicSourceHealth {
     market: unavailable(reason),
     opportunities: unavailable(reason),
     x: unavailable(reason),
-    earnings: unavailable(reason),
+    earnings: { ...unavailable(reason), engineState: "UNINITIALIZED" },
     sentiment: unavailable(reason),
     quickStats: unavailable(reason),
   };

@@ -187,7 +187,7 @@ function mergedEvent(existing: EarningsRow | null, incoming: NormalizedEarningsE
   // If provider values are rejected, keep the lifecycle attached to the
   // schedule/data that won. A stale payload may normalize to `unknown` or
   // `cancelled` even though the preserved event is still scheduled.
-  const preservedLifecycle = providerOlder || reportedAlready
+  const preservedLifecycle = providerOlder || reportedAlready || old.cancelled
     ? {
         status: old.status,
         scheduled: old.scheduled,
@@ -534,4 +534,13 @@ export async function readUniverseMetadata(db: Database): Promise<Map<string, { 
 export async function setEarningsMeta(db: Database, key: string, value: string): Promise<void> {
   await db.prepare("INSERT INTO app_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
     .bind(key, value).run();
+}
+
+export async function readEarningsMeta(db: Database, key: string): Promise<string | null> {
+  const row = await db.prepare("SELECT value FROM app_meta WHERE key = ? LIMIT 1").bind(key).first<{ value: string | null }>();
+  return row?.value ?? null;
+}
+
+export async function clearEarningsMeta(db: Database, key: string): Promise<void> {
+  await db.prepare("DELETE FROM app_meta WHERE key = ?").bind(key).run();
 }

@@ -10,6 +10,15 @@ export const sourceStateValues = [
 
 export type SourceState = (typeof sourceStateValues)[number];
 
+export const earningsEngineStateValues = [
+  "UNINITIALIZED",
+  "HEALTHY",
+  "STALE",
+  "DEGRADED",
+] as const;
+
+export type EarningsEngineState = (typeof earningsEngineStateValues)[number];
+
 const isoTimestamp = z.string().datetime({ offset: true });
 
 /**
@@ -25,6 +34,7 @@ export const sourceHealthSchema = z.strictObject({
   lastSuccess: isoTimestamp.nullable(),
   lastAttempt: isoTimestamp.nullable(),
   error: z.string().trim().min(1).max(500).nullable(),
+  engineState: z.enum(earningsEngineStateValues).optional(),
 }).superRefine((source, ctx) => {
   const hasData = source.asOf !== null && source.ageSeconds !== null && source.lastSuccess !== null;
   const add = (path: (string | number)[], message: string) =>

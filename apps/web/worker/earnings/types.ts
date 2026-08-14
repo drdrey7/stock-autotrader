@@ -60,6 +60,8 @@ export interface EarningsProviderResult<T> {
   observations: T[];
   warnings: string[];
   updatedAt: string;
+  /** False means the provider returned a partial/incomplete view. */
+  complete?: boolean;
 }
 
 export interface EarningsCalendarProvider {

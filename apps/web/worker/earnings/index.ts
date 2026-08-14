@@ -32,7 +32,9 @@ import {
   readEarningsEvents,
   readUniverseMetadata,
   rowToEarningsEvent,
+  readEarningsMeta,
   setEarningsMeta,
+  clearEarningsMeta,
   upsertEarningsEvents,
   upsertUniverseMembers,
   readEarningsMonitoringEvents,
@@ -40,9 +42,18 @@ import {
 import { MAX_SEC_FILING_LOOKUPS_PER_JOB } from "./subrequest-budget";
 export { MAX_SEC_FILING_LOOKUPS_PER_JOB } from "./subrequest-budget";
 
-export const EARNINGS_BACKFILL_DAYS = 90;
+export const EARNINGS_BACKFILL_DAYS = 30;
 export const EARNINGS_WINDOW_DAYS = 60;
 export const EARNINGS_QUERY_MAX_DAYS = 450;
+export const EARNINGS_ENGINE_STALE_AFTER_SECONDS = 26 * 60 * 60;
+
+const EARNINGS_META_KEYS = {
+  lastAttempt: "earningsEngineLastAttemptAt",
+  lastError: "earningsEngineLastError",
+  calendarError: "earningsCalendarLastError",
+  monitorError: "earningsMonitorLastError",
+} as const;
+
 export class EarningsQueryError extends Error {
   constructor(message: string) {
     super(message);
@@ -97,11 +108,17 @@ function observationFromExisting(event: EarningsEngineEvent): EarningsCalendarOb
   };
 }
 
-async function syncUniverse(env: Env, providers: EarningsProviderBundle, collectedAt: string): Promise<Awaited<ReturnType<typeof readUniverseMetadata>>> {
+async function syncUniverse(
+  env: Env,
+  providers: EarningsProviderBundle,
+  collectedAt: string,
+): Promise<{ metadata: Awaited<ReturnType<typeof readUniverseMetadata>>; warnings: string[] }> {
   const previous = await readUniverseMetadata(env.DB).catch(() => new Map<string, { company: string; cik: string | null; investorRelationsUrl: string | null }>());
+  const warnings: string[] = [];
   let metadata = new Map<string, { company: string; cik: string | null; investorRelationsUrl: string | null }>();
   try {
     const result = await providers.official.fetchCompanyMetadata(collectedAt);
+    warnings.push(...result.warnings);
     const bySymbol = new Map(result.observations.map((item) => [normalizeSymbol(item.symbol), item]));
     await upsertUniverseMembers(env.DB, EARNINGS_UNIVERSE.map((member) => {
       const sec = bySymbol.get(member.symbol);
@@ -116,7 +133,9 @@ async function syncUniverse(env: Env, providers: EarningsProviderBundle, collect
       };
     }));
   } catch (error) {
-    console.warn(JSON.stringify({ message: "earnings universe metadata degraded", error: errorMessage(error).slice(0, 180) }));
+    const warning = `SEC company metadata degraded: ${errorMessage(error).slice(0, 180)}`;
+    warnings.push(warning);
+    console.warn(JSON.stringify({ message: "earnings universe metadata degraded", error: warning }));
     // A metadata outage must not erase the last known CIK/company values.
     await upsertUniverseMembers(env.DB, EARNINGS_UNIVERSE.map((member) => ({
       symbol: member.symbol,
@@ -129,7 +148,7 @@ async function syncUniverse(env: Env, providers: EarningsProviderBundle, collect
     })));
   }
   metadata = await readUniverseMetadata(env.DB);
-  return metadata;
+  return { metadata, warnings };
 }
 
 async function findFiling(
@@ -148,6 +167,71 @@ async function findFiling(
 
 function applyProviderNames(event: NormalizedEarningsEvent, providers: EarningsProviderBundle): NormalizedEarningsEvent {
   return { ...event, calendarProvider: providers.calendar.name, consensusProvider: providers.consensus.name };
+}
+
+function logEarningsJob(fields: {
+  job: "calendar" | "monitor";
+  provider: string;
+  range: EarningsDateRange;
+  observations: number;
+  normalized: number;
+  written: number;
+  secLookups: number;
+  status: "ok" | "degraded" | "skipped";
+  durationMs: number;
+  warningCount: number;
+  detail?: string;
+}): void {
+  console.info(JSON.stringify({
+    job: `earnings-${fields.job}`,
+    provider: fields.provider,
+    range: fields.range,
+    observations: fields.observations,
+    normalized: fields.normalized,
+    written: fields.written,
+    secLookups: fields.secLookups,
+    status: fields.status,
+    durationMs: fields.durationMs,
+    warningCount: fields.warningCount,
+    ...(fields.detail ? { detail: fields.detail.slice(0, 240) } : {}),
+  }));
+}
+
+type EarningsFailureScope = "calendar" | "monitor";
+
+function failureKey(scope: EarningsFailureScope): string {
+  return scope === "calendar" ? EARNINGS_META_KEYS.calendarError : EARNINGS_META_KEYS.monitorError;
+}
+
+async function recordEarningsAttempt(env: Env, collectedAt: string): Promise<void> {
+  await setEarningsMeta(env.DB, EARNINGS_META_KEYS.lastAttempt, collectedAt);
+}
+
+async function refreshEarningsCurrentError(env: Env): Promise<void> {
+  const [calendarError, monitorError] = await Promise.all([
+    readEarningsMeta(env.DB, EARNINGS_META_KEYS.calendarError),
+    readEarningsMeta(env.DB, EARNINGS_META_KEYS.monitorError),
+  ]);
+  const currentError = calendarError ?? monitorError;
+  if (currentError) await setEarningsMeta(env.DB, EARNINGS_META_KEYS.lastError, currentError);
+  else await clearEarningsMeta(env.DB, EARNINGS_META_KEYS.lastError);
+}
+
+async function rememberEarningsFailure(
+  env: Env,
+  scope: EarningsFailureScope,
+  collectedAt: string,
+  detail: string,
+): Promise<void> {
+  const bounded = detail.slice(0, 480);
+  await setEarningsMeta(env.DB, EARNINGS_META_KEYS.lastAttempt, collectedAt);
+  await setEarningsMeta(env.DB, failureKey(scope), bounded);
+  await setEarningsMeta(env.DB, EARNINGS_META_KEYS.lastError, bounded);
+}
+
+async function clearEarningsFailure(env: Env, scope: EarningsFailureScope): Promise<void> {
+  await clearEarningsMeta(env.DB, failureKey(scope));
+  await refreshEarningsCurrentError(env);
 }
 
 async function normalizeObservation(
@@ -177,11 +261,17 @@ async function readProviderCalendar(
   providers: EarningsProviderBundle,
   range: EarningsDateRange,
   collectedAt: string,
-): Promise<{ observations: EarningsCalendarObservation[]; provider: string; warnings: string[]; success: boolean }> {
+): Promise<{ observations: EarningsCalendarObservation[]; provider: string; warnings: string[]; success: boolean; complete: boolean }> {
   try {
     const calendar = await providers.calendar.fetchCalendar(range, EARNINGS_UNIVERSE_SYMBOLS, collectedAt);
     if (Object.is(providers.calendar, providers.consensus)) {
-      return { observations: calendar.observations, provider: calendar.provider, warnings: calendar.warnings, success: true };
+      return {
+        observations: calendar.observations,
+        provider: calendar.provider,
+        warnings: calendar.warnings,
+        success: true,
+        complete: calendar.complete !== false,
+      };
     }
     let consensus: Awaited<ReturnType<EarningsConsensusProvider["fetchConsensus"]>>;
     try {
@@ -194,6 +284,7 @@ async function readProviderCalendar(
         provider: calendar.provider,
         warnings: [...calendar.warnings, `consensus degraded: ${errorMessage(error)}`],
         success: true,
+        complete: calendar.complete !== false,
       };
     }
     const map = providerConsensusMap(consensus.observations);
@@ -202,13 +293,15 @@ async function readProviderCalendar(
       provider: calendar.provider,
       warnings: [...calendar.warnings, ...consensus.warnings],
       success: true,
+      complete: calendar.complete !== false,
     };
   } catch (error) {
-    return { observations: [], provider: providers.calendar.name, warnings: [errorMessage(error)], success: false };
+    return { observations: [], provider: providers.calendar.name, warnings: [errorMessage(error)], success: false, complete: false };
   }
 }
 
 async function runCalendarSync(env: Env, scheduledTime: Date, providers: EarningsProviderBundle): Promise<{ status: "ok" | "degraded"; detail: string }> {
+  const startedAt = Date.now();
   const collectedAt = scheduledTime.toISOString();
   const today = newYorkDate(scheduledTime);
   const range = { from: addDays(today, -EARNINGS_BACKFILL_DAYS), to: addDays(today, EARNINGS_WINDOW_DAYS) };
@@ -216,49 +309,111 @@ async function runCalendarSync(env: Env, scheduledTime: Date, providers: Earning
   // rolling future window. Providers may return fewer rows when they do not
   // publish forward schedules; missing values remain NULL/Not Available.
   const providerRange = range;
-  const metadata = await syncUniverse(env, providers, collectedAt);
+  await recordEarningsAttempt(env, collectedAt);
+  const universe = await syncUniverse(env, providers, collectedAt);
+  const metadata = universe.metadata;
   const calendar = await readProviderCalendar(providers, providerRange, collectedAt);
   if (!calendar.success) {
-    console.error(JSON.stringify({ message: "earnings calendar sync failed", warnings: calendar.warnings.slice(0, 3) }));
-    return { status: "degraded", detail: calendar.warnings[0]?.slice(0, 200) ?? "calendar unavailable" };
+    const detail = calendar.warnings[0]?.slice(0, 200) ?? "calendar unavailable";
+    await rememberEarningsFailure(env, "calendar", collectedAt, detail);
+    logEarningsJob({
+      job: "calendar",
+      provider: providers.calendar.name,
+      range,
+      observations: 0,
+      normalized: 0,
+      written: 0,
+      secLookups: 0,
+      status: "degraded",
+      durationMs: Date.now() - startedAt,
+      warningCount: universe.warnings.length + calendar.warnings.length,
+      detail,
+    });
+    return { status: "degraded", detail };
   }
 
   let written = 0;
   const filingLookups = { used: 0, limit: MAX_SEC_FILING_LOOKUPS_PER_JOB };
   const normalized: NormalizedEarningsEvent[] = [];
+  const warnings = [...universe.warnings, ...calendar.warnings];
   for (const observation of calendar.observations) {
     try {
       normalized.push(await normalizeObservation(providers, observation, today, collectedAt, metadata, filingLookups));
       written += 1;
     } catch (error) {
-      console.warn(JSON.stringify({ message: "earnings event write failed", symbol: observation.symbol, error: errorMessage(error).slice(0, 180) }));
+      const warning = `${observation.symbol}: ${errorMessage(error).slice(0, 180)}`;
+      warnings.push(warning);
+      console.warn(JSON.stringify({ message: "earnings event normalization failed", symbol: observation.symbol, error: warning }));
     }
   }
   await upsertEarningsEvents(env.DB, normalized);
-  if (calendar.success && providers.calendar.supportsForwardCalendar !== false) {
-    await markUnseenScheduledEventsUnknown(env.DB, range.from, range.to, collectedAt, collectedAt);
+  // Absence reconciliation is destructive. A mixed/malformed provider payload
+  // is useful for valid rows, but it is not authoritative for rows it omitted.
+  // Keep the last-known-good schedule until a complete calendar is available.
+  if (calendar.complete) {
+    if (providers.calendar.supportsForwardCalendar !== false) {
+      await markUnseenScheduledEventsUnknown(env.DB, range.from, range.to, collectedAt, collectedAt);
+      await env.DB.prepare(
+        "UPDATE earnings_events SET status = 'unknown', scheduled = 0, reported = 0, unknown = 1, updated_at = ?, last_checked_at = ? WHERE status = 'scheduled' AND scheduled_date > ?",
+      ).bind(collectedAt, collectedAt, range.to).run();
+    }
+    await markPastScheduledEventsUnknown(env.DB, today, collectedAt);
   }
-  await markPastScheduledEventsUnknown(env.DB, today, collectedAt);
-  await env.DB.prepare(
-    "UPDATE earnings_events SET status = 'unknown', scheduled = 0, reported = 0, unknown = 1, updated_at = ?, last_checked_at = ? WHERE status = 'scheduled' AND scheduled_date > ?",
-  ).bind(collectedAt, collectedAt, range.to).run();
   await setEarningsMeta(env.DB, "earningsEngineUpdatedAt", collectedAt);
   await setEarningsMeta(env.DB, "earningsCalendarWindow", JSON.stringify(range));
-  return { status: "ok", detail: `${written}/${calendar.observations.length} events in ${range.from}..${range.to}` };
+  if (warnings.length > 0) await rememberEarningsFailure(env, "calendar", collectedAt, warnings[0]!);
+  else await clearEarningsFailure(env, "calendar");
+  const status = warnings.length > 0 ? "degraded" : "ok";
+  const detail = `${written}/${calendar.observations.length} events in ${range.from}..${range.to}`;
+  logEarningsJob({
+    job: "calendar",
+    provider: providers.calendar.name,
+    range,
+    observations: calendar.observations.length,
+    normalized: normalized.length,
+    written,
+    secLookups: filingLookups.used,
+    status,
+    durationMs: Date.now() - startedAt,
+    warningCount: warnings.length,
+    detail,
+  });
+  return { status, detail };
 }
 
 async function runMonitoring(env: Env, scheduledTime: Date, providers: EarningsProviderBundle): Promise<{ status: "ok" | "degraded" | "skipped"; detail: string }> {
+  const startedAt = Date.now();
   const collectedAt = scheduledTime.toISOString();
   const today = newYorkDate(scheduledTime);
   // A small current-day provider poll is also needed when a date moves to
   // today after the daily sync. Avoid it outside the broad ET monitoring
   // window, where it cannot produce a useful result.
-  if (!shouldPollEarnings("TBD", scheduledTime)) return { status: "skipped", detail: "outside the earnings monitoring window" };
+  const range = { from: addDays(today, -2), to: addDays(today, 1) };
+  if (!shouldPollEarnings("TBD", scheduledTime)) {
+    logEarningsJob({ job: "monitor", provider: providers.calendar.name, range, observations: 0, normalized: 0, written: 0, secLookups: 0, status: "skipped", durationMs: Date.now() - startedAt, warningCount: 0, detail: "outside the earnings monitoring window" });
+    return { status: "skipped", detail: "outside the earnings monitoring window" };
+  }
   const due = await readEarningsMonitoringEvents(env.DB, today);
   const active = due.filter((event) => shouldPollEarnings(event.timing, scheduledTime) || event.status === "reported");
-
-  const range = { from: addDays(today, -2), to: addDays(today, 1) };
+  const lastPoll = await readEarningsMeta(env.DB, "earningsEngineLastMonitorPollAt").catch(() => null);
+  const lastPollMs = lastPoll ? Date.parse(lastPoll) : NaN;
+  const recentPoll = Number.isFinite(lastPollMs) && lastPollMs <= scheduledTime.getTime()
+    && scheduledTime.getTime() - lastPollMs < 60 * 60 * 1000;
+  // An hourly discovery poll catches dates that moved onto today without
+  // spending a Finnhub request on an otherwise empty 15-minute invocation.
+  if (active.length === 0 && recentPoll) {
+    logEarningsJob({ job: "monitor", provider: providers.calendar.name, range, observations: 0, normalized: 0, written: 0, secLookups: 0, status: "skipped", durationMs: Date.now() - startedAt, warningCount: 0, detail: "no active events; discovery poll is fresh" });
+    return { status: "skipped", detail: "no active events; discovery poll is fresh" };
+  }
+  await setEarningsMeta(env.DB, "earningsEngineLastMonitorPollAt", collectedAt);
+  await recordEarningsAttempt(env, collectedAt);
   const calendar = await readProviderCalendar(providers, range, collectedAt);
+  if (!calendar.success) {
+    const detail = calendar.warnings[0]?.slice(0, 200) ?? "calendar unavailable";
+    await rememberEarningsFailure(env, "monitor", collectedAt, detail);
+    logEarningsJob({ job: "monitor", provider: providers.calendar.name, range, observations: 0, normalized: 0, written: 0, secLookups: 0, status: "degraded", durationMs: Date.now() - startedAt, warningCount: calendar.warnings.length, detail });
+    return { status: "degraded", detail };
+  }
   const providerMap = new Map<string, EarningsCalendarObservation>();
   for (const observation of calendar.observations) {
     providerMap.set(`${observation.symbol}:${observation.scheduledDate ?? ""}`, observation);
@@ -273,6 +428,7 @@ async function runMonitoring(env: Env, scheduledTime: Date, providers: EarningsP
   const filingLookups = { used: 0, limit: MAX_SEC_FILING_LOOKUPS_PER_JOB };
   const normalized: NormalizedEarningsEvent[] = [];
   const activeSymbols = new Set<string>();
+  const warnings = [...calendar.warnings];
   let successes = 0;
   for (const event of active) {
     try {
@@ -283,7 +439,9 @@ async function runMonitoring(env: Env, scheduledTime: Date, providers: EarningsP
       activeSymbols.add(event.symbol);
       successes += 1;
     } catch (error) {
-      console.warn(JSON.stringify({ message: "earnings monitoring failed for symbol", symbol: event.symbol, error: errorMessage(error).slice(0, 180) }));
+      const warning = `${event.symbol}: ${errorMessage(error).slice(0, 180)}`;
+      warnings.push(warning);
+      console.warn(JSON.stringify({ message: "earnings monitoring failed for symbol", symbol: event.symbol, error: warning }));
     }
   }
   for (const observation of todayObservations) {
@@ -292,14 +450,21 @@ async function runMonitoring(env: Env, scheduledTime: Date, providers: EarningsP
       normalized.push(await normalizeObservation(providers, observation, today, collectedAt, metadata, filingLookups));
       successes += 1;
     } catch (error) {
-      console.warn(JSON.stringify({ message: "new earnings event monitoring failed", symbol: observation.symbol, error: errorMessage(error).slice(0, 180) }));
+      const warning = `${observation.symbol}: ${errorMessage(error).slice(0, 180)}`;
+      warnings.push(warning);
+      console.warn(JSON.stringify({ message: "new earnings event monitoring failed", symbol: observation.symbol, error: warning }));
     }
   }
   await upsertEarningsEvents(env.DB, normalized);
-  if (calendar.success || successes > 0) await setEarningsMeta(env.DB, "earningsEngineCheckedAt", collectedAt);
+  await setEarningsMeta(env.DB, "earningsEngineCheckedAt", collectedAt);
+  if (warnings.length > 0) await rememberEarningsFailure(env, "monitor", collectedAt, warnings[0]!);
+  else await clearEarningsFailure(env, "monitor");
+  const status = warnings.length > 0 ? "degraded" : "ok";
+  const detail = `${successes}/${Math.max(active.length, todayObservations.length)} events checked; provider=ok`;
+  logEarningsJob({ job: "monitor", provider: providers.calendar.name, range, observations: calendar.observations.length, normalized: normalized.length, written: normalized.length, secLookups: filingLookups.used, status, durationMs: Date.now() - startedAt, warningCount: warnings.length, detail });
   return {
-    status: calendar.success ? "ok" : successes > 0 ? "degraded" : "degraded",
-    detail: `${successes}/${Math.max(active.length, todayObservations.length)} events checked; provider=${calendar.success ? "ok" : "degraded"}`,
+    status,
+    detail,
   };
 }
 
@@ -307,7 +472,7 @@ export async function runEarningsJob(
   env: Env,
   scheduledTime: Date,
   mode: EarningsJobMode,
-  providers: EarningsProviderBundle = createDefaultEarningsProviders(env.FMP_API_KEY, env.SEC_USER_AGENT),
+  providers: EarningsProviderBundle = createDefaultEarningsProviders(env.FINNHUB_API_KEY, env.SEC_USER_AGENT),
 ): Promise<{ status: "ok" | "degraded" | "skipped"; detail: string }> {
   if (mode === "calendar") return runCalendarSync(env, scheduledTime, providers);
   return runMonitoring(env, scheduledTime, providers);

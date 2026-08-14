@@ -59,6 +59,7 @@ const stubEarningsSchedule = () => {
 
 beforeEach(() => {
   localStorage.clear();
+  sessionStorage.clear();
   vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-08-12T16:00:00Z"));
   vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline test fallback")));
   Object.defineProperty(window, "matchMedia", {
@@ -110,6 +111,16 @@ describe("Morning Briefing frontend demo", () => {
     expect(screen.getByRole("heading", { level: 2, name: "January 2027" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Today" }));
     expect(screen.getByRole("heading", { level: 2, name: "August 2026" })).toBeInTheDocument();
+  });
+
+  it("keeps a manually selected month stable across a page refresh", async () => {
+    const view = renderApp("/earnings");
+    await screen.findByRole("heading", { level: 2, name: "August 2026" });
+    fireEvent.click(screen.getByRole("button", { name: "Next month" }));
+    expect(screen.getByRole("heading", { level: 2, name: "September 2026" })).toBeInTheDocument();
+    view.unmount();
+    renderApp("/earnings");
+    expect(await screen.findByRole("heading", { level: 2, name: "September 2026" })).toBeInTheDocument();
   });
 
   it("uses the New York market date for calendar Today near a UTC boundary", async () => {
@@ -206,8 +217,8 @@ describe("Morning Briefing frontend demo", () => {
             scheduled: false, reported: true, cancelled: false, unknown: false,
             epsEstimate: 3, epsActual: 3.3, epsSurprise: 0.3, epsSurprisePct: 10, epsResult: "Beat",
             revenueEstimate: 100, revenueActual: 90, revenueSurprise: -10, revenueSurprisePct: -10, revenueResult: "Miss",
-            overallResult: "Mixed", reportedAt: "2026-08-12T20:10:00.000Z",
-            calendarProvider: "fmp-earnings-calendar", consensusProvider: "fmp-earnings-calendar",
+            overallResult: "Mixed", reportedAt: null,
+            calendarProvider: "finnhub-earnings-calendar", consensusProvider: "finnhub-earnings-calendar",
             providerEventId: "msft-event", providerUpdatedAt: "2026-08-12T20:10:00.000Z",
             officialReportUrl: "https://example.test/msft-release", investorRelationsUrl: "https://example.test/msft-ir",
             secFilingUrl: "https://www.sec.gov/Archives/edgar/data/789012/000078901226000001/msft8k.htm",
@@ -221,7 +232,7 @@ describe("Morning Briefing frontend demo", () => {
             epsEstimate: null, epsActual: null, epsSurprise: null, epsSurprisePct: null, epsResult: "Not Available",
             revenueEstimate: null, revenueActual: null, revenueSurprise: null, revenueSurprisePct: null, revenueResult: "Not Available",
             overallResult: "Not Available", reportedAt: null,
-            calendarProvider: "fmp-earnings-calendar", consensusProvider: "fmp-earnings-calendar",
+            calendarProvider: "finnhub-earnings-calendar", consensusProvider: "finnhub-earnings-calendar",
             providerEventId: "aapl-event", providerUpdatedAt: "2026-08-12T20:10:00.000Z",
             officialReportUrl: null, investorRelationsUrl: null, secFilingUrl: null, secAccession: null, secForm: null, secFiledAt: null,
             createdAt: "2026-08-12T20:00:00.000Z", updatedAt: "2026-08-12T20:10:00.000Z", lastCheckedAt: null,
@@ -243,6 +254,7 @@ describe("Morning Briefing frontend demo", () => {
     expect(drawer).toHaveTextContent("3.3");
     expect(drawer).toHaveTextContent("+10.00%");
     expect(drawer).toHaveTextContent("Mixed");
+    expect(drawer).toHaveTextContent(/Reported at\s*N\/A/);
     expect(screen.getByRole("link", { name: /Official Earnings Report/ })).toHaveAttribute("href", "https://example.test/msft-release");
     expect(screen.getByRole("link", { name: /SEC Filing/ })).toHaveAttribute("href", expect.stringContaining("sec.gov"));
     expect(screen.getByRole("link", { name: /Investor Relations/ })).toHaveAttribute("href", "https://example.test/msft-ir");
