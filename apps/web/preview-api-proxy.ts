@@ -38,13 +38,8 @@ export async function proxyProductionApiRequest(
   // only a valid downstream request envelope and carries no client origin,
   // credentials, cookies or body.
   const headers = new Headers({ accept: request.headers.get("accept") ?? "application/json" });
-  const downstream = new Request(serviceBindingUrl(request), {
-    method,
-    headers,
-    redirect: "error",
-  });
-
   try {
+    const downstream = new Request(serviceBindingUrl(request), { method, headers });
     const upstream = await productionApi.fetch(downstream);
     const responseHeaders = new Headers(upstream.headers);
     // Do not let the production Worker establish a browser session on the
