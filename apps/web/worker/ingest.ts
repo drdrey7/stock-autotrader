@@ -154,7 +154,7 @@ const systemStatusSchema = z.object({
 
 // dashboardReadSchema is the shared read contract from
 // @stock-autotrader/contracts (see marketDataSchema above): it validates the
-// constructed dashboard read model in index.ts before serving it.
+// constructed dashboard read model in ./dashboard before serving it.
 
 const eventSchema = z.discriminatedUnion("type", [
   z.strictObject({
