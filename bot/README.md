@@ -44,8 +44,10 @@ thresholds, `INGEST_URL`/`INGEST_SECRET`).
 
 ## Tests
 
+Run from the `bot/` directory (as set up above):
+
 ```bash
-python -m pytest bot/tests -v
+python -m pytest tests -v
 # or, matching CI:
 python3 -m unittest discover -s tests -v
 ```
