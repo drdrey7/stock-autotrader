@@ -553,25 +553,33 @@ function deriveMarketData(rawValue: unknown): MarketDataSnapshot {
 }
 
 export async function buildDashboard(env: Env): Promise<DashboardData> {
-  const meta = await env.DB.prepare("SELECT key, value FROM app_meta").all();
-  const metaMap = new Map<string, string>((meta.results as { key: string; value: string }[]).map((r) => [r.key, r.value]));
-
-  const [scanRes, strategiesRes, candidatesRes, earningsRes, positionsRes, eventsRes, researchRes] = await Promise.all([
-    env.DB.prepare("SELECT * FROM scans ORDER BY id DESC LIMIT 1").first(),
-    env.DB.prepare("SELECT * FROM strategies ORDER BY id").all(),
+  // A single db.batch() round trip instead of 8 separate ones: these queries
+  // are already all-or-nothing (a failure on any of them was already fatal
+  // to the whole call, via the .first()/Promise.all() this replaces), so
+  // batching changes nothing about failure semantics.
+  // A fixed 8-statement batch: each index below is guaranteed present.
+  const batchResults = await env.DB.batch([
+    env.DB.prepare("SELECT key, value FROM app_meta"),
+    env.DB.prepare("SELECT * FROM scans ORDER BY id DESC LIMIT 1"),
+    env.DB.prepare("SELECT * FROM strategies ORDER BY id"),
     // Surface only active-universe candidates from the latest scan (older scans
     // are history, and removed symbols remain stored but are not public).
-    env.DB.prepare(`SELECT c.* FROM scan_candidates AS c WHERE c.scan_id = (SELECT MAX(id) FROM scans) AND ${activeUniverseExistsSql("c.symbol")} ORDER BY c.id`).all(),
+    env.DB.prepare(`SELECT c.* FROM scan_candidates AS c WHERE c.scan_id = (SELECT MAX(id) FROM scans) AND ${activeUniverseExistsSql("c.symbol")} ORDER BY c.id`),
     // `earnings` is the legacy quant/screening table, not the Automated
     // Earnings Engine's read model — see README.md "Automated Earnings
     // Engine (PR #12)". /api/earnings reads `earnings_events` instead,
     // via readEarningsApi() in worker/earnings/.
-    env.DB.prepare(`SELECT e.* FROM earnings AS e WHERE ${activeUniverseExistsSql("e.symbol")} ORDER BY e.date`).all(),
-    env.DB.prepare(`SELECT p.* FROM shadow_positions AS p WHERE ${activeUniverseExistsSql("p.symbol")} ORDER BY p.id`).all(),
-    env.DB.prepare(`SELECT e.* FROM bot_events AS e WHERE e.symbol IS NULL OR ${activeUniverseExistsSql("e.symbol")} ORDER BY e.id`).all(),
-    env.DB.prepare("SELECT * FROM research ORDER BY id").all(),
+    env.DB.prepare(`SELECT e.* FROM earnings AS e WHERE ${activeUniverseExistsSql("e.symbol")} ORDER BY e.date`),
+    env.DB.prepare(`SELECT p.* FROM shadow_positions AS p WHERE ${activeUniverseExistsSql("p.symbol")} ORDER BY p.id`),
+    env.DB.prepare(`SELECT e.* FROM bot_events AS e WHERE e.symbol IS NULL OR ${activeUniverseExistsSql("e.symbol")} ORDER BY e.id`),
+    env.DB.prepare("SELECT * FROM research ORDER BY id"),
   ]);
-  const scan = (scanRes ?? null) as ScanRow | null;
+  const [metaRes, scanRes, strategiesRes, candidatesRes, earningsRes, positionsRes, eventsRes, researchRes] =
+    batchResults as [
+      D1Result, D1Result, D1Result, D1Result, D1Result, D1Result, D1Result, D1Result,
+    ];
+  const metaMap = new Map<string, string>((metaRes.results as { key: string; value: string }[]).map((r) => [r.key, r.value]));
+  const scan = (scanRes.results[0] ?? null) as ScanRow | null;
 
   const candidateRows = (candidatesRes.results as Record<string, unknown>[]).map((r) => Number(r.id));
   let reasons: Record<string, unknown>[] = [];
