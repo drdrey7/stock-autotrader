@@ -25,6 +25,7 @@ import {
   SENTIMENT_STALE_AFTER_SECONDS,
   type MarketContextReadModel,
 } from "./market-context";
+import { activeUniverseExistsSql } from "./stock-universe";
 
 /**
  * The public dashboard/source-health read model: builds validated responses
@@ -268,7 +269,7 @@ export async function buildSources(
     // update with zero rows is healthy. Universe count is checked separately
     // so an empty filtered date range is never mistaken for initialization.
     const row = await env.DB.prepare(
-      "SELECT (SELECT value FROM app_meta WHERE key = 'earningsEngineUpdatedAt') AS updated_at, (SELECT value FROM app_meta WHERE key = 'earningsEngineCheckedAt') AS checked_at, (SELECT value FROM app_meta WHERE key = 'earningsEngineLastAttemptAt') AS attempt_at, (SELECT value FROM app_meta WHERE key = 'earningsCalendarLastError') AS calendar_error, (SELECT value FROM app_meta WHERE key = 'earningsMonitorLastError') AS monitor_error, (SELECT value FROM app_meta WHERE key = 'earningsEngineLastError') AS last_error, (SELECT COUNT(*) FROM earnings_universe) AS universe_count",
+      "SELECT (SELECT value FROM app_meta WHERE key = 'earningsEngineUpdatedAt') AS updated_at, (SELECT value FROM app_meta WHERE key = 'earningsEngineCheckedAt') AS checked_at, (SELECT value FROM app_meta WHERE key = 'earningsEngineLastAttemptAt') AS attempt_at, (SELECT value FROM app_meta WHERE key = 'earningsCalendarLastError') AS calendar_error, (SELECT value FROM app_meta WHERE key = 'earningsMonitorLastError') AS monitor_error, (SELECT value FROM app_meta WHERE key = 'earningsEngineLastError') AS last_error, (SELECT COUNT(*) FROM earnings_universe WHERE active = 1 AND source = 'core') AS universe_count",
     ).first<{ updated_at: string | null; checked_at: string | null; attempt_at: string | null; calendar_error: string | null; monitor_error: string | null; last_error: string | null; universe_count: number | string | null }>();
     const updatedAt = parseIsoTimestamp(row?.updated_at);
     const checkedAt = parseIsoTimestamp(row?.checked_at);
@@ -524,15 +525,16 @@ export async function buildDashboard(env: Env): Promise<DashboardData> {
   const [scanRes, strategiesRes, candidatesRes, earningsRes, positionsRes, eventsRes, researchRes] = await Promise.all([
     env.DB.prepare("SELECT * FROM scans ORDER BY id DESC LIMIT 1").first(),
     env.DB.prepare("SELECT * FROM strategies ORDER BY id").all(),
-    // Surface only the candidates from the latest scan (older scans are history).
-    env.DB.prepare("SELECT * FROM scan_candidates WHERE scan_id = (SELECT MAX(id) FROM scans) ORDER BY id").all(),
+    // Surface only active-universe candidates from the latest scan (older scans
+    // are history, and removed symbols remain stored but are not public).
+    env.DB.prepare(`SELECT c.* FROM scan_candidates AS c WHERE c.scan_id = (SELECT MAX(id) FROM scans) AND ${activeUniverseExistsSql("c.symbol")} ORDER BY c.id`).all(),
     // `earnings` is the legacy quant/screening table, not the Automated
     // Earnings Engine's read model — see README.md "Automated Earnings
     // Engine (PR #12)". /api/earnings reads `earnings_events` instead,
     // via readEarningsApi() in worker/earnings/.
-    env.DB.prepare("SELECT * FROM earnings ORDER BY date").all(),
-    env.DB.prepare("SELECT * FROM shadow_positions ORDER BY id").all(),
-    env.DB.prepare("SELECT * FROM bot_events ORDER BY id").all(),
+    env.DB.prepare(`SELECT e.* FROM earnings AS e WHERE ${activeUniverseExistsSql("e.symbol")} ORDER BY e.date`).all(),
+    env.DB.prepare(`SELECT p.* FROM shadow_positions AS p WHERE ${activeUniverseExistsSql("p.symbol")} ORDER BY p.id`).all(),
+    env.DB.prepare(`SELECT e.* FROM bot_events AS e WHERE e.symbol IS NULL OR ${activeUniverseExistsSql("e.symbol")} ORDER BY e.id`).all(),
     env.DB.prepare("SELECT * FROM research ORDER BY id").all(),
   ]);
   const scan = (scanRes ?? null) as ScanRow | null;
@@ -678,7 +680,7 @@ export async function readPortfolioAndPositions(
   const placeholders = PORTFOLIO_META_KEYS.map(() => "?").join(",");
   const [metaRes, positionsRes] = await Promise.all([
     db.prepare(`SELECT key, value FROM app_meta WHERE key IN (${placeholders})`).bind(...PORTFOLIO_META_KEYS).all(),
-    db.prepare("SELECT * FROM shadow_positions ORDER BY id").all(),
+    db.prepare(`SELECT p.* FROM shadow_positions AS p WHERE ${activeUniverseExistsSql("p.symbol")} ORDER BY p.id`).all(),
   ]);
   const metaMap = new Map<string, string>((metaRes.results as { key: string; value: string }[]).map((r) => [r.key, r.value]));
 
@@ -714,7 +716,11 @@ export async function readPortfolioAndPositions(
 /** Scoped read for /api/stocks/:symbol: only the one matching candidate + its reasons. */
 export async function readCandidateBySymbol(db: D1Database, symbol: string): Promise<Candidate | null> {
   const row = await db.prepare(
-    "SELECT * FROM scan_candidates WHERE scan_id = (SELECT MAX(id) FROM scans) AND symbol = ? ORDER BY id LIMIT 1",
+    `SELECT c.* FROM scan_candidates AS c
+     WHERE c.scan_id = (SELECT MAX(id) FROM scans)
+       AND c.symbol = ?
+       AND ${activeUniverseExistsSql("c.symbol")}
+     ORDER BY c.id LIMIT 1`,
   ).bind(symbol).first<Record<string, unknown>>();
   if (!row) return null;
   const reasonsRes = await db.prepare("SELECT * FROM decision_reasons WHERE candidate_id = ?").bind(row.id).all();

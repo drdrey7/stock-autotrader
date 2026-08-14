@@ -197,6 +197,7 @@ export interface MarketDataSnapshot {
 export * from "./primitives";
 export * from "./daily-briefing";
 export * from "./briefing-universe";
+export * from "./core-universe";
 export * from "./source-health";
 export * from "./dashboard";
 

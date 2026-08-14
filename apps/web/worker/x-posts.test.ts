@@ -158,7 +158,8 @@ class FakeStatement {
 
   async all<T>(): Promise<{ results: T[] }> {
     if (!this.sql.includes("FROM x_posts")) throw new Error(`Unhandled SELECT: ${this.sql}`);
-    let rows = [...this.db.posts.values()] as unknown as XPostRow[];
+    let rows = [...this.db.posts.values()]
+      .filter((row) => this.db.isActiveUniverseSymbol(row.symbol)) as unknown as XPostRow[];
     const whereIdx = this.sql.indexOf("WHERE");
     if (whereIdx !== -1) {
       const where = this.sql.slice(whereIdx);
@@ -180,8 +181,16 @@ class FakeStatement {
 class FakeD1 {
   readonly events = new Map<string, IngestEventRow>();
   readonly posts = new Map<string, PostRow>();
+  readonly universe = new Map<string, { active: number; source: string }>();
   readonly meta = new Map<string, string>();
   readonly sqls: string[] = [];
+
+  isActiveUniverseSymbol(symbol: string | null): boolean {
+    if (symbol === null) return true;
+    if (this.universe.size === 0) return true;
+    const row = this.universe.get(symbol);
+    return Boolean(row && row.active === 1 && row.source === "core");
+  }
 
   prepare(sql: string): FakeStatement {
     return new FakeStatement(this, sql);
@@ -382,6 +391,18 @@ describe("readXPosts", () => {
     await storeXPosts(db as unknown as D1Database, "event-12345678", "2026-08-12T12:00:00Z", [postA, postB]);
     const rows = await readXPosts(db as unknown as D1Database, { symbol: "NVDA", limit: 10 });
     expect(rows.map((row) => row.id)).toEqual(["post-aaa"]);
+  });
+
+  it("does not publicly surface a symbol after its universe row is deactivated", async () => {
+    const db = new FakeD1();
+    db.universe.set("NVDA", { active: 1, source: "core" });
+    db.universe.set("ABNB", { active: 0, source: "core" });
+    await storeXPosts(db as unknown as D1Database, "event-removed", "2026-08-12T12:00:00Z", [
+      postA,
+      { ...postA, id: "post-abnb", symbol: "ABNB", universe: "S&P 500" },
+    ]);
+    const rows = await readXPosts(db as unknown as D1Database, { limit: 10 });
+    expect(rows.map((row) => row.symbol)).toEqual(["NVDA"]);
   });
 
   it("clamps the limit", async () => {

@@ -28,6 +28,7 @@ interface Tables {
   scanCandidates: Record<string, unknown>[];
   decisionReasons: Record<string, unknown>[];
   earnings: Record<string, unknown>[];
+  universe: Record<string, unknown>[];
   shadowPositions: Record<string, unknown>[];
   botEvents: Record<string, unknown>[];
   research: Record<string, unknown>[];
@@ -43,6 +44,7 @@ function createDb(tables: Partial<Tables> = {}, throwOn: ThrowOn = {}) {
     scanCandidates: [],
     decisionReasons: [],
     earnings: [],
+    universe: [],
     shadowPositions: [],
     botEvents: [],
     research: [],
@@ -63,10 +65,10 @@ function createDb(tables: Partial<Tables> = {}, throwOn: ThrowOn = {}) {
             return null;
           }
           // readCandidateBySymbol's scoped lookup (WHERE scan_id = ... AND symbol = ?).
-          if (sql.startsWith("SELECT * FROM scan_candidates WHERE scan_id")) {
+          if (sql.includes("FROM scan_candidates") && sql.includes("WHERE c.scan_id")) {
             if (throwOn.scanCandidates) throw new Error("scan_candidates unavailable");
             const symbol = args[0];
-            return (t.scanCandidates.find((row) => row.symbol === symbol) as T | undefined) ?? null;
+            return (t.scanCandidates.find((row) => row.symbol === symbol && isActiveUniverseSymbol(t, String(row.symbol))) as T | undefined) ?? null;
           }
           if (sql === "SELECT value FROM app_meta WHERE key = 'marketData'") {
             if (throwOn.marketData) throw new Error("marketData unavailable");
@@ -88,17 +90,22 @@ function createDb(tables: Partial<Tables> = {}, throwOn: ThrowOn = {}) {
             const ids = new Set(args.map((value) => Number(value)));
             return { results: t.decisionReasons.filter((row) => ids.has(Number(row.candidate_id))) as T[] };
           }
-          if (sql.startsWith("SELECT * FROM scan_candidates")) return { results: t.scanCandidates as T[] };
+          if (sql.includes("FROM scan_candidates")) return { results: t.scanCandidates.filter((row) => isActiveUniverseSymbol(t, String(row.symbol))) as T[] };
           if (sql.startsWith("SELECT * FROM strategies")) return { results: t.strategies as T[] };
-          if (sql.startsWith("SELECT * FROM earnings")) return { results: t.earnings as T[] };
-          if (sql.startsWith("SELECT * FROM shadow_positions")) return { results: t.shadowPositions as T[] };
-          if (sql.startsWith("SELECT * FROM bot_events")) return { results: t.botEvents as T[] };
+          if (sql.includes("FROM earnings AS e")) return { results: t.earnings.filter((row) => isActiveUniverseSymbol(t, String(row.symbol))) as T[] };
+          if (sql.includes("FROM shadow_positions")) return { results: t.shadowPositions.filter((row) => isActiveUniverseSymbol(t, String(row.symbol))) as T[] };
+          if (sql.includes("FROM bot_events")) return { results: t.botEvents.filter((row) => row.symbol == null || isActiveUniverseSymbol(t, String(row.symbol))) as T[] };
           if (sql.startsWith("SELECT * FROM research")) return { results: t.research as T[] };
           return { results: [] as T[] };
         },
       };
     },
   };
+}
+
+function isActiveUniverseSymbol(t: Tables, symbol: string): boolean {
+  const row = t.universe.find((candidate) => String(candidate.symbol) === symbol);
+  return Boolean(row && Number(row.active) === 1 && row.source === "core");
 }
 
 const assets = { fetch: async () => new Response("assets") };
@@ -194,6 +201,10 @@ function healthyTables(): Partial<Tables> {
         tracked: 1,
         updated_at: "2026-08-13T09:00:00Z",
       },
+    ],
+    universe: [
+      { symbol: "AMD", active: 1, source: "core" },
+      { symbol: "NVDA", active: 1, source: "core" },
     ],
     shadowPositions: [
       {
@@ -381,6 +392,39 @@ describe("narrow endpoints derived from the dashboard read model", () => {
     const env = envWith(healthyTables());
     const response = await worker.fetch(new Request("https://example.test/api/stocks/ZZZZ"), env);
     expect(response.status).toBe(404);
+  });
+
+  it("does not surface an inactive universe member on dashboard or stock lookup reads", async () => {
+    const tables = healthyTables();
+    tables.universe = [
+      ...(tables.universe ?? []),
+      { symbol: "ABNB", active: 0, source: "core" },
+    ];
+    tables.scanCandidates = [
+      ...(tables.scanCandidates ?? []),
+      { ...tables.scanCandidates![0], id: 43, symbol: "ABNB" },
+    ];
+    tables.earnings = [
+      ...(tables.earnings ?? []),
+      { ...tables.earnings![0], symbol: "ABNB" },
+    ];
+    tables.shadowPositions = [
+      ...(tables.shadowPositions ?? []),
+      { ...tables.shadowPositions![0], id: 43, symbol: "ABNB" },
+    ];
+    tables.botEvents = [
+      ...(tables.botEvents ?? []),
+      { ...tables.botEvents![0], event_id: "evt-abnb", symbol: "ABNB" },
+    ];
+    const env = envWith(tables);
+    const dashboard = (await (await worker.fetch(new Request("https://example.test/api/dashboard"), env)).json()) as DashboardData;
+    expect(dashboard.candidates.some((candidate) => candidate.symbol === "ABNB")).toBe(false);
+    expect(dashboard.earnings.some((event) => event.symbol === "ABNB")).toBe(false);
+    expect(dashboard.positions.some((position) => position.symbol === "ABNB")).toBe(false);
+    expect(dashboard.events.some((event) => event.symbol === "ABNB")).toBe(false);
+    const portfolio = (await (await worker.fetch(new Request("https://example.test/api/portfolio/shadow"), env)).json()) as PortfolioBody;
+    expect(portfolio.positions.some((position) => (position as { symbol?: string }).symbol === "ABNB")).toBe(false);
+    expect((await worker.fetch(new Request("https://example.test/api/stocks/abnb"), env)).status).toBe(404);
   });
 
   it("GET /api/stocks/:symbol fails closed on a store error", async () => {
