@@ -464,6 +464,7 @@ describe("narrow endpoints derived from the dashboard read model", () => {
       invested: 1285,
       openPositions: 1,
     });
+    expect(dashboard.portfolio.returnPct).toBeCloseTo(-47.15);
     expect(dashboard.portfolio.openRiskPct).toBeCloseTo((80 / 5285) * 100);
     expect(dashboard.portfolio.grossExposurePct).toBeCloseTo((1285 / 5285) * 100);
     const portfolio = (await (await worker.fetch(new Request("https://example.test/api/portfolio/shadow"), env)).json()) as PortfolioBody;
@@ -475,6 +476,7 @@ describe("narrow endpoints derived from the dashboard read model", () => {
       invested: 1285,
       openPositions: 1,
     });
+    expect(portfolio.portfolio.returnPct).toBeCloseTo(-47.15);
     expect(portfolio.portfolio.openRiskPct).toBeCloseTo((80 / 5285) * 100);
     expect(portfolio.portfolio.grossExposurePct).toBeCloseTo((1285 / 5285) * 100);
     expect((tables.shadowPositions ?? []).some((position) => position.symbol === "ABNB")).toBe(true);
@@ -499,6 +501,32 @@ describe("narrow endpoints derived from the dashboard read model", () => {
     expect((tables.shadowPositions ?? []).some((position) => position.symbol === "ABNB")).toBe(true);
     expect(body.positions).toEqual([]);
     expect(body.portfolio).toMatchObject({ cash: 8715, equity: 8715, invested: 0, openPositions: 0, openRiskPct: 0, grossExposurePct: 0 });
+  });
+
+  it("recomputes scan counts from active-universe candidates", async () => {
+    const tables = healthyTables();
+    tables.universe = [
+      ...(tables.universe ?? []),
+      { symbol: "ABNB", active: 0, source: "core" },
+    ];
+    tables.scanCandidates = [
+      ...(tables.scanCandidates ?? []),
+      { ...tables.scanCandidates![0], id: 43, symbol: "AMD", status: "Watch" },
+      { ...tables.scanCandidates![0], id: 44, symbol: "ABNB", status: "Strong Setup" },
+    ];
+    tables.scan = {
+      ...tables.scan!,
+      candidates: 3,
+      setups: 2,
+      watch: 1,
+    };
+    const env = envWith(tables);
+    const response = await worker.fetch(new Request("https://example.test/api/status"), env);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as StatusBody;
+
+    expect(body.candidates.map((candidate) => candidate.symbol)).toEqual(["NVDA", "AMD"]);
+    expect(body.scan).toMatchObject({ universe: 500, passedFilters: 40, candidates: 2, setups: 1, watch: 1 });
   });
 
   it("GET /api/stocks/:symbol fails closed on a store error", async () => {

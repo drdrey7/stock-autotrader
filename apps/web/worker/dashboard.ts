@@ -506,6 +506,7 @@ function derivePortfolioFromActivePositions(
   positions: DashboardData["positions"],
 ) {
   const cash = Math.max(num(metaMap.get("cash") ?? 0), 0);
+  const initialCapital = num(metaMap.get("initialCapital") ?? 10000);
   const invested = positions.reduce(
     (total, position) => total + Math.max(position.currentPrice * position.quantity, 0),
     0,
@@ -515,9 +516,9 @@ function derivePortfolioFromActivePositions(
   const equityDenominator = equity > 0 ? equity : 0;
 
   return {
-    initialCapital: num(metaMap.get("initialCapital") ?? 10000),
+    initialCapital,
     equity,
-    returnPct: num(metaMap.get("returnPct") ?? 0),
+    returnPct: initialCapital > 0 ? ((equity - initialCapital) / initialCapital) * 100 : 0,
     cash,
     invested,
     openPositions: positions.length,
@@ -590,6 +591,11 @@ export async function buildDashboard(env: Env): Promise<DashboardData> {
   const strategies = (strategiesRes.results as Record<string, unknown>[]).map(mapStrategyRow);
   const candidates = (candidatesRes.results as Record<string, unknown>[])
     .map((c) => mapCandidateRow(c, reasonsByCandidate.get(Number(c.id)) ?? []));
+  const candidateCounts = {
+    candidates: candidates.length,
+    setups: candidates.filter((candidate) => candidate.status === "Strong Setup").length,
+    watch: candidates.filter((candidate) => candidate.status === "Watch").length,
+  };
 
   const earnings = (earningsRes.results as Record<string, unknown>[]).map((e) => ({
     symbol: String(e.symbol),
@@ -659,9 +665,9 @@ export async function buildDashboard(env: Env): Promise<DashboardData> {
     scan: {
       universe: scan ? int(scan.universe) : 0,
       passedFilters: scan ? int(scan.passed_filters) : 0,
-      candidates: scan ? int(scan.candidates) : 0,
-      setups: scan ? int(scan.setups) : 0,
-      watch: scan ? int(scan.watch) : 0,
+      candidates: candidateCounts.candidates,
+      setups: candidateCounts.setups,
+      watch: candidateCounts.watch,
     },
     portfolio,
     strategies,
@@ -680,7 +686,7 @@ export async function buildDashboard(env: Env): Promise<DashboardData> {
 }
 
 const PORTFOLIO_META_KEYS = [
-  "initialCapital", "returnPct", "cash", "riskPolicy",
+  "initialCapital", "cash", "riskPolicy",
 ] as const;
 
 /** Scoped read for /api/strategies: only the strategies table. */
