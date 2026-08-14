@@ -6,10 +6,13 @@ except the one signed write endpoint below, unauthenticated, and every response 
 and no broker/trading action anywhere in this API.
 
 Schemas referenced below live in [`packages/contracts`](../packages/contracts); the
-Worker validates every response it builds against them before serving, and the
-frontend validates every response it fetches against the same schema — see
-`packages/contracts/src/dashboard.ts` for the dashboard/market-data shapes and
-`packages/contracts/src/daily-briefing.ts` for the briefing shape.
+Worker validates every response it builds against them before serving, so a
+malformed payload never leaves the API. The frontend trusts that contract and
+does not re-validate on receipt — `fetchJson()` in `MorningBriefingData.tsx`
+casts the parsed JSON straight to its expected type, so the validation
+boundary is server-side only. See `packages/contracts/src/dashboard.ts` for
+the dashboard/market-data shapes and `packages/contracts/src/daily-briefing.ts`
+for the briefing shape.
 
 ## `GET /healthz`
 
