@@ -1,9 +1,0 @@
-{
-  "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "stock-autotrader-pr-preview",
-  "pages_build_output_dir": "./apps/web/dist",
-  "compatibility_date": "2026-08-13",
-  "vars": {
-    "PUBLIC_API_ORIGIN": "https://stock-autotrader-web.barroso-labs.workers.dev"
-  }
-}

@@ -10,7 +10,7 @@ function fakeFetcher(response: Response, calls: FetchCall[]) {
   };
 }
 
-describe("Pages preview API proxy", () => {
+describe("Worker preview API proxy", () => {
   it("proxies GET paths and query strings without client credentials", async () => {
     const calls: FetchCall[] = [];
     const response = await proxyPublicApiRequest(
@@ -71,5 +71,16 @@ describe("Pages preview API proxy", () => {
       expect(response.status).toBe(500);
       expect(calls).toHaveLength(0);
     }
+  });
+
+  it("fails closed when the upstream rejects an unexpected redirect", async () => {
+    const response = await proxyPublicApiRequest(
+      new Request("https://preview.example/api/status"),
+      "https://stock-autotrader-web.barroso-labs.workers.dev",
+      async () => { throw new TypeError("redirect disallowed"); },
+    );
+
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ error: "preview_api_unavailable" });
   });
 });

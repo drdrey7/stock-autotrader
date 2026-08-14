@@ -35,6 +35,11 @@ jobs:
         run: |
           node -e 'const fs=require("node:fs"); const config=JSON.parse(fs.readFileSync("wrangler.jsonc", "utf8")); const expected=["*/15 * * * *", "0 6 * * *"]; const actual=config.triggers?.crons ?? []; if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error(`Expected exactly two production cron triggers, got ${JSON.stringify(actual)}`); console.log(`Production cron triggers (${actual.length}): ${actual.join(", ")}`);'
           npx --yes wrangler@4.122.0 deploy --dry-run
+      - name: Validate preview Worker config and dry-run
+        working-directory: apps/web
+        run: |
+          node -e 'const fs=require("node:fs"); const config=JSON.parse(fs.readFileSync("wrangler.preview.jsonc", "utf8")); const forbidden=["d1_databases","kv_namespaces","r2_buckets","durable_objects","services","queues","secrets"]; if (config.name !== "stock-autotrader-preview") throw new Error(`Unexpected preview Worker name: ${config.name}`); if (config.main !== "preview-worker.ts") throw new Error(`Unexpected preview entrypoint: ${config.main}`); if ((config.triggers?.crons ?? []).length !== 0) throw new Error("Preview Worker must have zero cron triggers"); for (const key of forbidden) if (Object.hasOwn(config,key)) throw new Error(`Preview config must not contain ${key}`); const vars=Object.keys(config.vars ?? {}).sort(); if (vars.join(",") !== "ENVIRONMENT,PUBLIC_API_ORIGIN") throw new Error(`Unexpected preview vars: ${vars.join(",")}`); if (config.vars.ENVIRONMENT !== "preview") throw new Error("Preview ENVIRONMENT must be preview"); if (!/^https:\/\//.test(config.vars.PUBLIC_API_ORIGIN)) throw new Error("Preview API origin must be HTTPS"); const serialized=JSON.stringify(config); if (/INGEST_SECRET|FMP_API_KEY|SEC_USER_AGENT|broker/i.test(serialized)) throw new Error("Preview config contains a production secret name"); console.log("Preview config has zero triggers, storage bindings, service bindings and secrets");'
+          npx --yes wrangler@4.122.0 deploy --config wrangler.preview.jsonc --dry-run
       - name: Validate D1 migrations (local)
         working-directory: apps/web
         run: npx --yes wrangler@4.122.0 d1 migrations apply stock-autotrader-db --local

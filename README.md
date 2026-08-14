@@ -102,11 +102,13 @@ npx wrangler secret put FMP_API_KEY
 npx wrangler secret put SEC_USER_AGENT
 ```
 
-No key, token or contact secret belongs in Git. The PR preview is a dedicated
-Cloudflare Pages project with no D1 or Worker bindings, no secrets and no cron
-triggers. Its same-origin `/api/*` Pages Function proxies only public GET/HEAD
-requests to the production Worker. Isolated backend staging/D1 previews remain
-a future follow-up and are intentionally outside PR #13.
+No key, token or contact secret belongs in Git. PR previews use one permanent
+`stock-autotrader-preview` Worker with no D1, KV, R2, Durable Object, service or
+secret bindings and no cron triggers. Its same-origin `/api/*` handler proxies
+only public GET/HEAD requests to the production Worker; branch commits are
+uploaded as isolated Worker versions by Cloudflare Workers Builds. Isolated
+backend staging/D1 previews remain a future follow-up and are intentionally
+outside PR #13.
 
 The daily Cron refreshes `today - 90 days → today + 60 days`; the 15-minute Cron polls only scheduled events inside the
 BMO/AMC/TBD New York-time windows and also detects a provider event newly moved
