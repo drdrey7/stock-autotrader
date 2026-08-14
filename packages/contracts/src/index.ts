@@ -197,6 +197,7 @@ export interface MarketDataSnapshot {
 export * from "./daily-briefing";
 export * from "./briefing-universe";
 export * from "./source-health";
+export * from "./dashboard";
 
 export interface DashboardData {
   demo: boolean;

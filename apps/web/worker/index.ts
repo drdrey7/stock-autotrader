@@ -1,6 +1,8 @@
 import {
   briefingCalendarDateSchema,
   briefingEditionTypeSchema,
+  dashboardReadSchema,
+  marketDataSchema,
   publicSourceHealthSchema,
   sourceHealthSchema,
   type Candidate,
@@ -10,7 +12,7 @@ import {
   type SourceHealth,
   type StrategySummary,
 } from "@stock-autotrader/contracts";
-import { dashboardReadSchema, handleIngest, isoTimestampSchema, marketDataSchema } from "./ingest";
+import { handleIngest, isoTimestampSchema } from "./ingest";
 import {
   readBriefingByDateAndType,
   readBriefingStatus,
