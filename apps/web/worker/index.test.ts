@@ -1,0 +1,559 @@
+import { describe, expect, it, vi } from "vitest";
+import type { D1Database } from "@cloudflare/workers-types";
+import worker, { buildMarketContextHealth, unavailableSources, type Env } from "./index";
+import type { MarketContextReadModel } from "./market-context";
+import type { DashboardData, MarketDataSnapshot, PublicSourceHealth, StrategySummary } from "@stock-autotrader/contracts";
+
+type StatusBody = DashboardData & {
+  market: { indices: unknown[] };
+  briefing: { available: boolean; freshness: string };
+  sources: PublicSourceHealth;
+  sentiment: unknown;
+};
+type StockBody = { symbol: string; strategy: string; direction: string };
+type PortfolioBody = { portfolio: unknown; positions: unknown[] };
+
+/**
+ * A minimal, table-aware D1 fake. Each table is seeded independently; any
+ * query this file doesn't care about (daily_briefings, x_posts,
+ * earnings_events, market_indices, market_sentiment, ...) defaults to an
+ * empty/absent result rather than throwing, so tests only need to set up
+ * the tables their assertions actually touch.
+ */
+interface Tables {
+  appMeta: Record<string, string>;
+  scan: Record<string, unknown> | null;
+  strategies: Record<string, unknown>[];
+  scanCandidates: Record<string, unknown>[];
+  decisionReasons: Record<string, unknown>[];
+  earnings: Record<string, unknown>[];
+  shadowPositions: Record<string, unknown>[];
+  botEvents: Record<string, unknown>[];
+  research: Record<string, unknown>[];
+}
+
+type ThrowOn = Partial<Record<"appMeta" | "dailyBriefings", boolean>>;
+
+function createDb(tables: Partial<Tables> = {}, throwOn: ThrowOn = {}) {
+  const t: Tables = {
+    appMeta: {},
+    scan: null,
+    strategies: [],
+    scanCandidates: [],
+    decisionReasons: [],
+    earnings: [],
+    shadowPositions: [],
+    botEvents: [],
+    research: [],
+    ...tables,
+  };
+  return {
+    prepare(sql: string) {
+      let args: unknown[] = [];
+      return {
+        bind(...values: unknown[]) {
+          args = values;
+          return this;
+        },
+        async first<T>(): Promise<T | null> {
+          if (sql === "SELECT * FROM scans ORDER BY id DESC LIMIT 1") return (t.scan as T | null) ?? null;
+          if (sql.includes("FROM daily_briefings")) {
+            if (throwOn.dailyBriefings) throw new Error("daily_briefings unavailable");
+            return null;
+          }
+          return null;
+        },
+        async all<T>(): Promise<{ results: T[] }> {
+          if (sql === "SELECT key, value FROM app_meta") {
+            if (throwOn.appMeta) throw new Error("app_meta unavailable");
+            return { results: Object.entries(t.appMeta).map(([key, value]) => ({ key, value })) as T[] };
+          }
+          if (sql.startsWith("SELECT * FROM decision_reasons")) {
+            const ids = new Set(args.map((value) => Number(value)));
+            return { results: t.decisionReasons.filter((row) => ids.has(Number(row.candidate_id))) as T[] };
+          }
+          if (sql.startsWith("SELECT * FROM scan_candidates")) return { results: t.scanCandidates as T[] };
+          if (sql.startsWith("SELECT * FROM strategies")) return { results: t.strategies as T[] };
+          if (sql.startsWith("SELECT * FROM earnings")) return { results: t.earnings as T[] };
+          if (sql.startsWith("SELECT * FROM shadow_positions")) return { results: t.shadowPositions as T[] };
+          if (sql.startsWith("SELECT * FROM bot_events")) return { results: t.botEvents as T[] };
+          if (sql.startsWith("SELECT * FROM research")) return { results: t.research as T[] };
+          return { results: [] as T[] };
+        },
+      };
+    },
+  };
+}
+
+const assets = { fetch: async () => new Response("assets") };
+
+function envWith(tables: Partial<Tables>, throwOn: ThrowOn = {}): Env {
+  return { DB: createDb(tables, throwOn) as unknown as D1Database, ASSETS: assets } as unknown as Env;
+}
+
+const validRiskPolicy = JSON.stringify({
+  riskPerTradePct: 1,
+  maxPositions: 5,
+  maxOpenRiskPct: 5,
+  maxSinglePositionPct: 10,
+  maxSectorExposurePct: 20,
+  maxGrossExposurePct: 50,
+  leverage: "1x",
+  averagingDown: false,
+  martingale: false,
+});
+
+function healthyTables(): Partial<Tables> {
+  return {
+    appMeta: { riskPolicy: validRiskPolicy },
+    scan: {
+      id: 7,
+      scanned_at: "2026-08-13T11:00:00Z",
+      universe: 500,
+      passed_filters: 40,
+      candidates: 1,
+      setups: 1,
+      watch: 0,
+    },
+    strategies: [
+      {
+        id: "trend-breakout",
+        name: "Trend Breakout",
+        version: "1.2",
+        status: "Shadow",
+        description: "Momentum continuation",
+        universe: "S&P 500",
+        typical_holding_period: "5-10 days",
+        signals_today: 3,
+        open_shadow_positions: 1,
+        metadata: "{}",
+      },
+    ],
+    scanCandidates: [
+      {
+        id: 42,
+        symbol: "NVDA",
+        company: "NVIDIA Corp",
+        sector: "Technology",
+        market_cap: 3_000_000_000_000,
+        price: 128.5,
+        quant_score: 88,
+        strategy_id: "trend-breakout",
+        strategy: "Trend Breakout",
+        strategy_version: "1.2",
+        trend: "Strong",
+        momentum: 1.4,
+        relative_strength: 1.2,
+        relative_volume: 2.1,
+        breakout: "20-day high",
+        earnings_date: "2026-08-20",
+        earnings_proximity_days: 7,
+        status: "Strong Setup",
+        direction: "Bullish",
+        risk_flags: JSON.stringify(["earnings-window"]),
+        updated_at: "2026-08-13T11:00:00Z",
+      },
+    ],
+    decisionReasons: [
+      {
+        candidate_id: 42,
+        reason_code: "TREND_STRONG",
+        reason_label: "Strong uptrend",
+        outcome: "pass",
+        observed: "ADX 32",
+        threshold: "ADX 25",
+      },
+    ],
+    earnings: [
+      {
+        symbol: "NVDA",
+        company: "NVIDIA Corp",
+        date: "2026-08-20",
+        timing: "AMC",
+        event_signal: "Confirmed",
+        engine_relevant: 1,
+        signal: "Strong Setup",
+        strategy: "Trend Breakout",
+        has_position: 0,
+        tracked: 1,
+        updated_at: "2026-08-13T09:00:00Z",
+      },
+    ],
+    shadowPositions: [
+      {
+        symbol: "NVDA",
+        strategy: "Trend Breakout",
+        entry_price: 120,
+        current_price: 128.5,
+        stop_price: 112,
+        quantity: 10,
+        risk_amount: 80,
+        unrealized_pnl: 85,
+        return_pct: 7.08,
+        r_multiple: 1.06,
+        opened_at: "2026-08-11T14:30:00Z",
+      },
+    ],
+    botEvents: [
+      {
+        event_id: "evt-1",
+        event_type: "SIGNAL_SURFACED",
+        message: "NVDA signal surfaced",
+        severity: "success",
+        symbol: "NVDA",
+        strategy_id: "trend-breakout",
+        created_at: "2026-08-13T11:00:00Z",
+      },
+    ],
+    research: [
+      {
+        id: "res-1",
+        strategy_id: "trend-breakout",
+        strategy: "Trend Breakout",
+        stage: "Shadow",
+        period: "2026 Q3",
+        status: "Complete",
+        metrics: JSON.stringify({ sharpe: 1.4 }),
+      },
+    ],
+  };
+}
+
+describe("buildDashboard via /api/dashboard", () => {
+  it("maps every table into the validated dashboard shape", async () => {
+    const env = envWith(healthyTables());
+    const response = await worker.fetch(new Request("https://example.test/api/dashboard"), env);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as DashboardData;
+
+    expect(body.demo).toBe(false);
+    expect(body.status).toMatchObject({ engine: "online", apiHealth: "healthy", latestScan: "2026-08-13T11:00:00Z" });
+    expect(body.scan).toMatchObject({ universe: 500, passedFilters: 40, candidates: 1, setups: 1, watch: 0 });
+
+    expect(body.strategies).toHaveLength(1);
+    expect(body.strategies[0]).toMatchObject({ id: "trend-breakout", state: "Shadow", enabled: true, signalsToday: 3 });
+
+    expect(body.candidates).toHaveLength(1);
+    expect(body.candidates[0]).toMatchObject({
+      symbol: "NVDA",
+      direction: "Bullish",
+      riskFlags: ["earnings-window"],
+    });
+    expect(body.candidates[0]!.reasons).toEqual([
+      { id: "TREND_STRONG", outcome: "pass", code: "TREND_STRONG", label: "Strong uptrend", observed: "ADX 32", threshold: "ADX 25" },
+    ]);
+
+    expect(body.earnings).toEqual([
+      {
+        symbol: "NVDA",
+        company: "NVIDIA Corp",
+        date: "2026-08-20",
+        timing: "AMC",
+        eventSignal: "Confirmed",
+        engineRelevant: true,
+        signal: "Strong Setup",
+        strategy: "Trend Breakout",
+        hasPosition: false,
+        tracked: true,
+        updatedAt: "2026-08-13T09:00:00Z",
+      },
+    ]);
+
+    expect(body.positions).toHaveLength(1);
+    expect(body.positions[0]).toMatchObject({ symbol: "NVDA", quantity: 10, rMultiple: 1.06 });
+
+    expect(body.events).toHaveLength(1);
+    expect(body.events[0]).toMatchObject({ id: "evt-1", severity: "success", symbol: "NVDA" });
+
+    expect(body.research).toHaveLength(1);
+    expect(body.research[0]).toMatchObject({ id: "res-1", metrics: { sharpe: 1.4 } });
+
+    // No marketData/lastDataUpdate published -> conservative offline defaults, not fabricated health.
+    expect(body.marketData.status).toBe("offline");
+    expect(body.status.lastDataUpdate).toBeNull();
+  });
+
+  it("groups decision reasons per candidate and never leaks another candidate's reasons", async () => {
+    const tables = healthyTables();
+    tables.scanCandidates = [
+      ...(tables.scanCandidates ?? []),
+      { ...tables.scanCandidates![0], id: 43, symbol: "AMD", updated_at: "2026-08-13T11:00:00Z" },
+    ];
+    tables.decisionReasons = [
+      ...(tables.decisionReasons ?? []),
+      { candidate_id: 43, reason_code: "RVOL_LOW", reason_label: "Below average volume", outcome: "reject" },
+    ];
+    const env = envWith(tables);
+    const body = (await (await worker.fetch(new Request("https://example.test/api/dashboard"), env)).json()) as DashboardData;
+
+    const nvda = body.candidates.find((c) => c.symbol === "NVDA")!;
+    const amd = body.candidates.find((c) => c.symbol === "AMD")!;
+    expect(nvda.reasons.map((r) => r.code)).toEqual(["TREND_STRONG"]);
+    expect(amd.reasons.map((r) => r.code)).toEqual(["RVOL_LOW"]);
+  });
+
+  it("marks the engine delayed and API degraded when lastDataUpdate is stale", async () => {
+    const tables = healthyTables();
+    tables.appMeta = { ...tables.appMeta, lastDataUpdate: "2020-01-01T00:00:00Z" };
+    const env = envWith(tables);
+    const body = (await (await worker.fetch(new Request("https://example.test/api/dashboard"), env)).json()) as DashboardData;
+    expect(body.status.engine).toBe("delayed");
+    expect(body.status.apiHealth).toBe("degraded");
+  });
+
+  it("marks the engine delayed when the latest scan timestamp is malformed", async () => {
+    const tables = healthyTables();
+    tables.scan = { ...tables.scan!, scanned_at: "not-a-timestamp" };
+    const env = envWith(tables);
+    const body = (await (await worker.fetch(new Request("https://example.test/api/dashboard"), env)).json()) as DashboardData;
+    expect(body.status.engine).toBe("delayed");
+    expect(body.status.apiHealth).toBe("degraded");
+  });
+
+  it("degrades a healthy market snapshot that has gone stale instead of presenting it live", async () => {
+    const tables = healthyTables();
+    tables.appMeta = {
+      ...tables.appMeta,
+      marketData: JSON.stringify({
+        provider: "csv",
+        status: "healthy",
+        asOf: "2020-01-01",
+        lastSuccessfulUpdate: "2020-01-01T00:00:00Z",
+        universe: { total: 1, eligible: 1, excluded: 0 },
+        benchmarks: [
+          { symbol: "SPY", date: "2020-01-01", open: 1, high: 1, low: 1, close: 1, adjustedClose: 1, volume: 1 },
+          { symbol: "QQQ", date: "2020-01-01", open: 1, high: 1, low: 1, close: 1, adjustedClose: 1, volume: 1 },
+        ],
+        warnings: [],
+        updatedAt: "2020-01-01T00:00:00Z",
+      }),
+    };
+    const env = envWith(tables);
+    const body = (await (await worker.fetch(new Request("https://example.test/api/dashboard"), env)).json()) as DashboardData;
+    expect(body.marketData.status).toBe("degraded");
+    expect(body.marketData.warnings.some((w) => w.includes("stale"))).toBe(true);
+  });
+
+  it("falls back to the empty dashboard, not a schema-invalid payload, when a row violates the contract", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const tables = healthyTables();
+    // "Sideways" is not a valid trend enum value: the whole read model must
+    // fail closed to the empty dashboard rather than serve a broken shape.
+    tables.scanCandidates = [{ ...tables.scanCandidates![0], trend: "Sideways" }];
+    const env = envWith(tables);
+    const body = (await (await worker.fetch(new Request("https://example.test/api/dashboard"), env)).json()) as DashboardData;
+    expect(body.candidates).toEqual([]);
+    expect(body.status.engine).toBe("offline");
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it("returns the empty dashboard, not a 500, when the store is entirely unavailable", async () => {
+    const env = envWith({}, { appMeta: true });
+    const response = await worker.fetch(new Request("https://example.test/api/dashboard"), env);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as DashboardData;
+    expect(body.status.engine).toBe("offline");
+    expect(body.candidates).toEqual([]);
+  });
+});
+
+describe("narrow endpoints derived from the dashboard read model", () => {
+  it("GET /api/stocks/:symbol returns the matching candidate, case-insensitively", async () => {
+    const env = envWith(healthyTables());
+    const response = await worker.fetch(new Request("https://example.test/api/stocks/nvda"), env);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as StockBody;
+    expect(body).toMatchObject({ symbol: "NVDA", strategy: "Trend Breakout", direction: "Bullish" });
+  });
+
+  it("GET /api/stocks/:symbol 404s for a symbol not in the latest scan", async () => {
+    const env = envWith(healthyTables());
+    const response = await worker.fetch(new Request("https://example.test/api/stocks/ZZZZ"), env);
+    expect(response.status).toBe(404);
+  });
+
+  it("GET /api/stocks/:symbol fails closed on a store error", async () => {
+    const env = envWith({}, { appMeta: true });
+    const response = await worker.fetch(new Request("https://example.test/api/stocks/NVDA"), env);
+    expect(response.status).toBe(500);
+  });
+
+  it("GET /api/portfolio/shadow returns portfolio + positions only", async () => {
+    const env = envWith(healthyTables());
+    const response = await worker.fetch(new Request("https://example.test/api/portfolio/shadow"), env);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as PortfolioBody;
+    expect(Object.keys(body).sort()).toEqual(["portfolio", "positions"]);
+    expect(body.positions).toHaveLength(1);
+  });
+
+  it("GET /api/strategies returns the strategy list only", async () => {
+    const env = envWith(healthyTables());
+    const response = await worker.fetch(new Request("https://example.test/api/strategies"), env);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as StrategySummary[];
+    expect(body).toHaveLength(1);
+    expect(body[0]!.id).toBe("trend-breakout");
+  });
+
+  it("GET /api/market-data returns the empty snapshot, not an error, on a store failure", async () => {
+    const env = envWith({}, { appMeta: true });
+    const response = await worker.fetch(new Request("https://example.test/api/market-data"), env);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as MarketDataSnapshot;
+    expect(body.status).toBe("offline");
+  });
+});
+
+describe("/api/status", () => {
+  it("composes dashboard, briefing and market context into one contract-shaped response", async () => {
+    const env = envWith(healthyTables());
+    const response = await worker.fetch(new Request("https://example.test/api/status"), env);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as StatusBody;
+    expect(body.candidates).toHaveLength(1);
+    expect(body.briefing).toMatchObject({ available: false, freshness: "unavailable" });
+    expect(Object.keys(body.sources).sort()).toEqual(
+      ["briefing", "earnings", "market", "opportunities", "quickStats", "sentiment", "x"].sort(),
+    );
+    expect(body.market).toHaveProperty("indices");
+  });
+
+  it("keeps the public contract shape and fails every source closed when part of the read model errors", async () => {
+    const env = envWith(healthyTables(), { dailyBriefings: true });
+    const response = await worker.fetch(new Request("https://example.test/api/status"), env);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as StatusBody;
+    // buildDashboard itself still succeeded on retry, so candidates survive;
+    // only the fields the failing source touches are forced Unavailable.
+    expect(body.candidates).toHaveLength(1);
+    expect(body.briefing).toMatchObject({ available: false, freshness: "unavailable" });
+    expect(Object.values(body.sources).every((source) => source.state === "Error")).toBe(true);
+    expect(body.sentiment).toBeNull();
+  });
+
+  it("returns 500 only when the dashboard read model is unavailable on both attempts", async () => {
+    const env = envWith({}, { appMeta: true, dailyBriefings: true });
+    const response = await worker.fetch(new Request("https://example.test/api/status"), env);
+    expect(response.status).toBe(500);
+  });
+});
+
+describe("routing", () => {
+  it("GET /healthz reports ok without touching the store", async () => {
+    const env = envWith({}, { appMeta: true });
+    const response = await worker.fetch(new Request("https://example.test/healthz"), env);
+    expect(response.status).toBe(200);
+    expect(((await response.json()) as { ok: boolean }).ok).toBe(true);
+  });
+
+  it("rejects a non-GET/HEAD/OPTIONS method on an API route with 405", async () => {
+    const env = envWith(healthyTables());
+    const response = await worker.fetch(new Request("https://example.test/api/dashboard", { method: "POST" }), env);
+    expect(response.status).toBe(405);
+  });
+
+  it("404s an unknown /api/* path instead of falling through to assets", async () => {
+    const env = envWith(healthyTables());
+    const response = await worker.fetch(new Request("https://example.test/api/does-not-exist"), env);
+    expect(response.status).toBe(404);
+    expect(((await response.json()) as { error: string }).error).toBe("Not found");
+  });
+
+  it("falls through to Workers Assets for a non-API path", async () => {
+    const seen: string[] = [];
+    const env = {
+      DB: createDb() as unknown as D1Database,
+      ASSETS: { fetch: async (request: Request) => { seen.push(new URL(request.url).pathname); return new Response("assets"); } },
+    } as unknown as Env;
+    const response = await worker.fetch(new Request("https://example.test/dashboard"), env);
+    expect(await response.text()).toBe("assets");
+    expect(seen).toEqual(["/dashboard"]);
+  });
+
+  it("routes POST /ingest/events before the GET-only method gate", async () => {
+    // No INGEST_SECRET configured: reaching handleIngest (503), not the
+    // generic 405, proves /ingest/events is dispatched ahead of the gate.
+    const env = envWith({});
+    const response = await worker.fetch(
+      new Request("https://example.test/ingest/events", { method: "POST", body: "{}" }),
+      env,
+    );
+    expect(response.status).toBe(503);
+  });
+});
+
+describe("buildMarketContextHealth", () => {
+  const nowMs = Date.parse("2026-08-13T18:00:00Z");
+  const context = (overrides: Partial<MarketContextReadModel> = {}): MarketContextReadModel => ({
+    indices: [],
+    sentiment: null,
+    provider: null,
+    latestSourceTimestamp: null,
+    latestCollectedAt: null,
+    ...overrides,
+  });
+
+  it("fails closed with a specific error when no index has ever been collected", () => {
+    const health = buildMarketContextHealth(context(), nowMs);
+    expect(health.state).toBe("Error");
+    expect(health.error).toBe("No market index data has been collected.");
+  });
+
+  it("has no error when all four indices are present from today's New York session", () => {
+    const indices = ["SPX", "NDX", "DJI", "VIX"].map((symbol) => ({
+      symbol: symbol as "SPX" | "NDX" | "DJI" | "VIX",
+      name: symbol,
+      value: 100,
+      change: 0.1,
+      updatedAt: "2026-08-13T15:00:00Z",
+    }));
+    const health = buildMarketContextHealth(
+      context({ indices, provider: "yahoo-finance-chart", latestSourceTimestamp: "2026-08-13T15:00:00Z", latestCollectedAt: "2026-08-13T15:01:00Z" }),
+      nowMs,
+    );
+    expect(health.error).toBeNull();
+  });
+
+  it("flags an incomplete index set even though a source timestamp exists", () => {
+    const health = buildMarketContextHealth(
+      context({
+        indices: [{ symbol: "SPX", name: "S&P 500", value: 100, change: 0.1, updatedAt: "2026-08-13T15:00:00Z" }],
+        provider: "yahoo-finance-chart",
+        latestSourceTimestamp: "2026-08-13T15:00:00Z",
+        latestCollectedAt: "2026-08-13T15:01:00Z",
+      }),
+      nowMs,
+    );
+    expect(health.error).toContain("incomplete or from a prior session");
+  });
+
+  it("flags a complete index set left over from a prior session's date", () => {
+    const staleIndices = ["SPX", "NDX", "DJI", "VIX"].map((symbol) => ({
+      symbol: symbol as "SPX" | "NDX" | "DJI" | "VIX",
+      name: symbol,
+      value: 100,
+      change: 0.1,
+      updatedAt: "2026-08-10T15:00:00Z",
+    }));
+    const health = buildMarketContextHealth(
+      context({ indices: staleIndices, provider: "yahoo-finance-chart", latestSourceTimestamp: "2026-08-10T15:00:00Z", latestCollectedAt: "2026-08-10T15:01:00Z" }),
+      nowMs,
+    );
+    expect(health.error).toContain("incomplete or from a prior session");
+  });
+});
+
+describe("unavailableSources", () => {
+  it("fails every source closed with the given reason", () => {
+    const sources = unavailableSources();
+    for (const source of Object.values(sources)) {
+      expect(source.state).toBe("Error");
+      expect(source.error).toBe("Source health is unavailable.");
+    }
+    expect(Object.keys(sources).sort()).toEqual(
+      ["briefing", "earnings", "market", "opportunities", "quickStats", "sentiment", "x"].sort(),
+    );
+  });
+});
