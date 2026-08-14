@@ -147,12 +147,19 @@ jobs:
               const comments = await commentsForThread(thread);
               const root = comments[0];
               if (!root) continue;
+              // GitHub returns thread comments in creation order. The root is
+              // the finding, never an acceptance of its own marker. Only a
+              // later reply may defer or accept the finding.
+              const markerReply = comments
+                .slice(1)
+                .filter((comment) => comment.createdAt > root.createdAt)
+                .find((comment) => acceptedMarker.test(comment.body ?? ""));
               const priorities = priorityMatches(root.body);
               if (priorities.length === 0) continue;
               const priority = Math.min(...priorities);
               // A P0/P1 in the finding always wins. Never make it non-blocking.
               if (priority < 2 || priority > 3) continue;
-              if (!comments.some((comment) => acceptedMarker.test(comment.body ?? ""))) continue;
+              if (!markerReply) continue;
 
               const marker = `deferred-review-thread:${thread.id}`;
               const search = await github.rest.search.issuesAndPullRequests({
@@ -174,7 +181,7 @@ jobs:
                   `- Pull request: [#${pullRequestNumber}](${pullRequestData.url})`,
                   `- Review thread ID: \`${thread.id}\``,
                   `- Root comment: [${root.id}](${root.url ?? pullRequestData.url})`,
-                  `- Accepted/deferred marker comment: ${comments.find((comment) => acceptedMarker.test(comment.body ?? ""))?.url ?? root.url ?? pullRequestData.url}`,
+                  `- Accepted/deferred marker comment: ${markerReply.url ?? pullRequestData.url}`,
                   thread.path ? `- Location: \`${thread.path}:${thread.line ?? thread.startLine ?? "?"}\`` : "- Location: general review comment",
                   thread.isOutdated ? "- Note: the review thread is outdated but remained unresolved when the PR merged." : "",
                 ].filter(Boolean).join("\n");

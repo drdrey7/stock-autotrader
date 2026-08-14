@@ -28,6 +28,8 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      - name: Test deferred review policy
+        run: node .github/scripts/test-deferred-review-workflow.mjs
       - name: Validate production Worker dry-run and cron budget
         working-directory: apps/web
         run: |

@@ -12,6 +12,7 @@ import type {
   OfficialFilingsProvider,
 } from "./types";
 import { isInEarningsUniverse, normalizeSymbol } from "./universe";
+import { MAX_PROVIDER_ATTEMPTS } from "./subrequest-budget";
 
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 type Sleeper = (milliseconds: number) => Promise<void>;
@@ -21,7 +22,6 @@ const SEC_TICKERS_URL = "https://www.sec.gov/files/company_tickers_exchange.json
 const SEC_SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK";
 const SEC_FULL_INDEX_URL = "https://www.sec.gov/Archives/edgar/full-index";
 const PROVIDER_TIMEOUT_MS = 8_000;
-const MAX_PROVIDER_ATTEMPTS = 2;
 const SEC_MIN_REQUEST_INTERVAL_MS = 125;
 // SEC full-index rows do not identify the subject of a 6-K. Keep 6-K for
 // targeted filing enrichment, but do not turn arbitrary 6-K rows into events.
@@ -356,7 +356,7 @@ function filingPriority(filing: OfficialFiling): number {
   return 9;
 }
 
-function secIndexQuarters(range: EarningsDateRange): string[] {
+export function secIndexQuarters(range: EarningsDateRange): string[] {
   const from = new Date(`${range.from}T12:00:00.000Z`);
   const to = new Date(`${range.to}T12:00:00.000Z`);
   const quarters: string[] = [];

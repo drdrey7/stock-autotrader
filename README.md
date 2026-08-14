@@ -49,6 +49,13 @@ Greed only at 14:00 and 19:00 UTC on weekdays. The 06:00 UTC entry runs
 Earnings calendar/backfill. The Worker applies `America/New_York` conversion,
 weekends, holidays, DST and source-date validation before writing.
 
+The combined 14:00/19:00 invocation is budgeted conservatively below the
+Workers Free 50-external-subrequest limit. With two attempts per request and a
+16-filing lookup cap, the worst SEC-calendar path is `2` metadata + `6` full
+index + `32` filing + `4` Yahoo + `1` CNN = `45` requests, leaving `5` headroom.
+The FMP-calendar path is `39`; the 06:00 calendar-only paths are `40` (SEC)
+or `36` (FMP). D1 reads/writes are not counted as external provider requests.
+
 The temporary zero-cost index adapter uses Yahoo Finance's public Chart HTTP
 endpoint for `^GSPC`, `^NDX`, `^DJI` and `^VIX`. It requires no API key and runs
 directly from the Worker. This endpoint is unofficial, has no published SLA or
@@ -119,7 +126,7 @@ also verifies that `earnings_events` and `earnings_universe` exist remotely.
 Use `npm run db:migrate:local -w @stock-autotrader/web` for local validation;
 the production migration remains CI-owned.
 
-Cron batches D1 writes and caps SEC enrichment at 24 filings per invocation so
+Cron batches D1 writes and caps SEC enrichment at 16 filings per invocation so
 the free Workers subrequest budget is respected; remaining official links are
 picked up by the next 15-minute/daily run. A transient provider or SEC failure
 never clears the last valid event values.
