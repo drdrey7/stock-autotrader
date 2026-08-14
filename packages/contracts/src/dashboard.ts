@@ -1,18 +1,12 @@
 import { z } from "zod";
+import { isoTimestampSchema, marketDateSchema } from "./primitives";
 
 /**
- * The public dashboard/market-data read contract. This is the single source
- * of truth for what `/api/dashboard` and `/api/status` return: the Worker
- * validates its own constructed read model against it before serving, and
- * the frontend validates the fetched response against the same schema
- * before trusting it — previously two independently hand-maintained copies.
+ * The public dashboard/market-data read contract: the single source of
+ * truth for what `/api/status` (and the now-removed `/api/dashboard`) once
+ * returned. The Worker validates its own constructed read model against it
+ * before serving.
  */
-
-const isoTimestampSchema = z.string().datetime({ offset: true });
-const marketDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
-  const parsed = new Date(`${value}T00:00:00Z`);
-  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
-}, "date must be a valid calendar date");
 
 const directionSchema = z.enum(["Bullish", "Neutral", "Bearish"]).or(
   z.literal("Long").transform(() => "Bullish" as const),

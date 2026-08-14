@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { canonicalBriefingSymbol, isBriefingSymbolInUniverse } from "./briefing-universe";
+import { isoTimestampSchema, marketDateSchema } from "./primitives";
 
 export const briefingVerdictValues = [
   "Potential Entry",
@@ -23,7 +24,6 @@ export const briefingBenchmarkDefinitions = [
 const nonEmptyString = z.string().trim().min(1).max(2_000);
 const titleString = z.string().trim().min(1).max(200);
 
-const isoTimestamp = z.string().datetime({ offset: true });
 const MAX_SOURCE_AGE_MS = 26 * 60 * 60 * 1000;
 
 function calendarDateInBriefingTimezone(timestamp: string): string {
@@ -39,13 +39,7 @@ function calendarDateInBriefingTimezone(timestamp: string): string {
 
 const tickerSymbol = z.string().regex(/^[A-Z0-9.-]{1,12}$/, "symbol must use a canonical ticker format");
 
-export const briefingCalendarDateSchema = z
-  .string()
-  .regex(/^\d{4}-\d{2}-\d{2}$/)
-  .refine((value) => {
-    const parsed = new Date(`${value}T00:00:00Z`);
-    return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
-  }, "date must be a valid calendar date");
+export const briefingCalendarDateSchema = marketDateSchema;
 
 export const briefingEditionTypeSchema = z.enum(briefingEditionTypes);
 
@@ -71,8 +65,8 @@ export type MarketContextItem = z.infer<typeof marketContextItemSchema>;
 export const briefingSourceSchema = z.strictObject({
   handle: z.enum(briefingSourceAllowlist),
   reference: httpsUrl,
-  originalTimestamp: isoTimestamp.nullable(),
-  collectedTimestamp: isoTimestamp.nullable(),
+  originalTimestamp: isoTimestampSchema.nullable(),
+  collectedTimestamp: isoTimestampSchema.nullable(),
   summary: nonEmptyString,
 });
 
@@ -107,7 +101,7 @@ const dailyBriefingObjectSchema = z
     editionDate: briefingCalendarDateSchema,
     editionType: briefingEditionTypeSchema,
     timezone: z.literal(briefingTimezone),
-    preparedAt: isoTimestamp,
+    preparedAt: isoTimestampSchema,
     title: titleString,
     marketSummary: nonEmptyString,
     market: z.array(marketContextItemSchema).length(briefingBenchmarkDefinitions.length),

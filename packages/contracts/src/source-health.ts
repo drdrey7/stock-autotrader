@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isoTimestampSchema } from "./primitives";
 
 export const sourceStateValues = [
   "Live",
@@ -19,8 +20,6 @@ export const earningsEngineStateValues = [
 
 export type EarningsEngineState = (typeof earningsEngineStateValues)[number];
 
-const isoTimestamp = z.string().datetime({ offset: true });
-
 /**
  * Provider/read-model freshness metadata shared by every public data domain.
  * Nullable timestamps are intentional for sources that have not succeeded yet.
@@ -28,11 +27,11 @@ const isoTimestamp = z.string().datetime({ offset: true });
 export const sourceHealthSchema = z.strictObject({
   provider: z.string().trim().min(1).max(128),
   state: z.enum(sourceStateValues),
-  asOf: isoTimestamp.nullable(),
+  asOf: isoTimestampSchema.nullable(),
   ageSeconds: z.number().int().nonnegative().nullable(),
   staleAfterSeconds: z.number().int().positive(),
-  lastSuccess: isoTimestamp.nullable(),
-  lastAttempt: isoTimestamp.nullable(),
+  lastSuccess: isoTimestampSchema.nullable(),
+  lastAttempt: isoTimestampSchema.nullable(),
   error: z.string().trim().min(1).max(500).nullable(),
   engineState: z.enum(earningsEngineStateValues).optional(),
 }).superRefine((source, ctx) => {
