@@ -39,8 +39,9 @@ Binding and returns only HTTP statuses, availability, and row counts. It never
 returns production payloads, secrets, or financial data.
 
 The dedicated config is
-[`apps/web/wrangler.preview.jsonc`](../apps/web/wrangler.preview.jsonc). Its
-runtime configuration contains only:
+[`apps/web/wrangler.preview.jsonc`](../apps/web/wrangler.preview.jsonc). It is
+used for local/CI dry-runs and documents the intended runtime envelope, which
+contains only:
 
 - `ASSETS` static assets;
 - `ENVIRONMENT=preview`;
@@ -49,6 +50,28 @@ runtime configuration contains only:
 It has no D1, KV, R2, Durable Object, additional service binding, secret,
 broker credential, or cron trigger. A separate staging Worker/D1 is not part of
 PR13.
+
+## Trusted Workers Builds envelope
+
+Workers Builds does not read `wrangler.preview.jsonc` when uploading a branch.
+The deploy command is stored in the Cloudflare Workers Builds trigger, outside
+the repository, and generates a short-lived `/tmp` Wrangler config containing
+only the fixed `PRODUCTION_API -> stock-autotrader-web` service binding and the
+asset Worker-first routes. It supplies the Worker entrypoint, name, assets,
+and `ENVIRONMENT=preview` through fixed command arguments:
+
+```sh
+P=$(mktemp /tmp/p.XXXXXX.jsonc); P=$P node -e 'require("fs").writeFileSync(process.env.P,`{"services":[{"binding":"PRODUCTION_API","service":"stock-autotrader-web"}],"assets":{"run_worker_first":["/api","/api/*","/__preview/diagnostics"],"not_found_handling":"single-page-application"}}`)'; npx --yes wrangler@4.122.0 versions upload apps/web/preview-worker.ts --config "$P" --name stock-autotrader-preview --assets apps/web/dist --var ENVIRONMENT:preview --compatibility-date 2026-08-10
+```
+
+This trigger command is the binding/deployment security boundary, not GitHub
+CI. A PR may change the checked-in config, but that file is never passed to the
+Workers Builds upload. A dry-run with an injected D1 binding therefore still
+produces only `ASSETS`, `ENVIRONMENT`, and `PRODUCTION_API`; no PR edit can add
+D1, KV, R2, Durable Objects, cron, secrets, or another service binding to the
+preview version. The two existing triggers retain their branch filters:
+non-production branches exclude `main`, and the `main` trigger remains
+separate from the production Worker deployment.
 
 ## One-time Cloudflare setup
 
@@ -65,15 +88,15 @@ the Cloudflare dashboard:
    Keep `stock-autotrader-web` as the separate production Worker.
 5. Set the build command to
    `npm ci --ignore-scripts && npm run build`.
-6. Set both the production and non-production deploy command to
-   `npx wrangler@4.122.0 versions upload --config
-   apps/web/wrangler.preview.jsonc`. Non-production branches upload versions;
-   they do not promote a version to the production deployment.
+6. Set both deploy commands to the fixed trusted command shown above. Do not
+   point Workers Builds at `apps/web/wrangler.preview.jsonc`; that file is only
+   for local/CI dry-runs. Non-production branches upload versions; they do not
+   promote a version to the production deployment.
 7. Keep builds enabled for non-production branches. Do not add dashboard D1,
    KV, R2, Durable Object, Worker/service, secret, broker, or cron bindings.
 
-The checked-in Wrangler config is the source of truth for the one service
-binding. Cloudflare posts the commit and branch preview URLs to the connected
+The Cloudflare trigger configuration is the trusted source of truth for the
+binding envelope. Cloudflare posts the commit and branch preview URLs to the connected
 GitHub PR. The branch alias remains stable while each commit gets its own
 version preview URL, allowing multiple PRs to coexist on the permanent
 `stock-autotrader-preview` Worker.
