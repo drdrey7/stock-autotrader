@@ -1,5 +1,6 @@
 import type { EarningsApiResponse, EarningsEngineEvent } from "@stock-autotrader/contracts";
 import type { Env } from "../index";
+export { EARNINGS_CALENDAR_CRON, EARNINGS_MONITOR_CRON } from "../cron-dispatcher";
 import {
   addDays,
   currentYearStart,
@@ -37,8 +38,6 @@ import {
   readEarningsMonitoringEvents,
 } from "./storage";
 
-export const EARNINGS_CALENDAR_CRON = "0 6 * * *";
-export const EARNINGS_MONITOR_CRON = "*/15 * * * *";
 export const EARNINGS_BACKFILL_DAYS = 90;
 export const EARNINGS_WINDOW_DAYS = 60;
 export const EARNINGS_QUERY_MAX_DAYS = 450;

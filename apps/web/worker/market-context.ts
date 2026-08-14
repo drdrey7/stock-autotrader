@@ -1,8 +1,5 @@
 import type { Env } from "./index";
 
-export const MARKET_CRON = "*/15 * * * mon-fri";
-export const SENTIMENT_CRON = "0 14,19 * * mon-fri";
-
 export const MARKET_CONTEXT_STALE_AFTER_SECONDS = 26 * 60 * 60;
 export const SENTIMENT_STALE_AFTER_SECONDS = 72 * 60 * 60;
 const MAX_SOURCE_FUTURE_SKEW_MS = 5 * 60 * 1000;

@@ -20,8 +20,6 @@ import {
 import { readXPosts } from "./x-posts";
 import {
   MARKET_CONTEXT_STALE_AFTER_SECONDS,
-  MARKET_CRON,
-  SENTIMENT_CRON,
   SENTIMENT_STALE_AFTER_SECONDS,
   readMarketContext,
   runMarketContextJob,
@@ -29,12 +27,11 @@ import {
   type MarketContextReadModel,
 } from "./market-context";
 import {
-  EARNINGS_CALENDAR_CRON,
-  EARNINGS_MONITOR_CRON,
   EarningsQueryError,
   readEarningsApi,
   runEarningsJob,
 } from "./earnings";
+import { jobsForProductionCron } from "./cron-dispatcher";
 
 /**
  * Stock Autotrader public read-only API (PR #2).
@@ -626,23 +623,26 @@ export default {
       return;
     }
     const scheduledTime = new Date(controller.scheduledTime);
-    if (controller.cron === MARKET_CRON) {
-      await runMarketContextJob(env, scheduledTime);
+    const jobs = jobsForProductionCron(controller.cron, scheduledTime);
+    if (jobs.length === 0) {
+      console.warn("unknown cron trigger", controller.cron);
       return;
     }
-    if (controller.cron === SENTIMENT_CRON) {
-      await runSentimentJob(env, scheduledTime);
-      return;
-    }
-    if (controller.cron === EARNINGS_CALENDAR_CRON) {
+    await Promise.all(jobs.map(async (job) => {
+      if (job === "earnings-monitor") {
+        await runEarningsJob(env, scheduledTime, "monitor");
+        return;
+      }
+      if (job === "market-context") {
+        await runMarketContextJob(env, scheduledTime);
+        return;
+      }
+      if (job === "sentiment") {
+        await runSentimentJob(env, scheduledTime);
+        return;
+      }
       await runEarningsJob(env, scheduledTime, "calendar");
-      return;
-    }
-    if (controller.cron === EARNINGS_MONITOR_CRON) {
-      await runEarningsJob(env, scheduledTime, "monitor");
-      return;
-    }
-    console.warn("unknown cron trigger", controller.cron);
+    }));
   },
 
   async fetch(request: Request, env: Env): Promise<Response> {
