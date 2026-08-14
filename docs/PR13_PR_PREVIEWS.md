@@ -54,24 +54,34 @@ PR13.
 ## Trusted Workers Builds envelope
 
 Workers Builds does not read `wrangler.preview.jsonc` when uploading a branch.
-The deploy command is stored in the Cloudflare Workers Builds trigger, outside
-the repository, and generates a short-lived `/tmp` Wrangler config containing
+The deploy command and `CF_PREVIEW_CONFIG` build variable are stored in the
+Cloudflare Workers Builds trigger, outside the repository. The variable holds
 only the fixed `PRODUCTION_API -> stock-autotrader-web` service binding and the
-asset Worker-first routes. It supplies the Worker entrypoint, name, assets,
-and `ENVIRONMENT=preview` through fixed command arguments:
+asset Worker-first routes. The deploy command first changes to a new temporary
+directory, installs the pinned official Wrangler package there with scripts
+disabled and the public npm registry fixed, and invokes that package by its
+absolute path:
 
 ```sh
-P=$(mktemp /tmp/p.XXXXXX.jsonc); P=$P node -e 'require("fs").writeFileSync(process.env.P,`{"services":[{"binding":"PRODUCTION_API","service":"stock-autotrader-web"}],"assets":{"run_worker_first":["/api","/api/*","/__preview/diagnostics"],"not_found_handling":"single-page-application"}}`)'; npx --yes wrangler@4.122.0 versions upload apps/web/preview-worker.ts --config "$P" --name stock-autotrader-preview --assets apps/web/dist --var ENVIRONMENT:preview --compatibility-date 2026-08-10
+P=$(mktemp -d /tmp/cf-w.XXXXXX); printf %s "$CF_PREVIEW_CONFIG" >/tmp/p.jsonc; cd "$P"; NPM_CONFIG_USERCONFIG=/dev/null NPM_CONFIG_REGISTRY=https://registry.npmjs.org npm i --ignore-scripts --no-save --prefix "$P" wrangler@4.122.0 >/dev/null 2>&1; "$P/node_modules/.bin/wrangler" versions upload /opt/buildhome/repo/apps/web/preview-worker.ts -c /tmp/p.jsonc --name stock-autotrader-preview --assets /opt/buildhome/repo/apps/web/dist --var ENVIRONMENT:preview --compatibility-date 2026-08-10
+```
+
+The external `CF_PREVIEW_CONFIG` value is exactly:
+
+```json
+{"services":[{"binding":"PRODUCTION_API","service":"stock-autotrader-web"}],"assets":{"run_worker_first":["/api","/api/*","/__preview/diagnostics"],"not_found_handling":"single-page-application"}}
 ```
 
 This trigger command is the binding/deployment security boundary, not GitHub
-CI. A PR may change the checked-in config, but that file is never passed to the
-Workers Builds upload. A dry-run with an injected D1 binding therefore still
-produces only `ASSETS`, `ENVIRONMENT`, and `PRODUCTION_API`; no PR edit can add
-D1, KV, R2, Durable Objects, cron, secrets, or another service binding to the
-preview version. The two existing triggers retain their branch filters:
-non-production branches exclude `main`, and the `main` trigger remains
-separate from the production Worker deployment.
+CI. A PR may change the checked-in config or add a local Wrangler package, but
+neither is read by the upload: the envelope comes from the external trigger
+variable and the uploader is installed after the build outside the checkout.
+A dry-run with an injected D1 binding therefore still produces only `ASSETS`,
+`ENVIRONMENT`, and `PRODUCTION_API`; no PR edit can add D1, KV, R2, Durable
+Objects, cron, secrets, or another service binding to the preview version. The
+two existing triggers retain their branch filters: non-production branches
+exclude `main`, and the `main` trigger remains separate from the production
+Worker deployment.
 
 ## One-time Cloudflare setup
 
@@ -88,10 +98,11 @@ the Cloudflare dashboard:
    Keep `stock-autotrader-web` as the separate production Worker.
 5. Set the build command to
    `npm ci --ignore-scripts && npm run build`.
-6. Set both deploy commands to the fixed trusted command shown above. Do not
-   point Workers Builds at `apps/web/wrangler.preview.jsonc`; that file is only
-   for local/CI dry-runs. Non-production branches upload versions; they do not
-   promote a version to the production deployment.
+6. Set `CF_PREVIEW_CONFIG` as a plain build variable to the fixed JSON shown
+   above, and set both deploy commands to the fixed trusted command shown
+   above. Do not point Workers Builds at `apps/web/wrangler.preview.jsonc`; that
+   file is only for local/CI dry-runs. Non-production branches upload versions;
+   they do not promote a version to the production deployment.
 7. Keep builds enabled for non-production branches. Do not add dashboard D1,
    KV, R2, Durable Object, Worker/service, secret, broker, or cron bindings.
 
