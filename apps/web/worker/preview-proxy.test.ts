@@ -25,7 +25,8 @@ describe("Worker preview API proxy", () => {
     expect(await response.text()).toBe('{"events":[]}');
     expect(response.headers.get("set-cookie")).toBeNull();
     expect(String(calls[0]?.input)).toBe("https://stock-autotrader-web.barroso-labs.workers.dev/api/earnings?status=scheduled");
-    expect(calls[0]?.init).toMatchObject({ method: "GET", redirect: "error", credentials: "omit" });
+    expect(calls[0]?.init).toMatchObject({ method: "GET", redirect: "error" });
+    expect(calls[0]?.init).not.toHaveProperty("credentials");
     const forwardedHeaders = new Headers(calls[0]?.init?.headers);
     expect(forwardedHeaders.get("accept")).toBe("application/json");
     expect(forwardedHeaders.get("authorization")).toBeNull();

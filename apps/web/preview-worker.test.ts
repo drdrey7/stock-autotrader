@@ -21,7 +21,8 @@ describe("preview Worker", () => {
     const env = previewEnv();
     const upstream = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       expect(String(input)).toBe("https://stock-autotrader-web.barroso-labs.workers.dev/api/status");
-      expect(init).toMatchObject({ method: "GET", credentials: "omit", redirect: "error" });
+      expect(init).toMatchObject({ method: "GET", redirect: "error" });
+      expect(init).not.toHaveProperty("credentials");
       return new Response('{"ok":true}', { status: 200 });
     });
 

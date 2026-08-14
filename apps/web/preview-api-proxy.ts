@@ -62,7 +62,6 @@ export async function proxyPublicApiRequest(
       method,
       headers,
       redirect: "error",
-      credentials: "omit",
     });
     const responseHeaders = new Headers(upstream.headers);
     // The public API is read-only. Do not let an upstream response establish a
