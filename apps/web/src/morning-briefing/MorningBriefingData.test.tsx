@@ -2,6 +2,7 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import MorningBriefingApp from "./MorningBriefingApp";
+import { isDisplayableMarketIndex } from "./MorningBriefingData";
 
 const renderApp = (path = "/") => render(<MemoryRouter initialEntries={[path]}><MorningBriefingApp/></MemoryRouter>);
 
@@ -77,6 +78,16 @@ afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+});
+
+it("keeps a validated previous market session visible during the next session gap", () => {
+  expect(isDisplayableMarketIndex("2026-08-12T20:00:00Z", Date.parse("2026-08-13T12:00:00Z"))).toBe(true);
+  expect(isDisplayableMarketIndex("2026-08-14T20:00:00Z", Date.parse("2026-08-15T18:00:00Z"))).toBe(true);
+});
+
+it("accepts current-session indices but rejects genuinely stale observations", () => {
+  expect(isDisplayableMarketIndex("2026-08-13T16:00:00Z", Date.parse("2026-08-13T20:00:00Z"))).toBe(true);
+  expect(isDisplayableMarketIndex("2026-08-12T09:00:00Z", Date.parse("2026-08-13T12:00:00Z"))).toBe(false);
 });
 
 it("renders only qualified ideas and classifies scheduled earnings by date", async () => {

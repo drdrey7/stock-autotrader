@@ -126,22 +126,10 @@ async function fetchJson<T>(path: string): Promise<T | null> {
   }
 }
 
-function isWithinWindow(value: string | null | undefined, maxAgeMs: number): boolean {
+function isWithinWindow(value: string | null | undefined, maxAgeMs: number, now = Date.now()): boolean {
   const timestamp = Date.parse(value ?? "");
-  const ageMs = Date.now() - timestamp;
+  const ageMs = now - timestamp;
   return Number.isFinite(timestamp) && ageMs >= 0 && ageMs <= maxAgeMs;
-}
-
-function isCurrentNewYorkDate(value: string | null | undefined): boolean {
-  const timestamp = Date.parse(value ?? "");
-  if (!Number.isFinite(timestamp)) return false;
-  const date = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/New_York",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date(timestamp));
-  return date === marketTodayKey();
 }
 
 function opportunitiesFromBriefing(
@@ -169,8 +157,14 @@ function opportunitiesFromBriefing(
 
 // Real index context (PR #11): the Worker publishes live index quotes in the
 // dedicated market-context read model; it is the only source for market cards
-// and is gated by the 26h freshness window.
+// and is gated by the 26h freshness window. The Worker validates that each
+// observation belongs to the latest market session; the client must not add a
+// calendar-day requirement that hides valid overnight/weekend data.
 const INDEX_GATE_MS = 26 * 60 * 60_000;
+
+export function isDisplayableMarketIndex(updatedAt: string | null | undefined, now = Date.now()): boolean {
+  return isWithinWindow(updatedAt, INDEX_GATE_MS, now);
+}
 
 function indicesFromStatus(status: StatusResponse | null): { indexes: MarketIndex[]; updatedAt: string } | null {
   const indices = status?.market?.indices;
@@ -178,7 +172,7 @@ function indicesFromStatus(status: StatusResponse | null): { indexes: MarketInde
   let latestUpdatedAt = "";
   const fresh: MarketIndex[] = [];
   for (const index of indices) {
-    if (!isWithinWindow(index.updatedAt, INDEX_GATE_MS) || !isCurrentNewYorkDate(index.updatedAt)) continue;
+    if (!isDisplayableMarketIndex(index.updatedAt)) continue;
     fresh.push({
       name: index.name,
       symbol: index.symbol,
@@ -338,8 +332,7 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
         const retained = isWithinWindow(previous.opportunitiesUpdatedAt, BRIEFING_MAX_AGE_MS);
         const nextOpportunities = liveOpportunities ?? (retained ? previous.opportunities : []);
         const retainedIndices = previous.marketUpdatedAt
-          && isWithinWindow(previous.marketUpdatedAt, INDEX_GATE_MS)
-          && isCurrentNewYorkDate(previous.marketUpdatedAt)
+          && isDisplayableMarketIndex(previous.marketUpdatedAt)
           ? previous.marketIndexes
           : [];
         const nextMarketIndexes = liveIndices?.indexes ?? retainedIndices;
