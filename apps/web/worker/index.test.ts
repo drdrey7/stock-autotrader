@@ -82,6 +82,9 @@ function createDb(tables: Partial<Tables> = {}, throwOn: ThrowOn = {}) {
             if (throwOn.appMeta) throw new Error("app_meta unavailable");
             return { results: Object.entries(t.appMeta).map(([key, value]) => ({ key, value })) as T[] };
           }
+          if (sql === "SELECT * FROM scans ORDER BY id DESC LIMIT 1") {
+            return { results: (t.scan ? [t.scan] : []) as T[] };
+          }
           if (sql.startsWith("SELECT key, value FROM app_meta WHERE key IN")) {
             const keys = new Set(args.map(String));
             return { results: Object.entries(t.appMeta).filter(([key]) => keys.has(key)).map(([key, value]) => ({ key, value })) as T[] };
@@ -99,6 +102,11 @@ function createDb(tables: Partial<Tables> = {}, throwOn: ThrowOn = {}) {
           return { results: [] as T[] };
         },
       };
+    },
+    // Mirrors D1's batch(): each statement resolves as it would via .all(),
+    // and a failure on any one rejects the whole batch (matches D1).
+    async batch<T>(statements: { all<U>(): Promise<{ results: U[] }> }[]): Promise<{ results: T[] }[]> {
+      return Promise.all(statements.map((statement) => statement.all())) as Promise<{ results: T[] }[]>;
     },
   };
 }
@@ -316,6 +324,20 @@ describe("buildDashboard()", () => {
     // No marketData/lastDataUpdate published -> conservative offline defaults, not fabricated health.
     expect(body.marketData.status).toBe("offline");
     expect(body.status.lastDataUpdate).toBeNull();
+  });
+
+  it("fetches its base tables in a single D1 batch round trip, not eight separate ones", async () => {
+    const env = envWith(healthyTables());
+    const batchSpy = vi.spyOn(env.DB, "batch");
+    const prepareSpy = vi.spyOn(env.DB, "prepare");
+    await buildDashboard(env);
+
+    expect(batchSpy).toHaveBeenCalledTimes(1);
+    expect(batchSpy.mock.calls[0]![0]).toHaveLength(8);
+    // 8 statements built for the batch, plus one more for this fixture's
+    // single candidate's decision_reasons lookup (necessarily separate: it
+    // depends on the batch's own scan_candidates result).
+    expect(prepareSpy).toHaveBeenCalledTimes(9);
   });
 
   it("groups decision reasons per candidate and never leaks another candidate's reasons", async () => {
