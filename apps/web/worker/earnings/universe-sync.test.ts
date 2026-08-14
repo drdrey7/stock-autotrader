@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CORE_UNIVERSE, CORE_UNIVERSE_VERSION } from "@stock-autotrader/contracts";
+import { reconcileAndVerifyCoreUniverse } from "../bootstrap";
 import { reconcileCoreUniverse, readTrackedUniverse } from "./storage";
 
 type Row = Record<string, unknown>;
@@ -69,6 +70,34 @@ class SyncDb {
 }
 
 describe("Core Universe D1 reconciliation", () => {
+  it("repairs migration-inactive production rows immediately without a provider", async () => {
+    const db = new SyncDb();
+    for (const symbol of [...CORE_UNIVERSE, "ABNB"]) {
+      db.rows.set(symbol, {
+        symbol,
+        company: symbol,
+        active: 0,
+        source: "core",
+        universe_version: 0,
+        added_at: "2026-08-14T14:08:55.384Z",
+        removed_at: null,
+        updated_at: "2026-08-14T14:08:55.384Z",
+      });
+    }
+
+    const health = await reconcileAndVerifyCoreUniverse(
+      { DB: db } as never,
+      "2026-08-14T21:40:00.000Z",
+    );
+
+    expect(health).toMatchObject({ activeCount: 50, expectedCount: 50, universeVersion: 1, initialized: true });
+    expect((await readTrackedUniverse(db as never)).find((row) => row.symbol === "ABNB")).toMatchObject({
+      active: false,
+      universeVersion: 1,
+    });
+    expect(db.historicalEarnings).toEqual([{ id: "legacy-abnb-event", symbol: "ABNB" }]);
+  });
+
   it("activates all Core v1 members and deactivates the old index-only member without deleting history", async () => {
     const db = new SyncDb();
     db.rows.set("ABNB", {

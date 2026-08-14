@@ -69,3 +69,11 @@ jobs:
           if [ -n "$SEC_USER_AGENT" ]; then
             printf '%s' "$SEC_USER_AGENT" | npx --yes wrangler@4.122.0 secret put SEC_USER_AGENT
           fi
+      - name: Bootstrap and verify production Core/Earnings (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        working-directory: apps/web
+        run: npm run db:bootstrap:production
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PRODUCTION_WORKER_URL: https://stock-autotrader-web.barroso-labs.workers.dev

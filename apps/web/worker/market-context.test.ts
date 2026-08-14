@@ -20,6 +20,7 @@ type StoredIndex = MarketIndexObservation;
 class MemoryD1 {
   readonly indices = new Map<string, StoredIndex>();
   readonly sentiments: SentimentObservation[] = [];
+  readonly meta = new Map<string, string>();
   readonly sql: string[] = [];
   failIndices = false;
   failSentiment = false;
@@ -33,7 +34,11 @@ class MemoryD1 {
         return statement;
       },
       run: async () => {
-        if (sql.includes("market_indices")) {
+        if (sql.includes("INSERT INTO app_meta")) {
+          this.meta.set(String(args[0]), String(args[1]));
+        } else if (sql.includes("DELETE FROM app_meta")) {
+          this.meta.delete(String(args[0]));
+        } else if (sql.includes("market_indices")) {
           const [symbol, name, value, changePct, sourceTimestamp, collectedAt, provider] = args as [
             StoredIndex["symbol"], string, number, number, string, string, string,
           ];
@@ -65,6 +70,9 @@ class MemoryD1 {
         };
       },
       first: async <T>() => {
+        if (sql.includes("FROM app_meta")) {
+          return (this.meta.has(String(args[0])) ? { value: this.meta.get(String(args[0])) } : null) as T | null;
+        }
         if (this.failSentiment) throw new Error("sentiment read failed");
         const row = [...this.sentiments].sort((a, b) => b.sourceTimestamp.localeCompare(a.sourceTimestamp))[0];
         return (row ? {
@@ -104,7 +112,8 @@ const yahooResponse = (row: Record<string, unknown>) => response({
 
 describe("market context providers and persistence", () => {
   it("normalizes all four free Yahoo chart quotes and preserves source timestamps", async () => {
-    const provider = new YahooFinanceMarketDataProvider(async (input) => {
+    const provider = new YahooFinanceMarketDataProvider(async (input, init) => {
+      expect(new Headers(init?.headers).get("User-Agent")).toContain("StockAutotrader/1.0");
       const symbol = decodeURIComponent(new URL(input.toString()).pathname.split("/").pop()!);
       return yahooResponse(providerRows[symbol]!);
     });
@@ -161,6 +170,55 @@ describe("market context providers and persistence", () => {
     errorSpy.mockRestore();
     expect(second.status).toBe("degraded");
     expect((await readMarketContext(db as unknown as D1Database)).indices[0]?.updatedAt).toBe("2026-08-13T15:30:00.000Z");
+  });
+
+  it("preserves the last-known-good set on provider 429 and clears degraded health on the next success", async () => {
+    const db = new MemoryD1();
+    const goodProvider = {
+      name: "yahoo-finance-chart",
+      collect: async (collectedAt: string) => ({
+        observations: INDEX_DEFINITIONS.map((definition) => ({
+          symbol: definition.symbol,
+          name: definition.name,
+          value: 100,
+          changePct: 1,
+          sourceTimestamp: "2026-08-13T15:30:00.000Z",
+          collectedAt,
+          provider: "yahoo-finance-chart",
+        })),
+        warnings: [],
+      }),
+    };
+    await runMarketContextJob(envFor(db), new Date("2026-08-13T19:30:00Z"), goodProvider);
+
+    const rateLimited = {
+      name: "yahoo-finance-chart",
+      collect: async () => ({
+        observations: [],
+        warnings: INDEX_DEFINITIONS.map((definition) => `${definition.symbol}: provider HTTP 429`),
+      }),
+    };
+    const warningSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const degraded = await runMarketContextJob(envFor(db), new Date("2026-08-13T19:45:00Z"), rateLimited);
+    warningSpy.mockRestore();
+    expect(degraded).toMatchObject({ status: "degraded" });
+    expect((await readMarketContext(db as unknown as D1Database)).indices).toHaveLength(4);
+    expect(JSON.parse(db.meta.get("marketContextHealth")!)).toMatchObject({
+      status: "degraded",
+      lastError: expect.stringContaining("SPX: provider HTTP 429"),
+      httpStatuses: [429],
+      rowsWritten: 0,
+      lastKnownGoodPreserved: true,
+    });
+
+    const recovered = await runMarketContextJob(envFor(db), new Date("2026-08-13T20:30:00Z"), goodProvider);
+    expect(recovered.status).toBe("ok");
+    expect(JSON.parse(db.meta.get("marketContextHealth")!)).toMatchObject({
+      status: "ok",
+      lastError: null,
+      rowsWritten: 4,
+      lastKnownGoodPreserved: false,
+    });
   });
 
   it("uses insert-or-ignore semantics for repeated market runs", async () => {

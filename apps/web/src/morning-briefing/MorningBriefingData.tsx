@@ -31,6 +31,12 @@ type StatusResponse = {
     rating: "extreme_fear" | "fear" | "neutral" | "greed" | "extreme_greed";
     asOf: string;
   } | null;
+  sources?: {
+    market?: {
+      state?: string;
+      error?: string | null;
+    };
+  };
 };
 
 type XApiPost = {
@@ -57,6 +63,7 @@ export type MorningBriefingData = {
   editionDate: string | null;
   editionType: DailyBriefing["editionType"] | null;
   marketUpdatedAt: string | null;
+  marketStale: boolean;
   opportunitiesUpdatedAt: string | null;
   sentiment: NonNullable<StatusResponse["sentiment"]> | null;
 };
@@ -72,6 +79,7 @@ const initialData: MorningBriefingData = {
   editionDate: null,
   editionType: null,
   marketUpdatedAt: null,
+  marketStale: false,
   opportunitiesUpdatedAt: null,
   sentiment: null,
 };
@@ -168,7 +176,7 @@ export function isDisplayableMarketIndex(updatedAt: string | null | undefined, n
   return isWithinWindow(updatedAt, INDEX_GATE_MS, now);
 }
 
-function indicesFromStatus(status: StatusResponse | null): { indexes: MarketIndex[]; updatedAt: string } | null {
+function indicesFromStatus(status: StatusResponse | null): { indexes: MarketIndex[]; updatedAt: string; stale: boolean } | null {
   const indices = status?.market?.indices;
   if (!Array.isArray(indices) || indices.length === 0) return null;
   // The source timestamp identifies the latest validated market session, but
@@ -180,7 +188,12 @@ function indicesFromStatus(status: StatusResponse | null): { indexes: MarketInde
   let latestUpdatedAt = "";
   const fresh: MarketIndex[] = [];
   for (const index of indices) {
-    if (!isDisplayableMarketIndex(latestCollectedAt ?? index.updatedAt)) continue;
+    const displayTimestamp = latestCollectedAt ?? index.updatedAt;
+    const parsedTimestamp = Date.parse(displayTimestamp);
+    // Keep a validated last-known-good quote visible when the backend marks it
+    // stale/degraded. It is labelled below; a transient provider outage should
+    // not turn real persisted prices into four empty cards.
+    if (!Number.isFinite(parsedTimestamp) || parsedTimestamp > Date.now() + 5 * 60_000) continue;
     fresh.push({
       name: index.name,
       symbol: index.symbol,
@@ -192,7 +205,10 @@ function indicesFromStatus(status: StatusResponse | null): { indexes: MarketInde
     if (index.updatedAt > latestUpdatedAt) latestUpdatedAt = index.updatedAt;
   }
   if (fresh.length === 0) return null;
-  return { indexes: fresh, updatedAt: latestCollectedAt ?? latestUpdatedAt };
+  const sourceState = status?.sources?.market?.state;
+  const stale = !isDisplayableMarketIndex(latestCollectedAt ?? latestUpdatedAt)
+    || (sourceState !== undefined && sourceState !== "Live");
+  return { indexes: fresh, updatedAt: latestCollectedAt ?? latestUpdatedAt, stale };
 }
 
 // Market sentiment (PR #11): the CNN Fear & Greed reading is published once or
@@ -360,6 +376,7 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
           marketIndexes: nextMarketIndexes,
           opportunities: nextOpportunities,
           marketUpdatedAt,
+          marketStale: liveIndices?.stale ?? (nextMarketIndexes.length > 0 ? previous.marketStale : false),
           opportunitiesUpdatedAt: liveOpportunities !== null && briefingUpdatedAt ? briefingUpdatedAt : previous.opportunitiesUpdatedAt,
           editionDate: nextEditionDate,
           editionType: nextEditionDate !== null ? (analysisBriefing?.editionType ?? previous.editionType) : null,

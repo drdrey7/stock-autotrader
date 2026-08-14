@@ -12,6 +12,7 @@
     "test:coverage": "vitest run --coverage",
     "db:migrate": "npx --yes wrangler@4.122.0 d1 migrations apply stock-autotrader-db --remote",
     "db:migrate:local": "npx --yes wrangler@4.122.0 d1 migrations apply stock-autotrader-db --local",
+    "db:bootstrap:production": "node scripts/bootstrap-production.mjs",
     "db:seed": "node scripts/seed.mjs",
     "db:seed:local": "node scripts/seed.mjs --local"
   },
