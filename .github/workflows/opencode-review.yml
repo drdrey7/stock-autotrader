@@ -28,10 +28,10 @@ jobs:
       - name: Review pull request with OpenCode
         uses: anomalyco/opencode/github@latest
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          model: anthropic/claude-sonnet-4-5
+          model: opencode-go/deepseek-v4-flash
           use_github_token: true
           prompt: |
             Review this pull request as an independent senior code reviewer.
