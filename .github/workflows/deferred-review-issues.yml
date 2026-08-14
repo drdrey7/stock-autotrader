@@ -1,0 +1,228 @@
+name: Preserve deferred review findings
+
+on:
+  pull_request_target:
+    types: [closed]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: deferred-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  preserve:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # This trusted workflow deliberately has no checkout step. The script
+      # reads review metadata through GitHub's API and never executes PR code.
+      - name: Create or find deferred P2/P3 Issues
+        uses: actions/github-script@v9
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const pullRequestNumber = context.payload.pull_request.number;
+
+            const reviewThreadsQuery = `
+              query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
+                repository(owner: $owner, name: $repo) {
+                  pullRequest(number: $number) {
+                    number
+                    title
+                    url
+                    reviewThreads(first: 100, after: $cursor) {
+                      nodes {
+                        id
+                        isResolved
+                        isOutdated
+                        path
+                        line
+                        startLine
+                        comments(first: 100) {
+                          nodes {
+                            id
+                            body
+                            url
+                            author { login }
+                            createdAt
+                          }
+                          pageInfo { hasNextPage endCursor }
+                        }
+                      }
+                      pageInfo { hasNextPage endCursor }
+                    }
+                  }
+                }
+              }
+            `;
+
+            const threadCommentsQuery = `
+              query($id: ID!, $cursor: String) {
+                node(id: $id) {
+                  ... on PullRequestReviewThread {
+                    comments(first: 100, after: $cursor) {
+                      nodes {
+                        id
+                        body
+                        url
+                        author { login }
+                        createdAt
+                      }
+                      pageInfo { hasNextPage endCursor }
+                    }
+                  }
+                }
+              }
+            `;
+
+            const pullRequest = context.payload.pull_request;
+            const allThreads = [];
+            let threadCursor = null;
+            let pullRequestData = null;
+            do {
+              const result = await github.graphql(reviewThreadsQuery, {
+                owner,
+                repo,
+                number: pullRequestNumber,
+                cursor: threadCursor,
+              });
+              pullRequestData = result.repository?.pullRequest;
+              if (!pullRequestData) return;
+              allThreads.push(...(pullRequestData.reviewThreads.nodes ?? []));
+              const pageInfo = pullRequestData.reviewThreads.pageInfo;
+              threadCursor = pageInfo.hasNextPage ? pageInfo.endCursor : null;
+            } while (threadCursor);
+
+            const commentsForThread = async (thread) => {
+              const comments = [...(thread.comments.nodes ?? [])];
+              let cursor = thread.comments.pageInfo.hasNextPage
+                ? thread.comments.pageInfo.endCursor
+                : null;
+              while (cursor) {
+                const result = await github.graphql(threadCommentsQuery, {
+                  id: thread.id,
+                  cursor,
+                });
+                const page = result.node?.comments;
+                if (!page) break;
+                comments.push(...(page.nodes ?? []));
+                cursor = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+              }
+              return comments;
+            };
+
+            const acceptedMarker = /(?:^|\n)\s*(?:\[(?:accepted|deferred)\]|(?:accepted|deferred)\s*:\s*(?:accepted|deferred|yes|true))\s*(?:$|\n)/i;
+            const priorityMatches = (body) => [
+              ...(body ?? "").matchAll(/\bP([0-3])\b/gi),
+            ].map((match) => Number(match[1]));
+            const impactFrom = (body) => {
+              const match = (body ?? "").match(/^\s*impact\s*:\s*(.+)$/im);
+              return match?.[1]?.trim()
+                ?? "Impact was not stated in the review comment; reassess it before closing this follow-up.";
+            };
+            const titleFrom = (body, priority) => {
+              const summary = (body ?? "")
+                .split(/\r?\n/, 1)[0]
+                .replace(/^\s*[-*#>\[\]P0-9:.]+\s*/i, "")
+                .trim()
+                .slice(0, 90);
+              return `P${priority} deferred review finding from PR #${pullRequestNumber}: ${summary || "follow-up required"}`;
+            };
+            const quoted = (body) => (body ?? "")
+              .slice(0, 6000)
+              .split(/\r?\n/)
+              .map((line) => `> ${line}`)
+              .join("\n");
+
+            const followUps = [];
+            for (const thread of allThreads) {
+              if (thread.isResolved !== false) continue;
+              const comments = await commentsForThread(thread);
+              const root = comments[0];
+              if (!root) continue;
+              // GitHub returns thread comments in creation order. The root is
+              // the finding, never an acceptance of its own marker. Only a
+              // later reply may defer or accept the finding.
+              const markerReply = comments
+                .slice(1)
+                .filter((comment) => comment.createdAt > root.createdAt)
+                .find((comment) => acceptedMarker.test(comment.body ?? ""));
+              const priorities = priorityMatches(root.body);
+              if (priorities.length === 0) continue;
+              const priority = Math.min(...priorities);
+              // A P0/P1 in the finding always wins. Never make it non-blocking.
+              if (priority < 2 || priority > 3) continue;
+              if (!markerReply) continue;
+
+              const marker = `deferred-review-thread:${thread.id}`;
+              const search = await github.rest.search.issuesAndPullRequests({
+                q: `repo:${owner}/${repo} "${marker}" in:body`,
+                per_page: 10,
+              });
+              const existing = search.data.items.find((item) => !item.pull_request);
+              let issue = existing;
+              if (!issue) {
+                const body = [
+                  `<!-- ${marker} source-comment:${root.id} -->`,
+                  "## Impact",
+                  impactFrom(root.body),
+                  "",
+                  "## Review finding",
+                  quoted(root.body),
+                  "",
+                  "## Source",
+                  `- Pull request: [#${pullRequestNumber}](${pullRequestData.url})`,
+                  `- Review thread ID: \`${thread.id}\``,
+                  `- Root comment: [${root.id}](${root.url ?? pullRequestData.url})`,
+                  `- Accepted/deferred marker comment: ${markerReply.url ?? pullRequestData.url}`,
+                  thread.path ? `- Location: \`${thread.path}:${thread.line ?? thread.startLine ?? "?"}\`` : "- Location: general review comment",
+                  thread.isOutdated ? "- Note: the review thread is outdated but remained unresolved when the PR merged." : "",
+                ].filter(Boolean).join("\n");
+                issue = (await github.rest.issues.create({
+                  owner,
+                  repo,
+                  title: titleFrom(root.body, priority),
+                  body,
+                })).data;
+              }
+              followUps.push({ priority, issue, marker });
+            }
+
+            if (followUps.length === 0) return;
+
+            const commentMarker = "<!-- deferred-review-follow-up -->";
+            const commentBody = [
+              commentMarker,
+              `Deferred review follow-up for merged PR #${pullRequestNumber}:`,
+              ...followUps.map(({ priority, issue }) => `- P${priority}: [#${issue.number}](${issue.html_url})`),
+            ].join("\n");
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number: pullRequestNumber,
+              per_page: 100,
+            });
+            const previous = comments.find((comment) =>
+              comment.user?.type === "Bot" && comment.body?.includes(commentMarker));
+            if (previous) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: previous.id,
+                body: commentBody,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: pullRequestNumber,
+                body: commentBody,
+              });
+            }

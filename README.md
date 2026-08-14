@@ -40,12 +40,21 @@ Market indices and Fear & Greed are collected by the Worker Cron Triggers and
 stored in D1. The public API composes those rows with the screening read model;
 the VPS publisher does not write market-context data.
 
-The Worker schedules are UTC because Cloudflare Cron Triggers are UTC: indices
-run every 15 minutes on weekdays and are accepted only inside the New York
-regular session (including the supported 13:00 ET early-close calendar) plus
-a small post-close retry window; Fear & Greed runs at 14:00 and 19:00 UTC on weekdays. The
-Worker applies `America/New_York` conversion, weekends, holidays, DST and
-source-date validation before writing.
+The Worker schedules are UTC because Cloudflare Cron Triggers are UTC.
+Production declares only two trigger entries because Cloudflare Workers Free
+applies its cron-trigger limit at the account level: `*/15 * * * *` and
+`0 6 * * *`. The 15-minute dispatcher runs the Earnings monitor every time,
+lets Market Context apply its existing market-window logic, and runs Fear &
+Greed only at 14:00 and 19:00 UTC on weekdays. The 06:00 UTC entry runs
+Earnings calendar/backfill. The Worker applies `America/New_York` conversion,
+weekends, holidays, DST and source-date validation before writing.
+
+The combined 14:00/19:00 invocation is budgeted conservatively below the
+Workers Free 50-external-subrequest limit. With two attempts per request and a
+16-filing lookup cap, the worst SEC-calendar path is `2` metadata + `6` full
+index + `32` filing + `4` Yahoo + `1` CNN = `45` requests, leaving `5` headroom.
+The FMP-calendar path is `39`; the 06:00 calendar-only paths are `40` (SEC)
+or `36` (FMP). D1 reads/writes are not counted as external provider requests.
 
 The temporary zero-cost index adapter uses Yahoo Finance's public Chart HTTP
 endpoint for `^GSPC`, `^NDX`, `^DJI` and `^VIX`. It requires no API key and runs
@@ -93,10 +102,13 @@ npx wrangler secret put FMP_API_KEY
 npx wrangler secret put SEC_USER_AGENT
 ```
 
-No key, token or contact secret belongs in Git. Preview Cron is disabled by the
-Worker whenever `ENVIRONMENT` is not `production`; PR validation runs without
-Cloudflare credentials, and the preview config intentionally has no D1 binding.
-Full staging/preview deployment is a follow-up and is outside PR #12.
+No key, token or contact secret belongs in Git. PR previews use one permanent
+`stock-autotrader-preview` Worker with no D1, KV, R2, Durable Object, service or
+secret bindings and no cron triggers. Its same-origin `/api/*` handler proxies
+only public GET/HEAD requests to the production Worker; branch commits are
+uploaded as isolated Worker versions by Cloudflare Workers Builds. Isolated
+backend staging/D1 previews remain a future follow-up and are intentionally
+outside PR #13.
 
 The daily Cron refreshes `today - 90 days → today + 60 days`; the 15-minute Cron polls only scheduled events inside the
 BMO/AMC/TBD New York-time windows and also detects a provider event newly moved
@@ -116,7 +128,7 @@ also verifies that `earnings_events` and `earnings_universe` exist remotely.
 Use `npm run db:migrate:local -w @stock-autotrader/web` for local validation;
 the production migration remains CI-owned.
 
-Cron batches D1 writes and caps SEC enrichment at 24 filings per invocation so
+Cron batches D1 writes and caps SEC enrichment at 16 filings per invocation so
 the free Workers subrequest budget is respected; remaining official links are
 picked up by the next 15-minute/daily run. A transient provider or SEC failure
 never clears the last valid event values.
@@ -139,6 +151,9 @@ npm test
 npm run build
 npx --yes wrangler@4.122.0 deploy --dry-run
 ```
+
+PR preview setup and its security boundary are documented in
+[`docs/PR13_PR_PREVIEWS.md`](docs/PR13_PR_PREVIEWS.md).
 
 ## Project structure
 

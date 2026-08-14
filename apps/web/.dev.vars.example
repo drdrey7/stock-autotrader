@@ -1,4 +1,4 @@
-# Local-only secrets for `wrangler dev` (never committed).
-# Copy to .dev.vars and set a value. Production/preview secrets come from
-# GitHub Actions secrets (INGEST_SECRET) via `wrangler secret put`.
+# Local-only secrets for the production Worker `wrangler dev` path (never
+# committed). The permanent Worker PR preview has no secrets.
+# Copy to .dev.vars and set a value only when exercising the Worker locally.
 INGEST_SECRET=dev-secret-change-me

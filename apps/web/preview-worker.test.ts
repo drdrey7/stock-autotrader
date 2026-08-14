@@ -1,0 +1,104 @@
+import { describe, expect, it, vi } from "vitest";
+import { handlePreviewRequest, type PreviewEnv } from "./preview-worker";
+
+type ProductionApiStub = { fetch: ReturnType<typeof vi.fn> };
+
+const previewEnv = (
+  assetResponse = new Response("branch asset"),
+  productionApi: ProductionApiStub = { fetch: vi.fn(async () => new Response('{"ok":true}')) },
+): { env: PreviewEnv; productionApi: ProductionApiStub } => ({
+  env: {
+    ENVIRONMENT: "preview",
+    ASSETS: { fetch: vi.fn(async () => assetResponse) } as unknown as Fetcher,
+    PRODUCTION_API: productionApi as unknown as Fetcher,
+  },
+  productionApi,
+});
+
+describe("preview Worker", () => {
+  it("serves normal frontend asset paths from the branch build", async () => {
+    const { env } = previewEnv();
+    const response = await handlePreviewRequest(new Request("https://preview.example/"), env);
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("branch asset");
+    expect(env.ASSETS.fetch).toHaveBeenCalledOnce();
+  });
+
+  it("routes same-origin API reads through the production service binding", async () => {
+    const productionApi = {
+      fetch: vi.fn(async (input: RequestInfo | URL) => {
+        const downstream = input as Request;
+        expect(downstream.url).toBe("https://stock-autotrader-web/api/status");
+        expect(downstream.method).toBe("GET");
+        expect(downstream.headers.get("accept")).toBe("application/json");
+        expect(downstream.headers.get("authorization")).toBeNull();
+        expect(downstream.headers.get("cookie")).toBeNull();
+        return new Response('{"ok":true}');
+      }),
+    };
+    const { env } = previewEnv(new Response("branch asset"), productionApi);
+
+    const response = await handlePreviewRequest(
+      new Request("https://preview.example/api/status", {
+        headers: { authorization: "Bearer blocked", cookie: "blocked=1" },
+      }),
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe('{"ok":true}');
+    expect(env.ASSETS.fetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects API mutations before invoking the production service binding", async () => {
+    const productionApi = { fetch: vi.fn(async () => new Response("must not run")) };
+    const { env } = previewEnv(new Response("branch asset"), productionApi);
+
+    const response = await handlePreviewRequest(
+      new Request("https://preview.example/api/status", { method: "POST" }),
+      env,
+    );
+
+    expect(response.status).toBe(405);
+    expect(response.headers.get("allow")).toBe("GET, HEAD");
+    expect(productionApi.fetch).not.toHaveBeenCalled();
+  });
+
+  it("reports compact production read-model diagnostics without returning payloads", async () => {
+    const productionApi = {
+      fetch: vi.fn(async (input: RequestInfo | URL) => {
+        const path = new URL(String((input as Request).url)).pathname;
+        if (path === "/api/status") return new Response('{"market":{"indices":[1,2,3,4]}}');
+        if (path === "/api/market-context") return new Response('{"indices":[1,2,3,4]}');
+        if (path === "/api/earnings") return new Response('{"events":[1,2,3]}');
+        if (path === "/api/x/posts") return new Response('{"posts":[1,2]}');
+        return new Response('{"title":"private briefing payload"}');
+      }),
+    };
+    const { env } = previewEnv(new Response("branch asset"), productionApi);
+
+    const response = await handlePreviewRequest(new Request("https://preview.example/__preview/diagnostics"), env);
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toEqual({
+      environment: "preview",
+      upstream: "stock-autotrader-web",
+      endpoints: {
+        status: { http: 200, data: true },
+        marketContext: { http: 200, count: 4 },
+        earnings: { http: 200, count: 3 },
+        x: { http: 200, count: 2 },
+        briefing: { http: 200, available: true },
+      },
+    });
+    expect(JSON.stringify(body)).not.toContain("private briefing payload");
+    expect(productionApi.fetch).toHaveBeenCalledTimes(5);
+  });
+
+  it("has no scheduled entrypoint", async () => {
+    const moduleSource = await import("./preview-worker");
+    expect("scheduled" in moduleSource.default).toBe(false);
+  });
+});
