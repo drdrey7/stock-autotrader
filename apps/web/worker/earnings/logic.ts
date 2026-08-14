@@ -50,7 +50,10 @@ export function startOfWeek(dateKey: string): string {
   if (!validDateKey(dateKey)) throw new Error("invalid week date");
   const date = new Date(`${dateKey}T12:00:00.000Z`);
   const day = date.getUTCDay();
-  return addDays(dateKey, day === 0 ? 0 : 1 - day);
+  // Monday-anchored week: Sunday (day 0) belongs to the week that started the
+  // preceding Monday, not to a week of its own — every weekday must resolve
+  // to the same seven-day span.
+  return addDays(dateKey, day === 0 ? -6 : 1 - day);
 }
 
 export function endOfWeek(dateKey: string): string {

@@ -51,6 +51,7 @@ const json = (data: unknown, status = 200) =>
       "access-control-allow-origin": "*",
       "access-control-allow-methods": "GET, HEAD, OPTIONS",
       "access-control-allow-headers": "Content-Type, Accept",
+      "x-content-type-options": "nosniff",
     },
   });
 

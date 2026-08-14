@@ -42,7 +42,10 @@ function httpUrlValue(value: unknown): string | null {
   if (!candidate) return null;
   try {
     const url = new URL(candidate);
-    return url.protocol === "https:" || url.protocol === "http:" ? url.toString() : null;
+    // https-only: an http: link rendered on this HTTPS page would be a
+    // mixed-content downgrade. Upstream sources (SEC, Finnhub) are
+    // https-only in practice, so this never rejects real data.
+    return url.protocol === "https:" ? url.toString() : null;
   } catch {
     return null;
   }
