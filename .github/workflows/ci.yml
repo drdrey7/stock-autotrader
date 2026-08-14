@@ -48,7 +48,7 @@ jobs:
         run: npx --yes wrangler@4.122.0 d1 migrations apply stock-autotrader-db --local
       - name: Validate seed against local D1
         working-directory: apps/web
-        run: node scripts/seed.mjs --local
+        run: node scripts/verify-local-seed.mjs --local --expect-clean
       - name: Lint Python (ruff)
         run: |
           pip install --quiet "ruff>=0.15,<1"

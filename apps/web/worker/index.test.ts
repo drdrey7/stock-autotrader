@@ -12,7 +12,7 @@ type StatusBody = DashboardData & {
   sentiment: unknown;
 };
 type StockBody = { symbol: string; strategy: string; direction: string };
-type PortfolioBody = { portfolio: { riskPolicy: { maxPositions: number; leverage: string } }; positions: unknown[] };
+type PortfolioBody = { portfolio: DashboardData["portfolio"]; positions: DashboardData["positions"] };
 
 /**
  * A minimal, table-aware D1 fake. Each table is seeded independently; any
@@ -28,6 +28,7 @@ interface Tables {
   scanCandidates: Record<string, unknown>[];
   decisionReasons: Record<string, unknown>[];
   earnings: Record<string, unknown>[];
+  universe: Record<string, unknown>[];
   shadowPositions: Record<string, unknown>[];
   botEvents: Record<string, unknown>[];
   research: Record<string, unknown>[];
@@ -43,6 +44,7 @@ function createDb(tables: Partial<Tables> = {}, throwOn: ThrowOn = {}) {
     scanCandidates: [],
     decisionReasons: [],
     earnings: [],
+    universe: [],
     shadowPositions: [],
     botEvents: [],
     research: [],
@@ -63,10 +65,10 @@ function createDb(tables: Partial<Tables> = {}, throwOn: ThrowOn = {}) {
             return null;
           }
           // readCandidateBySymbol's scoped lookup (WHERE scan_id = ... AND symbol = ?).
-          if (sql.startsWith("SELECT * FROM scan_candidates WHERE scan_id")) {
+          if (sql.includes("FROM scan_candidates") && sql.includes("WHERE c.scan_id")) {
             if (throwOn.scanCandidates) throw new Error("scan_candidates unavailable");
             const symbol = args[0];
-            return (t.scanCandidates.find((row) => row.symbol === symbol) as T | undefined) ?? null;
+            return (t.scanCandidates.find((row) => row.symbol === symbol && isActiveUniverseSymbol(t, String(row.symbol))) as T | undefined) ?? null;
           }
           if (sql === "SELECT value FROM app_meta WHERE key = 'marketData'") {
             if (throwOn.marketData) throw new Error("marketData unavailable");
@@ -88,17 +90,22 @@ function createDb(tables: Partial<Tables> = {}, throwOn: ThrowOn = {}) {
             const ids = new Set(args.map((value) => Number(value)));
             return { results: t.decisionReasons.filter((row) => ids.has(Number(row.candidate_id))) as T[] };
           }
-          if (sql.startsWith("SELECT * FROM scan_candidates")) return { results: t.scanCandidates as T[] };
+          if (sql.includes("FROM scan_candidates")) return { results: t.scanCandidates.filter((row) => isActiveUniverseSymbol(t, String(row.symbol))) as T[] };
           if (sql.startsWith("SELECT * FROM strategies")) return { results: t.strategies as T[] };
-          if (sql.startsWith("SELECT * FROM earnings")) return { results: t.earnings as T[] };
-          if (sql.startsWith("SELECT * FROM shadow_positions")) return { results: t.shadowPositions as T[] };
-          if (sql.startsWith("SELECT * FROM bot_events")) return { results: t.botEvents as T[] };
+          if (sql.includes("FROM earnings AS e")) return { results: t.earnings.filter((row) => isActiveUniverseSymbol(t, String(row.symbol))) as T[] };
+          if (sql.includes("FROM shadow_positions")) return { results: t.shadowPositions.filter((row) => isActiveUniverseSymbol(t, String(row.symbol))) as T[] };
+          if (sql.includes("FROM bot_events")) return { results: t.botEvents.filter((row) => row.symbol == null || isActiveUniverseSymbol(t, String(row.symbol))) as T[] };
           if (sql.startsWith("SELECT * FROM research")) return { results: t.research as T[] };
           return { results: [] as T[] };
         },
       };
     },
   };
+}
+
+function isActiveUniverseSymbol(t: Tables, symbol: string): boolean {
+  const row = t.universe.find((candidate) => String(candidate.symbol) === symbol);
+  return Boolean(row && Number(row.active) === 1 && row.source === "core");
 }
 
 const assets = { fetch: async () => new Response("assets") };
@@ -121,7 +128,19 @@ const validRiskPolicy = JSON.stringify({
 
 function healthyTables(): Partial<Tables> {
   return {
-    appMeta: { riskPolicy: validRiskPolicy },
+    // Published account metadata for the one active position. Mixed-universe
+    // tests replace these with a broader runtime snapshot below.
+    appMeta: {
+      initialCapital: "10000",
+      equity: "10000",
+      returnPct: "0",
+      cash: "8715",
+      invested: "1285",
+      openPositions: "1",
+      openRiskPct: "0.8",
+      grossExposurePct: "12.85",
+      riskPolicy: validRiskPolicy,
+    },
     scan: {
       id: 7,
       scanned_at: "2026-08-13T11:00:00Z",
@@ -194,6 +213,10 @@ function healthyTables(): Partial<Tables> {
         tracked: 1,
         updated_at: "2026-08-13T09:00:00Z",
       },
+    ],
+    universe: [
+      { symbol: "AMD", active: 1, source: "core" },
+      { symbol: "NVDA", active: 1, source: "core" },
     ],
     shadowPositions: [
       {
@@ -275,6 +298,14 @@ describe("buildDashboard()", () => {
 
     expect(body.positions).toHaveLength(1);
     expect(body.positions[0]).toMatchObject({ symbol: "NVDA", quantity: 10, rMultiple: 1.06 });
+    expect(body.portfolio).toMatchObject({
+      equity: 10000,
+      cash: 8715,
+      invested: 1285,
+      openPositions: 1,
+    });
+    expect(body.portfolio.openRiskPct).toBeCloseTo(0.8);
+    expect(body.portfolio.grossExposurePct).toBeCloseTo(12.85);
 
     expect(body.events).toHaveLength(1);
     expect(body.events[0]).toMatchObject({ id: "evt-1", severity: "success", symbol: "NVDA" });
@@ -381,6 +412,121 @@ describe("narrow endpoints derived from the dashboard read model", () => {
     const env = envWith(healthyTables());
     const response = await worker.fetch(new Request("https://example.test/api/stocks/ZZZZ"), env);
     expect(response.status).toBe(404);
+  });
+
+  it("does not surface an inactive universe member on status or stock lookup reads", async () => {
+    const tables = healthyTables();
+    tables.universe = [
+      ...(tables.universe ?? []),
+      { symbol: "ABNB", active: 0, source: "core" },
+    ];
+    tables.scanCandidates = [
+      ...(tables.scanCandidates ?? []),
+      { ...tables.scanCandidates![0], id: 43, symbol: "ABNB" },
+    ];
+    tables.earnings = [
+      ...(tables.earnings ?? []),
+      { ...tables.earnings![0], symbol: "ABNB" },
+    ];
+    tables.shadowPositions = [
+      ...(tables.shadowPositions ?? []),
+      { ...tables.shadowPositions![0], id: 43, symbol: "ABNB", current_price: 999, quantity: 100, risk_amount: 5000 },
+    ];
+    // The unfiltered runtime snapshot includes the hidden ABNB position:
+    // total equity = $11,000, real cash = $4,000, total invested = $7,000.
+    // Public active-universe totals must retain $4,000 cash and exclude only
+    // ABNB's invested value/risk/count.
+    tables.appMeta = {
+      ...tables.appMeta,
+      equity: "11000",
+      cash: "4000",
+      invested: "7000",
+      openPositions: "2",
+      openRiskPct: "54.55",
+      grossExposurePct: "63.64",
+      returnPct: "10",
+    };
+    tables.botEvents = [
+      ...(tables.botEvents ?? []),
+      { ...tables.botEvents![0], event_id: "evt-abnb", symbol: "ABNB" },
+    ];
+    const env = envWith(tables);
+    const statusResponse = await worker.fetch(new Request("https://example.test/api/status"), env);
+    expect(statusResponse.status).toBe(200);
+    const dashboard = (await statusResponse.json()) as StatusBody;
+    expect(dashboard.candidates.some((candidate) => candidate.symbol === "ABNB")).toBe(false);
+    expect(dashboard.earnings.some((event) => event.symbol === "ABNB")).toBe(false);
+    expect(dashboard.positions.some((position) => position.symbol === "ABNB")).toBe(false);
+    expect(dashboard.events.some((event) => event.symbol === "ABNB")).toBe(false);
+    expect(dashboard.portfolio).toMatchObject({
+      cash: 4000,
+      equity: 5285,
+      invested: 1285,
+      openPositions: 1,
+    });
+    expect(dashboard.portfolio.returnPct).toBeCloseTo(-47.15);
+    expect(dashboard.portfolio.openRiskPct).toBeCloseTo((80 / 5285) * 100);
+    expect(dashboard.portfolio.grossExposurePct).toBeCloseTo((1285 / 5285) * 100);
+    const portfolio = (await (await worker.fetch(new Request("https://example.test/api/portfolio/shadow"), env)).json()) as PortfolioBody;
+    expect(portfolio.positions.some((position) => (position as { symbol?: string }).symbol === "ABNB")).toBe(false);
+    expect(portfolio.portfolio).toEqual(dashboard.portfolio);
+    expect(portfolio.portfolio).toMatchObject({
+      cash: 4000,
+      equity: 5285,
+      invested: 1285,
+      openPositions: 1,
+    });
+    expect(portfolio.portfolio.returnPct).toBeCloseTo(-47.15);
+    expect(portfolio.portfolio.openRiskPct).toBeCloseTo((80 / 5285) * 100);
+    expect(portfolio.portfolio.grossExposurePct).toBeCloseTo((1285 / 5285) * 100);
+    expect((tables.shadowPositions ?? []).some((position) => position.symbol === "ABNB")).toBe(true);
+    expect((await worker.fetch(new Request("https://example.test/api/stocks/abnb"), env)).status).toBe(404);
+  });
+
+  it("excludes an inactive stored position from public portfolio totals", async () => {
+    const tables = healthyTables();
+    tables.universe = [{ symbol: "ABNB", active: 0, source: "core" }];
+    tables.shadowPositions = [{
+      ...tables.shadowPositions![0],
+      symbol: "ABNB",
+      current_price: 999,
+      quantity: 100,
+      risk_amount: 5000,
+    }];
+    const env = envWith(tables);
+    const response = await worker.fetch(new Request("https://example.test/api/portfolio/shadow"), env);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as PortfolioBody;
+
+    expect((tables.shadowPositions ?? []).some((position) => position.symbol === "ABNB")).toBe(true);
+    expect(body.positions).toEqual([]);
+    expect(body.portfolio).toMatchObject({ cash: 8715, equity: 8715, invested: 0, openPositions: 0, openRiskPct: 0, grossExposurePct: 0 });
+  });
+
+  it("recomputes scan counts from active-universe candidates", async () => {
+    const tables = healthyTables();
+    tables.universe = [
+      ...(tables.universe ?? []),
+      { symbol: "ABNB", active: 0, source: "core" },
+    ];
+    tables.scanCandidates = [
+      ...(tables.scanCandidates ?? []),
+      { ...tables.scanCandidates![0], id: 43, symbol: "AMD", status: "Watch" },
+      { ...tables.scanCandidates![0], id: 44, symbol: "ABNB", status: "Strong Setup" },
+    ];
+    tables.scan = {
+      ...tables.scan!,
+      candidates: 3,
+      setups: 2,
+      watch: 1,
+    };
+    const env = envWith(tables);
+    const response = await worker.fetch(new Request("https://example.test/api/status"), env);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as StatusBody;
+
+    expect(body.candidates.map((candidate) => candidate.symbol)).toEqual(["NVDA", "AMD"]);
+    expect(body.scan).toMatchObject({ universe: 500, passedFilters: 40, candidates: 2, setups: 1, watch: 1 });
   });
 
   it("GET /api/stocks/:symbol fails closed on a store error", async () => {

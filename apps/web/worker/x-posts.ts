@@ -1,5 +1,9 @@
 import { z } from "zod";
 import { isBriefingSymbolInUniverse, isoTimestampSchema } from "@stock-autotrader/contracts";
+// X provenance labels remain index-specific for the existing curated feed;
+// they are not the active stock-universe source. Public symbol rows are gated
+// separately by the D1 Core runtime predicate below.
+import { activeUniverseExistsSql } from "./stock-universe";
 
 export const X_POSTS_EVENT_TYPE = "X_POSTS_COLLECTED" as const;
 
@@ -242,23 +246,25 @@ export async function readXPosts(
   db: D1Database,
   options: { author?: string; symbol?: string; limit: number },
 ): Promise<XPostRow[]> {
-  const conditions: string[] = [];
+  const conditions: string[] = [options.symbol
+    ? activeUniverseExistsSql("p.symbol")
+    : `(p.symbol IS NULL OR ${activeUniverseExistsSql("p.symbol")})`];
   const args: (string | number)[] = [];
   if (options.author) {
-    conditions.push("author = ?");
+    conditions.push("p.author = ?");
     args.push(options.author);
   }
   if (options.symbol) {
-    conditions.push("symbol = ?");
+    conditions.push("p.symbol = ?");
     args.push(options.symbol);
   }
-  const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  const where = `WHERE ${conditions.join(" AND ")}`;
   const safeLimit = Math.min(Math.max(options.limit, 1), 200);
   const rows = await db
     .prepare(
       `SELECT id, author, text, created_at, url, symbol, company, universe, collected_at, chart_json, price, change
-       FROM x_posts ${where}
-       ORDER BY created_at DESC, id DESC
+       FROM x_posts AS p ${where}
+       ORDER BY p.created_at DESC, p.id DESC
        LIMIT ?`,
     )
     .bind(...args, safeLimit)

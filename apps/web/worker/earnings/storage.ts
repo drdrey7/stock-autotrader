@@ -1,6 +1,7 @@
 import type { EarningsEngineEvent } from "@stock-autotrader/contracts";
 import { calculateMetric, calculateOverallResult, canonicalFiscalPeriod } from "./logic";
 import type { NormalizedEarningsEvent } from "./types";
+import { ACTIVE_UNIVERSE_PREDICATE } from "../stock-universe";
 
 type Database = Pick<D1Database, "prepare"> & Partial<Pick<D1Database, "batch">>;
 
@@ -462,36 +463,46 @@ export interface EarningsQuery {
 }
 
 export async function readEarningsEvents(db: Database, query: EarningsQuery): Promise<EarningsEngineEvent[]> {
-  const conditions = ["scheduled_date IS NOT NULL", "scheduled_date >= ?", "scheduled_date <= ?"];
+  const conditions = ["e.scheduled_date IS NOT NULL", "e.scheduled_date >= ?", "e.scheduled_date <= ?"];
   const values: unknown[] = [query.from, query.to];
   if (query.symbol) {
-    conditions.push("symbol = ?");
+    conditions.push("e.symbol = ?");
     values.push(query.symbol);
   }
   if (query.status) {
-    conditions.push("status = ?");
+    conditions.push("e.status = ?");
     values.push(query.status);
   }
   const result = await db.prepare(
-    `SELECT * FROM earnings_events WHERE ${conditions.join(" AND ")} ORDER BY scheduled_date DESC, symbol ASC, id ASC LIMIT 5000`,
+    `SELECT e.* FROM earnings_events AS e
+     JOIN earnings_universe AS u ON u.symbol = e.symbol AND ${ACTIVE_UNIVERSE_PREDICATE}
+     WHERE ${conditions.join(" AND ")}
+     ORDER BY e.scheduled_date DESC, e.symbol ASC, e.id ASC LIMIT 5000`,
   ).bind(...values).all<EarningsRow>();
   return result.results.map(rowToEarningsEvent);
 }
 
 export async function readEarningsMonitoringEvents(db: Database, today: string): Promise<EarningsEngineEvent[]> {
   const result = await db.prepare(
-    `SELECT * FROM earnings_events
-     WHERE scheduled_date = ?
-       AND (status = 'scheduled' OR (status = 'reported' AND (eps_actual IS NULL OR revenue_actual IS NULL OR sec_filing_url IS NULL)))
-     ORDER BY symbol ASC, id ASC LIMIT 500`,
+    `SELECT e.* FROM earnings_events AS e
+     JOIN earnings_universe AS u ON u.symbol = e.symbol AND ${ACTIVE_UNIVERSE_PREDICATE}
+     WHERE e.scheduled_date = ?
+       AND (e.status = 'scheduled' OR (e.status = 'reported' AND (e.eps_actual IS NULL OR e.revenue_actual IS NULL OR e.sec_filing_url IS NULL)))
+     ORDER BY e.symbol ASC, e.id ASC LIMIT 500`,
   ).bind(today).all<EarningsRow>();
   return result.results.map(rowToEarningsEvent);
 }
 
 export async function readEarningsEventById(db: Database, id: string): Promise<EarningsEngineEvent | null> {
-  const row = await db.prepare("SELECT * FROM earnings_events WHERE id = ? LIMIT 1").bind(id).first<EarningsRow>();
+  const row = await db.prepare(
+    `SELECT e.* FROM earnings_events AS e
+     JOIN earnings_universe AS u ON u.symbol = e.symbol AND ${ACTIVE_UNIVERSE_PREDICATE}
+     WHERE e.id = ? LIMIT 1`,
+  ).bind(id).first<EarningsRow>();
   return row ? rowToEarningsEvent(row) : null;
 }
+
+export type UniverseSource = "core" | "trending";
 
 export interface EarningsUniverseMember {
   symbol: string;
@@ -503,16 +514,103 @@ export interface EarningsUniverseMember {
   updatedAt: string;
 }
 
-function universeStatement(db: Database, member: EarningsUniverseMember): D1PreparedStatement {
+export interface TrackedUniverseRow {
+  symbol: string;
+  active: boolean;
+  source: UniverseSource;
+  universeVersion: number;
+  addedAt: string | null;
+  removedAt: string | null;
+  updatedAt: string;
+}
+
+function assertUniverseSymbols(symbols: readonly string[]): void {
+  if (symbols.length === 0) throw new Error("Core Universe cannot be empty");
+  const seen = new Set<string>();
+  for (const symbol of symbols) {
+    if (symbol !== symbol.trim() || !/^[A-Z][A-Z0-9-]{0,11}$/.test(symbol)) {
+      throw new Error(`Invalid Core Universe symbol: ${JSON.stringify(symbol)}`);
+    }
+    if (seen.has(symbol)) throw new Error(`Duplicate Core Universe symbol: ${symbol}`);
+    seen.add(symbol);
+  }
+}
+
+function coreLifecycleStatement(db: Database, symbol: string, version: number, updatedAt: string): D1PreparedStatement {
   return db.prepare(
-    `INSERT INTO earnings_universe (symbol, company, cik, exchange, investor_relations_url, index_memberships, metadata_provider, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(symbol) DO UPDATE SET company = excluded.company, cik = COALESCE(excluded.cik, earnings_universe.cik), exchange = COALESCE(excluded.exchange, earnings_universe.exchange), investor_relations_url = COALESCE(excluded.investor_relations_url, earnings_universe.investor_relations_url), index_memberships = excluded.index_memberships, metadata_provider = excluded.metadata_provider, updated_at = excluded.updated_at`,
-  ).bind(member.symbol, member.company, member.cik, member.exchange, member.investorRelationsUrl ?? null, JSON.stringify(member.indexes), "sec-edgar", member.updatedAt);
+    `INSERT INTO earnings_universe
+      (symbol, company, cik, exchange, investor_relations_url, index_memberships, metadata_provider, active, source, universe_version, added_at, removed_at, updated_at)
+     VALUES (?, ?, NULL, NULL, NULL, '[]', 'core-universe', 1, 'core', ?, ?, NULL, ?)
+     ON CONFLICT(symbol) DO UPDATE SET
+       active = 1,
+       source = 'core',
+       universe_version = excluded.universe_version,
+       added_at = COALESCE(earnings_universe.added_at, excluded.added_at),
+       removed_at = NULL,
+       updated_at = excluded.updated_at`,
+  ).bind(symbol, symbol, version, updatedAt, updatedAt);
+}
+
+/**
+ * Reconcile the checked-in Core baseline into the existing D1 universe table.
+ * The operation only changes membership lifecycle rows; earnings_events are
+ * never deleted, including for symbols that become inactive.
+ */
+export async function reconcileCoreUniverse(
+  db: Database,
+  symbols: readonly string[],
+  version: number,
+  updatedAt: string,
+): Promise<void> {
+  if (!Number.isInteger(version) || version < 1) throw new Error("Core Universe version must be a positive integer");
+  assertUniverseSymbols(symbols);
+  const placeholders = symbols.map(() => "?").join(", ");
+  const deactivate = db.prepare(
+    `UPDATE earnings_universe
+     SET active = 0,
+         universe_version = ?,
+         removed_at = COALESCE(removed_at, ?),
+         updated_at = ?
+     WHERE source = 'core'
+       AND symbol NOT IN (${placeholders})
+       AND (active = 1 OR removed_at IS NULL)`,
+  ).bind(version, updatedAt, updatedAt, ...symbols);
+  const statements = [deactivate, ...symbols.map((symbol) => coreLifecycleStatement(db, symbol, version, updatedAt))];
+  if (db.batch) {
+    for (let index = 0; index < statements.length; index += 100) {
+      await db.batch(statements.slice(index, index + 100));
+    }
+    return;
+  }
+  for (const statement of statements) await statement.run();
+}
+
+function universeMetadataStatement(db: Database, member: EarningsUniverseMember): D1PreparedStatement {
+  return db.prepare(
+    `UPDATE earnings_universe
+     SET company = ?,
+         cik = COALESCE(?, cik),
+         exchange = COALESCE(?, exchange),
+         investor_relations_url = COALESCE(?, investor_relations_url),
+         index_memberships = ?,
+         metadata_provider = ?,
+         updated_at = ?
+     WHERE symbol = ? AND active = 1 AND source = 'core'`,
+  ).bind(
+    member.company,
+    member.cik,
+    member.exchange,
+    member.investorRelationsUrl ?? null,
+    JSON.stringify(member.indexes),
+    "sec-edgar",
+    member.updatedAt,
+    member.symbol,
+  );
 }
 
 export async function upsertUniverseMembers(db: Database, members: EarningsUniverseMember[]): Promise<void> {
-  const statements = members.map((member) => universeStatement(db, member));
+  if (members.length === 0) return;
+  const statements = members.map((member) => universeMetadataStatement(db, member));
   if (db.batch) {
     for (let index = 0; index < statements.length; index += 100) {
       await db.batch(statements.slice(index, index + 100));
@@ -527,8 +625,42 @@ export async function upsertUniverseMember(db: Database, member: EarningsUnivers
 }
 
 export async function readUniverseMetadata(db: Database): Promise<Map<string, { company: string; cik: string | null; investorRelationsUrl: string | null }>> {
-  const result = await db.prepare("SELECT symbol, company, cik, investor_relations_url FROM earnings_universe").all<{ symbol: string; company: string; cik: string | null; investor_relations_url: string | null }>();
+  // Include inactive rows so a re-added symbol keeps its previously enriched
+  // metadata. Public reads use readActiveUniverseSymbols/active joins instead.
+  const result = await db.prepare(
+    "SELECT symbol, company, cik, investor_relations_url FROM earnings_universe",
+  ).all<{ symbol: string; company: string; cik: string | null; investor_relations_url: string | null }>();
   return new Map(result.results.map((row) => [row.symbol, { company: row.company, cik: row.cik, investorRelationsUrl: row.investor_relations_url }]));
+}
+
+export async function readActiveUniverseSymbols(db: Database): Promise<ReadonlySet<string>> {
+  const result = await db.prepare(
+    "SELECT symbol FROM earnings_universe WHERE active = 1 AND source = 'core' ORDER BY symbol",
+  ).all<{ symbol: string }>();
+  return new Set(result.results.map((row) => row.symbol));
+}
+
+export async function readTrackedUniverse(db: Database): Promise<TrackedUniverseRow[]> {
+  const result = await db.prepare(
+    "SELECT symbol, active, source, universe_version, added_at, removed_at, updated_at FROM earnings_universe ORDER BY symbol",
+  ).all<{
+    symbol: string;
+    active: number;
+    source: UniverseSource;
+    universe_version: number;
+    added_at: string | null;
+    removed_at: string | null;
+    updated_at: string;
+  }>();
+  return result.results.map((row) => ({
+    symbol: row.symbol,
+    active: Number(row.active) === 1,
+    source: row.source,
+    universeVersion: Number(row.universe_version),
+    addedAt: row.added_at,
+    removedAt: row.removed_at,
+    updatedAt: row.updated_at,
+  }));
 }
 
 export async function setEarningsMeta(db: Database, key: string, value: string): Promise<void> {

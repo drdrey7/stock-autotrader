@@ -25,6 +25,7 @@ import {
   SENTIMENT_STALE_AFTER_SECONDS,
   type MarketContextReadModel,
 } from "./market-context";
+import { activeUniverseExistsSql } from "./stock-universe";
 
 /**
  * The public dashboard/source-health read model: builds validated responses
@@ -268,7 +269,7 @@ export async function buildSources(
     // update with zero rows is healthy. Universe count is checked separately
     // so an empty filtered date range is never mistaken for initialization.
     const row = await env.DB.prepare(
-      "SELECT (SELECT value FROM app_meta WHERE key = 'earningsEngineUpdatedAt') AS updated_at, (SELECT value FROM app_meta WHERE key = 'earningsEngineCheckedAt') AS checked_at, (SELECT value FROM app_meta WHERE key = 'earningsEngineLastAttemptAt') AS attempt_at, (SELECT value FROM app_meta WHERE key = 'earningsCalendarLastError') AS calendar_error, (SELECT value FROM app_meta WHERE key = 'earningsMonitorLastError') AS monitor_error, (SELECT value FROM app_meta WHERE key = 'earningsEngineLastError') AS last_error, (SELECT COUNT(*) FROM earnings_universe) AS universe_count",
+      "SELECT (SELECT value FROM app_meta WHERE key = 'earningsEngineUpdatedAt') AS updated_at, (SELECT value FROM app_meta WHERE key = 'earningsEngineCheckedAt') AS checked_at, (SELECT value FROM app_meta WHERE key = 'earningsEngineLastAttemptAt') AS attempt_at, (SELECT value FROM app_meta WHERE key = 'earningsCalendarLastError') AS calendar_error, (SELECT value FROM app_meta WHERE key = 'earningsMonitorLastError') AS monitor_error, (SELECT value FROM app_meta WHERE key = 'earningsEngineLastError') AS last_error, (SELECT COUNT(*) FROM earnings_universe WHERE active = 1 AND source = 'core') AS universe_count",
     ).first<{ updated_at: string | null; checked_at: string | null; attempt_at: string | null; calendar_error: string | null; monitor_error: string | null; last_error: string | null; universe_count: number | string | null }>();
     const updatedAt = parseIsoTimestamp(row?.updated_at);
     const checkedAt = parseIsoTimestamp(row?.checked_at);
@@ -494,6 +495,40 @@ function mapPositionRow(p: Record<string, unknown>): DashboardData["positions"][
 }
 
 /**
+ * Derive portfolio totals from the same active-universe positions that are
+ * returned publicly. Cash is authoritative from app_meta; active-universe
+ * equity is that real cash plus only the visible holdings. This prevents a
+ * hidden position's value from being reclassified as public cash and keeps
+ * exposure and risk denominators on the same scope as the positions.
+ */
+function derivePortfolioFromActivePositions(
+  metaMap: Map<string, string>,
+  positions: DashboardData["positions"],
+) {
+  const cash = Math.max(num(metaMap.get("cash") ?? 0), 0);
+  const initialCapital = num(metaMap.get("initialCapital") ?? 10000);
+  const invested = positions.reduce(
+    (total, position) => total + Math.max(position.currentPrice * position.quantity, 0),
+    0,
+  );
+  const equity = cash + invested;
+  const openRisk = positions.reduce((total, position) => total + Math.max(position.riskAmount, 0), 0);
+  const equityDenominator = equity > 0 ? equity : 0;
+
+  return {
+    initialCapital,
+    equity,
+    returnPct: initialCapital > 0 ? ((equity - initialCapital) / initialCapital) * 100 : 0,
+    cash,
+    invested,
+    openPositions: positions.length,
+    openRiskPct: equityDenominator > 0 ? (openRisk / equityDenominator) * 100 : 0,
+    grossExposurePct: equityDenominator > 0 ? (invested / equityDenominator) * 100 : 0,
+    riskPolicy: parseJson(metaMap.get("riskPolicy"), {}),
+  };
+}
+
+/**
  * Parse+validate the published `marketData` app_meta snapshot and apply the
  * shared staleness gate: a "healthy" snapshot whose publish timestamp has
  * gone stale (or is malformed) is degraded rather than presented as current.
@@ -524,15 +559,16 @@ export async function buildDashboard(env: Env): Promise<DashboardData> {
   const [scanRes, strategiesRes, candidatesRes, earningsRes, positionsRes, eventsRes, researchRes] = await Promise.all([
     env.DB.prepare("SELECT * FROM scans ORDER BY id DESC LIMIT 1").first(),
     env.DB.prepare("SELECT * FROM strategies ORDER BY id").all(),
-    // Surface only the candidates from the latest scan (older scans are history).
-    env.DB.prepare("SELECT * FROM scan_candidates WHERE scan_id = (SELECT MAX(id) FROM scans) ORDER BY id").all(),
+    // Surface only active-universe candidates from the latest scan (older scans
+    // are history, and removed symbols remain stored but are not public).
+    env.DB.prepare(`SELECT c.* FROM scan_candidates AS c WHERE c.scan_id = (SELECT MAX(id) FROM scans) AND ${activeUniverseExistsSql("c.symbol")} ORDER BY c.id`).all(),
     // `earnings` is the legacy quant/screening table, not the Automated
     // Earnings Engine's read model — see README.md "Automated Earnings
     // Engine (PR #12)". /api/earnings reads `earnings_events` instead,
     // via readEarningsApi() in worker/earnings/.
-    env.DB.prepare("SELECT * FROM earnings ORDER BY date").all(),
-    env.DB.prepare("SELECT * FROM shadow_positions ORDER BY id").all(),
-    env.DB.prepare("SELECT * FROM bot_events ORDER BY id").all(),
+    env.DB.prepare(`SELECT e.* FROM earnings AS e WHERE ${activeUniverseExistsSql("e.symbol")} ORDER BY e.date`).all(),
+    env.DB.prepare(`SELECT p.* FROM shadow_positions AS p WHERE ${activeUniverseExistsSql("p.symbol")} ORDER BY p.id`).all(),
+    env.DB.prepare(`SELECT e.* FROM bot_events AS e WHERE e.symbol IS NULL OR ${activeUniverseExistsSql("e.symbol")} ORDER BY e.id`).all(),
     env.DB.prepare("SELECT * FROM research ORDER BY id").all(),
   ]);
   const scan = (scanRes ?? null) as ScanRow | null;
@@ -555,6 +591,11 @@ export async function buildDashboard(env: Env): Promise<DashboardData> {
   const strategies = (strategiesRes.results as Record<string, unknown>[]).map(mapStrategyRow);
   const candidates = (candidatesRes.results as Record<string, unknown>[])
     .map((c) => mapCandidateRow(c, reasonsByCandidate.get(Number(c.id)) ?? []));
+  const candidateCounts = {
+    candidates: candidates.length,
+    setups: candidates.filter((candidate) => candidate.status === "Strong Setup").length,
+    watch: candidates.filter((candidate) => candidate.status === "Watch").length,
+  };
 
   const earnings = (earningsRes.results as Record<string, unknown>[]).map((e) => ({
     symbol: String(e.symbol),
@@ -592,17 +633,7 @@ export async function buildDashboard(env: Env): Promise<DashboardData> {
     metrics: parseJson(r.metrics, {}),
   }));
 
-  const portfolio = {
-    initialCapital: num(metaMap.get("initialCapital") ?? 10000),
-    equity: num(metaMap.get("equity") ?? 0),
-    returnPct: num(metaMap.get("returnPct") ?? 0),
-    cash: num(metaMap.get("cash") ?? 0),
-    invested: num(metaMap.get("invested") ?? 0),
-    openPositions: int(metaMap.get("openPositions") ?? 0),
-    openRiskPct: num(metaMap.get("openRiskPct") ?? 0),
-    grossExposurePct: num(metaMap.get("grossExposurePct") ?? 0),
-    riskPolicy: parseJson(metaMap.get("riskPolicy"), {}),
-  };
+  const portfolio = derivePortfolioFromActivePositions(metaMap, positions);
 
   const marketData = deriveMarketData(metaMap.get("marketData"));
 
@@ -634,9 +665,9 @@ export async function buildDashboard(env: Env): Promise<DashboardData> {
     scan: {
       universe: scan ? int(scan.universe) : 0,
       passedFilters: scan ? int(scan.passed_filters) : 0,
-      candidates: scan ? int(scan.candidates) : 0,
-      setups: scan ? int(scan.setups) : 0,
-      watch: scan ? int(scan.watch) : 0,
+      candidates: candidateCounts.candidates,
+      setups: candidateCounts.setups,
+      watch: candidateCounts.watch,
     },
     portfolio,
     strategies,
@@ -655,8 +686,7 @@ export async function buildDashboard(env: Env): Promise<DashboardData> {
 }
 
 const PORTFOLIO_META_KEYS = [
-  "initialCapital", "equity", "returnPct", "cash", "invested",
-  "openPositions", "openRiskPct", "grossExposurePct", "riskPolicy",
+  "initialCapital", "cash", "riskPolicy",
 ] as const;
 
 /** Scoped read for /api/strategies: only the strategies table. */
@@ -671,35 +701,16 @@ export async function readStrategies(db: D1Database): Promise<StrategySummary[]>
   return validated.data as StrategySummary[];
 }
 
-/** Scoped read for /api/portfolio/shadow: only the portfolio app_meta keys + shadow_positions. */
+/** Scoped read for /api/portfolio/shadow: account metadata + active positions. */
 export async function readPortfolioAndPositions(
   db: D1Database,
 ): Promise<{ portfolio: DashboardData["portfolio"]; positions: DashboardData["positions"] }> {
   const placeholders = PORTFOLIO_META_KEYS.map(() => "?").join(",");
   const [metaRes, positionsRes] = await Promise.all([
     db.prepare(`SELECT key, value FROM app_meta WHERE key IN (${placeholders})`).bind(...PORTFOLIO_META_KEYS).all(),
-    db.prepare("SELECT * FROM shadow_positions ORDER BY id").all(),
+    db.prepare(`SELECT p.* FROM shadow_positions AS p WHERE ${activeUniverseExistsSql("p.symbol")} ORDER BY p.id`).all(),
   ]);
   const metaMap = new Map<string, string>((metaRes.results as { key: string; value: string }[]).map((r) => [r.key, r.value]));
-
-  const rawPortfolio = {
-    initialCapital: num(metaMap.get("initialCapital") ?? 10000),
-    equity: num(metaMap.get("equity") ?? 0),
-    returnPct: num(metaMap.get("returnPct") ?? 0),
-    cash: num(metaMap.get("cash") ?? 0),
-    invested: num(metaMap.get("invested") ?? 0),
-    openPositions: int(metaMap.get("openPositions") ?? 0),
-    openRiskPct: num(metaMap.get("openRiskPct") ?? 0),
-    grossExposurePct: num(metaMap.get("grossExposurePct") ?? 0),
-    riskPolicy: parseJson(metaMap.get("riskPolicy"), {}),
-  };
-  const validatedPortfolio = dashboardPortfolioSchema.safeParse(rawPortfolio);
-  if (!validatedPortfolio.success) {
-    console.error("portfolio read-model validation failed", validatedPortfolio.error.issues.length);
-  }
-  const portfolio = validatedPortfolio.success
-    ? (validatedPortfolio.data as DashboardData["portfolio"])
-    : emptyDashboard.portfolio;
 
   const rawPositions = (positionsRes.results as Record<string, unknown>[]).map(mapPositionRow);
   const validatedPositions = z.array(dashboardPositionSchema).safeParse(rawPositions);
@@ -708,13 +719,26 @@ export async function readPortfolioAndPositions(
   }
   const positions = validatedPositions.success ? (validatedPositions.data as DashboardData["positions"]) : [];
 
+  const rawPortfolio = derivePortfolioFromActivePositions(metaMap, positions);
+  const validatedPortfolio = dashboardPortfolioSchema.safeParse(rawPortfolio);
+  if (!validatedPortfolio.success) {
+    console.error("portfolio read-model validation failed", validatedPortfolio.error.issues.length);
+  }
+  const portfolio = validatedPortfolio.success
+    ? (validatedPortfolio.data as DashboardData["portfolio"])
+    : emptyDashboard.portfolio;
+
   return { portfolio, positions };
 }
 
 /** Scoped read for /api/stocks/:symbol: only the one matching candidate + its reasons. */
 export async function readCandidateBySymbol(db: D1Database, symbol: string): Promise<Candidate | null> {
   const row = await db.prepare(
-    "SELECT * FROM scan_candidates WHERE scan_id = (SELECT MAX(id) FROM scans) AND symbol = ? ORDER BY id LIMIT 1",
+    `SELECT c.* FROM scan_candidates AS c
+     WHERE c.scan_id = (SELECT MAX(id) FROM scans)
+       AND c.symbol = ?
+       AND ${activeUniverseExistsSql("c.symbol")}
+     ORDER BY c.id LIMIT 1`,
   ).bind(symbol).first<Record<string, unknown>>();
   if (!row) return null;
   const reasonsRes = await db.prepare("SELECT * FROM decision_reasons WHERE candidate_id = ?").bind(row.id).all();

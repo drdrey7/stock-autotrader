@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { CORE_UNIVERSE, CORE_UNIVERSE_VERSION } from "@stock-autotrader/contracts";
 import { EARNINGS_BACKFILL_DAYS, EarningsQueryError, readEarningsApi, runEarningsJob } from "./earnings";
 import {
   addDays,
@@ -18,6 +19,7 @@ import {
   SecEdgarProvider,
 } from "./earnings/providers";
 import {
+  reconcileCoreUniverse,
   readEarningsEvents,
   upsertEarningsEvent,
 } from "./earnings/storage";
@@ -71,13 +73,13 @@ class MemoryStatement {
   async all<T>(): Promise<{ results: T[] }> {
     if (this.sql.includes("FROM earnings_events") && this.sql.includes("status = 'scheduled'") && !this.sql.includes("status = 'reported'")) {
       const results = [...this.db.events.values()]
-        .filter((row) => row.symbol === this.args[0] && row.status === "scheduled" && row.fiscal_year === null)
+        .filter((row) => this.db.isActiveUniverseSymbol(String(row.symbol)) && row.symbol === this.args[0] && row.status === "scheduled" && row.fiscal_year === null)
         .sort((left, right) => String(right.scheduled_date).localeCompare(String(left.scheduled_date)));
       return { results: results as T[] };
     }
     if (this.sql.includes("FROM earnings_events") && this.sql.includes("status = 'reported'")) {
       const today = String(this.args[0]);
-      const results = [...this.db.events.values()].filter((row) => row.scheduled_date === today
+      const results = [...this.db.events.values()].filter((row) => this.db.isActiveUniverseSymbol(String(row.symbol)) && row.scheduled_date === today
         && (row.status === "scheduled" || (row.status === "reported" && (row.eps_actual === null || row.revenue_actual === null || row.sec_filing_url === null))));
       return { results: results as T[] };
     }
@@ -102,6 +104,7 @@ class MemoryStatement {
       const status = this.sql.includes("status = ?") ? String(this.args[argumentIndex]) : null;
       const results = [...this.db.events.values()]
         .filter((row) => typeof row.scheduled_date === "string"
+          && this.db.isActiveUniverseSymbol(String(row.symbol))
           && row.scheduled_date >= from
           && row.scheduled_date <= to
           && (symbol === null || row.symbol === symbol)
@@ -110,7 +113,9 @@ class MemoryStatement {
       return { results: results as T[] };
     }
     if (this.sql.includes("FROM earnings_universe")) {
-      return { results: [...this.db.universe.values()] as T[] };
+      const activeOnly = this.sql.includes("active = 1") && this.sql.includes("source = 'core'");
+      const results = [...this.db.universe.values()].filter((row) => !activeOnly || this.db.isActiveUniverseSymbol(String(row.symbol)));
+      return { results: results as T[] };
     }
     throw new Error(`Unhandled all SQL: ${this.sql}`);
   }
@@ -175,15 +180,53 @@ class MemoryStatement {
       }
       return { success: true, meta: { changes: 1 } };
     }
+    if (this.sql.includes("UPDATE earnings_universe") && this.sql.includes("SET active = 0")) {
+      const [version, removedAt, updatedAt, ...desiredSymbols] = this.args;
+      const desired = new Set(desiredSymbols.map(String));
+      for (const row of this.db.universe.values()) {
+        if (row.source === "core" && (Number(row.active) === 1 || row.removed_at == null) && !desired.has(String(row.symbol))) {
+          row.active = 0;
+          row.universe_version = version;
+          row.removed_at = row.removed_at ?? removedAt;
+          row.updated_at = updatedAt;
+        }
+      }
+      return { success: true, meta: { changes: 1 } };
+    }
     if (this.sql.includes("INSERT INTO earnings_universe")) {
-      const [symbol, company, cik, exchange, investorRelationsUrl, indexes, metadataProvider, updatedAt] = this.args;
+      const [symbol, company, version, addedAt, updatedAt] = this.args;
       const previous = this.db.universe.get(String(symbol));
       this.db.universe.set(String(symbol), {
-        symbol, company, cik: cik ?? previous?.cik ?? null, exchange: exchange ?? previous?.exchange ?? null,
-        investor_relations_url: investorRelationsUrl ?? previous?.investor_relations_url ?? null,
-        index_memberships: indexes, metadata_provider: metadataProvider, updated_at: updatedAt,
+        ...previous,
+        symbol,
+        company: previous?.company ?? company,
+        cik: previous?.cik ?? null,
+        exchange: previous?.exchange ?? null,
+        investor_relations_url: previous?.investor_relations_url ?? null,
+        index_memberships: previous?.index_memberships ?? "[]",
+        metadata_provider: previous?.metadata_provider ?? "core-universe",
+        active: 1,
+        source: "core",
+        universe_version: version,
+        added_at: previous?.added_at ?? addedAt,
+        removed_at: null,
+        updated_at: updatedAt,
       });
       return { success: true, meta: { changes: 1 } };
+    }
+    if (this.sql.includes("UPDATE earnings_universe") && this.sql.includes("SET company =")) {
+      const [company, cik, exchange, investorRelationsUrl, indexes, metadataProvider, updatedAt, symbol] = this.args;
+      const row = this.db.universe.get(String(symbol));
+      if (row && Number(row.active) === 1 && row.source === "core") {
+        row.company = company;
+        row.cik = cik ?? row.cik ?? null;
+        row.exchange = exchange ?? row.exchange ?? null;
+        row.investor_relations_url = investorRelationsUrl ?? row.investor_relations_url ?? null;
+        row.index_memberships = indexes;
+        row.metadata_provider = metadataProvider;
+        row.updated_at = updatedAt;
+      }
+      return { success: true, meta: { changes: row ? 1 : 0 } };
     }
     if (this.sql.includes("INSERT INTO app_meta")) {
       this.db.meta.set(String(this.args[0]), String(this.args[1]));
@@ -197,6 +240,12 @@ class MemoryD1 {
   readonly events = new Map<string, Row>();
   readonly universe = new Map<string, Row>();
   readonly meta = new Map<string, string>();
+
+  isActiveUniverseSymbol(symbol: string): boolean {
+    if (this.universe.size === 0) return true;
+    const row = this.universe.get(symbol);
+    return Boolean(row && Number(row.active) === 1 && row.source === "core");
+  }
 
   prepare(sql: string): D1PreparedStatement {
     return new MemoryStatement(this, sql) as unknown as D1PreparedStatement;
@@ -237,6 +286,10 @@ const jsonResponse = (payload: unknown, status = 200): Response => new Response(
 
 const providerRange = { from: "2026-08-13", to: "2026-10-12" };
 const providerUniverse = new Set(["MSFT", "AAPL"]);
+
+const seedActiveCoreUniverse = async (db: MemoryD1): Promise<void> => {
+  await reconcileCoreUniverse(db as never, CORE_UNIVERSE, CORE_UNIVERSE_VERSION, "2026-08-13T06:00:00.000Z");
+};
 
 describe("earnings calendar and result logic", () => {
   it("rolls the window across day, month and year boundaries", () => {
@@ -333,10 +386,11 @@ describe("free provider adapters", () => {
         { symbol: "AAPL", date: "2026-08-21", hour: "amc", quarter: 3, year: 2026, epsEstimate: 1, epsActual: 0.9, revenueEstimate: 90, revenueActual: 90 },
         { symbol: "NVDA", date: "2026-08-22", hour: "dmh", quarter: 2, year: 2026, epsEstimate: 0, epsActual: 0 },
         { symbol: "TSLA", date: "2026-08-23", quarter: 3, year: 2026, epsEstimate: null, epsActual: null, revenueEstimate: null, revenueActual: null },
+        { symbol: "ABNB", date: "2026-08-23", hour: "bmo", quarter: 3, year: 2026 },
         { symbol: "PRIVATE", date: "2026-08-20", hour: "bmo", quarter: 1, year: 2026 },
       ] });
     });
-    const result = await provider.fetchCalendar({ from: "2026-08-20", to: "2026-08-23" }, new Set(["MSFT", "AAPL", "NVDA", "TSLA", "PRIVATE"]), "2026-08-13T13:00:00.000Z");
+    const result = await provider.fetchCalendar({ from: "2026-08-20", to: "2026-08-23" }, new Set(["MSFT", "AAPL", "NVDA", "TSLA", "ABNB", "PRIVATE"]), "2026-08-13T13:00:00.000Z");
     expect(calls).toHaveLength(1);
     expect(new URL(calls[0]!.url).search).toBe("?from=2026-08-20&to=2026-08-23");
     expect(calls[0]!.token).toBe("test-key");
@@ -349,6 +403,7 @@ describe("free provider adapters", () => {
       expect.objectContaining({ symbol: "TSLA", timing: "TBD", epsEstimate: null, revenueActual: null }),
     ]));
     expect(result.observations.some((row) => row.symbol === "PRIVATE")).toBe(false);
+    expect(result.observations.some((row) => row.symbol === "ABNB")).toBe(false);
   });
 
   it("marks a mixed Finnhub payload incomplete without discarding valid rows", async () => {
@@ -531,11 +586,21 @@ describe("earnings D1 write model and API", () => {
   it("requests the 30-day historical backfill plus the 60-day forward window", async () => {
     expect(EARNINGS_BACKFILL_DAYS).toBe(30);
     let requestedRange: { from: string; to: string } | null = null;
+    let requestedUniverse: Set<string> | null = null;
     const calendar: EarningsCalendarProvider = {
       name: "test-calendar",
-      fetchCalendar: async (range) => {
+      fetchCalendar: async (range, universe) => {
         requestedRange = range;
-        return { provider: "test-calendar", observations: [], warnings: [], updatedAt: "2026-08-13T06:00:00.000Z" };
+        requestedUniverse = new Set(universe);
+        return {
+          provider: "test-calendar",
+          observations: [
+            eventObservation({ symbol: "MSFT", providerEventId: "core-msft" }),
+            eventObservation({ symbol: "ABNB", providerEventId: "legacy-abnb" }),
+          ],
+          warnings: [],
+          updatedAt: "2026-08-13T06:00:00.000Z",
+        };
       },
     };
     const official: OfficialFilingsProvider = {
@@ -550,7 +615,9 @@ describe("earnings D1 write model and API", () => {
       official,
     })).resolves.toMatchObject({ status: "ok" });
     expect(requestedRange).toEqual({ from: "2026-07-14", to: "2026-10-12" });
-    expect(db.universe.size).toBeGreaterThan(0);
+    expect(requestedUniverse).toEqual(new Set(CORE_UNIVERSE));
+    expect([...db.events.values()].map((event) => event.symbol)).toEqual(["MSFT"]);
+    expect(db.universe.size).toBe(50);
   });
 
   it("preserves the last valid calendar when Finnhub fails", async () => {
@@ -784,8 +851,28 @@ describe("earnings D1 write model and API", () => {
     expect((await readEarningsEvents(db, { from: "2026-01-01", to: "2026-12-31" })).some((event) => event.scheduledDate === "2026-02-10")).toBe(true);
   });
 
+  it("surfaces active Core earnings but never surfaces an inactive historical member", async () => {
+    const db = new MemoryD1();
+    await seedActiveCoreUniverse(db);
+    db.universe.set("ABNB", {
+      symbol: "ABNB",
+      active: 0,
+      source: "core",
+      universe_version: 1,
+      added_at: "2026-08-01T00:00:00.000Z",
+      removed_at: "2026-08-14T06:00:00.000Z",
+      updated_at: "2026-08-14T06:00:00.000Z",
+    });
+    await upsertEarningsEvent(db, normalizedEvent({ symbol: "NVDA", scheduledDate: "2026-08-20", providerEventId: "active-nvda" }));
+    await upsertEarningsEvent(db, normalizedEvent({ symbol: "ABNB", scheduledDate: "2026-08-20", providerEventId: "removed-abnb" }));
+
+    const events = await readEarningsEvents(db, { from: "2026-08-20", to: "2026-08-20" });
+    expect(events.map((event) => event.symbol)).toEqual(["NVDA"]);
+  });
+
   it("updates reports independently when one company has no official filing", async () => {
     const db = new MemoryD1();
+    await seedActiveCoreUniverse(db);
     await upsertEarningsEvent(db, normalizedEvent({ symbol: "MSFT", scheduledDate: "2026-08-13", fiscalQuarter: 2, providerEventId: "monitor-msft" }));
     await upsertEarningsEvent(db, normalizedEvent({ symbol: "AAPL", scheduledDate: "2026-08-13", fiscalQuarter: 2, providerEventId: "monitor-aapl" }));
     const calendar: EarningsCalendarProvider = {
@@ -813,6 +900,7 @@ describe("earnings D1 write model and API", () => {
 
   it("detects a provider event that moved onto today without a scheduled D1 row", async () => {
     const db = new MemoryD1();
+    await seedActiveCoreUniverse(db);
     const calendar: EarningsCalendarProvider = {
       name: "test-calendar",
       fetchCalendar: async () => ({

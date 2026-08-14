@@ -1,6 +1,7 @@
 # Morning Briefing
 
-Public, read-only market intelligence for S&P 500 and Nasdaq-100 investors.
+Public, read-only market intelligence for a manually curated Core stock
+universe and separate market-index context.
 
 ## Current frontend
 
@@ -81,10 +82,49 @@ Cloudflare Cron → provider adapters → normalization → D1 → Worker API �
 
 `earnings_events` is the only Earnings Engine write model. The legacy
 `earnings` table remains a quant/screening table and is not read by
-`/api/earnings`. The tracked universe is the deduplicated union of the
-versioned S&P 500 and Nasdaq-100 resources in `apps/publisher/data`; it is
-stored in `earnings_universe` so the resource can be replaced without editing
-React components.
+`/api/earnings`.
+
+### Core Stock Universe
+
+The versioned baseline is [`packages/contracts/src/core-universe.v1.json`](packages/contracts/src/core-universe.v1.json).
+It contains only the version and the deterministic list of 50 uppercase
+symbols. `npm run validate:core-universe` and the build fail loudly on malformed
+configuration, duplicates, invalid symbols or an incorrect v1 count.
+
+The runtime flow is:
+
+```text
+Git Core Universe → Core sync → D1 earnings_universe → public stock-specific reads
+```
+
+`earnings_universe` is the D1 lifecycle model. Core sync activates configured
+symbols with `source = 'core'`, preserves `added_at` for existing members,
+records `removed_at` when a symbol is removed, and reactivates rows safely if a
+symbol is later re-added. Historical `earnings_events` rows are never deleted.
+Only active D1 universe members are publicly surfaced on stock-specific reads.
+
+To add a stock today:
+
+1. Edit the JSON `symbols` list.
+2. Run `npm run validate:core-universe` and the tests.
+3. Open, merge and deploy the PR.
+4. Let the normal calendar sync reconcile D1.
+
+To remove a stock, use the same process; its row becomes inactive and its
+historical data remains.
+Core is manually curated in this phase. S&P 500/Nasdaq-100 membership no
+longer defines the site stock universe; their snapshots remain only where
+index-specific features legitimately need them. X/Trending dynamic membership
+is not implemented. A future authenticated Admin page can write the same D1
+`earnings_universe` model while runtime readers remain unchanged.
+
+The local demo seed consumes this same JSON configuration and reconciles the
+Core rows before inserting demo stock data, so the documented
+`npm run db:migrate:local` followed by `npm run db:seed:local` workflow keeps
+Core demo symbols publicly visible without activating non-Core symbols.
+
+Deferred product decision: Legacy bot/trading code is scheduled for deletion
+and full redesign; current PR must not treat it as production architecture.
 
 The calendar and consensus contracts are provider-neutral. Finnhub is the
 production primary for the bulk earnings calendar: scheduled dates, BMO/AMC/
@@ -113,8 +153,8 @@ intentionally outside this issue.
 
 The daily Finnhub request refreshes `today - 30 days → today + 60 days`, matching
 the useful Free-plan historical range while retaining older rows already in
-D1. It uses one bulk date-range request, filters the response to the tracked
-universe, and enriches a bounded number of events through SEC. The 15-minute
+D1. It uses one bulk date-range request, filters the response to the active
+Core universe, and enriches a bounded number of events through SEC. The 15-minute
 Cron polls only active events inside the BMO/AMC/TBD New York-time windows and
 does at most an hourly empty-calendar discovery poll. Fiscal
 identity (`symbol + fiscal year + normalized fiscal period`, using `Qn` when
@@ -125,7 +165,8 @@ side is unavailable. An actual greater than, less than or exactly equal to an
 estimate is a Beat, Miss or Met respectively; surprise percentage is `NULL`
 when the estimate is zero.
 
-Migrations `0008_earnings_engine.sql` and `0009_earnings_identity_scope.sql` are
+Migrations `0008_earnings_engine.sql`, `0009_earnings_identity_scope.sql` and
+`0010_core_universe_runtime.sql` are
 applied locally in CI and remotely by
 the production deployment workflow before the Worker deploy. The workflow
 also verifies that `earnings_events` and `earnings_universe` exist remotely.

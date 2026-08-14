@@ -25,7 +25,11 @@ import type {
   NormalizedEarningsEvent,
   OfficialFiling,
 } from "./types";
-import { EARNINGS_UNIVERSE, EARNINGS_UNIVERSE_SYMBOLS, normalizeSymbol } from "./universe";
+import {
+  CORE_UNIVERSE,
+  CORE_UNIVERSE_VERSION,
+  normalizeSymbol,
+} from "./universe";
 import {
   markPastScheduledEventsUnknown,
   markUnseenScheduledEventsUnknown,
@@ -37,6 +41,8 @@ import {
   clearEarningsMeta,
   upsertEarningsEvents,
   upsertUniverseMembers,
+  reconcileCoreUniverse,
+  readActiveUniverseSymbols,
   readEarningsMonitoringEvents,
 } from "./storage";
 import { MAX_SEC_FILING_LOOKUPS_PER_JOB } from "./subrequest-budget";
@@ -112,7 +118,8 @@ async function syncUniverse(
   env: Env,
   providers: EarningsProviderBundle,
   collectedAt: string,
-): Promise<{ metadata: Awaited<ReturnType<typeof readUniverseMetadata>>; warnings: string[] }> {
+): Promise<{ metadata: Awaited<ReturnType<typeof readUniverseMetadata>>; activeSymbols: ReadonlySet<string>; warnings: string[] }> {
+  await reconcileCoreUniverse(env.DB, CORE_UNIVERSE, CORE_UNIVERSE_VERSION, collectedAt);
   const previous = await readUniverseMetadata(env.DB).catch(() => new Map<string, { company: string; cik: string | null; investorRelationsUrl: string | null }>());
   const warnings: string[] = [];
   let metadata = new Map<string, { company: string; cik: string | null; investorRelationsUrl: string | null }>();
@@ -120,15 +127,15 @@ async function syncUniverse(
     const result = await providers.official.fetchCompanyMetadata(collectedAt);
     warnings.push(...result.warnings);
     const bySymbol = new Map(result.observations.map((item) => [normalizeSymbol(item.symbol), item]));
-    await upsertUniverseMembers(env.DB, EARNINGS_UNIVERSE.map((member) => {
-      const sec = bySymbol.get(member.symbol);
+    await upsertUniverseMembers(env.DB, CORE_UNIVERSE.map((symbol) => {
+      const sec = bySymbol.get(symbol);
       return {
-        symbol: member.symbol,
-        company: sec?.company ?? previous.get(member.symbol)?.company ?? member.symbol,
-        cik: sec?.cik ?? previous.get(member.symbol)?.cik ?? null,
+        symbol,
+        company: sec?.company ?? previous.get(symbol)?.company ?? symbol,
+        cik: sec?.cik ?? previous.get(symbol)?.cik ?? null,
         exchange: sec?.exchange ?? null,
-        investorRelationsUrl: sec?.investorRelationsUrl ?? previous.get(member.symbol)?.investorRelationsUrl ?? null,
-        indexes: member.indexes,
+        investorRelationsUrl: sec?.investorRelationsUrl ?? previous.get(symbol)?.investorRelationsUrl ?? null,
+        indexes: [],
         updatedAt: collectedAt,
       };
     }));
@@ -137,18 +144,18 @@ async function syncUniverse(
     warnings.push(warning);
     console.warn(JSON.stringify({ message: "earnings universe metadata degraded", error: warning }));
     // A metadata outage must not erase the last known CIK/company values.
-    await upsertUniverseMembers(env.DB, EARNINGS_UNIVERSE.map((member) => ({
-      symbol: member.symbol,
-      company: previous.get(member.symbol)?.company ?? member.symbol,
-      cik: previous.get(member.symbol)?.cik ?? null,
+    await upsertUniverseMembers(env.DB, CORE_UNIVERSE.map((symbol) => ({
+      symbol,
+      company: previous.get(symbol)?.company ?? symbol,
+      cik: previous.get(symbol)?.cik ?? null,
       exchange: null,
-      investorRelationsUrl: previous.get(member.symbol)?.investorRelationsUrl ?? null,
-      indexes: member.indexes,
+      investorRelationsUrl: previous.get(symbol)?.investorRelationsUrl ?? null,
+      indexes: [],
       updatedAt: collectedAt,
     })));
   }
   metadata = await readUniverseMetadata(env.DB);
-  return { metadata, warnings };
+  return { metadata, activeSymbols: await readActiveUniverseSymbols(env.DB), warnings };
 }
 
 async function findFiling(
@@ -260,13 +267,26 @@ async function normalizeObservation(
 async function readProviderCalendar(
   providers: EarningsProviderBundle,
   range: EarningsDateRange,
+  activeSymbols: ReadonlySet<string>,
   collectedAt: string,
 ): Promise<{ observations: EarningsCalendarObservation[]; provider: string; warnings: string[]; success: boolean; complete: boolean }> {
+  const activeObservations = (observations: EarningsCalendarObservation[]): EarningsCalendarObservation[] => observations.flatMap((observation) => {
+    const symbol = normalizeSymbol(observation.symbol);
+    return activeSymbols.has(symbol)
+      ? [{ ...observation, symbol }]
+      : [];
+  });
+  const activeConsensusObservations = (observations: EarningsConsensusObservation[]): EarningsConsensusObservation[] => observations.flatMap((observation) => {
+    const symbol = normalizeSymbol(observation.symbol);
+    return activeSymbols.has(symbol)
+      ? [{ ...observation, symbol }]
+      : [];
+  });
   try {
-    const calendar = await providers.calendar.fetchCalendar(range, EARNINGS_UNIVERSE_SYMBOLS, collectedAt);
+    const calendar = await providers.calendar.fetchCalendar(range, activeSymbols, collectedAt);
     if (Object.is(providers.calendar, providers.consensus)) {
       return {
-        observations: calendar.observations,
+        observations: activeObservations(calendar.observations),
         provider: calendar.provider,
         warnings: calendar.warnings,
         success: true,
@@ -275,21 +295,21 @@ async function readProviderCalendar(
     }
     let consensus: Awaited<ReturnType<EarningsConsensusProvider["fetchConsensus"]>>;
     try {
-      consensus = await providers.consensus.fetchConsensus(range, EARNINGS_UNIVERSE_SYMBOLS, collectedAt);
+      consensus = await providers.consensus.fetchConsensus(range, activeSymbols, collectedAt);
     } catch (error) {
       // A calendar is still useful when estimates/actuals are temporarily
       // unavailable from a separate adapter. Keep the valid calendar rows.
       return {
-        observations: calendar.observations,
+        observations: activeObservations(calendar.observations),
         provider: calendar.provider,
         warnings: [...calendar.warnings, `consensus degraded: ${errorMessage(error)}`],
         success: true,
         complete: calendar.complete !== false,
       };
     }
-    const map = providerConsensusMap(consensus.observations);
+    const map = providerConsensusMap(activeConsensusObservations(consensus.observations));
     return {
-      observations: calendar.observations.map((observation) => mergeCalendarAndConsensus(observation, matchConsensus(observation, map))),
+      observations: activeObservations(calendar.observations).map((observation) => mergeCalendarAndConsensus(observation, matchConsensus(observation, map))),
       provider: calendar.provider,
       warnings: [...calendar.warnings, ...consensus.warnings],
       success: true,
@@ -312,7 +332,7 @@ async function runCalendarSync(env: Env, scheduledTime: Date, providers: Earning
   await recordEarningsAttempt(env, collectedAt);
   const universe = await syncUniverse(env, providers, collectedAt);
   const metadata = universe.metadata;
-  const calendar = await readProviderCalendar(providers, providerRange, collectedAt);
+  const calendar = await readProviderCalendar(providers, providerRange, universe.activeSymbols, collectedAt);
   if (!calendar.success) {
     const detail = calendar.warnings[0]?.slice(0, 200) ?? "calendar unavailable";
     await rememberEarningsFailure(env, "calendar", collectedAt, detail);
@@ -407,7 +427,8 @@ async function runMonitoring(env: Env, scheduledTime: Date, providers: EarningsP
   }
   await setEarningsMeta(env.DB, "earningsEngineLastMonitorPollAt", collectedAt);
   await recordEarningsAttempt(env, collectedAt);
-  const calendar = await readProviderCalendar(providers, range, collectedAt);
+  const activeUniverseSymbols = await readActiveUniverseSymbols(env.DB);
+  const calendar = await readProviderCalendar(providers, range, activeUniverseSymbols, collectedAt);
   if (!calendar.success) {
     const detail = calendar.warnings[0]?.slice(0, 200) ?? "calendar unavailable";
     await rememberEarningsFailure(env, "monitor", collectedAt, detail);
