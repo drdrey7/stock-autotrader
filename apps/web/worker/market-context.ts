@@ -401,7 +401,7 @@ export async function writeMarketIndices(db: D1Database, observations: MarketInd
     observation.changePct,
     observation.sourceTimestamp,
     observation.collectedAt,
-     observation.provider,
+    observation.provider,
   )));
   return results.reduce((total, result) => total + (result.meta?.changes ?? 0), 0);
 }
