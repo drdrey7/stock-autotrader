@@ -275,15 +275,15 @@
   .shell-drawer {
     position: absolute;
     top: 0;
-    left: 0;
+    right: 0;
     bottom: 0;
     width: min(300px, 84vw);
     display: flex;
     flex-direction: column;
     background: var(--shell-surface);
-    border-right: 1px solid var(--shell-line);
-    box-shadow: 18px 0 44px rgb(20 30 26 / 0.16);
-    transform: translateX(-100%);
+    border-left: 1px solid var(--shell-line);
+    box-shadow: -18px 0 44px rgb(20 30 26 / 0.16);
+    transform: translateX(100%);
     transition: transform 0.22s ease;
   }
 
