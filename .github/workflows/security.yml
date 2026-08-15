@@ -50,7 +50,7 @@ jobs:
       - name: Self-test Gitleaks detection
         run: |
           canary="${RUNNER_TEMP}/gitleaks-canary.txt"
-          printf 'token = "ghp_%s%s"\n' 'aBcDeFgHiJkLmNoPqRsT' 'uVwXyZ0123456789' > "$canary"
+          printf 'aws_access_key_id = "%s%s"\n' 'AKIA' 'ABCDEFGHIJKLMNOP' > "$canary"
           if gitleaks detect --no-git --source "$canary" --no-banner --exit-code 1; then
             echo "Gitleaks canary was not detected" >&2
             exit 1
