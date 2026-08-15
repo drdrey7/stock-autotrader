@@ -151,6 +151,16 @@ describe("mobile navigation drawer", () => {
     expect(screen.getAllByRole("navigation", { name: "Primary navigation" })).toHaveLength(2);
   });
 
+  it("makes the background inert while the drawer is open", () => {
+    renderShell();
+    const main = document.querySelector("main.shell-main") as HTMLElement;
+    expect(main).not.toHaveAttribute("inert", "");
+    fireEvent.click(hamburger());
+    expect(main).toHaveAttribute("inert", "");
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(main).not.toHaveAttribute("inert", "");
+  });
+
   it("locks body scroll while the drawer is open", () => {
     renderShell();
     fireEvent.click(hamburger());

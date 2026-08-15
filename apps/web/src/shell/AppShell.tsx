@@ -77,7 +77,9 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
         <MobileHeader ref={menuButtonRef} menuOpen={menuOpen} onMenuToggle={toggleMenu} />
         <MobileNavigationDrawer ref={closeButtonRef} open={menuOpen} onClose={closeMenu} />
-        <main className="shell-main">{children}</main>
+        {/* The drawer is modal while open: background content is inert so it
+            cannot receive focus or be reached by assistive technology. */}
+        <main className="shell-main" inert={menuOpen}>{children}</main>
       </div>
     </ThemeProvider>
   );
