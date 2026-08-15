@@ -360,30 +360,28 @@ function earningsFromApi(payload: unknown): EarningsCompany[] | null {
     : isRecord(payload) && Array.isArray(payload.events)
       ? payload.events
       : null;
-  if (events) {
-    // Fail closed, but never silently: a single malformed record blanks the
-    // whole earnings feature, so log which symbol/field was rejected to make
-    // a provider or contract drift diagnosable from the console.
-    for (const event of events) {
-      if (!isRecord(event)) {
-        console.warn("earnings: rejected non-object event", event);
-        return null;
-      }
-      const invalidField = invalidEarningsEventField(event);
-      if (invalidField !== null) {
-        console.warn("earnings: rejected malformed event", { symbol: event.symbol, field: invalidField, event });
-        return null;
-      }
+  if (!events) return null;
+  // Drop only the invalid records, never blank the whole feature: a single
+  // malformed row (provider/contract drift) must not hide the valid ones.
+  // Each rejection is logged with symbol + field so the drift is diagnosable.
+  const valid: EarningsCompany[] = [];
+  for (const event of events) {
+    if (!isRecord(event)) {
+      console.warn("earnings: rejected non-object event", event);
+      continue;
+    }
+    const invalidField = invalidEarningsEventField(event);
+    if (invalidField !== null) {
+      console.warn("earnings: rejected malformed event", { symbol: event.symbol, field: invalidField, event });
+      continue;
+    }
+    try {
+      valid.push(eventWithViewMetadata(event as Partial<EarningsEngineEvent>));
+    } catch (error) {
+      console.warn("earnings: rejected event that failed to map", { symbol: event.symbol, error });
     }
   }
-  if (!events) {
-    return null;
-  }
-  try {
-    return events.map((event) => eventWithViewMetadata(event as Partial<EarningsEngineEvent>));
-  } catch {
-    return null;
-  }
+  return valid.length > 0 ? valid : null;
 }
 
 export function MorningBriefingDataProvider({ children }: { children: React.ReactNode }) {

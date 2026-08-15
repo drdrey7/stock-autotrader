@@ -216,6 +216,47 @@ it("announces the full date for earnings calendar events", async () => {
   expect(await screen.findByRole("button", { name: /Future Corp, Scheduled · BMO, Friday, August 14, 2026/i })).toBeInTheDocument();
 });
 
+it("accepts a full-shape earnings payload exactly as the worker emits it", async () => {
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+    if (String(input) === "/api/earnings") return new Response(JSON.stringify({
+      events: [{
+        id: "evt-1", symbol: "FULL", company: "Full Shape Corp", cik: "0001045810",
+        fiscalYear: 2027, fiscalQuarter: 2, fiscalPeriod: "2027 Q2", fiscalPeriodEnd: "2026-07-31",
+        scheduledDate: "2026-08-19", scheduledTime: "09:00", timing: "BMO",
+        status: "scheduled", scheduled: true, reported: false, cancelled: false, unknown: false,
+        epsEstimate: 0.87, epsActual: null, epsSurprise: null, epsSurprisePct: null, epsResult: "Not Available",
+        revenueEstimate: 28500000000, revenueActual: null, revenueSurprise: null, revenueSurprisePct: null, revenueResult: "Not Available",
+        overallResult: "Not Available", reportedAt: null,
+        calendarProvider: "Finnhub", consensusProvider: "Finnhub", providerEventId: "evt-1",
+        providerUpdatedAt: "2026-08-12T10:00:00Z", officialReportUrl: null, investorRelationsUrl: null,
+        secFilingUrl: null, secAccession: null, secForm: null, secFiledAt: null,
+        createdAt: "2026-08-12T10:00:00Z", updatedAt: "2026-08-12T10:00:00Z", lastCheckedAt: null,
+      }],
+      summary: { today: 0, thisWeek: 0, next60Days: 1 },
+      from: "2026-01-01", to: "2026-10-11",
+    }), { status: 200 });
+    return new Response(null, { status: 404 });
+  });
+
+  const view = renderApp();
+  await waitFor(() => expect(view.container.querySelector(".earnings-mini")).toHaveTextContent("Full Shape Corp"));
+  expect(view.container.querySelector(".earnings-mini")).toHaveTextContent("FULL");
+});
+
+it("drops only the invalid records and keeps the valid ones", async () => {
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+    if (String(input) === "/api/earnings") return new Response(JSON.stringify([
+      { symbol: "GOOD", company: "Valid Corp", date: "2026-08-19", timing: "BMO" },
+      { symbol: "BAD", company: "Malformed Corp", date: "2026-99-99", timing: "BMO" },
+    ]), { status: 200 });
+    return new Response(null, { status: 404 });
+  });
+
+  const view = renderApp();
+  await waitFor(() => expect(view.container.querySelector(".earnings-mini")).toHaveTextContent("Valid Corp"));
+  expect(view.container.querySelector(".earnings-mini")).not.toHaveTextContent("Malformed Corp");
+});
+
 it("starts financially actionable sections empty when the backend has no data", async () => {
   vi.mocked(fetch).mockImplementation(async () => new Response(null, { status: 503 }));
   const view = renderApp();
