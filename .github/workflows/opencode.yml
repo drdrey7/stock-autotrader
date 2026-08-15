@@ -6,6 +6,10 @@ on:
   pull_request_review_comment:
     types: [created]
 
+concurrency:
+  group: opencode-manual-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   opencode:
     if: |
@@ -38,15 +42,8 @@ jobs:
           allowed=false
           reason=invalid_command
 
-          # Require an explicit standalone command at the beginning of the
-          # comment. This rejects lookalikes such as /octokit or /ocsp and
-          # prose that merely mentions /oc later in the comment.
           if [[ "$COMMENT_BODY" =~ ^/(oc|opencode)($|[[:space:]]) ]]; then
             reason=permission_lookup_failed
-
-            # author_association is not an authorization boundary: MEMBER and
-            # COLLABORATOR can still have read/triage-only access. Fail closed
-            # unless GitHub positively reports effective write-capable access.
             if permission=$(gh api "repos/$REPOSITORY/collaborators/$COMMENTER/permission" --jq '.permission' 2>/dev/null) && [[ -n "$permission" ]]; then
               case "$permission" in
                 admin|maintain|write)
@@ -61,9 +58,6 @@ jobs:
             fi
           fi
 
-          # Only inspect the PR target after the commenter has passed the
-          # effective-permission check. PR commands fail closed unless the
-          # head repository is positively verified as this repository.
           if [[ "$allowed" == "true" && "$EVENT_NAME" == "pull_request_review_comment" ]]; then
             allowed=false
             reason=target_lookup_failed
@@ -115,13 +109,13 @@ jobs:
 
       - name: Checkout repository
         if: steps.target.outputs.allowed == 'true'
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 1
 
       - name: Run OpenCode command
         if: steps.target.outputs.allowed == 'true'
-        uses: anomalyco/opencode/github@2c14fc5586fe0b88e5c04732d2e846769cc35671
+        uses: anomalyco/opencode/github@77fc88c8ade8e5a620ebbe1197f3a572d29ae91a
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
