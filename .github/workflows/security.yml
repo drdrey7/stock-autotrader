@@ -1,0 +1,60 @@
+name: Security
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dependencies:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Audit npm dependencies
+        run: npm audit --audit-level=high
+      - name: Audit Python dependencies
+        run: |
+          python3 -m pip install --quiet "pip-audit==2.10.1"
+          python3 -m pip_audit -r bot/requirements-lock.txt
+
+  secrets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Install pinned Gitleaks
+        env:
+          GOBIN: ${{ runner.temp }}/bin
+        run: |
+          mkdir -p "$GOBIN"
+          # v8.30.1 has a reported false-negative regression; stay on the
+          # latest known-good predecessor and verify the scanner below.
+          go install github.com/zricethezav/gitleaks/v8@v8.30.0
+          echo "$GOBIN" >> "$GITHUB_PATH"
+      - name: Self-test Gitleaks detection
+        run: |
+          canary="${RUNNER_TEMP}/gitleaks-canary.txt"
+          printf 'aws_access_key_id = "%s%s"\n' 'AKIA' 'ABCDEFGHIJKLMNOP' > "$canary"
+          if gitleaks detect --no-git --source "$canary" --no-banner --exit-code 1; then
+            echo "Gitleaks canary was not detected" >&2
+            exit 1
+          fi
+          rm -f "$canary"
+      - name: Scan Git history for secrets
+        run: gitleaks git --redact --no-banner --exit-code 1 .

@@ -19,11 +19,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 22
           cache: npm
@@ -47,7 +47,7 @@ jobs:
       - name: Verify Earnings Engine D1 tables (production only)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         working-directory: apps/web
-        run: npx --yes wrangler@4.122.0 d1 execute stock-autotrader-db --remote --command "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('earnings_events', 'earnings_universe') ORDER BY name;"
+        run: npx --yes wrangler@4.123.0 d1 execute stock-autotrader-db --remote --command "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('earnings_events', 'earnings_universe') ORDER BY name;"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -61,13 +61,13 @@ jobs:
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
         run: |
-          npx --yes wrangler@4.122.0 deploy
-          printf '%s' "$INGEST_SECRET" | npx --yes wrangler@4.122.0 secret put INGEST_SECRET
+          npx --yes wrangler@4.123.0 deploy
+          printf '%s' "$INGEST_SECRET" | npx --yes wrangler@4.123.0 secret put INGEST_SECRET
           if [ -n "$FINNHUB_API_KEY" ]; then
-            printf '%s' "$FINNHUB_API_KEY" | npx --yes wrangler@4.122.0 secret put FINNHUB_API_KEY
+            printf '%s' "$FINNHUB_API_KEY" | npx --yes wrangler@4.123.0 secret put FINNHUB_API_KEY
           fi
           if [ -n "$SEC_USER_AGENT" ]; then
-            printf '%s' "$SEC_USER_AGENT" | npx --yes wrangler@4.122.0 secret put SEC_USER_AGENT
+            printf '%s' "$SEC_USER_AGENT" | npx --yes wrangler@4.123.0 secret put SEC_USER_AGENT
           fi
       - name: Bootstrap and verify production Core/Earnings (main only)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'

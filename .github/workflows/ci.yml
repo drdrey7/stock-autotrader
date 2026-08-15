@@ -18,8 +18,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 22
           cache: npm
@@ -27,7 +27,7 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
-      - name: Coverage summary (informational, not a gate)
+      - name: Enforce coverage thresholds
         working-directory: apps/web
         run: npm run test:coverage -- --coverage.reporter=text-summary
       - run: npm run build
@@ -37,21 +37,21 @@ jobs:
         working-directory: apps/web
         run: |
           node -e 'const fs=require("node:fs"); const config=JSON.parse(fs.readFileSync("wrangler.jsonc", "utf8")); const expected=["*/15 * * * *", "0 6 * * *"]; const actual=config.triggers?.crons ?? []; if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error(`Expected exactly two production cron triggers, got ${JSON.stringify(actual)}`); console.log(`Production cron triggers (${actual.length}): ${actual.join(", ")}`);'
-          npx --yes wrangler@4.122.0 deploy --dry-run
+          npx --yes wrangler@4.123.0 deploy --dry-run
       - name: Validate preview Worker config and dry-run
         working-directory: apps/web
         run: |
           node -e 'const fs=require("node:fs"); const config=JSON.parse(fs.readFileSync("wrangler.preview.jsonc", "utf8")); const forbidden=["d1_databases","kv_namespaces","r2_buckets","durable_objects","queues","secrets"]; if (config.name !== "stock-autotrader-preview") throw new Error(`Unexpected preview Worker name: ${config.name}`); if (config.main !== "preview-worker.ts") throw new Error(`Unexpected preview entrypoint: ${config.main}`); if ((config.triggers?.crons ?? []).length !== 0) throw new Error("Preview Worker must have zero cron triggers"); for (const key of forbidden) if (Object.hasOwn(config,key)) throw new Error(`Preview config must not contain ${key}`); if (config.compatibility_flags?.includes("global_fetch_strictly_public")) throw new Error("Preview Worker must not use public global fetch"); const services=config.services ?? []; if (JSON.stringify(services) !== JSON.stringify([{binding:"PRODUCTION_API",service:"stock-autotrader-web"}])) throw new Error(`Preview must have exactly one production service binding: ${JSON.stringify(services)}`); const vars=Object.keys(config.vars ?? {}).sort(); if (vars.join(",") !== "ENVIRONMENT") throw new Error(`Unexpected preview vars: ${vars.join(",")}`); if (config.vars.ENVIRONMENT !== "preview") throw new Error("Preview ENVIRONMENT must be preview"); const workerFirst=config.assets?.run_worker_first ?? []; if (JSON.stringify(workerFirst) !== JSON.stringify(["/api","/api/*","/__preview/diagnostics"])) throw new Error(`Worker-first routes changed: ${JSON.stringify(workerFirst)}`); const serialized=JSON.stringify(config); if (/PUBLIC_API_ORIGIN|INGEST_SECRET|FINNHUB_API_KEY|FMP_API_KEY|SEC_USER_AGENT|broker/i.test(serialized)) throw new Error("Preview config contains a public-origin or production secret name"); console.log("Preview config has zero triggers, zero storage bindings, one production service binding and no secrets");'
-          npx --yes wrangler@4.122.0 deploy --config wrangler.preview.jsonc --dry-run
+          npx --yes wrangler@4.123.0 deploy --config wrangler.preview.jsonc --dry-run
       - name: Validate D1 migrations (local)
         working-directory: apps/web
-        run: npx --yes wrangler@4.122.0 d1 migrations apply stock-autotrader-db --local
+        run: npx --yes wrangler@4.123.0 d1 migrations apply stock-autotrader-db --local
       - name: Validate seed against local D1
         working-directory: apps/web
         run: node scripts/verify-local-seed.mjs --local --expect-clean
       - name: Lint Python (ruff)
         run: |
-          pip install --quiet "ruff>=0.15,<1"
+          pip install --quiet "ruff==0.16.0"
           ruff check .
       - name: Test publisher client (Python)
         run: npm run test -w @stock-autotrader/publisher
