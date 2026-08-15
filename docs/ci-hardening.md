@@ -13,7 +13,9 @@ A pull request should not be merged unless all applicable checks are green:
 
 ## Coverage baseline
 
-The initial frontend coverage floor is 70% for lines, functions, branches, and statements. This is a minimum regression barrier, not a target. Raise the thresholds as coverage improves; do not lower them to make a feature PR green without documenting a specific reason.
+The frontend application coverage gate is scoped to `apps/web/src/**/*.{ts,tsx}`, excluding test files and `src/test-setup.ts`. The initial floor is 45% for lines, functions, branches, and statements, set just below the current frontend baseline so regressions fail CI without relying on worker or script coverage to subsidize the result.
+
+This is a minimum regression barrier, not a target. Raise the thresholds as frontend coverage improves; do not lower them to make a feature PR green without documenting a specific reason.
 
 ## GitHub Free limitation
 

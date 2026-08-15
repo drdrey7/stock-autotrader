@@ -11,11 +11,13 @@ export default defineConfig({
     setupFiles: "./src/test-setup.ts",
     exclude: [...configDefaults.exclude, "e2e/**"],
     coverage: {
+      include: ["src/**/*.{ts,tsx}"],
+      exclude: ["src/**/*.test.{ts,tsx}", "src/test-setup.ts"],
       thresholds: {
-        lines: 70,
-        functions: 70,
-        branches: 70,
-        statements: 70,
+        lines: 45,
+        functions: 45,
+        branches: 45,
+        statements: 45,
       },
     },
   },
