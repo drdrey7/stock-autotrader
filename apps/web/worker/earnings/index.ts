@@ -465,7 +465,10 @@ async function runCalendarSync(env: Env, scheduledTime: Date, providers: Earning
   if (warnings.length > 0) await rememberEarningsFailure(env, "calendar", collectedAt, warnings[0]!);
   else await clearEarningsFailure(env, "calendar");
   await flushSecDiagnostics(env, collectedAt, sec);
-  const status = warnings.length > 0 || sec.failures > 0 || enrichmentWarnings.length > 0 ? "degraded" : "ok";
+  // Job status mirrors the critical Earnings/calendar pipeline only. SEC
+  // enrichment failures remain visible in the SEC diagnostics (meta keys +
+  // secAttempts/secFailures on the log line) but never degrade the job.
+  const status = warnings.length > 0 ? "degraded" : "ok";
   const detail = `${written}/${calendar.observations.length} events in ${range.from}..${range.to}`;
   logEarningsJob({
     job: "calendar",
@@ -567,7 +570,9 @@ async function runMonitoring(env: Env, scheduledTime: Date, providers: EarningsP
   if (warnings.length > 0) await rememberEarningsFailure(env, "monitor", collectedAt, warnings[0]!);
   else await clearEarningsFailure(env, "monitor");
   await flushSecDiagnostics(env, collectedAt, sec);
-  const status = warnings.length > 0 || sec.failures > 0 ? "degraded" : "ok";
+  // Same separation as the calendar job: status reflects the critical
+  // Finnhub-backed monitoring path only; SEC failures stay diagnostic.
+  const status = warnings.length > 0 ? "degraded" : "ok";
   const detail = `${successes}/${Math.max(active.length, todayObservations.length)} events checked; provider=ok`;
   logEarningsJob({ job: "monitor", provider: providers.calendar.name, range, observations: calendar.observations.length, normalized: normalized.length, written: normalized.length, secLookups: filingLookups.used, secAttempts: sec.attempts, secFailures: sec.failures, status, durationMs: Date.now() - startedAt, warningCount: warnings.length, detail });
   return {

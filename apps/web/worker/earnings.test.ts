@@ -22,6 +22,7 @@ import {
   reconcileCoreUniverse,
   readEarningsEvents,
   upsertEarningsEvent,
+  upsertUniverseMember,
 } from "./earnings/storage";
 import type {
   EarningsCalendarObservation,
@@ -956,9 +957,9 @@ describe("SEC EDGAR enrichment decoupling (issue #35)", () => {
       consensus: calendar as never,
       official,
     });
-    // SEC enrichment degraded is observable in the job status, but the
-    // critical calendar/monitor failure keys must stay clean.
-    expect(result.status).toBe("degraded");
+    // SEC enrichment failure is observable in diagnostics + job log, but the
+    // critical job status and calendar/monitor failure keys must stay clean.
+    expect(result.status).toBe("ok");
     expect(db.meta.get("earningsCalendarLastError")).toBeUndefined();
     expect(db.meta.get("earningsMonitorLastError")).toBeUndefined();
     expect(db.meta.get("earningsEngineLastError")).toBeUndefined();
@@ -985,7 +986,7 @@ describe("SEC EDGAR enrichment decoupling (issue #35)", () => {
       consensus: calendar as never,
       official,
     });
-    expect(result.status).toBe("degraded");
+    expect(result.status).toBe("ok");
     expect(db.meta.get("earningsCalendarLastError")).toBeUndefined();
     expect(db.meta.get("earningsMonitorLastError")).toBeUndefined();
     expect(db.meta.get("earningsEngineLastError")).toBeUndefined();
@@ -1073,6 +1074,39 @@ describe("SEC EDGAR enrichment decoupling (issue #35)", () => {
     });
   });
 
+  it("keeps the monitor job status ok when SEC filing enrichment fails", async () => {
+    const db = new MemoryD1();
+    await seedActiveCoreUniverse(db);
+    await upsertUniverseMember(db, { symbol: "MSFT", company: "Microsoft Corporation", cik: "0000789012", exchange: null, indexes: [], updatedAt: "2026-08-13T06:00:00.000Z" });
+    await upsertEarningsEvent(db, normalizedEvent({ scheduledDate: "2026-08-13", providerEventId: "monitor-msft" }));
+    const calendar: EarningsCalendarProvider = {
+      name: "finnhub-test",
+      fetchCalendar: async () => ({
+        provider: "finnhub-test",
+        observations: [eventObservation({ scheduledDate: "2026-08-13", providerEventId: "monitor-msft" })],
+        warnings: [],
+        updatedAt: "2026-08-13T19:30:00.000Z",
+      }),
+    };
+    const official = new SecEdgarProvider(
+      "StockAutotraderTest/1.0 (+https://example.test/contact)",
+      async () => jsonResponse({ error: "forbidden" }, 403),
+    );
+    const result = await runEarningsJob({ DB: db } as never, new Date("2026-08-13T19:30:00.000Z"), "monitor", {
+      calendar,
+      consensus: calendar as never,
+      official,
+    });
+    // The critical Finnhub-backed monitor path succeeded; the SEC filing
+    // lookup failure stays diagnostic-only.
+    expect(result.status).toBe("ok");
+    expect(db.meta.get("earningsMonitorLastError")).toBeUndefined();
+    expect(db.meta.get("earningsCalendarLastError")).toBeUndefined();
+    expect(db.meta.get("earningsSecLastAttemptAt")).toBe("2026-08-13T19:30:00.000Z");
+    expect(db.meta.get("earningsSecLastError")).toContain("403");
+    expect(db.meta.get("earningsSecConsecutiveFailures")).toBe("1");
+  });
+
   it("preserves valid Finnhub data and prior SEC enrichment when a later SEC run fails", async () => {
     const db = new MemoryD1();
     const filing = {
@@ -1108,9 +1142,11 @@ describe("SEC EDGAR enrichment decoupling (issue #35)", () => {
       official,
     };
     await expect(runEarningsJob({ DB: db } as never, new Date("2026-08-13T06:00:00.000Z"), "calendar", providers)).resolves.toMatchObject({ status: "ok" });
-    // SEC goes down; the same Finnhub calendar rows are synced again.
+    // SEC goes down; the same Finnhub calendar rows are synced again. The
+    // critical job status stays ok — SEC is enrichment-only — while the SEC
+    // diagnostics record the failure.
     secHealthy = false;
-    await expect(runEarningsJob({ DB: db } as never, new Date("2026-08-13T06:00:00.000Z"), "calendar", providers)).resolves.toMatchObject({ status: "degraded" });
+    await expect(runEarningsJob({ DB: db } as never, new Date("2026-08-13T06:00:00.000Z"), "calendar", providers)).resolves.toMatchObject({ status: "ok" });
     // Critical health stays clean; SEC diagnostics show the new failure.
     expect(db.meta.get("earningsCalendarLastError")).toBeUndefined();
     expect(db.meta.get("earningsSecLastError")).toContain("403");
