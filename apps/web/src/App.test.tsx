@@ -1,7 +1,9 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
+import { lazy, Suspense } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
+import { LazyPageErrorBoundary } from "./morning-briefing/shared";
 import indexHtml from "../index.html?raw";
 import cloudflareHeaders from "../public/_headers?raw";
 
@@ -37,6 +39,21 @@ it("ships Morning Briefing metadata in the static HTML fallback", () => {
   expect(indexHtml).not.toContain("Stock Daily Briefing");
 });
 
+it("shows an accessible recovery state when a lazy page fails", async () => {
+  const FailedPage = lazy(() => Promise.reject(new Error("chunk failed")));
+  const ReadyPage = () => <h1>Recovered page</h1>;
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  try {
+    const view = render(<LazyPageErrorBoundary resetKey="failed"><Suspense fallback={<div role="status">Loading…</div>}><FailedPage /></Suspense></LazyPageErrorBoundary>);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Page unavailable");
+    expect(screen.getByRole("button", { name: "Reload page" })).toBeInTheDocument();
+    view.rerender(<LazyPageErrorBoundary resetKey="recovered"><Suspense fallback={<div role="status">Loading…</div>}><ReadyPage /></Suspense></LazyPageErrorBoundary>);
+    expect(await screen.findByRole("heading", { name: "Recovered page" })).toBeInTheDocument();
+  } finally {
+    errorSpy.mockRestore();
+  }
+});
+
 describe("Morning Briefing public experience", () => {
   it.each(["/", "/dashboard"])("opens Morning Briefing at %s", (path) => {
     render(<MemoryRouter initialEntries={[path]}><App /></MemoryRouter>);
@@ -46,14 +63,14 @@ describe("Morning Briefing public experience", () => {
     expect(screen.queryByRole("button", { name: /buy|sell|trade/i })).not.toBeInTheDocument();
   });
 
-  it("opens the X Pulse route directly", () => {
+  it("opens the X Pulse route directly", async () => {
     render(<MemoryRouter initialEntries={["/x"]}><App /></MemoryRouter>);
-    expect(screen.getByRole("heading", { name: /X Pulse/ })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /X Pulse/ })).toBeInTheDocument();
   });
 
-  it("opens the Earnings route directly", () => {
+  it("opens the Earnings route directly", async () => {
     render(<MemoryRouter initialEntries={["/earnings"]}><App /></MemoryRouter>);
-    expect(screen.getByRole("heading", { name: /Earnings Calendar/ })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /Earnings Calendar/ })).toBeInTheDocument();
   });
 
   it.each([
