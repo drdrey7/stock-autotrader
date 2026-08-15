@@ -27,6 +27,9 @@ jobs:
       - name: Install Playwright runner for CI only
         working-directory: apps/web
         run: npm install --no-save --ignore-scripts @playwright/test@1.62.1
+      - name: Audit E2E dependency tree
+        working-directory: apps/web
+        run: npm audit --audit-level=high
       - name: Install Chromium
         working-directory: apps/web
         run: npx playwright install --with-deps chromium
