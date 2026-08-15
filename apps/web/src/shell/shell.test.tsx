@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppShell } from "./AppShell";
@@ -49,6 +49,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -161,6 +162,32 @@ describe("mobile navigation drawer", () => {
     expect(main).not.toHaveAttribute("inert", "");
   });
 
+  it("closes the drawer when the viewport crosses into the desktop breakpoint", () => {
+    const changeListeners: Record<string, (event: { matches: boolean }) => void> = {};
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: vi.fn().mockImplementation((query: string) => ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addEventListener: (event: string, cb: (e: { matches: boolean }) => void) => { changeListeners[event] = cb; },
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+
+    renderShell();
+    fireEvent.click(hamburger());
+    expect(hamburger()).toHaveAttribute("aria-expanded", "true");
+    expect(document.querySelector("main.shell-main")).toHaveAttribute("inert", "");
+
+    act(() => { changeListeners["change"]?.({ matches: true }); });
+    expect(hamburger()).toHaveAttribute("aria-expanded", "false");
+    expect(document.querySelector("main.shell-main")).not.toHaveAttribute("inert", "");
+  });
+
   it("locks body scroll while the drawer is open", () => {
     renderShell();
     fireEvent.click(hamburger());
@@ -180,6 +207,16 @@ describe("theme toggle", () => {
     expect(screen.getAllByRole("button", { name: "Switch to light mode" }).length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getAllByRole("button", { name: "Switch to light mode" })[0]!);
+    expect(document.documentElement.dataset.theme).toBe("light");
+  });
+
+  it("defaults to light and still renders when localStorage is unavailable", () => {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("storage blocked");
+    });
+
+    renderShell();
+    expect(screen.getByRole("heading", { name: "Shell content" })).toBeInTheDocument();
     expect(document.documentElement.dataset.theme).toBe("light");
   });
 });

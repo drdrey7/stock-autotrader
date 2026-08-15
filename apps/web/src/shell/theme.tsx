@@ -22,7 +22,14 @@ interface ThemeContextValue {
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 function readInitialTheme(): ShellTheme {
-  const stored = localStorage.getItem(THEME_STORAGE_KEY);
+  let stored: string | null = null;
+  try {
+    stored = localStorage.getItem(THEME_STORAGE_KEY);
+  } catch {
+    // Storage can be unavailable (private mode, stricter policies). The write
+    // path is already guarded; the read must not be able to crash the app.
+    stored = null;
+  }
   if (stored === "light" || stored === "dark") return stored;
   const prefersDark =
     typeof window.matchMedia === "function" && window.matchMedia("(prefers-color-scheme: dark)").matches;

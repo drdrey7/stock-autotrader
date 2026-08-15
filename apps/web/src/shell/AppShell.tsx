@@ -52,6 +52,21 @@ export function AppShell({ children }: { children: ReactNode }) {
     closeMenu();
   }, [location.pathname, closeMenu]);
 
+  // Crossing into the desktop breakpoint while the drawer is open hides it via
+  // CSS but leaves `menuOpen` true — main content would stay inert and the Tab
+  // trap armed with no on-screen close control. Close it as soon as the desktop
+  // media query matches (Escape remains a manual fallback).
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const desktopQuery = window.matchMedia("(min-width: 901px)");
+    if (typeof desktopQuery.addEventListener !== "function") return;
+    const onDesktop = (event: MediaQueryListEvent) => {
+      if (event.matches) closeMenu();
+    };
+    desktopQuery.addEventListener("change", onDesktop);
+    return () => desktopQuery.removeEventListener("change", onDesktop);
+  }, [closeMenu]);
+
   // Reasonable focus behaviour: focus the close control when opening, return
   // focus to the hamburger when the drawer closes after having been open.
   useEffect(() => {
