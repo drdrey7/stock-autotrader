@@ -11,6 +11,7 @@ import {
   readMarketContext,
   runMarketContextJob,
   runSentimentJob,
+  writeMarketIndices,
   type MarketIndexObservation,
   type SentimentObservation,
 } from "./market-context";
@@ -34,23 +35,29 @@ class MemoryD1 {
         return statement;
       },
       run: async () => {
+        let changes = 0;
         if (sql.includes("INSERT INTO app_meta")) {
           this.meta.set(String(args[0]), String(args[1]));
+          changes = 1;
         } else if (sql.includes("DELETE FROM app_meta")) {
-          this.meta.delete(String(args[0]));
+          changes = this.meta.delete(String(args[0])) ? 1 : 0;
         } else if (sql.includes("market_indices")) {
           const [symbol, name, value, changePct, sourceTimestamp, collectedAt, provider] = args as [
             StoredIndex["symbol"], string, number, number, string, string, string,
           ];
           const key = `${symbol}|${sourceTimestamp}|${provider}`;
-          if (!this.indices.has(key)) this.indices.set(key, { symbol, name, value, changePct, sourceTimestamp, collectedAt, provider });
+          if (!this.indices.has(key)) {
+            this.indices.set(key, { symbol, name, value, changePct, sourceTimestamp, collectedAt, provider });
+            changes = 1;
+          }
         } else if (sql.includes("market_sentiment")) {
           const [score, rating, sourceTimestamp, collectedAt, provider] = args as [number, SentimentObservation["rating"], string, string, string];
           if (!this.sentiments.some((row) => row.sourceTimestamp === sourceTimestamp && row.provider === provider)) {
             this.sentiments.push({ score, rating, sourceTimestamp, collectedAt, provider });
+            changes = 1;
           }
         }
-        return { success: true, meta: { changes: 1 } };
+        return { success: true, meta: { changes } };
       },
       all: async <T>() => {
         if (this.failIndices) throw new Error("indices read failed");
@@ -88,8 +95,9 @@ class MemoryD1 {
   }
 
   async batch(statements: Array<{ run: () => Promise<unknown> }>) {
-    for (const statement of statements) await statement.run();
-    return [];
+    const results: unknown[] = [];
+    for (const statement of statements) results.push(await statement.run());
+    return results;
   }
 }
 
@@ -109,6 +117,19 @@ const providerRows: Record<string, { regularMarketPrice: number; chartPreviousCl
 const yahooResponse = (row: Record<string, unknown>) => response({
   chart: { result: [{ meta: row }], error: null },
 });
+
+const testObservations = (
+  sourceTimestamp = "2026-08-13T15:30:00.000Z",
+  provider = "test-provider",
+): MarketIndexObservation[] => INDEX_DEFINITIONS.map((definition) => ({
+  symbol: definition.symbol,
+  name: definition.name,
+  value: 100,
+  changePct: 1,
+  sourceTimestamp,
+  collectedAt: "2026-08-13T19:30:00.000Z",
+  provider,
+}));
 
 describe("market context providers and persistence", () => {
   it("normalizes all four free Yahoo chart quotes and preserves source timestamps", async () => {
@@ -216,9 +237,58 @@ describe("market context providers and persistence", () => {
     expect(JSON.parse(db.meta.get("marketContextHealth")!)).toMatchObject({
       status: "ok",
       lastError: null,
-      rowsWritten: 4,
+      rowsWritten: 0,
       lastKnownGoodPreserved: false,
     });
+  });
+
+  it("returns four for four genuinely inserted index rows", async () => {
+    const db = new MemoryD1();
+    expect(await writeMarketIndices(db as unknown as D1Database, testObservations())).toBe(4);
+  });
+
+  it("returns zero when all four index rows are ignored as duplicates", async () => {
+    const db = new MemoryD1();
+    const observations = testObservations();
+    expect(await writeMarketIndices(db as unknown as D1Database, observations)).toBe(4);
+    expect(await writeMarketIndices(db as unknown as D1Database, observations)).toBe(0);
+  });
+
+  it("returns the exact inserted count for mixed new and duplicate rows", async () => {
+    const db = new MemoryD1();
+    const observations = testObservations();
+    expect(await writeMarketIndices(db as unknown as D1Database, observations.slice(0, 2))).toBe(2);
+    const mixed = [
+      ...observations.slice(0, 2),
+      ...testObservations("2026-08-13T15:45:00.000Z").slice(2),
+    ];
+    expect(await writeMarketIndices(db as unknown as D1Database, mixed)).toBe(2);
+  });
+
+  it("reports actual D1 changes in Market Context health and structured logs", async () => {
+    const db = new MemoryD1();
+    const provider = {
+      name: "test-provider",
+      collect: async () => ({ observations: testObservations(), warnings: [] }),
+    };
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    try {
+      await runMarketContextJob(envFor(db), new Date("2026-08-13T19:30:00Z"), provider);
+      const firstResult = infoSpy.mock.calls
+        .map(([message]) => JSON.parse(String(message)) as { phase?: string; rowsWritten?: number })
+        .find((message) => message.phase === "result");
+      expect(firstResult?.rowsWritten).toBe(4);
+
+      infoSpy.mockClear();
+      await runMarketContextJob(envFor(db), new Date("2026-08-13T19:45:00Z"), provider);
+      const duplicateResult = infoSpy.mock.calls
+        .map(([message]) => JSON.parse(String(message)) as { phase?: string; rowsWritten?: number })
+        .find((message) => message.phase === "result");
+      expect(duplicateResult?.rowsWritten).toBe(0);
+      expect(JSON.parse(db.meta.get("marketContextHealth")!)).toMatchObject({ rowsWritten: 0 });
+    } finally {
+      infoSpy.mockRestore();
+    }
   });
 
   it("uses insert-or-ignore semantics for repeated market runs", async () => {

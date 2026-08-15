@@ -390,7 +390,7 @@ export function isNewYorkWeekday(instant: Date): boolean {
 export async function writeMarketIndices(db: D1Database, observations: MarketIndexObservation[]): Promise<number> {
   const valid = observations.filter(validMarketObservation);
   if (valid.length === 0) return 0;
-  await db.batch(valid.map((observation) => db.prepare(
+  const results = await db.batch(valid.map((observation) => db.prepare(
     `INSERT OR IGNORE INTO market_indices
       (symbol, name, value, change_pct, source_timestamp, collected_at, provider)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -403,7 +403,7 @@ export async function writeMarketIndices(db: D1Database, observations: MarketInd
     observation.collectedAt,
      observation.provider,
   )));
-  return valid.length;
+  return results.reduce((total, result) => total + (result.meta?.changes ?? 0), 0);
 }
 
 export async function writeSentiment(db: D1Database, observation: SentimentObservation): Promise<void> {
