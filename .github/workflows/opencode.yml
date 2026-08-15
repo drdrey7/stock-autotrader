@@ -15,19 +15,56 @@ jobs:
        github.event.comment.author_association == 'COLLABORATOR')
     runs-on: ubuntu-latest
     permissions:
-      id-token: write
       contents: write
       pull-requests: write
       issues: write
 
     steps:
+      - name: Check command target
+        id: target
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          REPOSITORY: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          REVIEW_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          set -euo pipefail
+          allowed=true
+          reason=allowed
+
+          if [[ "$EVENT_NAME" == "pull_request_review_comment" ]]; then
+            if [[ -n "$REVIEW_HEAD_REPO" && "$REVIEW_HEAD_REPO" != "$REPOSITORY" ]]; then
+              allowed=false
+              reason=fork_pull_request
+            fi
+          elif [[ "$EVENT_NAME" == "issue_comment" && -n "$ISSUE_NUMBER" ]]; then
+            if head_repo=$(gh api "repos/$REPOSITORY/pulls/$ISSUE_NUMBER" --jq '.head.repo.full_name' 2>/dev/null); then
+              if [[ "$head_repo" != "$REPOSITORY" ]]; then
+                allowed=false
+                reason=fork_pull_request
+              fi
+            fi
+          fi
+
+          echo "allowed=$allowed" >> "$GITHUB_OUTPUT"
+          echo "reason=$reason" >> "$GITHUB_OUTPUT"
+
+      - name: Explain unsupported fork command
+        if: steps.target.outputs.allowed != 'true'
+        shell: bash
+        run: echo "OpenCode write-capable commands are disabled for fork pull requests because repository secrets are not exposed to fork workflows."
+
       - name: Checkout repository
+        if: steps.target.outputs.allowed == 'true'
         uses: actions/checkout@v6
         with:
           fetch-depth: 1
 
       - name: Run OpenCode command
-        uses: anomalyco/opencode/github@latest
+        if: steps.target.outputs.allowed == 'true'
+        uses: anomalyco/opencode/github@2c14fc5586fe0b88e5c04732d2e846769cc35671
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
