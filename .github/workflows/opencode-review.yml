@@ -1,0 +1,62 @@
+name: opencode-review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: opencode-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: |
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Review pull request with OpenCode
+        uses: anomalyco/opencode/github@2c14fc5586fe0b88e5c04732d2e846769cc35671
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          model: opencode-go/deepseek-v4-flash
+          use_github_token: true
+          prompt: |
+            Review this pull request as an independent senior code reviewer.
+
+            Focus only on meaningful issues:
+            - P0: critical security, data-loss, production outage, or fundamentally broken behavior
+            - P1: serious bugs, regressions, security issues, incorrect business logic, broken API behavior, or major reliability problems
+            - P2: material correctness, robustness, performance, maintainability, or missing-test issues that should be fixed before merge
+
+            Also check:
+            - runtime and TypeScript/Python errors
+            - unsafe secret handling
+            - authentication/authorization mistakes
+            - database/schema and migration risks
+            - Cloudflare/worker deployment regressions where relevant
+            - frontend/backend contract mismatches
+            - missing error handling for realistic failure modes
+            - tests for changed behavior
+
+            Do not nitpick formatting, naming preferences, or subjective style.
+            Do not modify code in this automatic review workflow.
+
+            End with exactly one of these conclusions:
+            - READY: no P0/P1/P2 issues found
+            - NOT READY: P0/P1/P2 issues remain
+
+            For every issue, state severity (P0/P1/P2), file/location, why it matters, and the smallest safe fix.
