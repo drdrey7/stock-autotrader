@@ -646,19 +646,17 @@ function InformationLayout({
   lead: string;
   children: React.ReactNode;
 }) {
+  // The dashboard shell (sidebar / mobile drawer) provides all navigation, so
+  // the information pages only render their content here — no page-local header
+  // or footer chrome.
   return (
     <div className="briefing-information-page">
-      <header className="briefing-information-header">
-        <Brand />
-        <Link to="/dashboard">Open terminal</Link>
-      </header>
-      <main>
+      <div className="briefing-information-body">
         <span className="briefing-kicker">{eyebrow}</span>
         <h1>{title}</h1>
         <p className="briefing-information-lead">{lead}</p>
         {children}
-      </main>
-      <BriefingFooter />
+      </div>
     </div>
   );
 }
@@ -740,7 +738,6 @@ export function DailyBriefingDisclaimerPage() {
 export function DailyBriefingNotFoundPage() {
   return (
     <div className="briefing-not-found">
-      <Brand />
       <Radar size={42} aria-hidden="true" />
       <h1>Page not found</h1>
       <p>The requested public view does not exist.</p>

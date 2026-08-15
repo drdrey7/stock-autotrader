@@ -1,0 +1,76 @@
+/* eslint-disable react-refresh/only-export-components */
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Moon, Sun } from "lucide-react";
+
+/**
+ * Theme state for the application shell.
+ *
+ * The Morning Briefing content styles its light/dark palettes off the
+ * `data-theme` attribute on <html> (`[data-theme="dark"] .mb-demo { … }`), so
+ * the provider keeps that attribute, localStorage persistence and the
+ * `theme-color` meta tag in one place — independent of any single page.
+ */
+export type ShellTheme = "light" | "dark";
+
+const THEME_STORAGE_KEY = "morning-briefing-theme";
+
+interface ThemeContextValue {
+  theme: ShellTheme;
+  toggleTheme: () => void;
+}
+
+const ThemeContext = createContext<ThemeContextValue | null>(null);
+
+function readInitialTheme(): ShellTheme {
+  const stored = localStorage.getItem(THEME_STORAGE_KEY);
+  if (stored === "light" || stored === "dark") return stored;
+  const prefersDark =
+    typeof window.matchMedia === "function" && window.matchMedia("(prefers-color-scheme: dark)").matches;
+  return prefersDark ? "dark" : "light";
+}
+
+export function ThemeProvider({ children }: { children: ReactNode }) {
+  const [theme, setTheme] = useState<ShellTheme>(readInitialTheme);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, theme);
+    } catch {
+      // Storage can be unavailable (private mode, tests); the in-page theme still works.
+    }
+    document
+      .querySelector('meta[name="theme-color"]')
+      ?.setAttribute("content", theme === "dark" ? "#0b0d10" : "#f7f8f7");
+  }, [theme]);
+
+  const value = useMemo<ThemeContextValue>(
+    () => ({ theme, toggleTheme: () => setTheme((current) => (current === "light" ? "dark" : "light")) }),
+    [theme],
+  );
+
+  return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
+}
+
+export function useShellTheme(): ThemeContextValue {
+  const context = useContext(ThemeContext);
+  if (!context) throw new Error("useShellTheme must be used inside <ThemeProvider>");
+  return context;
+}
+
+/** Icon-only toggle rendered in the shell chrome (sidebar + mobile top bar). */
+export function ThemeToggle() {
+  const { theme, toggleTheme } = useShellTheme();
+  const next = theme === "light" ? "dark" : "light";
+  return (
+    <button
+      type="button"
+      className="shell-theme-toggle"
+      onClick={toggleTheme}
+      aria-label={`Switch to ${next} mode`}
+      title={`Switch to ${next} mode`}
+    >
+      {theme === "light" ? <Moon size={16} aria-hidden="true" /> : <Sun size={16} aria-hidden="true" />}
+    </button>
+  );
+}

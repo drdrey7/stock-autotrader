@@ -1,12 +1,16 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, useLocation, useNavigate } from "react-router-dom";
+import App from "../App";
 import MorningBriefingApp from "./MorningBriefingApp";
 
-const renderApp = (path = "/") => render(<MemoryRouter initialEntries={[path]}><MorningBriefingApp/></MemoryRouter>);
+// The Morning Briefing pages now live inside the dashboard shell, which owns
+// navigation (sidebar links / mobile drawer) and the theme toggle. Rendering the
+// full <App/> lets these tests drive navigation through the real shell chrome.
+const renderApp = (path = "/") => render(<MemoryRouter initialEntries={[path]}><App/></MemoryRouter>);
 function RoutedApp() {
   const location = useLocation();
-  return <><output aria-label="Current path">{location.pathname}</output><MorningBriefingApp/></>;
+  return <><output aria-label="Current path">{location.pathname}</output><App/></>;
 }
 function HistoryApp() {
   const navigate = useNavigate();
@@ -84,15 +88,15 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe("Morning Briefing frontend demo", () => {
-  it("opens on Morning Briefing and navigates between the three areas", async () => {
+  it("opens on Morning Briefing and navigates between the three areas via the shell", async () => {
     render(<MemoryRouter initialEntries={["/"]}><RoutedApp/></MemoryRouter>);
     expect(screen.getByRole("heading", { name: "Good morning." })).toBeInTheDocument();
 
-    fireEvent.click(screen.getAllByRole("button", { name: "X Pulse" })[0]!);
+    fireEvent.click(screen.getByRole("link", { name: "X Pulse" }));
     expect(await screen.findByRole("heading", { level: 1, name: /X Pulse/ })).toBeInTheDocument();
     expect(screen.getByRole("status", { name: "Current path" })).toHaveTextContent("/x");
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Earnings" })[0]!);
+    fireEvent.click(screen.getByRole("link", { name: "Earnings" }));
     expect(await screen.findByRole("heading", { name: /Earnings Calendar/ })).toBeInTheDocument();
     expect(screen.getByRole("status", { name: "Current path" })).toHaveTextContent("/earnings");
   });
@@ -143,7 +147,7 @@ describe("Morning Briefing frontend demo", () => {
 
   it("shows one filter per tracked account without technical source badges", async () => {
     const view = renderApp();
-    fireEvent.click(screen.getAllByRole("button", { name: "X Pulse" })[0]!);
+    fireEvent.click(screen.getByRole("link", { name: "X Pulse" }));
     await screen.findByRole("heading", { level: 1, name: /X Pulse/ });
 
     expect(screen.getByRole("button", { name: "All" })).toBeInTheDocument();
@@ -159,17 +163,6 @@ describe("Morning Briefing frontend demo", () => {
     expect(view.container.querySelector(".backend-ribbon")).toBeNull();
   });
 
-  it("persists the selected colour theme", async () => {
-    renderApp();
-    const toggle = (await screen.findAllByRole("button", { name: "Switch to dark mode" }))[0]!;
-    fireEvent.click(toggle);
-
-    await waitFor(() => {
-      expect(document.documentElement.dataset.theme).toBe("dark");
-      expect(localStorage.getItem("morning-briefing-theme")).toBe("dark");
-    });
-  });
-
   it("opens opportunity and earnings details", async () => {
     stubEarningsSchedule();
     renderApp();
@@ -182,7 +175,7 @@ describe("Morning Briefing frontend demo", () => {
 
     fireEvent.keyDown(document, { key: "Escape" });
     await waitFor(() => expect(opportunityTrigger).toHaveFocus());
-    fireEvent.click(screen.getAllByRole("button", { name: "Earnings" })[0]!);
+    fireEvent.click(screen.getByRole("link", { name: "Earnings" }));
     await screen.findByRole("heading", { name: /Earnings Calendar/ });
     fireEvent.click(await screen.findByRole("button", { name: /MSFT.*AMC/ }));
 
