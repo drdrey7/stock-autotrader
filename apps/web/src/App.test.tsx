@@ -82,11 +82,7 @@ describe("Morning Briefing public experience", () => {
     expect(await screen.findByRole("heading", { name: "Good morning." })).toBeInTheDocument();
   });
 
-  it.each([
-    ["/methodology", "Methodology"],
-    ["/status", "System status"],
-    ["/disclaimer", "Disclaimer"],
-  ])("keeps public information route %s", (path, heading) => {
+  it.each([["/status", "System status"]])("keeps public information route %s", (path, heading) => {
     render(<MemoryRouter initialEntries={[path]}><App /></MemoryRouter>);
     expect(screen.getByRole("heading", { name: heading })).toBeInTheDocument();
     expect(document.body).not.toHaveTextContent("Not connected in PR #6");

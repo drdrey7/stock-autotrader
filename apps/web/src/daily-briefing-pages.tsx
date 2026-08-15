@@ -82,9 +82,7 @@ function BriefingFooter() {
     <footer className="briefing-footer">
       <span>© 2026 Morning Briefing</span>
       <span className="briefing-footer-links">
-        <Link to="/methodology">Methodology</Link>
         <Link to="/status">Status</Link>
-        <Link to="/disclaimer">Disclaimer</Link>
       </span>
       <span>Informational research only. Not investment advice.</span>
     </footer>
@@ -661,37 +659,6 @@ function InformationLayout({
   );
 }
 
-export function DailyBriefingMethodologyPage() {
-  return (
-    <InformationLayout
-      eyebrow="HOW THE BRIEF IS BUILT"
-      title="Methodology"
-      lead="Morning Briefing turns a small, explicit source allowlist into independently checked market research."
-    >
-      <h2>1. Discover, do not endorse</h2>
-      <p>
-        The X allowlist begins with @nolimitgains. A post is an idea source—not a
-        recommendation, score or automatic qualification.
-      </p>
-      <h2>2. Restrict the universe</h2>
-      <p>
-        V1 analyses only companies in the S&amp;P 500 or Nasdaq-100. Crypto, ETFs,
-        retrospective wins and ambiguous tickers are excluded.
-      </p>
-      <h2>3. Verify independently</h2>
-      <p>
-        Market structure, technical context, financial context, material news,
-        freshness and risk must agree before an idea can be labelled Potential Entry.
-      </p>
-      <h2>4. Publish an honest outcome</h2>
-      <p>
-        Potential Entry, Watch, Avoid and Insufficient Data are informational labels.
-        Zero qualified entries is a valid briefing.
-      </p>
-    </InformationLayout>
-  );
-}
-
 export function DailyBriefingStatusPage() {
   return (
     <InformationLayout
@@ -707,29 +674,8 @@ export function DailyBriefingStatusPage() {
       </p>
       <h2>Independent research</h2>
       <p>
-        Use the Methodology and Disclaimer pages to understand the research process and
-        the limits of the information before making any decision.
-      </p>
-    </InformationLayout>
-  );
-}
-
-export function DailyBriefingDisclaimerPage() {
-  return (
-    <InformationLayout
-      eyebrow="READ BEFORE USING THE BRIEF"
-      title="Disclaimer"
-      lead="Morning Briefing provides general market research for informational and educational purposes only."
-    >
-      <h2>Not investment advice</h2>
-      <p>
-        Nothing on this website is a recommendation, solicitation or personalised
-        assessment to buy, hold or sell a security.
-      </p>
-      <h2>Risk and verification</h2>
-      <p>
-        Market information can be delayed, incomplete or wrong. Verify every source and
-        assess suitability independently before making financial decisions.
+        All areas are informational: verify sources and assess suitability independently
+        before making any decision.
       </p>
     </InformationLayout>
   );

@@ -4,9 +4,7 @@ const routes = [
   { path: "/", label: "Dashboard" },
   { path: "/x", label: "X Pulse" },
   { path: "/earnings", label: "Earnings" },
-  { path: "/methodology", label: "Methodology" },
   { path: "/status", label: "Status" },
-  { path: "/disclaimer", label: "Disclaimer" },
 ];
 
 for (const route of routes) {

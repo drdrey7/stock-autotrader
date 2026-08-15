@@ -1,10 +1,5 @@
 import { Navigate, Route, Routes } from "react-router-dom";
-import {
-  DailyBriefingDisclaimerPage,
-  DailyBriefingMethodologyPage,
-  DailyBriefingNotFoundPage,
-  DailyBriefingStatusPage,
-} from "./daily-briefing-pages";
+import { DailyBriefingNotFoundPage, DailyBriefingStatusPage } from "./daily-briefing-pages";
 import MorningBriefingApp from "./morning-briefing/MorningBriefingApp";
 import { AppShell } from "./shell/AppShell";
 
@@ -30,9 +25,7 @@ export default function App() {
         <Route path="/x" element={<MorningBriefingApp />} />
         <Route path="/x-search" element={<Navigate to="/x" replace />} />
         <Route path="/earnings" element={<MorningBriefingApp />} />
-        <Route path="/methodology" element={<DailyBriefingMethodologyPage />} />
         <Route path="/status" element={<DailyBriefingStatusPage />} />
-        <Route path="/disclaimer" element={<DailyBriefingDisclaimerPage />} />
         {legacyRoutes.map((path) => (
           <Route key={path} path={path} element={<Navigate to="/dashboard" replace />} />
         ))}

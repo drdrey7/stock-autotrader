@@ -15,8 +15,8 @@ The approved **Morning Briefing** interface is the public product shell:
 - the frontend refreshes silently while the backend controls publication cadence;
 - there is no login, portfolio, watchlist, chat or trading action.
 
-Routes: `/`, `/dashboard`, `/x` and `/earnings`. The public Methodology, Status
-and Disclaimer routes remain available.
+Routes: `/`, `/dashboard`, `/x` and `/earnings`. The public Status route remains
+available; unknown routes fall through to a Not Found page.
 
 ## Historical frontend work
 
