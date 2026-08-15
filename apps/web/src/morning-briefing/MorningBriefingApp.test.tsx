@@ -260,4 +260,41 @@ describe("Morning Briefing frontend demo", () => {
     expect(screen.getByRole("link", { name: /Investor Relations/ })).toHaveAttribute("href", "https://example.test/msft-ir");
     expect(view.container.querySelector(".earnings-table")).toHaveTextContent("Mixed");
   });
+
+  it("renders the earnings calendar Monday-first with earnings pinned to their dates", async () => {
+    stubEarningsSchedule();
+    renderApp("/earnings");
+    await screen.findByRole("heading", { name: /Earnings Calendar/ });
+    const msftButton = await screen.findByRole("button", { name: /MSFT.*AMC/ });
+    const weekdays = Array.from(document.querySelectorAll(".weekdays span")).map((el) => el.textContent);
+    expect(weekdays).toEqual(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]);
+    const cells = Array.from(document.querySelectorAll(".calendar-grid > div"));
+    expect(cells).toHaveLength(42);
+    expect(cells.slice(0, 5).every((cell) => cell.classList.contains("empty"))).toBe(true);
+    expect(cells[5]!.querySelector(".day-number")).toHaveTextContent("1");
+    expect(cells[6]!.querySelector(".day-number")).toHaveTextContent("2");
+    expect(cells[7]!.querySelector(".day-number")).toHaveTextContent("3");
+    // MSFT is scheduled for 2026-08-15 (a Saturday): index 5 + (15 - 1) = 19.
+    const msftCell = cells[19]!;
+    expect(msftCell.querySelector(".day-number")).toHaveTextContent("15");
+    expect(msftCell).toContainElement(msftButton);
+  });
+
+  it("counts THIS WEEK with a Monday-anchored week", async () => {
+    // Today is Monday 2026-08-17 (NY); the only event sits on the previous
+    // Sunday 2026-08-16. With a Monday-first week that Sunday belongs to last
+    // week, so THIS WEEK must be 0 — a Sunday-anchored week would report 1.
+    vi.mocked(Date.now).mockReturnValue(Date.parse("2026-08-17T16:00:00Z"));
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/earnings") {
+        return new Response(JSON.stringify([
+          { symbol: "TST", company: "Test Corp", date: "2026-08-16", timing: "BMO", eventSignal: "Confirmed" },
+        ]), { status: 200 });
+      }
+      return new Response(null, { status: 503 });
+    });
+    renderApp("/earnings");
+    const summary = await screen.findByLabelText("Earnings summary");
+    await waitFor(() => expect(summary).toHaveTextContent(/THIS WEEK\s*0/));
+  });
 });
