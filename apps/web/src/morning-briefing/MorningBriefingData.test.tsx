@@ -5,6 +5,10 @@ import MorningBriefingApp from "./MorningBriefingApp";
 import { isDisplayableMarketIndex } from "./MorningBriefingData";
 
 const renderApp = (path = "/") => render(<MemoryRouter initialEntries={[path]}><MorningBriefingApp/></MemoryRouter>);
+const useFixtureClock = () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  vi.setSystemTime(new Date("2026-08-12T22:30:00Z"));
+};
 
 const briefing = {
   example: false,
@@ -147,6 +151,7 @@ it("renders a persisted market snapshot with an explicit stale label after a pro
 });
 
 it("renders only qualified ideas and classifies scheduled earnings by date", async () => {
+  useFixtureClock();
   const view = renderApp();
   await waitFor(() => expect(view.container.querySelector(".market-status")).toHaveTextContent("S&P 500 up +0.31%"));
   expect(screen.getByText("+1.75%")).toBeInTheDocument();
@@ -301,6 +306,7 @@ it("labels a post-close edition instead of showing a morning greeting", async ()
 });
 
 it("renders the briefing without waiting for a stalled X request", async () => {
+  useFixtureClock();
   vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url === "/api/briefs/latest") return new Response(JSON.stringify(briefing), { status: 200 });
