@@ -193,7 +193,11 @@ function indicesFromStatus(status: StatusResponse | null): { indexes: MarketInde
     // Keep a validated last-known-good quote visible when the backend marks it
     // stale/degraded. It is labelled below; a transient provider outage should
     // not turn real persisted prices into four empty cards.
-    if (!Number.isFinite(parsedTimestamp) || parsedTimestamp > Date.now() + 5 * 60_000) continue;
+    if (
+      !Number.isFinite(parsedTimestamp)
+      || parsedTimestamp > Date.now() + 5 * 60_000
+      || !isDisplayableMarketIndex(displayTimestamp)
+    ) continue;
     fresh.push({
       name: index.name,
       symbol: index.symbol,
