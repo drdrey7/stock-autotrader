@@ -21,6 +21,22 @@ export const earningsEngineStateValues = [
 export type EarningsEngineState = (typeof earningsEngineStateValues)[number];
 
 /**
+ * Non-critical enrichment diagnostics attached to a source's health. Used to
+ * expose best-effort enrichment state (e.g. SEC EDGAR filing enrichment for
+ * the earnings calendar) without making it part of the critical gate:
+ * `consecutiveFailures` counts failed enrichment calls since the last success.
+ */
+export const secEnrichmentHealthSchema = z.object({
+  provider: z.string().trim().min(1).max(128),
+  lastAttempt: isoTimestampSchema.nullable(),
+  lastSuccess: isoTimestampSchema.nullable(),
+  lastError: z.string().trim().max(500).nullable(),
+  consecutiveFailures: z.number().int().nonnegative(),
+});
+
+export type SecEnrichmentHealth = z.infer<typeof secEnrichmentHealthSchema>;
+
+/**
  * Provider/read-model freshness metadata shared by every public data domain.
  * Nullable timestamps are intentional for sources that have not succeeded yet.
  */
@@ -34,6 +50,7 @@ export const sourceHealthSchema = z.strictObject({
   lastAttempt: isoTimestampSchema.nullable(),
   error: z.string().trim().min(1).max(500).nullable(),
   engineState: z.enum(earningsEngineStateValues).optional(),
+  enrichment: secEnrichmentHealthSchema.optional(),
 }).superRefine((source, ctx) => {
   const hasData = source.asOf !== null && source.ageSeconds !== null && source.lastSuccess !== null;
   const add = (path: (string | number)[], message: string) =>

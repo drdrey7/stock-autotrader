@@ -957,6 +957,69 @@ describe("GET /healthz/sources", () => {
     });
   });
 
+  it("stays 200 when market and Finnhub earnings are healthy despite SEC enrichment failing (issue #35)", async () => {
+    await withSystemTime(NOW, async () => {
+      // The issue #35 production shape: SEC EDGAR returned 403 on a scheduled
+      // earnings run while the Finnhub calendar pipeline stayed healthy. SEC
+      // failures are recorded as enrichment diagnostics only — never in the
+      // critical calendar/monitor error keys — so the gate must stay green.
+      const env = envWith({
+        ...healthyCriticalTables(),
+        earningsEngine: {
+          ...healthyEarningsEngine(),
+          sec_attempt_at: "2026-08-13T12:00:53.000Z",
+          sec_error: "provider HTTP 403",
+          sec_failures: "3",
+        },
+      });
+      const response = await worker.fetch(new Request("https://example.test/healthz/sources"), env);
+      const body = (await response.json()) as {
+        ok: boolean;
+        down: string[];
+        sources: Record<string, { engineState?: string; enrichment?: { provider: string; lastError: string | null; consecutiveFailures: number } }>;
+      };
+      expect(body.sources.earnings?.engineState).toBe("HEALTHY");
+      expect(body.sources.earnings?.enrichment).toMatchObject({
+        provider: "sec-edgar",
+        lastError: "provider HTTP 403",
+        consecutiveFailures: 3,
+      });
+      expect(body.down).toEqual([]);
+      expect(body.ok).toBe(true);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+    });
+  });
+
+  it("stays 503 when critical earnings health is genuinely unhealthy even if SEC enrichment succeeds", async () => {
+    await withSystemTime(NOW, async () => {
+      // The Finnhub-backed calendar failed (calendarError set) while SEC
+      // enrichment itself was healthy: the critical gate must still page.
+      const env = envWith({
+        ...healthyCriticalTables(),
+        earningsEngine: {
+          ...healthyEarningsEngine(),
+          calendar_error: "Finnhub HTTP 503",
+          sec_attempt_at: "2026-08-13T12:00:53.000Z",
+          sec_success_at: "2026-08-13T12:00:53.000Z",
+          sec_failures: "0",
+        },
+      });
+      const response = await worker.fetch(new Request("https://example.test/healthz/sources"), env);
+      const body = (await response.json()) as {
+        ok: boolean;
+        down: string[];
+        sources: Record<string, { engineState?: string; enrichment?: { lastError: string | null; consecutiveFailures: number } }>;
+      };
+      expect(body.sources.earnings?.engineState).toBe("DEGRADED");
+      expect(body.sources.earnings?.enrichment).toMatchObject({ lastError: null, consecutiveFailures: 0 });
+      expect(body.down).toEqual(["earnings"]);
+      expect(body.ok).toBe(false);
+      expect(response.status).toBe(503);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+    });
+  });
+
   it("ignores non-critical sources — a degraded scan engine alone must not page", async () => {
     await withSystemTime(NOW, async () => {
       const env = envWith({

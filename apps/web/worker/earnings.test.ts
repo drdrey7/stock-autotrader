@@ -22,6 +22,7 @@ import {
   reconcileCoreUniverse,
   readEarningsEvents,
   upsertEarningsEvent,
+  upsertUniverseMember,
 } from "./earnings/storage";
 import type {
   EarningsCalendarObservation,
@@ -929,5 +930,238 @@ describe("earnings D1 write model and API", () => {
     });
     expect(result.status).toBe("ok");
     expect((await readEarningsEvents(db, { from: "2026-08-13", to: "2026-08-13", status: "reported" })).map((event) => event.symbol)).toEqual(["AAPL"]);
+  });
+});
+
+describe("SEC EDGAR enrichment decoupling (issue #35)", () => {
+  const finnhubCalendar = (observations: EarningsCalendarObservation[]): EarningsCalendarProvider => ({
+    name: "finnhub-test",
+    supportsForwardCalendar: true,
+    fetchCalendar: async () => ({
+      provider: "finnhub-test",
+      observations,
+      warnings: [],
+      updatedAt: "2026-08-13T06:00:00.000Z",
+    }),
+  });
+
+  it("keeps earnings critical health healthy when SEC EDGAR returns 403 while the Finnhub calendar succeeds", async () => {
+    const db = new MemoryD1();
+    const official = new SecEdgarProvider(
+      "StockAutotraderTest/1.0 (+https://example.test/contact)",
+      async () => jsonResponse({ error: "forbidden" }, 403),
+    );
+    const calendar = finnhubCalendar([eventObservation({ providerEventId: "finnhub:MSFT:2026:1:2026-08-20" })]);
+    const result = await runEarningsJob({ DB: db } as never, new Date("2026-08-13T06:00:00.000Z"), "calendar", {
+      calendar,
+      consensus: calendar as never,
+      official,
+    });
+    // SEC enrichment failure is observable in diagnostics + job log, but the
+    // critical job status and calendar/monitor failure keys must stay clean.
+    expect(result.status).toBe("ok");
+    expect(db.meta.get("earningsCalendarLastError")).toBeUndefined();
+    expect(db.meta.get("earningsMonitorLastError")).toBeUndefined();
+    expect(db.meta.get("earningsEngineLastError")).toBeUndefined();
+    expect(db.meta.get("earningsEngineUpdatedAt")).toBe("2026-08-13T06:00:00.000Z");
+    // SEC diagnostics recorded separately.
+    expect(db.meta.get("earningsSecLastAttemptAt")).toBe("2026-08-13T06:00:00.000Z");
+    expect(db.meta.get("earningsSecLastError")).toContain("403");
+    expect(db.meta.get("earningsSecConsecutiveFailures")).toBe("1");
+    // The valid Finnhub calendar event survives without official enrichment.
+    const [event] = await readEarningsEvents(db, { from: "2026-08-20", to: "2026-08-20" });
+    expect(event).toMatchObject({ symbol: "MSFT", status: "scheduled", scheduledDate: "2026-08-20" });
+    expect(event?.secFilingUrl).toBeNull();
+  });
+
+  it("keeps earnings critical health healthy when SEC EDGAR fails with a network error/timeout", async () => {
+    const db = new MemoryD1();
+    const official = new SecEdgarProvider(
+      "StockAutotraderTest/1.0 (+https://example.test/contact)",
+      async () => { throw new TypeError("fetch failed"); },
+    );
+    const calendar = finnhubCalendar([eventObservation({ providerEventId: "finnhub:MSFT:2026:1:2026-08-20" })]);
+    const result = await runEarningsJob({ DB: db } as never, new Date("2026-08-13T06:00:00.000Z"), "calendar", {
+      calendar,
+      consensus: calendar as never,
+      official,
+    });
+    expect(result.status).toBe("ok");
+    expect(db.meta.get("earningsCalendarLastError")).toBeUndefined();
+    expect(db.meta.get("earningsMonitorLastError")).toBeUndefined();
+    expect(db.meta.get("earningsEngineLastError")).toBeUndefined();
+    expect(db.meta.get("earningsSecLastAttemptAt")).toBe("2026-08-13T06:00:00.000Z");
+    expect(db.meta.get("earningsSecLastError")).toContain("fetch failed");
+    // One logical SEC call failed (provider-internal retries are bounded
+    // inside the adapter, MAX_PROVIDER_ATTEMPTS = 2).
+    expect(db.meta.get("earningsSecConsecutiveFailures")).toBe("1");
+  });
+
+  it("marks earnings critical health degraded when the Finnhub calendar fails even if SEC enrichment succeeds", async () => {
+    const db = new MemoryD1();
+    const calendar: EarningsCalendarProvider = {
+      name: "finnhub-test",
+      supportsForwardCalendar: true,
+      fetchCalendar: async () => { throw new Error("Finnhub HTTP 503"); },
+    };
+    const official: OfficialFilingsProvider = {
+      name: "test-sec",
+      fetchCompanyMetadata: async () => ({
+        provider: "test-sec",
+        observations: [{ symbol: "MSFT", company: "Microsoft Corporation", cik: "0000789012", exchange: "NASDAQ" }],
+        warnings: [],
+        updatedAt: "2026-08-13T06:00:00.000Z",
+      }),
+      findRelevantFiling: async () => null,
+    };
+    const result = await runEarningsJob({ DB: db } as never, new Date("2026-08-13T06:00:00.000Z"), "calendar", {
+      calendar,
+      consensus: calendar as never,
+      official,
+    });
+    expect(result.status).toBe("degraded");
+    // Critical health reflects the Finnhub calendar failure regardless of SEC.
+    expect(db.meta.get("earningsCalendarLastError")).toContain("Finnhub HTTP 503");
+    expect(db.meta.get("earningsEngineLastError")).toContain("Finnhub HTTP 503");
+    expect(db.meta.get("earningsEngineUpdatedAt")).toBeUndefined();
+    // SEC enrichment itself succeeded and is recorded as healthy.
+    expect(db.meta.get("earningsSecLastAttemptAt")).toBe("2026-08-13T06:00:00.000Z");
+    expect(db.meta.get("earningsSecLastSuccessAt")).toBe("2026-08-13T06:00:00.000Z");
+    expect(db.meta.get("earningsSecLastError")).toBeUndefined();
+    expect(db.meta.get("earningsSecConsecutiveFailures")).toBe("0");
+  });
+
+  it("records SEC enrichment success and populates official filing fields", async () => {
+    const db = new MemoryD1();
+    const filing = {
+      url: "https://www.sec.gov/Archives/edgar/data/789012/000078901226000010/0000789012-26-000010-index.html",
+      accession: "0000789012-26-000010",
+      form: "10-Q",
+      filedAt: "2026-08-12T20:00:00.000Z",
+      reportDate: null,
+      items: [] as string[],
+    };
+    const official: OfficialFilingsProvider = {
+      name: "test-sec",
+      fetchCompanyMetadata: async () => ({
+        provider: "test-sec",
+        observations: [{ symbol: "MSFT", company: "Microsoft Corporation", cik: "0000789012", exchange: "NASDAQ" }],
+        warnings: [],
+        updatedAt: "2026-08-13T06:00:00.000Z",
+      }),
+      findRelevantFiling: async () => filing,
+    };
+    const calendar = finnhubCalendar([eventObservation({ scheduledDate: "2026-08-12", providerEventId: "finnhub:MSFT:2026:1:2026-08-12", epsActual: 3.2, revenueActual: 110 })]);
+    const result = await runEarningsJob({ DB: db } as never, new Date("2026-08-13T06:00:00.000Z"), "calendar", {
+      calendar,
+      consensus: calendar as never,
+      official,
+    });
+    expect(result.status).toBe("ok");
+    expect(db.meta.get("earningsCalendarLastError")).toBeUndefined();
+    expect(db.meta.get("earningsSecLastSuccessAt")).toBe("2026-08-13T06:00:00.000Z");
+    expect(db.meta.get("earningsSecLastError")).toBeUndefined();
+    expect(db.meta.get("earningsSecConsecutiveFailures")).toBe("0");
+    const [event] = await readEarningsEvents(db, { from: "2026-08-12", to: "2026-08-12" });
+    expect(event).toMatchObject({
+      symbol: "MSFT",
+      status: "reported",
+      epsActual: 3.2,
+      revenueActual: 110,
+      secAccession: "0000789012-26-000010",
+      secForm: "10-Q",
+      secFilingUrl: filing.url,
+    });
+  });
+
+  it("keeps the monitor job status ok when SEC filing enrichment fails", async () => {
+    const db = new MemoryD1();
+    await seedActiveCoreUniverse(db);
+    await upsertUniverseMember(db, { symbol: "MSFT", company: "Microsoft Corporation", cik: "0000789012", exchange: null, indexes: [], updatedAt: "2026-08-13T06:00:00.000Z" });
+    await upsertEarningsEvent(db, normalizedEvent({ scheduledDate: "2026-08-13", providerEventId: "monitor-msft" }));
+    const calendar: EarningsCalendarProvider = {
+      name: "finnhub-test",
+      fetchCalendar: async () => ({
+        provider: "finnhub-test",
+        observations: [eventObservation({ scheduledDate: "2026-08-13", providerEventId: "monitor-msft" })],
+        warnings: [],
+        updatedAt: "2026-08-13T19:30:00.000Z",
+      }),
+    };
+    const official = new SecEdgarProvider(
+      "StockAutotraderTest/1.0 (+https://example.test/contact)",
+      async () => jsonResponse({ error: "forbidden" }, 403),
+    );
+    const result = await runEarningsJob({ DB: db } as never, new Date("2026-08-13T19:30:00.000Z"), "monitor", {
+      calendar,
+      consensus: calendar as never,
+      official,
+    });
+    // The critical Finnhub-backed monitor path succeeded; the SEC filing
+    // lookup failure stays diagnostic-only.
+    expect(result.status).toBe("ok");
+    expect(db.meta.get("earningsMonitorLastError")).toBeUndefined();
+    expect(db.meta.get("earningsCalendarLastError")).toBeUndefined();
+    expect(db.meta.get("earningsSecLastAttemptAt")).toBe("2026-08-13T19:30:00.000Z");
+    expect(db.meta.get("earningsSecLastError")).toContain("403");
+    expect(db.meta.get("earningsSecConsecutiveFailures")).toBe("1");
+  });
+
+  it("preserves valid Finnhub data and prior SEC enrichment when a later SEC run fails", async () => {
+    const db = new MemoryD1();
+    const filing = {
+      url: "https://www.sec.gov/Archives/edgar/data/789012/000078901226000010/0000789012-26-000010-index.html",
+      accession: "0000789012-26-000010",
+      form: "10-Q",
+      filedAt: "2026-08-12T20:00:00.000Z",
+      reportDate: null,
+      items: [] as string[],
+    };
+    let secHealthy = true;
+    const official: OfficialFilingsProvider = {
+      name: "test-sec",
+      fetchCompanyMetadata: async () => {
+        if (!secHealthy) throw new Error("provider HTTP 403");
+        return {
+          provider: "test-sec",
+          observations: [{ symbol: "MSFT", company: "Microsoft Corporation", cik: "0000789012", exchange: "NASDAQ" }],
+          warnings: [],
+          updatedAt: "2026-08-13T06:00:00.000Z",
+        };
+      },
+      findRelevantFiling: async () => {
+        if (!secHealthy) throw new Error("provider HTTP 403");
+        return filing;
+      },
+    };
+    const observation = eventObservation({ scheduledDate: "2026-08-12", providerEventId: "finnhub:MSFT:2026:1:2026-08-12", epsActual: 3.2, revenueActual: 110 });
+    const calendar = finnhubCalendar([observation]);
+    const providers = {
+      calendar,
+      consensus: calendar as never,
+      official,
+    };
+    await expect(runEarningsJob({ DB: db } as never, new Date("2026-08-13T06:00:00.000Z"), "calendar", providers)).resolves.toMatchObject({ status: "ok" });
+    // SEC goes down; the same Finnhub calendar rows are synced again. The
+    // critical job status stays ok — SEC is enrichment-only — while the SEC
+    // diagnostics record the failure.
+    secHealthy = false;
+    await expect(runEarningsJob({ DB: db } as never, new Date("2026-08-13T06:00:00.000Z"), "calendar", providers)).resolves.toMatchObject({ status: "ok" });
+    // Critical health stays clean; SEC diagnostics show the new failure.
+    expect(db.meta.get("earningsCalendarLastError")).toBeUndefined();
+    expect(db.meta.get("earningsSecLastError")).toContain("403");
+    // Run 2: metadata call + filing lookup both failed (2 logical SEC calls).
+    expect(db.meta.get("earningsSecConsecutiveFailures")).toBe("2");
+    // The valid event keeps its Finnhub data and its prior official enrichment.
+    const [event] = await readEarningsEvents(db, { from: "2026-08-12", to: "2026-08-12" });
+    expect(event).toMatchObject({
+      symbol: "MSFT",
+      status: "reported",
+      epsActual: 3.2,
+      revenueActual: 110,
+      secAccession: "0000789012-26-000010",
+      secForm: "10-Q",
+      secFilingUrl: filing.url,
+    });
   });
 });

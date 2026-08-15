@@ -281,13 +281,19 @@ export async function buildSources(
   let earningsLastAttempt: string | null = null;
   let earningsError: string | null = null;
   let earningsUniverseCount = 0;
+  let secLastAttempt: string | null = null;
+  let secLastSuccess: string | null = null;
+  let secLastError: string | null = null;
+  let secConsecutiveFailures = 0;
   try {
     // Publication metadata records a successful empty calendar too: a valid
     // update with zero rows is healthy. Universe count is checked separately
     // so an empty filtered date range is never mistaken for initialization.
+    // The sec_* keys are enrichment diagnostics only: they never feed
+    // earningsError, so a SEC outage cannot degrade the critical gate.
     const row = await env.DB.prepare(
-      "SELECT (SELECT value FROM app_meta WHERE key = 'earningsEngineUpdatedAt') AS updated_at, (SELECT value FROM app_meta WHERE key = 'earningsEngineCheckedAt') AS checked_at, (SELECT value FROM app_meta WHERE key = 'earningsEngineLastAttemptAt') AS attempt_at, (SELECT value FROM app_meta WHERE key = 'earningsCalendarLastError') AS calendar_error, (SELECT value FROM app_meta WHERE key = 'earningsMonitorLastError') AS monitor_error, (SELECT value FROM app_meta WHERE key = 'earningsEngineLastError') AS last_error, (SELECT COUNT(*) FROM earnings_universe WHERE active = 1 AND source = 'core') AS universe_count",
-    ).first<{ updated_at: string | null; checked_at: string | null; attempt_at: string | null; calendar_error: string | null; monitor_error: string | null; last_error: string | null; universe_count: number | string | null }>();
+      "SELECT (SELECT value FROM app_meta WHERE key = 'earningsEngineUpdatedAt') AS updated_at, (SELECT value FROM app_meta WHERE key = 'earningsEngineCheckedAt') AS checked_at, (SELECT value FROM app_meta WHERE key = 'earningsEngineLastAttemptAt') AS attempt_at, (SELECT value FROM app_meta WHERE key = 'earningsCalendarLastError') AS calendar_error, (SELECT value FROM app_meta WHERE key = 'earningsMonitorLastError') AS monitor_error, (SELECT value FROM app_meta WHERE key = 'earningsEngineLastError') AS last_error, (SELECT value FROM app_meta WHERE key = 'earningsSecLastAttemptAt') AS sec_attempt_at, (SELECT value FROM app_meta WHERE key = 'earningsSecLastSuccessAt') AS sec_success_at, (SELECT value FROM app_meta WHERE key = 'earningsSecLastError') AS sec_error, (SELECT value FROM app_meta WHERE key = 'earningsSecConsecutiveFailures') AS sec_failures, (SELECT COUNT(*) FROM earnings_universe WHERE active = 1 AND source = 'core') AS universe_count",
+    ).first<{ updated_at: string | null; checked_at: string | null; attempt_at: string | null; calendar_error: string | null; monitor_error: string | null; last_error: string | null; sec_attempt_at: string | null; sec_success_at: string | null; sec_error: string | null; sec_failures: string | null; universe_count: number | string | null }>();
     const updatedAt = parseIsoTimestamp(row?.updated_at);
     const checkedAt = parseIsoTimestamp(row?.checked_at);
     earningsLastSuccess = updatedAt;
@@ -297,6 +303,13 @@ export async function buildSources(
       || row?.last_error?.trim()
       || null;
     earningsUniverseCount = Number(row?.universe_count ?? 0) || 0;
+    secLastAttempt = parseIsoTimestamp(row?.sec_attempt_at);
+    secLastSuccess = parseIsoTimestamp(row?.sec_success_at);
+    // Runtime writes are bounded (480 chars), but clamp again so an oversized
+    // app_meta value can never fail the strict source-health schema parse.
+    secLastError = row?.sec_error?.trim().slice(0, 500) || null;
+    const secFailuresRaw = row?.sec_failures;
+    secConsecutiveFailures = typeof secFailuresRaw === "string" && /^\d+$/.test(secFailuresRaw) ? Number(secFailuresRaw) : 0;
   } catch {
     earningsError = "Earnings store is unavailable.";
   }
@@ -350,7 +363,7 @@ export async function buildSources(
     }),
     earnings: {
       ...buildSourceHealth(earningsLastSuccess, earningsLastAttempt, {
-        provider: "finnhub + sec-edgar",
+        provider: "finnhub-earnings-calendar",
         staleAfterSeconds: EARNINGS_ENGINE_STALE_AFTER_SECONDS,
         // UNINITIALIZED is an unavailable state, not a synthetic failed job.
         // Real attempt timestamps remain visible when an actual pre-bootstrap
@@ -359,6 +372,16 @@ export async function buildSources(
         nowMs,
       }),
       engineState: earningsEngineState,
+      // SEC EDGAR is best-effort official enrichment, never part of the
+      // critical gate: a SEC 403/429/5xx/network outage is surfaced here as
+      // diagnostic state only, and `downCriticalSources` ignores it.
+      enrichment: {
+        provider: "sec-edgar",
+        lastAttempt: secLastAttempt,
+        lastSuccess: secLastSuccess,
+        lastError: secLastError,
+        consecutiveFailures: secConsecutiveFailures,
+      },
     },
     sentiment: options.marketContext?.sentiment
       ? buildSourceHealth(options.marketContext.sentiment.asOf, options.marketContext.sentiment.asOf, {

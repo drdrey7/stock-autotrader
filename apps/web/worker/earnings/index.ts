@@ -58,6 +58,12 @@ const EARNINGS_META_KEYS = {
   lastError: "earningsEngineLastError",
   calendarError: "earningsCalendarLastError",
   monitorError: "earningsMonitorLastError",
+  // SEC EDGAR enrichment diagnostics — non-critical observability only.
+  // These NEVER feed the critical earnings gate (calendar/monitor errors).
+  secLastAttempt: "earningsSecLastAttemptAt",
+  secLastSuccess: "earningsSecLastSuccessAt",
+  secLastError: "earningsSecLastError",
+  secConsecutiveFailures: "earningsSecConsecutiveFailures",
 } as const;
 
 export class EarningsQueryError extends Error {
@@ -70,6 +76,58 @@ export class EarningsQueryError extends Error {
 type EarningsJobMode = "calendar" | "monitor";
 
 const errorMessage = (error: unknown): string => error instanceof Error ? error.message : String(error);
+
+/**
+ * Accumulates SEC EDGAR enrichment outcomes for one earnings job. SEC is a
+ * best-effort enrichment source: its failures are recorded here (and in the
+ * SEC diagnostic meta keys) but never feed the critical calendar/monitor
+ * failure keys, so a SEC 403/429/5xx/network outage cannot degrade the
+ * critical earnings health gate while the Finnhub calendar path is healthy.
+ */
+interface SecEnrichmentDiagnostics {
+  attempts: number;
+  successes: number;
+  failures: number;
+  lastError: string | null;
+}
+
+const newSecDiagnostics = (): SecEnrichmentDiagnostics => ({ attempts: 0, successes: 0, failures: 0, lastError: null });
+
+function recordSecAttempt(sec: SecEnrichmentDiagnostics, error: unknown): void {
+  sec.attempts += 1;
+  sec.failures += 1;
+  sec.lastError = errorMessage(error).slice(0, 240);
+}
+
+function recordSecSuccess(sec: SecEnrichmentDiagnostics): void {
+  sec.attempts += 1;
+  sec.successes += 1;
+}
+
+/**
+ * Persists the job's SEC enrichment diagnostics. `earningsSecConsecutiveFailures`
+ * accumulates only while every SEC call in a job fails (a mixed job proves SEC
+ * is reachable); any success resets it. `earningsSecLastError` keeps the most
+ * recent failure until a fully-successful job clears it.
+ */
+async function flushSecDiagnostics(env: Env, collectedAt: string, sec: SecEnrichmentDiagnostics): Promise<void> {
+  if (sec.attempts === 0) return;
+  await setEarningsMeta(env.DB, EARNINGS_META_KEYS.secLastAttempt, collectedAt);
+  if (sec.successes > 0) {
+    await setEarningsMeta(env.DB, EARNINGS_META_KEYS.secLastSuccess, collectedAt);
+    await setEarningsMeta(env.DB, EARNINGS_META_KEYS.secConsecutiveFailures, "0");
+  }
+  if (sec.failures > 0) {
+    if (sec.lastError) await setEarningsMeta(env.DB, EARNINGS_META_KEYS.secLastError, sec.lastError.slice(0, 480));
+    if (sec.successes === 0) {
+      const previous = await readEarningsMeta(env.DB, EARNINGS_META_KEYS.secConsecutiveFailures).catch(() => null);
+      const previousCount = previous && /^\d+$/.test(previous) ? Number(previous) : 0;
+      await setEarningsMeta(env.DB, EARNINGS_META_KEYS.secConsecutiveFailures, String(Math.min(999, previousCount + sec.failures)));
+    }
+  } else {
+    await clearEarningsMeta(env.DB, EARNINGS_META_KEYS.secLastError);
+  }
+}
 
 function providerConsensusMap(observations: EarningsConsensusObservation[]): Map<string, EarningsConsensusObservation> {
   const map = new Map<string, EarningsConsensusObservation>();
@@ -118,6 +176,7 @@ async function syncUniverse(
   env: Env,
   providers: EarningsProviderBundle,
   collectedAt: string,
+  sec: SecEnrichmentDiagnostics,
 ): Promise<{ metadata: Awaited<ReturnType<typeof readUniverseMetadata>>; activeSymbols: ReadonlySet<string>; warnings: string[] }> {
   await reconcileCoreUniverse(env.DB, CORE_UNIVERSE, CORE_UNIVERSE_VERSION, collectedAt);
   const previous = await readUniverseMetadata(env.DB).catch(() => new Map<string, { company: string; cik: string | null; investorRelationsUrl: string | null }>());
@@ -125,24 +184,27 @@ async function syncUniverse(
   let metadata = new Map<string, { company: string; cik: string | null; investorRelationsUrl: string | null }>();
   try {
     const result = await providers.official.fetchCompanyMetadata(collectedAt);
+    recordSecSuccess(sec);
     warnings.push(...result.warnings);
     const bySymbol = new Map(result.observations.map((item) => [normalizeSymbol(item.symbol), item]));
     await upsertUniverseMembers(env.DB, CORE_UNIVERSE.map((symbol) => {
-      const sec = bySymbol.get(symbol);
+      const secRow = bySymbol.get(symbol);
       return {
         symbol,
-        company: sec?.company ?? previous.get(symbol)?.company ?? symbol,
-        cik: sec?.cik ?? previous.get(symbol)?.cik ?? null,
-        exchange: sec?.exchange ?? null,
-        investorRelationsUrl: sec?.investorRelationsUrl ?? previous.get(symbol)?.investorRelationsUrl ?? null,
+        company: secRow?.company ?? previous.get(symbol)?.company ?? symbol,
+        cik: secRow?.cik ?? previous.get(symbol)?.cik ?? null,
+        exchange: secRow?.exchange ?? null,
+        investorRelationsUrl: secRow?.investorRelationsUrl ?? previous.get(symbol)?.investorRelationsUrl ?? null,
         indexes: [],
         updatedAt: collectedAt,
       };
     }));
   } catch (error) {
-    const warning = `SEC company metadata degraded: ${errorMessage(error).slice(0, 180)}`;
-    warnings.push(warning);
-    console.warn(JSON.stringify({ message: "earnings universe metadata degraded", error: warning }));
+    // SEC company metadata is best-effort enrichment. A failure is recorded
+    // as enrichment diagnostics + a log line, but it must not degrade the
+    // critical earnings health gate (calendarError/monitorError/lastError).
+    recordSecAttempt(sec, error);
+    console.warn(JSON.stringify({ message: "earnings universe metadata degraded", error: errorMessage(error).slice(0, 180) }));
     // A metadata outage must not erase the last known CIK/company values.
     await upsertUniverseMembers(env.DB, CORE_UNIVERSE.map((symbol) => ({
       symbol,
@@ -162,11 +224,17 @@ async function findFiling(
   providers: EarningsProviderBundle,
   event: EarningsEngineEvent,
   today: string,
+  sec: SecEnrichmentDiagnostics,
 ): Promise<OfficialFiling | null> {
   if (!event.cik || !event.scheduledDate || event.scheduledDate > today) return null;
   try {
-    return await providers.official.findRelevantFiling(event, today);
+    const filing = await providers.official.findRelevantFiling(event, today);
+    recordSecSuccess(sec);
+    return filing;
   } catch (error) {
+    // Filing lookup is best-effort enrichment: record the failure in the SEC
+    // diagnostics (and the log) but keep the event usable without it.
+    recordSecAttempt(sec, error);
     console.warn(JSON.stringify({ message: "SEC filing lookup degraded", symbol: event.symbol, error: errorMessage(error).slice(0, 180) }));
     return null;
   }
@@ -184,6 +252,8 @@ function logEarningsJob(fields: {
   normalized: number;
   written: number;
   secLookups: number;
+  secAttempts?: number;
+  secFailures?: number;
   status: "ok" | "degraded" | "skipped";
   durationMs: number;
   warningCount: number;
@@ -197,6 +267,8 @@ function logEarningsJob(fields: {
     normalized: fields.normalized,
     written: fields.written,
     secLookups: fields.secLookups,
+    ...(fields.secAttempts !== undefined ? { secAttempts: fields.secAttempts } : {}),
+    ...(fields.secFailures !== undefined ? { secFailures: fields.secFailures } : {}),
     status: fields.status,
     durationMs: fields.durationMs,
     warningCount: fields.warningCount,
@@ -248,6 +320,7 @@ async function normalizeObservation(
   collectedAt: string,
   metadata: Map<string, { company: string; cik: string | null; investorRelationsUrl: string | null }>,
   filingLookups: { used: number; limit: number },
+  sec: SecEnrichmentDiagnostics,
 ): Promise<NormalizedEarningsEvent> {
   const member = metadata.get(observation.symbol);
   const base = normalizeEvent(observation, today, collectedAt, member, null);
@@ -256,7 +329,7 @@ async function normalizeObservation(
     && filingLookups.used < filingLookups.limit
     && withProviderNames.scheduledDate !== null
     && (withProviderNames.status === "reported" || withProviderNames.scheduledDate <= today);
-  const filing = canLookupFiling ? await findFiling(providers, withProviderNames, today) : null;
+  const filing = canLookupFiling ? await findFiling(providers, withProviderNames, today, sec) : null;
   if (canLookupFiling) filingLookups.used += 1;
   const final = filing
     ? applyProviderNames(normalizeEvent(observation, today, collectedAt, member, filing), providers)
@@ -330,12 +403,14 @@ async function runCalendarSync(env: Env, scheduledTime: Date, providers: Earning
   // publish forward schedules; missing values remain NULL/Not Available.
   const providerRange = range;
   await recordEarningsAttempt(env, collectedAt);
-  const universe = await syncUniverse(env, providers, collectedAt);
+  const sec = newSecDiagnostics();
+  const universe = await syncUniverse(env, providers, collectedAt, sec);
   const metadata = universe.metadata;
   const calendar = await readProviderCalendar(providers, providerRange, universe.activeSymbols, collectedAt);
   if (!calendar.success) {
     const detail = calendar.warnings[0]?.slice(0, 200) ?? "calendar unavailable";
     await rememberEarningsFailure(env, "calendar", collectedAt, detail);
+    await flushSecDiagnostics(env, collectedAt, sec);
     logEarningsJob({
       job: "calendar",
       provider: providers.calendar.name,
@@ -344,6 +419,8 @@ async function runCalendarSync(env: Env, scheduledTime: Date, providers: Earning
       normalized: 0,
       written: 0,
       secLookups: 0,
+      secAttempts: sec.attempts,
+      secFailures: sec.failures,
       status: "degraded",
       durationMs: Date.now() - startedAt,
       warningCount: universe.warnings.length + calendar.warnings.length,
@@ -355,10 +432,14 @@ async function runCalendarSync(env: Env, scheduledTime: Date, providers: Earning
   let written = 0;
   const filingLookups = { used: 0, limit: MAX_SEC_FILING_LOOKUPS_PER_JOB };
   const normalized: NormalizedEarningsEvent[] = [];
-  const warnings = [...universe.warnings, ...calendar.warnings];
+  // Critical warnings come from the calendar pipeline only (Finnhub). SEC
+  // enrichment warnings are diagnostics: they must not set the calendar
+  // failure key that drives critical earnings health.
+  const warnings = [...calendar.warnings];
+  const enrichmentWarnings = [...universe.warnings];
   for (const observation of calendar.observations) {
     try {
-      normalized.push(await normalizeObservation(providers, observation, today, collectedAt, metadata, filingLookups));
+      normalized.push(await normalizeObservation(providers, observation, today, collectedAt, metadata, filingLookups, sec));
       written += 1;
     } catch (error) {
       const warning = `${observation.symbol}: ${errorMessage(error).slice(0, 180)}`;
@@ -383,6 +464,10 @@ async function runCalendarSync(env: Env, scheduledTime: Date, providers: Earning
   await setEarningsMeta(env.DB, "earningsCalendarWindow", JSON.stringify(range));
   if (warnings.length > 0) await rememberEarningsFailure(env, "calendar", collectedAt, warnings[0]!);
   else await clearEarningsFailure(env, "calendar");
+  await flushSecDiagnostics(env, collectedAt, sec);
+  // Job status mirrors the critical Earnings/calendar pipeline only. SEC
+  // enrichment failures remain visible in the SEC diagnostics (meta keys +
+  // secAttempts/secFailures on the log line) but never degrade the job.
   const status = warnings.length > 0 ? "degraded" : "ok";
   const detail = `${written}/${calendar.observations.length} events in ${range.from}..${range.to}`;
   logEarningsJob({
@@ -393,9 +478,11 @@ async function runCalendarSync(env: Env, scheduledTime: Date, providers: Earning
     normalized: normalized.length,
     written,
     secLookups: filingLookups.used,
+    secAttempts: sec.attempts,
+    secFailures: sec.failures,
     status,
     durationMs: Date.now() - startedAt,
-    warningCount: warnings.length,
+    warningCount: warnings.length + enrichmentWarnings.length,
     detail,
   });
   return { status, detail };
@@ -427,12 +514,14 @@ async function runMonitoring(env: Env, scheduledTime: Date, providers: EarningsP
   }
   await setEarningsMeta(env.DB, "earningsEngineLastMonitorPollAt", collectedAt);
   await recordEarningsAttempt(env, collectedAt);
+  const sec = newSecDiagnostics();
   const activeUniverseSymbols = await readActiveUniverseSymbols(env.DB);
   const calendar = await readProviderCalendar(providers, range, activeUniverseSymbols, collectedAt);
   if (!calendar.success) {
     const detail = calendar.warnings[0]?.slice(0, 200) ?? "calendar unavailable";
     await rememberEarningsFailure(env, "monitor", collectedAt, detail);
-    logEarningsJob({ job: "monitor", provider: providers.calendar.name, range, observations: 0, normalized: 0, written: 0, secLookups: 0, status: "degraded", durationMs: Date.now() - startedAt, warningCount: calendar.warnings.length, detail });
+    await flushSecDiagnostics(env, collectedAt, sec);
+    logEarningsJob({ job: "monitor", provider: providers.calendar.name, range, observations: 0, normalized: 0, written: 0, secLookups: 0, secAttempts: sec.attempts, secFailures: sec.failures, status: "degraded", durationMs: Date.now() - startedAt, warningCount: calendar.warnings.length, detail });
     return { status: "degraded", detail };
   }
   const providerMap = new Map<string, EarningsCalendarObservation>();
@@ -456,7 +545,7 @@ async function runMonitoring(env: Env, scheduledTime: Date, providers: EarningsP
       const observation = providerMap.get(event.providerEventId ?? "")
         ?? providerMap.get(`${event.symbol}:${event.scheduledDate ?? ""}`)
         ?? observationFromExisting(event);
-      normalized.push(await normalizeObservation(providers, observation, today, collectedAt, metadata, filingLookups));
+      normalized.push(await normalizeObservation(providers, observation, today, collectedAt, metadata, filingLookups, sec));
       activeSymbols.add(event.symbol);
       successes += 1;
     } catch (error) {
@@ -468,7 +557,7 @@ async function runMonitoring(env: Env, scheduledTime: Date, providers: EarningsP
   for (const observation of todayObservations) {
     if (activeSymbols.has(observation.symbol)) continue;
     try {
-      normalized.push(await normalizeObservation(providers, observation, today, collectedAt, metadata, filingLookups));
+      normalized.push(await normalizeObservation(providers, observation, today, collectedAt, metadata, filingLookups, sec));
       successes += 1;
     } catch (error) {
       const warning = `${observation.symbol}: ${errorMessage(error).slice(0, 180)}`;
@@ -480,9 +569,12 @@ async function runMonitoring(env: Env, scheduledTime: Date, providers: EarningsP
   await setEarningsMeta(env.DB, "earningsEngineCheckedAt", collectedAt);
   if (warnings.length > 0) await rememberEarningsFailure(env, "monitor", collectedAt, warnings[0]!);
   else await clearEarningsFailure(env, "monitor");
+  await flushSecDiagnostics(env, collectedAt, sec);
+  // Same separation as the calendar job: status reflects the critical
+  // Finnhub-backed monitoring path only; SEC failures stay diagnostic.
   const status = warnings.length > 0 ? "degraded" : "ok";
   const detail = `${successes}/${Math.max(active.length, todayObservations.length)} events checked; provider=ok`;
-  logEarningsJob({ job: "monitor", provider: providers.calendar.name, range, observations: calendar.observations.length, normalized: normalized.length, written: normalized.length, secLookups: filingLookups.used, status, durationMs: Date.now() - startedAt, warningCount: warnings.length, detail });
+  logEarningsJob({ job: "monitor", provider: providers.calendar.name, range, observations: calendar.observations.length, normalized: normalized.length, written: normalized.length, secLookups: filingLookups.used, secAttempts: sec.attempts, secFailures: sec.failures, status, durationMs: Date.now() - startedAt, warningCount: warnings.length, detail });
   return {
     status,
     detail,
