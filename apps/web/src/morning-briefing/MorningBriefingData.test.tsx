@@ -123,6 +123,24 @@ it("keeps the latest validated session visible before the next US open", async (
   expect(view.container.querySelector(".market-section")).toHaveTextContent(/Updated 13 Aug/);
 });
 
+it("labels retained market quotes stale after a status refresh fails", async () => {
+  let statusCalls = 0;
+  const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input) === "/api/status") {
+      statusCalls += 1;
+      if (statusCalls > 1) return new Response(null, { status: 503 });
+    }
+    return originalFetch(input, init);
+  });
+
+  const view = renderApp();
+  await waitFor(() => expect(view.container.querySelector(".market-section")).not.toHaveTextContent("Not available"));
+  document.dispatchEvent(new Event("visibilitychange"));
+  await waitFor(() => expect(statusCalls).toBeGreaterThanOrEqual(2));
+  expect(view.container.querySelector(".market-section .card-subtitle")).toHaveTextContent("Stale");
+});
+
 it("renders a persisted market snapshot with an explicit stale label after a provider outage", async () => {
   vi.mocked(Date.now).mockReturnValue(Date.parse("2026-08-14T22:30:00Z"));
   vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
@@ -164,6 +182,38 @@ it("renders only qualified ideas and classifies scheduled earnings by date", asy
   expect(view.container.querySelector(".market-status")).toHaveTextContent("S&P 500 up +0.31%");
   expect(view.container.querySelector(".earnings-mini")).toHaveTextContent("Future Corp");
   expect(view.container.querySelector(".earnings-mini")).not.toHaveTextContent("Past Corp");
+});
+
+it("fails closed when the earnings payload has an invalid event list", async () => {
+  const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input) === "/api/earnings") return new Response(JSON.stringify({ events: {} }), { status: 200 });
+    return originalFetch(input, init);
+  });
+
+  const view = renderApp();
+  await waitFor(() => expect(view.container.querySelector(".earnings-mini")).toHaveTextContent("No upcoming earnings published."));
+  expect(view.container.querySelector(".recent-results")).toHaveTextContent("No recent earnings published.");
+});
+
+it("fails closed when an earnings event contains an invalid date", async () => {
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+    if (String(input) === "/api/earnings") return new Response(JSON.stringify([
+      { symbol: "BAD", company: "Malformed Corp", date: "2026-99-99", timing: "BMO" },
+    ]), { status: 200 });
+    return new Response(null, { status: 404 });
+  });
+
+  const view = renderApp();
+  await waitFor(() => expect(view.container.querySelector(".earnings-mini")).toHaveTextContent("No upcoming earnings published."));
+  expect(view.container).not.toHaveTextContent("Malformed Corp");
+});
+
+it("announces the full date for earnings calendar events", async () => {
+  sessionStorage.clear();
+  renderApp("/earnings");
+  expect(await screen.findByRole("heading", { name: "Earnings Calendar" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: /Future Corp, Scheduled · BMO, Friday, August 14, 2026/i })).toBeInTheDocument();
 });
 
 it("starts financially actionable sections empty when the backend has no data", async () => {

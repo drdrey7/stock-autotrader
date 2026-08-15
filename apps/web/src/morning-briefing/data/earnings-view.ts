@@ -55,13 +55,13 @@ function finiteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-function todayKey(): string {
+function todayKey(now = Date.now()): string {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: "America/New_York",
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
-  }).format(new Date());
+  }).format(new Date(now));
 }
 
 function normalizedStatus(value: unknown, scheduledDate: string | null): EarningsEngineEvent["status"] {

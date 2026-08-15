@@ -310,9 +310,80 @@ export function marketTodayKey(): string {
   return parts.replace(/-/g, "-");
 }
 
-function earningsFromApi(payload: EarningsApiResponse | EarningsEngineEvent[]): EarningsCompany[] {
-  const events = Array.isArray(payload) ? payload : payload.events;
-  return events.map((event) => eventWithViewMetadata(event));
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isDateKey(value: unknown): value is string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(Date.UTC(year!, month! - 1, day!));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month! - 1 && date.getUTCDate() === day;
+}
+
+const EARNINGS_STRING_FIELDS = [
+  "id", "symbol", "company", "cik", "date", "scheduledDate", "scheduledTime",
+  "fiscalPeriod", "fiscalPeriodEnd", "reportedAt", "calendarProvider", "consensusProvider",
+  "providerEventId", "providerUpdatedAt", "officialReportUrl", "investorRelationsUrl",
+  "secFilingUrl", "secAccession", "secForm", "secFiledAt", "createdAt", "updatedAt", "lastCheckedAt",
+] as const;
+const EARNINGS_NUMBER_FIELDS = [
+  "fiscalYear", "fiscalQuarter", "epsEstimate", "epsActual", "epsSurprise", "epsSurprisePct",
+  "revenueEstimate", "revenueActual", "revenueSurprise", "revenueSurprisePct",
+] as const;
+const EARNINGS_BOOLEAN_FIELDS = ["scheduled", "reported", "cancelled", "unknown"] as const;
+
+function invalidEarningsEventField(event: Record<string, unknown>): string | null {
+  if (typeof event.symbol !== "string" || event.symbol.trim().length === 0) return "symbol";
+  for (const field of EARNINGS_STRING_FIELDS) {
+    if (field in event && event[field] !== null && typeof event[field] !== "string") return field;
+  }
+  for (const field of EARNINGS_NUMBER_FIELDS) {
+    if (field in event && event[field] !== null && (typeof event[field] !== "number" || !Number.isFinite(event[field]))) return field;
+  }
+  for (const field of EARNINGS_BOOLEAN_FIELDS) {
+    if (field in event && event[field] !== null && typeof event[field] !== "boolean") return field;
+  }
+  if (event.date !== undefined && event.date !== null && !isDateKey(event.date)) return "date";
+  if (event.scheduledDate !== undefined && event.scheduledDate !== null && !isDateKey(event.scheduledDate)) return "scheduledDate";
+  if (event.status !== undefined && event.status !== null && !["scheduled", "reported", "cancelled", "unknown"].includes(String(event.status))) return "status";
+  if (event.timing !== undefined && event.timing !== null && !["BMO", "AMC", "TBD"].includes(String(event.timing))) return "timing";
+  if (event.epsResult !== undefined && event.epsResult !== null && !["Beat", "In Line", "Miss", "Not Available"].includes(String(event.epsResult))) return "epsResult";
+  if (event.revenueResult !== undefined && event.revenueResult !== null && !["Beat", "In Line", "Miss", "Not Available"].includes(String(event.revenueResult))) return "revenueResult";
+  if (event.overallResult !== undefined && event.overallResult !== null && !["Beat", "In Line", "Miss", "Mixed", "Not Available"].includes(String(event.overallResult))) return "overallResult";
+  return null;
+}
+
+function earningsFromApi(payload: unknown): EarningsCompany[] | null {
+  const events = Array.isArray(payload)
+    ? payload
+    : isRecord(payload) && Array.isArray(payload.events)
+      ? payload.events
+      : null;
+  if (events) {
+    // Fail closed, but never silently: a single malformed record blanks the
+    // whole earnings feature, so log which symbol/field was rejected to make
+    // a provider or contract drift diagnosable from the console.
+    for (const event of events) {
+      if (!isRecord(event)) {
+        console.warn("earnings: rejected non-object event", event);
+        return null;
+      }
+      const invalidField = invalidEarningsEventField(event);
+      if (invalidField !== null) {
+        console.warn("earnings: rejected malformed event", { symbol: event.symbol, field: invalidField, event });
+        return null;
+      }
+    }
+  }
+  if (!events) {
+    return null;
+  }
+  try {
+    return events.map((event) => eventWithViewMetadata(event as Partial<EarningsEngineEvent>));
+  } catch {
+    return null;
+  }
 }
 
 export function MorningBriefingDataProvider({ children }: { children: React.ReactNode }) {
@@ -380,7 +451,9 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
           marketIndexes: nextMarketIndexes,
           opportunities: nextOpportunities,
           marketUpdatedAt,
-          marketStale: liveIndices?.stale ?? (nextMarketIndexes.length > 0 ? previous.marketStale : false),
+          // A retained quote is still useful during a transient outage, but it
+          // must be labelled stale because this refresh did not revalidate it.
+          marketStale: liveIndices?.stale ?? (nextMarketIndexes.length > 0),
           opportunitiesUpdatedAt: liveOpportunities !== null && briefingUpdatedAt ? briefingUpdatedAt : previous.opportunitiesUpdatedAt,
           editionDate: nextEditionDate,
           editionType: nextEditionDate !== null ? (analysisBriefing?.editionType ?? previous.editionType) : null,
