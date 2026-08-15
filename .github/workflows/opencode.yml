@@ -28,6 +28,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           REPOSITORY: ${{ github.repository }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_IS_PR: ${{ github.event.issue.pull_request != null }}
           REVIEW_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
         run: |
           set -euo pipefail
@@ -35,14 +36,30 @@ jobs:
           reason=allowed
 
           if [[ "$EVENT_NAME" == "pull_request_review_comment" ]]; then
-            if [[ -n "$REVIEW_HEAD_REPO" && "$REVIEW_HEAD_REPO" != "$REPOSITORY" ]]; then
-              allowed=false
-              reason=fork_pull_request
+            # Review comments always target a PR. Fail closed unless we can
+            # positively prove the PR head belongs to this repository.
+            allowed=false
+            reason=target_lookup_failed
+            if [[ -n "$REVIEW_HEAD_REPO" ]]; then
+              if [[ "$REVIEW_HEAD_REPO" == "$REPOSITORY" ]]; then
+                allowed=true
+                reason=allowed
+              else
+                reason=fork_pull_request
+              fi
             fi
-          elif [[ "$EVENT_NAME" == "issue_comment" && -n "$ISSUE_NUMBER" ]]; then
-            if head_repo=$(gh api "repos/$REPOSITORY/pulls/$ISSUE_NUMBER" --jq '.head.repo.full_name' 2>/dev/null); then
-              if [[ "$head_repo" != "$REPOSITORY" ]]; then
-                allowed=false
+          elif [[ "$EVENT_NAME" == "issue_comment" && "$ISSUE_IS_PR" == "true" ]]; then
+            # issue_comment covers both issues and PR conversations. For PRs,
+            # fail closed when the GitHub API lookup errors or returns no head
+            # repository; only same-repository PRs may reach the write-capable
+            # OpenCode step.
+            allowed=false
+            reason=target_lookup_failed
+            if head_repo=$(gh api "repos/$REPOSITORY/pulls/$ISSUE_NUMBER" --jq '.head.repo.full_name' 2>/dev/null) && [[ -n "$head_repo" ]]; then
+              if [[ "$head_repo" == "$REPOSITORY" ]]; then
+                allowed=true
+                reason=allowed
+              else
                 reason=fork_pull_request
               fi
             fi
@@ -51,10 +68,15 @@ jobs:
           echo "allowed=$allowed" >> "$GITHUB_OUTPUT"
           echo "reason=$reason" >> "$GITHUB_OUTPUT"
 
-      - name: Explain unsupported fork command
+      - name: Explain blocked PR command
         if: steps.target.outputs.allowed != 'true'
         shell: bash
-        run: echo "OpenCode write-capable commands are disabled for fork pull requests because repository secrets are not exposed to fork workflows."
+        run: |
+          if [[ "${{ steps.target.outputs.reason }}" == "fork_pull_request" ]]; then
+            echo "OpenCode write-capable commands are disabled for fork pull requests because repository secrets are not exposed to fork workflows."
+          else
+            echo "OpenCode command blocked because the pull-request target could not be verified as belonging to this repository."
+          fi
 
       - name: Checkout repository
         if: steps.target.outputs.allowed == 'true'
