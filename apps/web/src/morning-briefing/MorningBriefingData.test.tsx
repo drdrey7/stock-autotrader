@@ -257,6 +257,23 @@ it("drops only the invalid records and keeps the valid ones", async () => {
   expect(view.container.querySelector(".earnings-mini")).not.toHaveTextContent("Malformed Corp");
 });
 
+it("treats a valid empty earnings publication as available, not unavailable", async () => {
+  sessionStorage.clear();
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+    if (String(input) === "/api/earnings") return new Response(JSON.stringify({
+      events: [],
+      summary: { today: 0, thisWeek: 0, next60Days: 0 },
+      from: "2026-01-01", to: "2026-10-11",
+    }), { status: 200 });
+    return new Response(null, { status: 404 });
+  });
+
+  const view = renderApp("/earnings");
+  await waitFor(() => expect(view.container.querySelector(".earnings-top-summary")).toHaveTextContent("reports"));
+  expect(view.container.querySelector(".earnings-top-summary")).toHaveTextContent("0");
+  expect(view.container.querySelector(".earnings-top-summary")).not.toHaveTextContent("—");
+});
+
 it("starts financially actionable sections empty when the backend has no data", async () => {
   vi.mocked(fetch).mockImplementation(async () => new Response(null, { status: 503 }));
   const view = renderApp();

@@ -361,9 +361,13 @@ function earningsFromApi(payload: unknown): EarningsCompany[] | null {
       ? payload.events
       : null;
   if (!events) return null;
-  // Drop only the invalid records, never blank the whole feature: a single
-  // malformed row (provider/contract drift) must not hide the valid ones.
-  // Each rejection is logged with symbol + field so the drift is diagnosable.
+  // A well-formed empty list is a valid publication (engine not yet
+  // populated, holiday weeks); only malformed payloads or fully rejected
+  // records are "unavailable". Drop only the invalid records, never blank
+  // the whole feature: a single malformed row (provider/contract drift)
+  // must not hide the valid ones. Each rejection is logged with symbol +
+  // field so the drift is diagnosable.
+  if (events.length === 0) return [];
   const valid: EarningsCompany[] = [];
   for (const event of events) {
     if (!isRecord(event)) {
