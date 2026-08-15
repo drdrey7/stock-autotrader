@@ -2,8 +2,10 @@
 
 `apps/web/worker/index.ts` is the entire public surface. It is **GET/HEAD/OPTIONS-only**
 except the one signed write endpoint below, unauthenticated, and every response is
-`application/json` with `cache-control: public, max-age=60`. There is no admin route
-and no broker/trading action anywhere in this API.
+`application/json`, cached `public, max-age=60` — except `/healthz/sources`, which
+is `no-store` (see below: it exists for an external monitor, so it must never
+serve a stale cached verdict). There is no admin route and no broker/trading
+action anywhere in this API.
 
 Schemas referenced below live in [`packages/contracts`](../packages/contracts); the
 Worker validates every response it builds against them before serving, so a
@@ -21,6 +23,73 @@ Liveness only — does not touch D1.
 ```json
 { "ok": true, "time": "2026-08-14T12:00:00.000Z" }
 ```
+
+## `GET /healthz/sources`
+
+For an external uptime monitor. Unlike `/healthz`, this touches D1 and reports
+whether the two critical public data sources — `market` and `earnings` — are
+effectively healthy, not just whether the Worker is up. `cache-control: no-store`
+(never cached, so every poll reflects live state).
+
+The verdict is computed from the runtime's own canonical health model
+(`buildSources()` + `buildMarketContextHealth()` in `worker/dashboard.ts`) —
+there is no second, parallel freshness/session computation in this endpoint:
+
+- `market` is down when its canonical state is `Unavailable`/`Error` (no valid
+  data: never collected, corrupt/future timestamps, or a failed read model),
+  when the canonical Market Context health record carries a runtime failure
+  (`lastError` from the last `degraded` collection run surfaces verbatim as
+  `sources.market.error`, distinguishing an active failure from the ordinary
+  prior-session marker), or when the required index set (SPX, NDX, DJI, VIX)
+  is incomplete. A complete set from a prior NY session date — `Cached` with
+  only the "incomplete or from a prior session" marker — is NOT down: that is
+  a closed market (overnight/weekend/holiday), not an outage. Because the
+  runtime writes all-or-nothing complete sets and records every failed run in
+  `marketContextHealth`, an intraday provider failure keeps paging (the
+  `lastError` persists) until a successful run actually replaces the data —
+  it never "heals" merely because the session window closed.
+  One check covers the no-error gaps the runtime cannot record itself (a
+  collection job that never runs — dead scheduler/trigger — or a provider
+  answering 200 with frozen quotes): each required index's own `updatedAt`
+  is checked against minutes of *actual session time* since it was written
+  (regular + post-close, via the canonical `marketCollectionWindow()`;
+  45 minutes = three missed 15-minute ticks). The count is monotonic —
+  session time never un-counts when the window closes — so an incident
+  flagged mid-session stays flagged through the close and across the
+  weekend until fresh data arrives, while a set genuinely fresh at Friday's
+  close accrues at most the post-close window's minutes, under the
+  threshold. A late-session freeze that misses the closing print keeps
+  accumulating through the post-close window and is flagged by ~16:45 ET.
+  A 96h absolute backstop catches outages spanning implausibly long closed
+  stretches.
+- `earnings` is down unless the canonical engine state is `HEALTHY`.
+  `engineState` is derived by `buildSources()` from the live
+  `earnings_universe` row count + last success + error + the canonical 26h
+  stale window, so an empty/invalid universe can never read as healthy off a
+  cached timestamp (`UNINITIALIZED` always pages), and an active collection
+  failure (`DEGRADED`) or a missed daily sync (`STALE`) always pages.
+
+Read-model failures unrelated to `market`/`earnings` (a broken `research` or
+`daily_briefings` read, say) fall back to safe defaults rather than aborting
+the check — only a failure in the market/earnings read path itself can make
+this endpoint report unhealthy for a reason other than actual staleness.
+
+All sources are included in the body for diagnostics, but only `critical`
+gates the status code — a degraded `opportunities` (the scan engine is a
+known, long-term stub — see `bot/README.md`) or `quickStats` (a permanent
+placeholder) never pages on their own.
+
+```json
+{
+  "ok": false,
+  "time": "2026-08-14T21:00:00.000Z",
+  "critical": ["market", "earnings"],
+  "down": ["market"],
+  "sources": { "market": { "state": "Cached", "error": "SPX: provider HTTP 429", "...": "..." }, "...": "..." }
+}
+```
+
+A hard store failure fails closed the same way: `503` with `{"ok": false, "error": "read_model_unavailable"}` — including when the critical Market Context health record itself cannot be read or parsed (`readMarketContextHealthStrict`), so a persisted provider error is never silently invisible. A degraded critical read (empty read model) fails closed with `503` and the per-source diagnostic instead.
 
 ## `GET /api/status`
 

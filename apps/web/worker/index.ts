@@ -10,12 +10,14 @@ import {
   readLatestBriefing,
 } from "./daily-briefings";
 import { readXPosts } from "./x-posts";
-import { readMarketContext, readMarketContextHealth, runMarketContextJob, runSentimentJob } from "./market-context";
+import { readMarketContext, readMarketContextHealth, readMarketContextHealthStrict, runMarketContextJob, runSentimentJob } from "./market-context";
 import { EarningsQueryError, readEarningsApi, runEarningsJob } from "./earnings";
 import { jobsForProductionCron } from "./cron-dispatcher";
 import {
   buildDashboard,
   buildSources,
+  downCriticalSources,
+  emptyDashboard,
   emptyMarketData,
   readCandidateBySymbol,
   readMarketData,
@@ -44,12 +46,12 @@ export interface Env {
   SEC_USER_AGENT?: string;
 }
 
-const json = (data: unknown, status = 200) =>
+const json = (data: unknown, status = 200, cacheControl = "public, max-age=60") =>
   new Response(JSON.stringify(data), {
     status,
     headers: {
       "content-type": "application/json; charset=utf-8",
-      "cache-control": "public, max-age=60",
+      "cache-control": cacheControl,
       "access-control-allow-origin": "*",
       "access-control-allow-methods": "GET, HEAD, OPTIONS",
       "access-control-allow-headers": "Content-Type, Accept",
@@ -65,6 +67,17 @@ const internalJson = (data: unknown, status = 200) => new Response(JSON.stringif
     "x-content-type-options": "nosniff",
   },
 });
+
+/**
+ * The sources an external uptime monitor should page on (reported as
+ * `critical` in /healthz/sources' body). Gated by downCriticalSources() in
+ * dashboard.ts against the canonical health model — deliberately excludes
+ * `opportunities` (the scan engine is a known, long-term no-op stub — see
+ * bot/README.md) and `quickStats` (a permanently-Unavailable placeholder):
+ * gating on either would make this endpoint permanently red and train
+ * whoever's watching it to ignore alerts.
+ */
+const CRITICAL_HEALTH_SOURCES = ["market", "earnings"] as const;
 
 const DEPLOYMENT_BOOTSTRAP_PATH = "/__internal/deployment/bootstrap";
 const DEPLOYMENT_BOOTSTRAP_NONCE_KEY = "deploymentBootstrapNonce";
@@ -200,6 +213,52 @@ export default {
 
     if (pathname === "/healthz") {
       return json({ ok: true, time: new Date().toISOString() });
+    }
+    if (pathname === "/healthz/sources") {
+      // For external uptime monitors: unlike /healthz (liveness only), this
+      // touches D1 and reports whether the critical public data sources —
+      // market data and earnings — are effectively healthy per the runtime's
+      // own canonical health model (see downCriticalSources). Never cached,
+      // so a monitor's poll always reflects live state, not a stale edge hit.
+      try {
+        // buildDashboard()/readBriefingStatus() read tables (strategies,
+        // candidates, positions, research, daily_briefings, ...) that have
+        // nothing to do with the two sources this endpoint gates on — a bug
+        // in any of them must not page for an unrelated reason, so they fall
+        // back to their safe-empty defaults instead of failing the request.
+        // readMarketContext() and readMarketContextHealthStrict() are the
+        // critical-path reads for `market`: the former fails closed
+        // internally (empty model -> Unavailable -> 503), the latter throws
+        // when the runtime health record is unreadable (a persisted provider
+        // error must never be invisible), and any unexpected throw falls
+        // through to read_model_unavailable.
+        const [dashboard, briefing, marketContext, marketContextHealth] = await Promise.all([
+          buildDashboard(env).catch((err) => {
+            console.error("healthz/sources: non-critical dashboard read failed", err);
+            return emptyDashboard;
+          }),
+          readBriefingStatus(env.DB).catch((err) => {
+            console.error("healthz/sources: non-critical briefing read failed", err);
+            return unavailableBriefingStatus();
+          }),
+          readMarketContext(env.DB),
+          readMarketContextHealthStrict(env.DB),
+        ]);
+        const sources = await buildSources(env, { briefing, dashboard, marketContext, marketContextHealth });
+        const down = downCriticalSources(sources, marketContext);
+        return json(
+          { ok: down.length === 0, time: new Date().toISOString(), critical: CRITICAL_HEALTH_SOURCES, down, sources },
+          down.length === 0 ? 200 : 503,
+          "no-store",
+        );
+      } catch (err) {
+        console.error("healthz/sources error", err);
+        return json(
+          { ok: false, time: new Date().toISOString(), critical: CRITICAL_HEALTH_SOURCES, error: "read_model_unavailable" },
+          503,
+          "no-store",
+        );
+      }
     }
     if (pathname === "/api/status") {
       try {

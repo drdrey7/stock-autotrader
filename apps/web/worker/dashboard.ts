@@ -21,8 +21,10 @@ import type { Env } from "./index";
 import type { BriefingStatus } from "./daily-briefings";
 import { EARNINGS_ENGINE_STALE_AFTER_SECONDS } from "./earnings";
 import {
+  INDEX_DEFINITIONS,
   MARKET_CONTEXT_STALE_AFTER_SECONDS,
   SENTIMENT_STALE_AFTER_SECONDS,
+  marketCollectionWindow,
   readMarketContextHealth,
   type MarketContextHealthRecord,
   type MarketContextReadModel,
@@ -191,6 +193,8 @@ export function buildMarketSourceHealth(market: MarketDataSnapshot, nowMs = Date
   });
 }
 
+const MARKET_SET_INCOMPLETE_OR_PRIOR_SESSION = "Market index set is incomplete or from a prior session.";
+
 export function buildMarketContextHealth(
   context: MarketContextReadModel,
   nowMs = Date.now(),
@@ -234,7 +238,7 @@ export function buildMarketContextHealth(
     staleAfterSeconds: MARKET_CONTEXT_STALE_AFTER_SECONDS,
     error: health?.lastError ?? (complete && indexDates.size === 1 && latestDate === currentDate
       ? null
-      : "Market index set is incomplete or from a prior session."),
+      : MARKET_SET_INCOMPLETE_OR_PRIOR_SESSION),
     nowMs,
   });
 }
@@ -245,13 +249,19 @@ export async function buildSources(
     briefing: BriefingStatus;
     dashboard: DashboardData;
     marketContext?: MarketContextReadModel;
+    marketContextHealth?: MarketContextHealthRecord | null;
     nowMs?: number;
   },
 ): Promise<PublicSourceHealth> {
   const nowMs = options.nowMs ?? Date.now();
   const brief = options.briefing;
   const market = options.dashboard.marketData;
-  const marketContextHealth = options.marketContext ? await readMarketContextHealth(env.DB) : null;
+  // /healthz/sources passes the strict-read record in (it must fail closed
+  // when the record is unreadable); every other caller lets the lenient read
+  // collapse absent/unreadable into null, as the public UI expects.
+  const marketContextHealth = options.marketContextHealth !== undefined
+    ? options.marketContextHealth
+    : options.marketContext ? await readMarketContextHealth(env.DB) : null;
 
   let xLastSuccess: string | null = null;
   let xError: string | null = null;
@@ -371,6 +381,130 @@ export async function buildSources(
     }),
   };
   return validateSourceHealth(sources);
+}
+
+/**
+ * Canonical health gate for /healthz/sources. Returns the critical sources
+ * that are *effectively unhealthy* according to the runtime's own health
+ * model (buildSources + buildMarketContextHealth) — the error path comes
+ * straight from canonical state, and the one gap the runtime cannot record
+ * itself (a collection that silently stops without ever producing an error)
+ * is covered by a monotonic session-time check over the canonical read model:
+ *
+ * - `market` is down when its canonical state is `Unavailable`/`Error` (no
+ *   valid data: never collected, corrupt/future timestamps, or an empty
+ *   read model), when the canonical Market Context health record carries a
+ *   runtime failure (`lastError` surfaces verbatim as `sources.market.error`,
+ *   distinguishing an active collection failure from the ordinary
+ *   prior-session marker), or when the required index set is incomplete.
+ *   A complete set from a prior NY session date (`Cached` with only the
+ *   "incomplete or from a prior session" marker) is NOT down — that is a
+ *   closed market (overnight/weekend/holiday), not an outage.
+ * - `marketDataOverdue()` below closes the no-error gaps: a collection job
+ *   that never runs (dead scheduler/trigger), a provider that keeps
+ *   answering 200 with frozen quotes, or a single index that silently stops
+ *   updating while the others move. It counts minutes of *actual session
+ *   time* (regular + post-close, via the canonical
+ *   `marketCollectionWindow()`) since each required index's own `updatedAt`,
+ *   flagging once that exceeds MARKET_DATA_MAX_ACTIVE_MINUTES (45 — three
+ *   missed 15-minute ticks). The count is monotonic — session time never
+ *   un-counts when the window closes — so an incident flagged mid-session
+ *   stays flagged through the close and across the weekend until fresh data
+ *   actually arrives (it never "heals" merely because the market closed),
+ *   while a set that was genuinely fresh at Friday's close accrues at most
+ *   the 30 post-close minutes, under the threshold, over the weekend. A
+ *   late-session freeze that misses the closing print keeps accumulating
+ *   through the post-close window and is flagged by ~16:45 ET. A 96h
+ *   absolute backstop catches outages spanning implausibly long closed
+ *   stretches (multiple back-to-back holidays) that accumulate no session
+ *   minutes at all.
+ * - `earnings` is down unless the canonical engine state is `HEALTHY`.
+ *   `engineState` is derived by buildSources from the live
+ *   `earnings_universe` row count + last success + error + the canonical
+ *   26h stale window, so an empty/invalid universe can never read as
+ *   healthy off a cached timestamp (UNINITIALIZED always down), and an
+ *   active collection failure (DEGRADED) or missed daily sync (STALE) is
+ *   always down.
+ *
+ * Non-critical sources (`opportunities`, `x`, `sentiment`, `quickStats`,
+ * `briefing`) never gate this endpoint.
+ */
+const MARKET_DATA_MAX_ACTIVE_MINUTES = 45;
+const MARKET_DATA_MAX_AGE_SECONDS_CLOSED = 96 * 60 * 60;
+
+/**
+ * Whether at least `thresholdMinutes` of session time have elapsed between
+ * two instants, sampled every 5 minutes rather than exactly (a per-minute
+ * sweep over a MARKET_DATA_MAX_AGE_SECONDS_CLOSED-wide span is ~5760
+ * Intl-backed date computations — measurably slow on every poll of a health
+ * endpoint). 5-minute steps cap the scan at ~1150 and can only misjudge a
+ * real span by up to one step (5 minutes) right at the threshold boundary.
+ * Both the regular and the post-close window count as session time: a
+ * freeze in the final regular minutes then misses the closing and post-close
+ * collections, which together accumulate past the 45-minute allowance by
+ * ~16:45 ET and keep the incident flagged through the close — a healthy
+ * runtime's post-close runs reset the clock with the closing print, landing
+ * at most 30 minutes below the threshold. Returns as soon as the threshold
+ * is crossed — the case that matters most (data that is actually overdue)
+ * is also the cheapest, while only the "still within tolerance" case scans
+ * further.
+ */
+function regularSessionMinutesExceed(fromMs: number, toMs: number, thresholdMinutes: number): boolean {
+  const stepMs = 5 * 60 * 1000;
+  let minutes = 0;
+  for (let t = fromMs; t < toMs; t += stepMs) {
+    if (marketCollectionWindow(new Date(t)) !== null) {
+      minutes += 5;
+      if (minutes > thresholdMinutes) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Monotonic session-time staleness for the market read model. Checks every
+ * required index's own `updatedAt` (not the aggregate newest row, which a
+ * single stuck index would hide), accumulating only regular-session minutes.
+ * Corrupt data (missing index, unparseable/future timestamps) fails closed.
+ */
+function marketDataOverdue(context: MarketContextReadModel, nowMs: number): boolean {
+  const bySymbol = new Map(context.indices.map((index) => [index.symbol, index]));
+  // Indices normally share one updatedAt (one atomic collection tick), so
+  // the multi-hour scan runs once per distinct timestamp, not per index.
+  const overdueByUpdatedMs = new Map<number, boolean>();
+  return INDEX_DEFINITIONS.some((definition) => {
+    const index = bySymbol.get(definition.symbol);
+    if (!index) return true;
+    const updatedMs = parseSafeTimestamp(index.updatedAt);
+    if (updatedMs === null) return true;
+    const ageSeconds = (nowMs - updatedMs) / 1000;
+    if (ageSeconds < 0 || ageSeconds > MARKET_DATA_MAX_AGE_SECONDS_CLOSED) return true;
+    const cached = overdueByUpdatedMs.get(updatedMs);
+    if (cached !== undefined) return cached;
+    const overdue = regularSessionMinutesExceed(updatedMs, nowMs, MARKET_DATA_MAX_ACTIVE_MINUTES);
+    overdueByUpdatedMs.set(updatedMs, overdue);
+    return overdue;
+  });
+}
+
+export function downCriticalSources(
+  sources: PublicSourceHealth,
+  marketContext: MarketContextReadModel,
+  nowMs = Date.now(),
+): ("market" | "earnings")[] {
+  const down: ("market" | "earnings")[] = [];
+  const market = sources.market;
+  const marketSetComplete = marketContext.indices.length === INDEX_DEFINITIONS.length
+    && INDEX_DEFINITIONS.every((definition) =>
+      marketContext.indices.some((index) => index.symbol === definition.symbol));
+  const marketDown = market.state === "Unavailable"
+    || market.state === "Error"
+    || (market.state === "Cached" && market.error !== MARKET_SET_INCOMPLETE_OR_PRIOR_SESSION)
+    || !marketSetComplete
+    || marketDataOverdue(marketContext, nowMs);
+  if (marketDown) down.push("market");
+  if (sources.earnings.engineState !== "HEALTHY") down.push("earnings");
+  return down;
 }
 
 /**
