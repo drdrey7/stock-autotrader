@@ -18,7 +18,7 @@ for (const route of routes) {
       // Below the breakpoint the sidebar is replaced by a compact top bar whose
       // hamburger opens the drawer; navigation is not on screen until then.
       await expect(page.locator(".shell-topbar .shell-brand")).toBeVisible();
-      await expect(page.getByRole("button", { name: /open main menu/i })).toBeVisible();
+      await expect(page.getByRole("button", { name: /main menu/i })).toBeVisible();
     } else {
       await expect(page.locator(".shell-sidebar .shell-brand")).toBeVisible();
       await expect(page.getByRole("navigation", { name: "Primary navigation" }).first()).toBeVisible();
@@ -51,7 +51,7 @@ test.describe("mobile shell", () => {
   test("drawer opens, navigates and closes with the correct aria state", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
 
-    const hamburger = page.getByRole("button", { name: /open main menu/i });
+    const hamburger = page.getByRole("button", { name: /main menu/i });
     await expect(hamburger).toBeVisible();
     await expect(hamburger).toHaveAttribute("aria-expanded", "false");
 
@@ -71,12 +71,12 @@ test.describe("mobile shell", () => {
   test("Escape and the explicit close button dismiss the drawer", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
 
-    await page.getByRole("button", { name: /open main menu/i }).click();
+    await page.getByRole("button", { name: /main menu/i }).click();
     await page.keyboard.press("Escape");
-    await expect(page.getByRole("button", { name: /open main menu/i })).toHaveAttribute("aria-expanded", "false");
+    await expect(page.getByRole("button", { name: /main menu/i })).toHaveAttribute("aria-expanded", "false");
 
-    await page.getByRole("button", { name: /open main menu/i }).click();
+    await page.getByRole("button", { name: /main menu/i }).click();
     await page.getByRole("button", { name: "Close menu" }).click();
-    await expect(page.getByRole("button", { name: /open main menu/i })).toHaveAttribute("aria-expanded", "false");
+    await expect(page.getByRole("button", { name: /main menu/i })).toHaveAttribute("aria-expanded", "false");
   });
 });
