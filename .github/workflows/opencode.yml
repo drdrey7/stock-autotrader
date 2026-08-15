@@ -9,7 +9,7 @@ on:
 jobs:
   opencode:
     if: |
-      (contains(github.event.comment.body, '/oc') || contains(github.event.comment.body, '/opencode')) &&
+      (startsWith(github.event.comment.body, '/oc') || startsWith(github.event.comment.body, '/opencode')) &&
       (github.event.comment.author_association == 'OWNER' ||
        github.event.comment.author_association == 'MEMBER' ||
        github.event.comment.author_association == 'COLLABORATOR')
@@ -28,6 +28,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           REPOSITORY: ${{ github.repository }}
           COMMENTER: ${{ github.event.comment.user.login }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           ISSUE_IS_PR: ${{ github.event.issue.pull_request != null }}
           REVIEW_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
@@ -35,22 +36,29 @@ jobs:
           set -euo pipefail
 
           allowed=false
-          reason=permission_lookup_failed
+          reason=invalid_command
 
-          # author_association is not an authorization boundary: MEMBER and
-          # COLLABORATOR can still have read/triage-only access. Fail closed
-          # unless GitHub positively reports effective write-capable access.
-          if permission=$(gh api "repos/$REPOSITORY/collaborators/$COMMENTER/permission" --jq '.permission' 2>/dev/null) && [[ -n "$permission" ]]; then
-            case "$permission" in
-              admin|maintain|write)
-                allowed=true
-                reason=allowed
-                ;;
-              *)
-                allowed=false
-                reason=insufficient_permission
-                ;;
-            esac
+          # Require an explicit standalone command at the beginning of the
+          # comment. This rejects lookalikes such as /octokit or /ocsp and
+          # prose that merely mentions /oc later in the comment.
+          if [[ "$COMMENT_BODY" =~ ^/(oc|opencode)($|[[:space:]]) ]]; then
+            reason=permission_lookup_failed
+
+            # author_association is not an authorization boundary: MEMBER and
+            # COLLABORATOR can still have read/triage-only access. Fail closed
+            # unless GitHub positively reports effective write-capable access.
+            if permission=$(gh api "repos/$REPOSITORY/collaborators/$COMMENTER/permission" --jq '.permission' 2>/dev/null) && [[ -n "$permission" ]]; then
+              case "$permission" in
+                admin|maintain|write)
+                  allowed=true
+                  reason=allowed
+                  ;;
+                *)
+                  allowed=false
+                  reason=insufficient_permission
+                  ;;
+              esac
+            fi
           fi
 
           # Only inspect the PR target after the commenter has passed the
@@ -88,6 +96,9 @@ jobs:
         shell: bash
         run: |
           case "${{ steps.target.outputs.reason }}" in
+            invalid_command)
+              echo "OpenCode command ignored: use /oc or /opencode as a standalone command at the start of the comment."
+              ;;
             insufficient_permission)
               echo "OpenCode command blocked: commenter does not have write, maintain, or admin permission on this repository."
               ;;
