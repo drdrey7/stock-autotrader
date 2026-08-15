@@ -23,6 +23,8 @@ import { EARNINGS_ENGINE_STALE_AFTER_SECONDS } from "./earnings";
 import {
   MARKET_CONTEXT_STALE_AFTER_SECONDS,
   SENTIMENT_STALE_AFTER_SECONDS,
+  readMarketContextHealth,
+  type MarketContextHealthRecord,
   type MarketContextReadModel,
 } from "./market-context";
 import { activeUniverseExistsSql } from "./stock-universe";
@@ -189,13 +191,17 @@ export function buildMarketSourceHealth(market: MarketDataSnapshot, nowMs = Date
   });
 }
 
-export function buildMarketContextHealth(context: MarketContextReadModel, nowMs = Date.now()): SourceHealth {
+export function buildMarketContextHealth(
+  context: MarketContextReadModel,
+  nowMs = Date.now(),
+  health: MarketContextHealthRecord | null = null,
+): SourceHealth {
   const latestSourceMs = parseSafeTimestamp(context.latestSourceTimestamp);
   if (latestSourceMs === null) {
     return buildSourceHealth(null, null, {
-      provider: "unavailable",
+      provider: health?.provider ?? "unavailable",
       staleAfterSeconds: MARKET_CONTEXT_STALE_AFTER_SECONDS,
-      error: "No market index data has been collected.",
+      error: health?.lastError ?? "No market index data has been collected.",
       nowMs,
     });
   }
@@ -223,12 +229,12 @@ export function buildMarketContextHealth(context: MarketContextReadModel, nowMs 
       day: "2-digit",
     }).format(new Date(timestamp))];
   }));
-  return buildSourceHealth(new Date(latestSourceMs).toISOString(), context.latestCollectedAt ?? context.latestSourceTimestamp, {
-    provider: context.provider ?? "unavailable",
+  return buildSourceHealth(new Date(latestSourceMs).toISOString(), health?.lastAttemptAt ?? context.latestCollectedAt ?? context.latestSourceTimestamp, {
+    provider: health?.provider ?? context.provider ?? "unavailable",
     staleAfterSeconds: MARKET_CONTEXT_STALE_AFTER_SECONDS,
-    error: complete && indexDates.size === 1 && latestDate === currentDate
+    error: health?.lastError ?? (complete && indexDates.size === 1 && latestDate === currentDate
       ? null
-      : "Market index set is incomplete or from a prior session.",
+      : "Market index set is incomplete or from a prior session."),
     nowMs,
   });
 }
@@ -245,6 +251,7 @@ export async function buildSources(
   const nowMs = options.nowMs ?? Date.now();
   const brief = options.briefing;
   const market = options.dashboard.marketData;
+  const marketContextHealth = options.marketContext ? await readMarketContextHealth(env.DB) : null;
 
   let xLastSuccess: string | null = null;
   let xError: string | null = null;
@@ -314,7 +321,7 @@ export async function buildSources(
       error: null,
       nowMs,
     }),
-    market: options.marketContext ? buildMarketContextHealth(options.marketContext, nowMs) : buildMarketSourceHealth(market, nowMs),
+    market: options.marketContext ? buildMarketContextHealth(options.marketContext, nowMs, marketContextHealth) : buildMarketSourceHealth(market, nowMs),
     opportunities: buildSourceHealth(scanSuccessAt, lastDataUpdate, {
       provider: "scan engine",
       staleAfterSeconds: HEALTHY_STALE_AFTER_SECONDS,

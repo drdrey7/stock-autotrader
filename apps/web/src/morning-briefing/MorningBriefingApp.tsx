@@ -108,7 +108,7 @@ function AnimatedValue({ value, decimals = 2 }: { value: number; decimals?: numb
 }
 
 function MarketCards() {
-  const { marketIndexes: liveIndexes, marketUpdatedAt } = useMorningBriefingData();
+  const { marketIndexes: liveIndexes, marketUpdatedAt, marketStale } = useMorningBriefingData();
   const aliases: Record<string, string[]> = {
     "S&P 500": ["SPX", "S&P 500"],
     "Nasdaq-100": ["NDX", "NASDAQ", "NASDAQ-100"],
@@ -120,7 +120,7 @@ function MarketCards() {
     const itemSymbol = item.symbol.toUpperCase();
     return itemName === name.toUpperCase() || (aliases[name] ?? []).some((alias) => alias === itemName || alias === itemSymbol);
   });
-  return <section className="market-section" aria-label="Market overview">{marketUpdatedAt && <p className="card-subtitle">Updated {formatUpdatedAt(marketUpdatedAt)}</p>}<div className="market-grid">{marketCardDefinitions.map(({ name, symbol }) => {
+  return <section className={`market-section${marketStale ? " market-stale" : ""}`} aria-label="Market overview">{marketUpdatedAt && <p className="card-subtitle">Updated {formatUpdatedAt(marketUpdatedAt)}{marketStale ? " · Stale" : ""}</p>}<div className="market-grid">{marketCardDefinitions.map(({ name, symbol }) => {
     const item = findLive(name);
     return <Card key={symbol} className="market-card"><div><span>{name}</span><small>{item?.symbol ?? symbol}</small></div>{item ? <><strong><AnimatedValue value={item.value}/></strong><em className={item.change > 0 ? "positive" : item.change < 0 ? "negative" : "neutral"}>{item.change > 0 ? <ArrowUpRight/> : item.change < 0 ? <ArrowDownRight/> : null}{item.change > 0 ? "+" : ""}{item.change.toFixed(2)}%</em></> : <><strong className="neutral">Not available</strong><em className="neutral" aria-hidden="true">—</em></>}</Card>;
   })}</div></section>;

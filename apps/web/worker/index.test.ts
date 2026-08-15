@@ -368,6 +368,20 @@ describe("buildDashboard()", () => {
     expect(body.status.apiHealth).toBe("degraded");
   });
 
+  it("fetches its base tables in a single D1 batch round trip, not eight separate ones", async () => {
+    const env = envWith(healthyTables());
+    const batchSpy = vi.spyOn(env.DB, "batch");
+    const prepareSpy = vi.spyOn(env.DB, "prepare");
+    await buildDashboard(env);
+
+    expect(batchSpy).toHaveBeenCalledTimes(1);
+    expect(batchSpy.mock.calls[0]![0]).toHaveLength(8);
+    // 8 statements built for the batch, plus one more for this fixture's
+    // single candidate's decision_reasons lookup (necessarily separate: it
+    // depends on the batch's own scan_candidates result).
+    expect(prepareSpy).toHaveBeenCalledTimes(9);
+  });
+
   it("marks the engine delayed when the latest scan timestamp is malformed", async () => {
     const tables = healthyTables();
     tables.scan = { ...tables.scan!, scanned_at: "not-a-timestamp" };
@@ -669,6 +683,17 @@ describe("routing", () => {
     );
     expect(response.status).toBe(503);
   });
+
+  it("rejects the deployment bootstrap mutation without its one-time nonce", async () => {
+    const env = envWith({});
+    env.ENVIRONMENT = "production";
+    const response = await worker.fetch(
+      new Request("https://example.test/__internal/deployment/bootstrap", { method: "POST" }),
+      env,
+    );
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: "unauthorized" });
+  });
 });
 
 describe("buildMarketContextHealth", () => {
@@ -729,6 +754,33 @@ describe("buildMarketContextHealth", () => {
       nowMs,
     );
     expect(health.error).toContain("incomplete or from a prior session");
+  });
+
+  it("surfaces a provider failure while retaining the persisted snapshot", () => {
+    const indices = ["SPX", "NDX", "DJI", "VIX"].map((symbol) => ({
+      symbol: symbol as "SPX" | "NDX" | "DJI" | "VIX",
+      name: symbol,
+      value: 100,
+      change: 0.1,
+      updatedAt: "2026-08-13T15:00:00Z",
+    }));
+    const health = buildMarketContextHealth(
+      context({ indices, provider: "yahoo-finance-chart", latestSourceTimestamp: "2026-08-13T15:00:00Z", latestCollectedAt: "2026-08-13T15:01:00Z" }),
+      nowMs,
+      {
+        provider: "yahoo-finance-chart",
+        status: "degraded",
+        lastAttemptAt: "2026-08-13T17:59:00Z",
+        lastSuccessfulUpdate: "2026-08-13T15:01:00Z",
+        lastError: "SPX: provider HTTP 429",
+        httpStatuses: [429],
+        rowsWritten: 0,
+        lastKnownGoodPreserved: true,
+      },
+    );
+    expect(health.state).toBe("Cached");
+    expect(health.error).toBe("SPX: provider HTTP 429");
+    expect(health.lastAttempt).toBe("2026-08-13T17:59:00.000Z");
   });
 });
 

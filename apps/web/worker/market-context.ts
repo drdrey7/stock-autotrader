@@ -56,6 +56,19 @@ export interface MarketContextReadModel {
   latestCollectedAt: string | null;
 }
 
+export interface MarketContextHealthRecord {
+  provider: string;
+  status: "running" | "ok" | "degraded" | "skipped";
+  lastAttemptAt: string | null;
+  lastSuccessfulUpdate: string | null;
+  lastError: string | null;
+  httpStatuses: number[];
+  rowsWritten: number;
+  lastKnownGoodPreserved: boolean;
+}
+
+export const MARKET_CONTEXT_HEALTH_META_KEY = "marketContextHealth";
+
 const validIsoTimestamp = (value: string): boolean => {
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) && parsed <= Date.now() + MAX_SOURCE_FUTURE_SKEW_MS;
@@ -110,7 +123,13 @@ const toIsoTimestamp = (value: unknown, unit: "seconds" | "auto" = "auto"): stri
 };
 
 const errorMessage = (error: unknown): string => error instanceof Error ? error.message : String(error);
+const httpStatusesFrom = (messages: readonly string[]): number[] => [...new Set(messages.flatMap((message) => {
+  const statuses: number[] = [];
+  for (const match of message.matchAll(/HTTP (\d{3})/g)) statuses.push(Number(match[1]));
+  return statuses;
+}))].slice(0, 8);
 const PROVIDER_TIMEOUT_MS = 8_000;
+const YAHOO_USER_AGENT = "StockAutotrader/1.0 (+https://stock-autotrader-web.barroso-labs.workers.dev)";
 
 async function fetchWithTimeout(fetcher: Fetcher, input: RequestInfo | URL, init: RequestInit): Promise<Response> {
   const controller = new AbortController();
@@ -156,7 +175,15 @@ export class YahooFinanceMarketDataProvider implements MarketDataProvider {
     url.searchParams.set("range", "1d");
     url.searchParams.set("interval", "15m");
     url.searchParams.set("includePrePost", "false");
-    const response = await fetchWithTimeout(this.fetcher, url, { headers: { Accept: "application/json" } });
+    const response = await fetchWithTimeout(this.fetcher, url, {
+      headers: {
+        Accept: "application/json",
+        // Yahoo's edge returns HTTP 429 to the default Workers fetch identity.
+        // An explicit application identity is accepted by the same provider
+        // and does not change the provider, endpoint, or request cadence.
+        "User-Agent": YAHOO_USER_AGENT,
+      },
+    });
     if (!response.ok) throw new Error(`provider HTTP ${response.status}`);
 
     const payload = await response.json() as unknown;
@@ -360,10 +387,10 @@ export function isNewYorkWeekday(instant: Date): boolean {
   return Boolean(parts && parts.weekday !== "Sat" && parts.weekday !== "Sun");
 }
 
-export async function writeMarketIndices(db: D1Database, observations: MarketIndexObservation[]): Promise<void> {
+export async function writeMarketIndices(db: D1Database, observations: MarketIndexObservation[]): Promise<number> {
   const valid = observations.filter(validMarketObservation);
-  if (valid.length === 0) return;
-  await db.batch(valid.map((observation) => db.prepare(
+  if (valid.length === 0) return 0;
+  const results = await db.batch(valid.map((observation) => db.prepare(
     `INSERT OR IGNORE INTO market_indices
       (symbol, name, value, change_pct, source_timestamp, collected_at, provider)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -376,6 +403,7 @@ export async function writeMarketIndices(db: D1Database, observations: MarketInd
     observation.collectedAt,
     observation.provider,
   )));
+  return results.reduce((total, result) => total + (result.meta?.changes ?? 0), 0);
 }
 
 export async function writeSentiment(db: D1Database, observation: SentimentObservation): Promise<void> {
@@ -391,6 +419,58 @@ export async function writeSentiment(db: D1Database, observation: SentimentObser
     observation.collectedAt,
     observation.provider,
   ).run();
+}
+
+const marketContextHealthFromValue = (value: unknown): MarketContextHealthRecord | null => {
+  if (typeof value !== "string") return null;
+  try {
+    const parsed = JSON.parse(value) as Partial<MarketContextHealthRecord>;
+    if (!parsed || typeof parsed !== "object" || typeof parsed.provider !== "string") return null;
+    if (!parsed.status || !["running", "ok", "degraded", "skipped"].includes(parsed.status)) return null;
+    return {
+      provider: parsed.provider,
+      status: parsed.status,
+      lastAttemptAt: typeof parsed.lastAttemptAt === "string" ? parsed.lastAttemptAt : null,
+      lastSuccessfulUpdate: typeof parsed.lastSuccessfulUpdate === "string" ? parsed.lastSuccessfulUpdate : null,
+      lastError: typeof parsed.lastError === "string" ? parsed.lastError : null,
+      httpStatuses: Array.isArray(parsed.httpStatuses)
+        ? parsed.httpStatuses.filter((status): status is number => Number.isInteger(status) && status >= 100 && status <= 599).slice(0, 8)
+        : [],
+      rowsWritten: Number.isFinite(Number(parsed.rowsWritten)) ? Number(parsed.rowsWritten) : 0,
+      lastKnownGoodPreserved: parsed.lastKnownGoodPreserved === true,
+    };
+  } catch {
+    return null;
+  }
+};
+
+export async function readMarketContextHealth(db: D1Database): Promise<MarketContextHealthRecord | null> {
+  try {
+    const row = await db.prepare("SELECT value FROM app_meta WHERE key = ? LIMIT 1")
+      .bind(MARKET_CONTEXT_HEALTH_META_KEY)
+      .first<{ value: string | null }>();
+    return marketContextHealthFromValue(row?.value);
+  } catch (error) {
+    console.error(JSON.stringify({ job: "market-context", phase: "health-read", status: "failed", error: errorMessage(error).slice(0, 180) }));
+    return null;
+  }
+}
+
+async function writeMarketContextHealth(db: D1Database, health: MarketContextHealthRecord): Promise<void> {
+  await db.prepare(
+    "INSERT INTO app_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+  ).bind(MARKET_CONTEXT_HEALTH_META_KEY, JSON.stringify(health)).run();
+}
+
+async function rememberMarketContextHealth(
+  db: D1Database,
+  health: MarketContextHealthRecord,
+): Promise<void> {
+  try {
+    await writeMarketContextHealth(db, health);
+  } catch (error) {
+    console.error(JSON.stringify({ job: "market-context", phase: "health-write", status: "failed", error: errorMessage(error).slice(0, 180) }));
+  }
 }
 
 interface MarketIndexRow {
@@ -483,10 +563,70 @@ export async function runMarketContextJob(
   env: Env,
   scheduledTime: Date,
   provider: MarketDataProvider = new YahooFinanceMarketDataProvider(),
+  options: { cron?: string } = {},
 ): Promise<{ status: "ok" | "degraded" | "skipped"; detail: string }> {
+  const startedAt = Date.now();
   const window = marketCollectionWindow(scheduledTime);
-  if (!window) return { status: "skipped", detail: "outside_market_collection_window" };
+  const namedProvider = provider as unknown as { name?: unknown };
+  const providerName = typeof namedProvider.name === "string"
+    ? namedProvider.name
+    : "unknown";
+  if (!window) {
+    console.info(JSON.stringify({
+      job: "market-context",
+      phase: "result",
+      scheduledTime: scheduledTime.toISOString(),
+      cron: options.cron ?? "unknown",
+      provider: providerName,
+      status: "skipped",
+      durationMs: Date.now() - startedAt,
+      httpStatuses: [],
+      rowsWritten: 0,
+      lastKnownGoodPreserved: true,
+      detail: "outside_market_collection_window",
+    }));
+    return { status: "skipped", detail: "outside_market_collection_window" };
+  }
   const collectedAt = new Date().toISOString();
+  const previousHealth = await readMarketContextHealth(env.DB);
+  const previousLastSuccessfulUpdate = previousHealth?.lastSuccessfulUpdate
+    ?? (previousHealth ? null : (await readMarketContext(env.DB)).latestCollectedAt);
+  const hadLastKnownGood = Boolean(previousLastSuccessfulUpdate);
+  await rememberMarketContextHealth(env.DB, {
+    provider: providerName,
+    status: "running",
+    lastAttemptAt: collectedAt,
+    lastSuccessfulUpdate: previousLastSuccessfulUpdate,
+    lastError: previousHealth?.lastError ?? null,
+    httpStatuses: previousHealth?.httpStatuses ?? [],
+    rowsWritten: 0,
+    lastKnownGoodPreserved: hadLastKnownGood,
+  });
+  console.info(JSON.stringify({
+    job: "market-context",
+    phase: "start",
+    scheduledTime: scheduledTime.toISOString(),
+    cron: options.cron ?? "unknown",
+    provider: providerName,
+  }));
+
+  const writeResultHealth = async (health: MarketContextHealthRecord): Promise<void> => {
+    await rememberMarketContextHealth(env.DB, health);
+    console.info(JSON.stringify({
+      job: "market-context",
+      phase: "result",
+      scheduledTime: scheduledTime.toISOString(),
+      cron: options.cron ?? "unknown",
+      provider: providerName,
+      status: health.status,
+      durationMs: Date.now() - startedAt,
+      httpStatuses: health.httpStatuses,
+      rowsWritten: health.rowsWritten,
+      lastKnownGoodPreserved: health.lastKnownGoodPreserved,
+      ...(health.lastError ? { error: health.lastError } : {}),
+    }));
+  };
+
   try {
     const result = await provider.collect(collectedAt);
     const scheduleParts = localNewYorkParts(scheduledTime);
@@ -501,13 +641,53 @@ export async function runMarketContextJob(
     });
     const validObservations = observations.filter(validMarketObservation);
     if (validObservations.length !== observations.length) warnings.push("provider returned invalid market observations");
-    await writeMarketIndices(env.DB, validObservations);
-    const status = validObservations.length === INDEX_DEFINITIONS.length && warnings.length === 0 ? "ok" : "degraded";
-    if (warnings.length > 0) console.warn("market context degraded", warnings);
+    const complete = validObservations.length === INDEX_DEFINITIONS.length && warnings.length === 0;
+    // A partial provider response is not authoritative. Keep the complete
+    // last-known-good set instead of mixing a new partial session with old
+    // symbols and making the read model appear current.
+    const rowsWritten = complete ? await writeMarketIndices(env.DB, validObservations) : 0;
+    const boundedWarnings = warnings.slice(0, 8).map((warning) => warning.slice(0, 180));
+    const httpStatuses = httpStatusesFrom(boundedWarnings);
+    const boundedError = boundedWarnings.join("; ").slice(0, 480);
+    if (boundedWarnings.length > 0) console.warn("market context degraded", boundedWarnings);
+    const status = complete ? "ok" : "degraded";
+    await writeResultHealth({
+      provider: providerName,
+      status,
+      lastAttemptAt: collectedAt,
+      lastSuccessfulUpdate: complete ? collectedAt : previousLastSuccessfulUpdate,
+      lastError: complete ? null : boundedError || "provider returned no complete market index set",
+      httpStatuses: complete ? [] : httpStatuses,
+      rowsWritten,
+      lastKnownGoodPreserved: !complete && hadLastKnownGood,
+    });
     return { status, detail: `${window}:${validObservations.length}/${INDEX_DEFINITIONS.length}` };
   } catch (error) {
-    console.error("market context collection failed", errorMessage(error));
-    return { status: "degraded", detail: errorMessage(error).slice(0, 200) };
+    const detail = errorMessage(error).slice(0, 200);
+    console.error(JSON.stringify({
+      job: "market-context",
+      phase: "result",
+      scheduledTime: scheduledTime.toISOString(),
+      cron: options.cron ?? "unknown",
+      provider: providerName,
+      status: "degraded",
+      durationMs: Date.now() - startedAt,
+      httpStatuses: httpStatusesFrom([detail]),
+      rowsWritten: 0,
+      lastKnownGoodPreserved: hadLastKnownGood,
+      error: detail,
+    }));
+    await rememberMarketContextHealth(env.DB, {
+      provider: providerName,
+      status: "degraded",
+      lastAttemptAt: collectedAt,
+      lastSuccessfulUpdate: previousLastSuccessfulUpdate,
+      lastError: detail,
+      httpStatuses: httpStatusesFrom([detail]),
+      rowsWritten: 0,
+      lastKnownGoodPreserved: hadLastKnownGood,
+    });
+    return { status: "degraded", detail };
   }
 }
 
