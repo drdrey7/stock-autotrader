@@ -1,11 +1,17 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
-import { AnimatePresence, MotionConfig, motion, useReducedMotion } from "motion/react";
+import { AnimatePresence, MotionConfig, motion } from "motion/react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   ArrowDownRight, ArrowLeft, ArrowUpRight,
-  ChevronRight, ExternalLink, TrendingUp, X,
+  ChevronRight, ExternalLink, X,
 } from "lucide-react";
-import { marketIndexes as marketCardDefinitions, quickStats } from "./data/market";
+import { TradingViewWidget } from "./TradingViewWidget";
+import {
+  ECONOMIC_CALENDAR_WIDGET,
+  MARKET_OVERVIEW_WIDGET,
+  TICKER_TAPE_WIDGET,
+  TOP_STORIES_WIDGET,
+} from "./tradingview";
 import { type Opportunity } from "./data/opportunities";
 import {
   displayMetricResult,
@@ -39,43 +45,18 @@ function formatBriefingDate(key: string | null): string {
   return `${weekday} · ${date.getDate()} ${month}`.toUpperCase();
 }
 
+function marketGreeting(now: Date = new Date(Date.now())): string {
+  // Time-of-day greeting in the canonical product timezone.
+  const hour = Number(new Intl.DateTimeFormat("en", { timeZone: "America/New_York", hour: "numeric", hourCycle: "h23" }).format(now));
+  if (hour >= 5 && hour < 12) return "Good morning.";
+  if (hour >= 12 && hour < 17) return "Good afternoon.";
+  return "Good evening.";
+}
 
 function formatAnalysisDate(key: string | null): string | null {
   if (!key || !/^\d{4}-\d{2}-\d{2}$/.test(key)) return null;
   const date = dateFromKey(key);
   return `${date.getDate()} ${new Intl.DateTimeFormat("en", { month: "short" }).format(date)}`;
-}
-
-function AnimatedValue({ value, decimals = 2 }: { value: number; decimals?: number }) {
-  const reduce = useReducedMotion();
-  const [display, setDisplay] = useState(reduce ? value : 0);
-  useEffect(() => {
-    if (reduce) return;
-    const start = performance.now();
-    let frame = 0;
-    const tick = (now: number) => { const progress = Math.min((now - start) / 700, 1); setDisplay(value * (1 - Math.pow(1 - progress, 3))); if (progress < 1) frame = requestAnimationFrame(tick); };
-    frame = requestAnimationFrame(tick); return () => cancelAnimationFrame(frame);
-  }, [value, reduce]);
-  return <>{(reduce ? value : display).toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}</>;
-}
-
-function MarketCards() {
-  const { marketIndexes: liveIndexes, marketUpdatedAt, marketStale } = useMorningBriefingData();
-  const aliases: Record<string, string[]> = {
-    "S&P 500": ["SPX", "S&P 500"],
-    "Nasdaq-100": ["NDX", "NASDAQ", "NASDAQ-100"],
-    "Dow Jones": ["DJI", "DIA", "DOW JONES"],
-    VIX: ["VIX"],
-  };
-  const findLive = (name: string) => liveIndexes.find((item) => {
-    const itemName = item.name.toUpperCase();
-    const itemSymbol = item.symbol.toUpperCase();
-    return itemName === name.toUpperCase() || (aliases[name] ?? []).some((alias) => alias === itemName || alias === itemSymbol);
-  });
-  return <section className={`market-section${marketStale ? " market-stale" : ""}`} aria-label="Market overview">{marketUpdatedAt && <p className="card-subtitle">Updated {formatUpdatedAt(marketUpdatedAt)}{marketStale ? " · Stale" : ""}</p>}<div className="market-grid">{marketCardDefinitions.map(({ name, symbol }) => {
-    const item = findLive(name);
-    return <Card key={symbol} className="market-card"><div><span>{name}</span><small>{item?.symbol ?? symbol}</small></div>{item ? <><strong><AnimatedValue value={item.value}/></strong><em className={item.change > 0 ? "positive" : item.change < 0 ? "negative" : "neutral"}>{item.change > 0 ? <ArrowUpRight/> : item.change < 0 ? <ArrowDownRight/> : null}{item.change > 0 ? "+" : ""}{item.change.toFixed(2)}%</em></> : <><strong className="neutral">Not available</strong><em className="neutral" aria-hidden="true">—</em></>}</Card>;
-  })}</div></section>;
 }
 
 function OpportunityMove({ change }: { change: number | null }) {
@@ -135,25 +116,18 @@ function Sentiment() {
   );
 }
 
-function QuickStats() {
-  return <Card className="quick-card"><SectionTitle title="Quick Market Stats"/><div className="quick-list">{quickStats.map(item => <div key={item.label}><span><b className="desktop-only">{item.label}</b><b className="mobile-only">{item.short}</b></span><strong className="neutral">Not available</strong><em className="neutral" aria-hidden="true">—</em></div>)}</div></Card>;
-}
-
-function EarningsSummary({ goEarnings, onSelect }: { goEarnings: () => void; onSelect: (e: EarningsCompany) => void }) {
-  const { earnings: storedEarnings, earningsAvailable } = useMorningBriefingData();
-  const earnings = earningsAvailable ? storedEarnings : [];
-  const upcoming = earnings.filter(e => e.status === "scheduled" && e.scheduledDate).sort((a, b) => (a.scheduledDate ?? "").localeCompare(b.scheduledDate ?? "")).slice(0, 3);
-  const recent = earnings.filter(e => e.status === "reported").sort((a, b) => (b.scheduledDate ?? "").localeCompare(a.scheduledDate ?? "")).slice(0, 4);
-  return <Card className="earnings-summary"><SectionTitle title="Earnings Summary" action="View Full Calendar" onAction={goEarnings}/><p className="card-subtitle">Upcoming reports and recent results.</p><div className="earnings-mini">{upcoming.length ? upcoming.map(e => <button key={e.id} onClick={() => onSelect(e)}><span className="date-tile"><small>{e.scheduledDate ? dateFromKey(e.scheduledDate).toLocaleDateString("en", { month: "short" }) : "—"}</small><strong>{e.scheduledDate ? Number(e.scheduledDate.slice(-2)) : "—"}</strong></span><span className="company-icon" style={{ "--company": e.color } as React.CSSProperties}>{e.symbol.slice(0,1)}</span><span><strong>{e.company}</strong><small>{e.symbol} · {e.timing}</small></span><ChevronRight/></button>) : <p className="empty-state">No upcoming earnings published.</p>}</div><div className="recent-results">{recent.length ? recent.map(e => <button key={e.id} onClick={() => onSelect(e)}><span>{e.company}</span><strong className={resultClass(e.result)}>{e.result}</strong><small>{formatPercent(e.epsSurprisePct)}</small></button>) : <p className="empty-state">No recent earnings published.</p>}</div></Card>;
-}
-
-function MorningBriefing({ setPage, selectOpportunity, selectEarnings }: { setPage: (p: Page) => void; selectOpportunity: (o: Opportunity) => void; selectEarnings: (e: EarningsCompany) => void }) {
-  const { xPosts, marketIndexes, editionDate, editionType, opportunitiesUpdatedAt } = useMorningBriefingData();
-  const leadMarket = marketIndexes[0];
-  const leadChange = leadMarket?.change ?? 0;
+function MorningBriefing({ setPage, selectOpportunity }: { setPage: (p: Page) => void; selectOpportunity: (o: Opportunity) => void }) {
+  const { xPosts, editionDate, editionType, opportunitiesUpdatedAt } = useMorningBriefingData();
   const postClose = editionType === "post_close";
   const editionLabel = editionType ? ` · ${postClose ? "POST-CLOSE" : "PRE-MARKET"}` : "";
-  return <div className="page-content"><Card className="welcome-card"><div className="welcome-copy"><span className="eyebrow">{formatBriefingDate(editionDate)}{editionLabel}</span><h1>{postClose ? "Market close." : "Good morning."}</h1><p>{postClose ? "Here are today’s closing opportunities." : "Here are today’s top opportunities."}</p>{leadMarket ? <span className={`market-status ${leadChange > 0 ? "positive" : leadChange < 0 ? "negative" : "neutral"}`}>{leadChange > 0 ? <TrendingUp/> : leadChange < 0 ? <ArrowDownRight/> : null} {leadMarket.name} {leadChange > 0 ? "up" : leadChange < 0 ? "down" : "flat"} <strong className={leadChange > 0 ? "positive" : leadChange < 0 ? "negative" : "neutral"}>{leadChange > 0 ? "+" : ""}{leadChange.toFixed(2)}%</strong></span> : <span className="market-status neutral">Market data <strong className="neutral">Not available</strong></span>}</div></Card><MarketCards/><div className="main-grid"><Card className="opportunities-card"><SectionTitle title="Top Opportunities" meta={opportunitiesUpdatedAt ? `Analysis · ${formatAnalysisDate(editionDate)}` : null}/><OpportunityList onSelect={selectOpportunity}/></Card><Sentiment/><QuickStats/></div><div className="lower-grid"><EarningsSummary goEarnings={() => setPage("earnings")} onSelect={selectEarnings}/><Card className="x-preview"><SectionTitle title="X Pulse" action="View More" onAction={() => setPage("surge")}/><p className="card-subtitle">Curated insights from selected accounts.</p>{xPosts.length ? xPosts.slice(0,3).map(post => <PostCard key={post.url} post={post} compact/>) : <p className="empty-state">No recent posts.</p>}</Card></div></div>;
+  return <div className="page-content">
+    <TradingViewWidget type="ticker-tape" settings={TICKER_TAPE_WIDGET} lazy={false}/>
+    <Card className="welcome-card"><div className="welcome-copy"><span className="eyebrow">{formatBriefingDate(editionDate)}{editionLabel}</span><h1>{marketGreeting()}</h1><p>{postClose ? "Here are today’s closing opportunities." : "Here are today’s top opportunities."}</p></div></Card>
+    <section className="widget-block" aria-label="Market overview"><span className="eyebrow">MARKET OVERVIEW · TRADINGVIEW</span><TradingViewWidget type="market-overview" settings={MARKET_OVERVIEW_WIDGET} lazy={false}/></section>
+    <div className="main-grid"><Card className="opportunities-card"><SectionTitle title="Top Opportunities" meta={opportunitiesUpdatedAt ? `Analysis · ${formatAnalysisDate(editionDate)}` : null}/><OpportunityList onSelect={selectOpportunity}/></Card><Sentiment/></div>
+    <div className="widgets-grid"><section className="widget-block" aria-label="Economic calendar"><span className="eyebrow">ECONOMIC CALENDAR · TRADINGVIEW</span><TradingViewWidget type="events" settings={ECONOMIC_CALENDAR_WIDGET}/></section><section className="widget-block" aria-label="Top stories"><span className="eyebrow">TOP STORIES · TRADINGVIEW</span><TradingViewWidget type="timeline" settings={TOP_STORIES_WIDGET}/></section></div>
+    <Card className="x-preview"><SectionTitle title="X Pulse" action="View More" onAction={() => setPage("surge")}/><p className="card-subtitle">Curated insights from selected accounts.</p>{xPosts.length ? xPosts.slice(0,3).map(post => <PostCard key={post.url} post={post} compact/>) : <p className="empty-state">No recent posts.</p>}</Card>
+  </div>;
 }
 
 function useDialogA11y<T extends HTMLElement>(onClose: () => void) {
@@ -210,7 +184,7 @@ function MorningBriefingShell() {
     window.scrollTo({ top: 0, behavior: reduced ? "auto" : "smooth" });
   }, [page]);
   useEffect(() => { setSelectedOpportunity(null); setSelectedEarnings(null); }, [page]);
-  return <div className="mb-demo"><AnimatePresence mode="wait"><motion.div key={page} initial={{opacity:0,y:8}} animate={{opacity:1,y:0}} exit={{opacity:0,y:-4}} transition={spring}><LazyPageErrorBoundary resetKey={page}><Suspense fallback={<PageLoadingFallback/>}>{page === "briefing" && <MorningBriefing setPage={setPage} selectOpportunity={setSelectedOpportunity} selectEarnings={setSelectedEarnings}/>} {page === "surge" && <XPulsePage/>} {page === "earnings" && <EarningsPage onSelect={setSelectedEarnings}/>}</Suspense></LazyPageErrorBoundary></motion.div></AnimatePresence><footer><span>Morning Briefing</span><p>Public, read-only market intelligence.</p></footer><AnimatePresence>{selectedOpportunity && <OpportunityModal item={selectedOpportunity} onClose={() => setSelectedOpportunity(null)}/>} {selectedEarnings && <EarningsDetail item={selectedEarnings} onClose={() => setSelectedEarnings(null)}/>}</AnimatePresence></div>;
+  return <div className="mb-demo"><AnimatePresence mode="wait"><motion.div key={page} initial={{opacity:0,y:8}} animate={{opacity:1,y:0}} exit={{opacity:0,y:-4}} transition={spring}><LazyPageErrorBoundary resetKey={page}><Suspense fallback={<PageLoadingFallback/>}>{page === "briefing" && <MorningBriefing setPage={setPage} selectOpportunity={setSelectedOpportunity}/>} {page === "surge" && <XPulsePage/>} {page === "earnings" && <EarningsPage onSelect={setSelectedEarnings}/>}</Suspense></LazyPageErrorBoundary></motion.div></AnimatePresence><footer><span>Morning Briefing</span><p>Public, read-only market intelligence.</p></footer><AnimatePresence>{selectedOpportunity && <OpportunityModal item={selectedOpportunity} onClose={() => setSelectedOpportunity(null)}/>} {selectedEarnings && <EarningsDetail item={selectedEarnings} onClose={() => setSelectedEarnings(null)}/>}</AnimatePresence></div>;
 }
 
 

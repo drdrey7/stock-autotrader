@@ -7,7 +7,11 @@ universe and separate market-index context.
 
 The approved **Morning Briefing** interface is the public product shell:
 
-- Morning Briefing consumes the published briefing, market/status and candidate APIs;
+- market display (indices, futures, bonds, crypto, economic calendar and market
+  news) is embedded from official TradingView widgets — TradingView owns the
+  market-data display layer and no market data travels through our backend;
+- Morning Briefing consumes the published briefing API for opportunities and the
+  status API for Fear & Greed sentiment;
 - X Pulse consumes curated posts from the tracked X accounts;
 - Earnings consumes the Cloudflare-owned `earnings_events` D1 read model;
 - missing Earnings backend fields are rendered as `N/A`;
@@ -18,6 +22,19 @@ The approved **Morning Briefing** interface is the public product shell:
 Routes: `/`, `/dashboard`, `/x` and `/earnings`. The public Status route remains
 available; unknown routes fall through to a Not Found page.
 
+### Homepage market display (TradingView)
+
+The homepage no longer renders backend market-index cards or quick stats. In
+their place it mounts four official TradingView widgets: a Ticker Tape strip, a
+tabbed Market Overview (Indices / Futures / Bonds / Crypto), an Economic
+Calendar and a Top Stories feed. Widgets load official embed scripts from
+`s3.tradingview.com` and render iframes from `tradingview-widget.com`, all
+behind a narrowed Content-Security-Policy; they follow the app light/dark theme
+and remount cleanly when the theme changes. A widget that fails to load shows a
+restrained "Market widget temporarily unavailable" state — never fabricated
+values. The Worker market-context backend is retained unchanged because the
+health/status routes still depend on it.
+
 ## Historical frontend work
 
 PR #6 introduced the first synthetic, frontend-only product demo. PR #7 added
@@ -27,6 +44,8 @@ Morning Briefing frontend. The Earnings route no longer imports financial
 fixtures: it only renders the Worker API response and shows `N/A`
 when a value is missing. The legacy dashboard/quant read model is intentionally
 outside the ownership boundary of the Earnings Engine and remains unchanged.
+A later PR replaced the homepage index/quick-stat cards with official
+TradingView widgets and kept the market-context backend for health monitoring.
 
 ## Briefing rhythm
 
@@ -39,7 +58,10 @@ Canonical timezone: `America/New_York`.
 
 Market indices and Fear & Greed are collected by the Worker Cron Triggers and
 stored in D1. The public API composes those rows with the screening read model;
-the VPS publisher does not write market-context data.
+the VPS publisher does not write market-context data. The index rows feed the
+health/status routes and `/api/status`; the public homepage no longer renders
+them — its index display is provided by the TradingView widgets described
+above, and the backend context is kept for health monitoring.
 
 The Worker schedules are UTC because Cloudflare Cron Triggers are UTC.
 Production declares only two trigger entries because Cloudflare Workers Free
@@ -63,8 +85,9 @@ endpoint for `^GSPC`, `^NDX`, `^DJI` and `^VIX`. It requires no API key and runs
 directly from the Worker. This endpoint is unofficial, has no published SLA or
 guaranteed quota, may be rate-limited or change without notice, and its public
 display/licensing terms must be reviewed before treating it as a permanent
-commercial data source. It is acceptable here because the product needs only
-four delayed/periodic context values and the adapter is explicitly temporary.
+commercial data source. It is retained here solely for the health/status
+backend — the public homepage no longer displays these values (TradingView
+widgets do) — and the adapter is explicitly temporary.
 
 The adapter is isolated behind `MarketDataProvider`, so changing provider does
 not change D1, the API, or the frontend. The Worker returns `Not available`

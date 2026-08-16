@@ -1,7 +1,6 @@
 /* eslint-disable react-refresh/only-export-components */
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import type { DailyBriefing, EarningsApiResponse, EarningsEngineEvent } from "@stock-autotrader/contracts";
-import type { MarketIndex } from "./data/market";
 import { type Opportunity } from "./data/opportunities";
 import { type XPost } from "./data/xSurge";
 import { eventWithViewMetadata, type EarningsCompany } from "./data/earnings-view";
@@ -14,29 +13,12 @@ type BriefingHealth = {
 
 type StatusResponse = {
   briefing?: BriefingHealth;
-  market?: {
-    indices?: Array<{
-      symbol: "SPX" | "NDX" | "DJI" | "VIX";
-      name: string;
-      value: number;
-      change: number;
-      updatedAt: string;
-    }>;
-    latestSourceTimestamp?: string | null;
-    latestCollectedAt?: string | null;
-  };
   sentiment?: {
     provider: string;
     score: number;
     rating: "extreme_fear" | "fear" | "neutral" | "greed" | "extreme_greed";
     asOf: string;
   } | null;
-  sources?: {
-    market?: {
-      state?: string;
-      error?: string | null;
-    };
-  };
 };
 
 type XApiPost = {
@@ -54,7 +36,6 @@ type XApiPost = {
 type XResponse = { posts?: XApiPost[]; count?: number };
 
 export type MorningBriefingData = {
-  marketIndexes: MarketIndex[];
   opportunities: Opportunity[];
   xPosts: XPost[];
   earnings: EarningsCompany[];
@@ -62,8 +43,6 @@ export type MorningBriefingData = {
   // The published edition shown, with the timestamps that label the data.
   editionDate: string | null;
   editionType: DailyBriefing["editionType"] | null;
-  marketUpdatedAt: string | null;
-  marketStale: boolean;
   opportunitiesUpdatedAt: string | null;
   sentiment: NonNullable<StatusResponse["sentiment"]> | null;
 };
@@ -71,15 +50,12 @@ export type MorningBriefingData = {
 const initialData: MorningBriefingData = {
   // Financially actionable sections stay empty until the backend publishes
   // validated data. Earnings has no financial fixture fallback.
-  marketIndexes: [],
   opportunities: [],
   xPosts: [],
   earnings: [],
   earningsAvailable: false,
   editionDate: null,
   editionType: null,
-  marketUpdatedAt: null,
-  marketStale: false,
   opportunitiesUpdatedAt: null,
   sentiment: null,
 };
@@ -163,56 +139,6 @@ function opportunitiesFromBriefing(
       source: "live",
     };
   });
-}
-
-// Real index context (PR #11): the Worker publishes live index quotes in the
-// dedicated market-context read model; it is the only source for market cards
-// and is gated by the 26h freshness window. The Worker validates that each
-// observation belongs to the latest market session; the client must not add a
-// calendar-day requirement that hides valid overnight/weekend data.
-const INDEX_GATE_MS = 26 * 60 * 60_000;
-
-export function isDisplayableMarketIndex(updatedAt: string | null | undefined, now = Date.now()): boolean {
-  return isWithinWindow(updatedAt, INDEX_GATE_MS, now);
-}
-
-function indicesFromStatus(status: StatusResponse | null): { indexes: MarketIndex[]; updatedAt: string; stale: boolean } | null {
-  const indices = status?.market?.indices;
-  if (!Array.isArray(indices) || indices.length === 0) return null;
-  // The source timestamp identifies the latest validated market session, but
-  // providers often timestamp a daily bar at that session's midnight. Use the
-  // Worker read model's collection timestamp for the stale gate so valid
-  // overnight/pre-market data is not hidden merely because its source date is
-  // yesterday in New York. The Worker only publishes validated observations.
-  const latestCollectedAt = status?.market?.latestCollectedAt ?? null;
-  let latestUpdatedAt = "";
-  const fresh: MarketIndex[] = [];
-  for (const index of indices) {
-    const displayTimestamp = latestCollectedAt ?? index.updatedAt;
-    const parsedTimestamp = Date.parse(displayTimestamp);
-    // Keep a validated last-known-good quote visible when the backend marks it
-    // stale/degraded. It is labelled below; a transient provider outage should
-    // not turn real persisted prices into four empty cards.
-    if (
-      !Number.isFinite(parsedTimestamp)
-      || parsedTimestamp > Date.now() + 5 * 60_000
-      || !isDisplayableMarketIndex(displayTimestamp)
-    ) continue;
-    fresh.push({
-      name: index.name,
-      symbol: index.symbol,
-      value: index.value,
-      decimals: 2,
-      change: index.change,
-      source: "live" as const,
-    });
-    if (index.updatedAt > latestUpdatedAt) latestUpdatedAt = index.updatedAt;
-  }
-  if (fresh.length === 0) return null;
-  const sourceState = status?.sources?.market?.state;
-  const stale = !isDisplayableMarketIndex(latestCollectedAt ?? latestUpdatedAt)
-    || (sourceState !== undefined && sourceState !== "Live");
-  return { indexes: fresh, updatedAt: latestCollectedAt ?? latestUpdatedAt, stale };
 }
 
 // Market sentiment (PR #11): the CNN Fear & Greed reading is published once or
@@ -420,10 +346,6 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
         ? briefing
         : null;
       const liveOpportunities = analysisBriefing ? opportunitiesFromBriefing(analysisBriefing) : null;
-      // Market cards have one owner: the Worker market-context read model.
-      // Briefing market summaries are analysis text and cannot substitute for
-      // a source-timestamped index observation.
-      const liveIndices = indicesFromStatus(status);
       const sentiment = sentimentFromStatus(status);
 
       setData((previous) => {
@@ -432,13 +354,6 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
         // inside the 72h window.
         const retained = isWithinWindow(previous.opportunitiesUpdatedAt, BRIEFING_MAX_AGE_MS);
         const nextOpportunities = liveOpportunities ?? (retained ? previous.opportunities : []);
-        const retainedIndices = previous.marketUpdatedAt
-          && isDisplayableMarketIndex(previous.marketUpdatedAt)
-          ? previous.marketIndexes
-          : [];
-        const nextMarketIndexes = liveIndices?.indexes ?? retainedIndices;
-        const marketUpdatedAt = liveIndices?.updatedAt
-          ?? (nextMarketIndexes.length > 0 ? previous.marketUpdatedAt : null);
         const retainedSentiment = previous.sentiment && isWithinWindow(previous.sentiment.asOf, SENTIMENT_GATE_MS)
           ? previous.sentiment
           : null;
@@ -450,12 +365,7 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
         const nextEditionDate = analysisBriefing?.editionDate ?? (retained ? previous.editionDate : null);
         return {
           ...previous,
-          marketIndexes: nextMarketIndexes,
           opportunities: nextOpportunities,
-          marketUpdatedAt,
-          // A retained quote is still useful during a transient outage, but it
-          // must be labelled stale because this refresh did not revalidate it.
-          marketStale: liveIndices?.stale ?? (nextMarketIndexes.length > 0),
           opportunitiesUpdatedAt: liveOpportunities !== null && briefingUpdatedAt ? briefingUpdatedAt : previous.opportunitiesUpdatedAt,
           editionDate: nextEditionDate,
           editionType: nextEditionDate !== null ? (analysisBriefing?.editionType ?? previous.editionType) : null,
