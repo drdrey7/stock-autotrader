@@ -30,16 +30,16 @@ const server = createServer((_req, res) => {
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 const PROBE_URL = `http://127.0.0.1:${server.address().port}/`;
 
+// The final global ticker: exactly the seven headline instruments, on feeds
+// verified to render real values on the public WC datafeed.
 const TICKER_SYMBOLS = [
   "FOREXCOM:SPXUSD",     // S&P 500 (official example)
   "FOREXCOM:NSXUSD",     // Nasdaq-100 (official example)
   "FOREXCOM:DJI",        // Dow Jones (official example)
   "VIX",                 // VIX (bare — verified, TVC:/CBOE: feeds fail)
-  "CMCMARKETS:GOLD",     // Gold (official example)
   "BITSTAMP:BTCUSD",     // Bitcoin (official example)
-  "BITSTAMP:ETHUSD",     // Ether (official example)
-  "COINBASE:SOLUSD",     // Solana candidate
-  "FX:EURUSD",           // EUR/USD (official example)
+  "CMCMARKETS:GOLD",     // Gold (official example)
+  "USOIL",               // WTI Crude Oil (bare — verified)
 ].join(",");
 
 // Candidate sweep for the sections that showed failures: futures, bonds and
@@ -70,7 +70,7 @@ const probeHtml = (symbols, sections) => `<!doctype html><html><head><meta chars
 <body style="margin:0;background:#f7f8f7;font-family:system-ui">
   <h3>Ticker tape</h3>
   <div id="ticker" style="width:900px;border:1px solid #ddd">
-    <tv-ticker-tape symbols="${symbols}" color-theme="light"></tv-ticker-tape>
+    <tv-ticker-tape symbols="${symbols}" item-size="compact" hide-chart color-theme="light"></tv-ticker-tape>
   </div>
   <h3>Market overview</h3>
   <div id="market" style="width:600px;border:1px solid #ddd">

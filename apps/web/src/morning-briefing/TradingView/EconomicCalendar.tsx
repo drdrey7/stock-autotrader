@@ -9,9 +9,11 @@ interface EconomicCalendarProps {
 /**
  * Official TradingView Economic Calendar embed widget.
  *
- * Shows the macro calendar for the US, Eurozone and UK with every importance
- * level (`countryFilter` lowercase ids, `importanceFilter` "-1,0,1" — see
- * tradingview-config.ts for the official config contract).
+ * Shows only the events that can materially move US or European markets: US +
+ * Eurozone countries (`countryFilter` "us,eu") and high importance only
+ * (`importanceFilter` "1" — see tradingview-config.ts for the official config
+ * contract). Low-importance noise (repeated auctions, minor releases) is
+ * filtered by TradingView's own high-importance flag.
  */
 export function EconomicCalendar({ lazy = true, className = "" }: EconomicCalendarProps) {
   return (

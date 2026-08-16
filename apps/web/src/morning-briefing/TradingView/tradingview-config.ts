@@ -22,17 +22,15 @@
  *      European bond → "EUREX:FGBL1!" (Euro-Bund Futures)
  */
 
-/** Global ticker tape: headline indices + the commodities/crypto the products key on. */
+/** Global ticker tape: exactly the seven headline instruments. */
 export const TICKER_SYMBOLS: readonly string[] = [
   "FOREXCOM:SPXUSD", // S&P 500 (official example)
   "FOREXCOM:NSXUSD", // Nasdaq-100 (official example)
   "FOREXCOM:DJI", // Dow Jones (official example)
   "VIX", // Volatility Index (bare — CBOE:/TVC: feeds are not served)
-  "CMCMARKETS:GOLD", // Gold (official example)
   "BITSTAMP:BTCUSD", // Bitcoin (official example)
-  "BITSTAMP:ETHUSD", // Ether (official example)
-  "COINBASE:SOLUSD", // Solana
-  "FX:EURUSD", // EUR/USD (official example)
+  "CMCMARKETS:GOLD", // Gold (official example)
+  "USOIL", // WTI Crude Oil (bare — CMCMARKETS:USOIL renders dead on the WC feed)
 ];
 
 export interface TradingViewMarketSection {
@@ -79,10 +77,14 @@ export const ECONOMIC_CALENDAR_CONFIG: TradingViewIframeConfig = {
   height: 600,
   config: {
     locale: "en",
-    // The official widget expects lowercase country ids and the -1..1
-    // importance scale; `currencyFilter` is not supported by this widget.
-    countryFilter: "us,eu,gb",
-    importanceFilter: "-1,0,1",
+    // The official widget expects lowercase country ids; "eu" is the Eurozone
+    // aggregate. importanceFilter uses the official -1 (low) / 0 (medium) /
+    // 1 (high) scale, so "1" keeps only high-importance events — what could
+    // actually move US or European markets (FOMC/ECB, CPI/PCE, NFP, GDP, PMI)
+    // and drops the repeated low-importance auctions. `currencyFilter` is not
+    // supported by this widget.
+    countryFilter: "us,eu",
+    importanceFilter: "1",
     isTransparent: false,
   },
 };

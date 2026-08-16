@@ -6,7 +6,7 @@
 // exercised by the mobile-chromium runs of smoke/tv-csp/tv-live.
 
 import { expect, test } from "@playwright/test";
-import { waitForTradingViewElement } from "./tv-helpers.mjs";
+import { installShadowRootProbe, waitForTradingViewElement } from "./tv-helpers.mjs";
 
 test.skip(({ isMobile }) => isMobile, "Responsive matrix runs on the desktop project");
 
@@ -36,6 +36,7 @@ for (const viewport of VIEWPORTS) {
       if (isCspViolation || !isTradingViewWidgetNoise) errors.push(text);
     });
 
+    await installShadowRootProbe(page);
     await page.goto("/", { waitUntil: "domcontentloaded" });
     await waitForTradingViewElement(page, "tv-ticker-tape");
     await waitForTradingViewElement(page, "tv-market-overview");
@@ -64,19 +65,46 @@ for (const viewport of VIEWPORTS) {
       expect(tapeBox.width, "ticker strip must span the content column").toBeGreaterThan(contentBox.width * 0.9);
       expect(tapeBox.height, "ticker strip must stay compact").toBeLessThan(64);
 
-      // It must be a LIVE tape, not a static row: the strip's pixels advance
-      // continuously (TradingView animates the marquee via transform/rAF, so a
-      // frame-diff is the mechanism-agnostic way to prove motion). Under
-      // prefers-reduced-motion the marquee stops — TradingView's accessible
-      // behaviour, which is correct — so skip the motion assertion there.
+      // It must be a LIVE tape, not a static row. TradingView's official
+      // marquee engine (tv-infinite-ticker) moves the quote items continuously;
+      // reading the first item's position directly proves the engine is running
+      // without prescribing pixels per second. Under prefers-reduced-motion the
+      // engine switches to its documented 2s step-through — accessible
+      // behaviour we must not override — so skip the motion assertion there.
       const reducedMotion = await page.evaluate(
         () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
       );
       if (!reducedMotion) {
-        const frameA = await tape.screenshot();
+        const firstItemX = () =>
+          page.evaluate(() => {
+            const el = document.querySelector("tv-ticker-tape");
+            const root = window.__tvShadowRoots?.get(el);
+            const findFirst = (node) => {
+              for (const child of node.children) {
+                if (child.tagName?.toLowerCase() === "tv-ticker-chart-item") {
+                  return Math.round(child.getBoundingClientRect().x);
+                }
+                const closed = window.__tvShadowRoots.get(child);
+                if (child.shadowRoot && findFirst(child.shadowRoot)) return findFirst(child.shadowRoot);
+                if (closed && closed !== child.shadowRoot && findFirst(closed)) return findFirst(closed);
+                const r = findFirst(child);
+                if (r != null) return r;
+              }
+              return null;
+            };
+            return root ? findFirst(root) : null;
+          });
+        // Wait for at least one quote item to render before sampling.
+        let x1 = null;
+        for (let attempt = 0; attempt < 20 && x1 === null; attempt += 1) {
+          x1 = await firstItemX();
+          if (x1 === null) await page.waitForTimeout(250);
+        }
         await page.waitForTimeout(1200);
-        const frameB = await tape.screenshot();
-        expect(Buffer.compare(frameA, frameB) !== 0, `ticker tape must scroll at ${viewport.label} (${theme})`).toBeTruthy();
+        const x2 = await firstItemX();
+        expect(x1, "tape must render at least one quote item").not.toBeNull();
+        expect(x2, "tape must render at least one quote item").not.toBeNull();
+        expect(x1 !== x2, `ticker marquee must be moving at ${viewport.label} (${theme})`).toBeTruthy();
       }
 
       await expect(page.locator("tv-ticker-tape")).toHaveAttribute("color-theme", theme);

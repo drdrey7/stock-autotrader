@@ -7,6 +7,12 @@ interface TickerTapeProps {
   colorTheme: ShellTheme;
   /** compact = thin terminal tape (48px); normal = larger items (74px). */
   itemSize?: "compact" | "normal";
+  /**
+   * Hide each item's mini sparkline so the tape is a clean text terminal strip
+   * (CNBC-style): the official component's default shows a small chart in every
+   * item, which takes real horizontal space at mobile widths.
+   */
+  hideChart?: boolean;
   locale?: string;
   className?: string;
 }
@@ -24,6 +30,7 @@ export function TickerTape({
   symbols,
   colorTheme,
   itemSize = "compact",
+  hideChart = true,
   locale = "en",
   className = "",
 }: TickerTapeProps) {
@@ -39,6 +46,8 @@ export function TickerTape({
     const el = document.createElement("tv-ticker-tape");
     el.setAttribute("symbols", symbolList);
     el.setAttribute("item-size", itemSize);
+    // Boolean host attribute: present => charts hidden.
+    el.toggleAttribute("hide-chart", hideChart);
     el.setAttribute("color-theme", colorTheme);
     host.appendChild(el);
     return () => {
@@ -47,7 +56,7 @@ export function TickerTape({
     // colorTheme intentionally excluded: it is synced in-place below so a theme
     // toggle does not unmount/remount the tape.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbolList, itemSize, locale]);
+  }, [symbolList, itemSize, hideChart, locale]);
 
   useEffect(() => {
     hostRef.current?.querySelector("tv-ticker-tape")?.setAttribute("color-theme", colorTheme);

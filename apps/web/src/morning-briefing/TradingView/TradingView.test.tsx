@@ -25,16 +25,37 @@ afterEach(() => {
 });
 
 describe("TickerTape (web component)", () => {
-  it("mounts a tv-ticker-tape element with the verified symbols and a compact tape size", () => {
+  // The final global tape is exactly these seven headline instruments. This is
+  // the product contract: it guards against non-essential instruments (ETH,
+  // SOL, EUR/USD, …) creeping back into the thin strip above the fold.
+  const FINAL_TICKER_SYMBOLS = [
+    "FOREXCOM:SPXUSD", // S&P 500
+    "FOREXCOM:NSXUSD", // Nasdaq-100
+    "FOREXCOM:DJI", // Dow Jones
+    "VIX", // Volatility Index
+    "BITSTAMP:BTCUSD", // Bitcoin
+    "CMCMARKETS:GOLD", // Gold
+    "USOIL", // WTI Crude Oil
+  ];
+
+  it("mounts a tv-ticker-tape element with the seven verified symbols, a compact size and charts hidden", () => {
     renderWithTheme(<TickerTape symbols={TICKER_SYMBOLS} colorTheme="light" />);
     const el = document.querySelector("tv-ticker-tape");
     expect(el).not.toBeNull();
     expect(el!.getAttribute("symbols")).toBe(TICKER_SYMBOLS.join(","));
     expect(el!.getAttribute("item-size")).toBe("compact");
     expect(el!.getAttribute("color-theme")).toBe("light");
-    // Every ticker symbol is one of the pre-verified feeds (no CME/CBOE futures
-    // or TVC:VIX that render blank rows / "No data here yet").
-    expect(TICKER_SYMBOLS).toEqual(expect.arrayContaining(["FOREXCOM:SPXUSD", "FOREXCOM:NSXUSD", "FOREXCOM:DJI"]));
+    // The tape is a clean text strip: the mini sparkline is hidden so each item
+    // is a compact quote (name + value + change), not a chart that eats the
+    // mobile viewport.
+    expect(el!.hasAttribute("hide-chart")).toBe(true);
+  });
+
+  it("configures exactly the final seven headline instruments on verified feeds", () => {
+    expect(TICKER_SYMBOLS).toEqual(FINAL_TICKER_SYMBOLS);
+    // No symbol may regress to a feed that renders blank / "No data here yet"
+    // on the public WC datafeed (CME/CBOE futures and TVC:VIX were proven dead).
+    expect(TICKER_SYMBOLS).not.toEqual(expect.arrayContaining(["CME_MINI:ES1!", "CME_MINI:NQ1!", "CBOE:VIX", "TVC:VIX"]));
   });
 
   it("updates color-theme in place when the theme changes — no element remount", () => {
@@ -96,8 +117,10 @@ describe("EconomicCalendar (iframe widget)", () => {
     );
     const config = JSON.parse(script!.textContent ?? "{}") as Record<string, unknown>;
     expect(config.container_id).toBe("tradingview-events");
-    expect(config.countryFilter).toBe("us,eu,gb"); // lowercase ids, not "US,EU,GB"
-    expect(config.importanceFilter).toBe("-1,0,1"); // the official importance scale
+    // US + Eurozone only (no UK), high importance only — the events that can
+    // materially move US or European markets. Lowercase ids, not "US,EU".
+    expect(config.countryFilter).toBe("us,eu");
+    expect(config.importanceFilter).toBe("1"); // official scale: -1 low, 0 medium, 1 high
     expect(config.currencyFilter).toBeUndefined(); // unsupported key removed
     expect(config.colorTheme).toBe("light");
     expect(config.locale).toBe("en");
