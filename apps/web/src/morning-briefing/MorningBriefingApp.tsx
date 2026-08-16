@@ -1,17 +1,12 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { AnimatePresence, MotionConfig, motion } from "motion/react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation } from "react-router-dom";
 import {
   ArrowDownRight, ArrowLeft, ArrowUpRight,
   ChevronRight, ExternalLink, X,
 } from "lucide-react";
-import { TradingViewWidget } from "./TradingViewWidget";
-import {
-  ECONOMIC_CALENDAR_WIDGET,
-  MARKET_OVERVIEW_WIDGET,
-  TICKER_TAPE_WIDGET,
-  TOP_STORIES_WIDGET,
-} from "./tradingview";
+import { useShellTheme } from "../shell/theme";
+import { EconomicCalendar, MarketOverview, TopStories, MARKET_OVERVIEW_SECTIONS } from "./TradingView";
 import { type Opportunity } from "./data/opportunities";
 import {
   displayMetricResult,
@@ -25,7 +20,7 @@ import {
   marketTodayKey,
   useMorningBriefingData,
 } from "./MorningBriefingData";
-import { Card, dateFromKey, formatUpdatedAt, LazyPageErrorBoundary, PageLoadingFallback, PostCard, SectionTitle, spring } from "./shared";
+import { Card, dateFromKey, formatUpdatedAt, LazyPageErrorBoundary, PageLoadingFallback, SectionTitle, spring } from "./shared";
 import "./morning-briefing.css";
 
 // Code-split: X Pulse and the Earnings Calendar are visited less often than
@@ -36,7 +31,6 @@ const XPulsePage = lazy(() => import("./XPulsePage"));
 const EarningsPage = lazy(() => import("./EarningsCalendarPage"));
 
 type Page = "briefing" | "surge" | "earnings";
-const pagePaths: Record<Page, string> = { briefing: "/", surge: "/x", earnings: "/earnings" };
 
 function formatBriefingDate(key: string | null): string {
   const date = dateFromKey(key ?? marketTodayKey());
@@ -116,17 +110,37 @@ function Sentiment() {
   );
 }
 
-function MorningBriefing({ setPage, selectOpportunity }: { setPage: (p: Page) => void; selectOpportunity: (o: Opportunity) => void }) {
-  const { xPosts, editionDate, editionType, opportunitiesUpdatedAt } = useMorningBriefingData();
+function MorningBriefing({ selectOpportunity }: { selectOpportunity: (o: Opportunity) => void }) {
+  const { editionDate, editionType, opportunitiesUpdatedAt } = useMorningBriefingData();
+  const { theme } = useShellTheme();
   const postClose = editionType === "post_close";
   const editionLabel = editionType ? ` · ${postClose ? "POST-CLOSE" : "PRE-MARKET"}` : "";
   return <div className="page-content">
-    <TradingViewWidget type="ticker-tape" settings={TICKER_TAPE_WIDGET} lazy={false}/>
-    <Card className="welcome-card"><div className="welcome-copy"><span className="eyebrow">{formatBriefingDate(editionDate)}{editionLabel}</span><h1>{marketGreeting()}</h1><p>{postClose ? "Here are today’s closing opportunities." : "Here are today’s top opportunities."}</p></div></Card>
-    <section className="widget-block" aria-label="Market overview"><span className="eyebrow">MARKET OVERVIEW · TRADINGVIEW</span><TradingViewWidget type="market-overview" settings={MARKET_OVERVIEW_WIDGET} lazy={false}/></section>
-    <div className="main-grid"><Card className="opportunities-card"><SectionTitle title="Top Opportunities" meta={opportunitiesUpdatedAt ? `Analysis · ${formatAnalysisDate(editionDate)}` : null}/><OpportunityList onSelect={selectOpportunity}/></Card><Sentiment/></div>
-    <div className="widgets-grid"><section className="widget-block" aria-label="Economic calendar"><span className="eyebrow">ECONOMIC CALENDAR · TRADINGVIEW</span><TradingViewWidget type="events" settings={ECONOMIC_CALENDAR_WIDGET}/></section><section className="widget-block" aria-label="Top stories"><span className="eyebrow">TOP STORIES · TRADINGVIEW</span><TradingViewWidget type="timeline" settings={TOP_STORIES_WIDGET}/></section></div>
-    <Card className="x-preview"><SectionTitle title="X Pulse" action="View More" onAction={() => setPage("surge")}/><p className="card-subtitle">Curated insights from selected accounts.</p>{xPosts.length ? xPosts.slice(0,3).map(post => <PostCard key={post.url} post={post} compact/>) : <p className="empty-state">No recent posts.</p>}</Card>
+    <section className="hero" aria-label="Morning briefing">
+      <span className="eyebrow">{formatBriefingDate(editionDate)}{editionLabel}</span>
+      <h1>{marketGreeting()}</h1>
+      <p>{postClose ? "Here are today’s closing opportunities." : "Here are today’s top opportunities."}</p>
+    </section>
+
+    <section className="widget-block market-overview-block" aria-label="Market overview">
+      <div className="widget-head"><span className="eyebrow">MARKET OVERVIEW</span><span className="section-meta">TradingView · 12M</span></div>
+      <MarketOverview sections={MARKET_OVERVIEW_SECTIONS} colorTheme={theme} className="market-overview-frame"/>
+    </section>
+
+    <Card className="opportunities-card opportunities-row"><SectionTitle title="Top Opportunities" meta={opportunitiesUpdatedAt ? `Analysis · ${formatAnalysisDate(editionDate)}` : null}/><OpportunityList onSelect={selectOpportunity}/></Card>
+
+    <div className="secondary-grid">
+      <section className="widget-block" aria-label="Economic calendar">
+        <div className="widget-head"><span className="eyebrow">ECONOMIC CALENDAR</span><span className="section-meta">TradingView</span></div>
+        <EconomicCalendar/>
+      </section>
+      <Sentiment/>
+    </div>
+
+    <section className="widget-block stories-block" aria-label="Top stories">
+      <div className="widget-head"><span className="eyebrow">TOP STORIES</span><span className="section-meta">TradingView</span></div>
+      <TopStories/>
+    </section>
   </div>;
 }
 
@@ -175,16 +189,15 @@ function EarningsDetail({ item, onClose }: { item: EarningsCompany; onClose: () 
 }
 
 function MorningBriefingShell() {
-  const location = useLocation(); const navigate = useNavigate();
+  const location = useLocation();
   const page: Page = location.pathname === "/x" ? "surge" : location.pathname === "/earnings" ? "earnings" : "briefing";
-  const setPage = (next: Page) => navigate(pagePaths[next]);
   const [selectedOpportunity, setSelectedOpportunity] = useState<Opportunity | null>(null); const [selectedEarnings, setSelectedEarnings] = useState<EarningsCompany | null>(null);
   useEffect(() => {
     const reduced = typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     window.scrollTo({ top: 0, behavior: reduced ? "auto" : "smooth" });
   }, [page]);
   useEffect(() => { setSelectedOpportunity(null); setSelectedEarnings(null); }, [page]);
-  return <div className="mb-demo"><AnimatePresence mode="wait"><motion.div key={page} initial={{opacity:0,y:8}} animate={{opacity:1,y:0}} exit={{opacity:0,y:-4}} transition={spring}><LazyPageErrorBoundary resetKey={page}><Suspense fallback={<PageLoadingFallback/>}>{page === "briefing" && <MorningBriefing setPage={setPage} selectOpportunity={setSelectedOpportunity}/>} {page === "surge" && <XPulsePage/>} {page === "earnings" && <EarningsPage onSelect={setSelectedEarnings}/>}</Suspense></LazyPageErrorBoundary></motion.div></AnimatePresence><footer><span>Morning Briefing</span><p>Public, read-only market intelligence.</p></footer><AnimatePresence>{selectedOpportunity && <OpportunityModal item={selectedOpportunity} onClose={() => setSelectedOpportunity(null)}/>} {selectedEarnings && <EarningsDetail item={selectedEarnings} onClose={() => setSelectedEarnings(null)}/>}</AnimatePresence></div>;
+  return <div className="mb-demo"><AnimatePresence mode="wait"><motion.div key={page} initial={{opacity:0,y:8}} animate={{opacity:1,y:0}} exit={{opacity:0,y:-4}} transition={spring}><LazyPageErrorBoundary resetKey={page}><Suspense fallback={<PageLoadingFallback/>}>{page === "briefing" && <MorningBriefing selectOpportunity={setSelectedOpportunity}/>} {page === "surge" && <XPulsePage/>} {page === "earnings" && <EarningsPage onSelect={setSelectedEarnings}/>}</Suspense></LazyPageErrorBoundary></motion.div></AnimatePresence><footer><span>Morning Briefing</span><p>Public, read-only market intelligence.</p></footer><AnimatePresence>{selectedOpportunity && <OpportunityModal item={selectedOpportunity} onClose={() => setSelectedOpportunity(null)}/>} {selectedEarnings && <EarningsDetail item={selectedEarnings} onClose={() => setSelectedEarnings(null)}/>}</AnimatePresence></div>;
 }
 
 

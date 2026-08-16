@@ -91,15 +91,17 @@ it("greets by New York time of day", () => {
   }
 });
 
-it("mounts the four TradingView widget sections on the homepage", async () => {
+it("mounts the TradingView widget sections on the homepage", async () => {
   const view = renderApp();
-  await waitFor(() => expect(view.container.querySelectorAll(".tv-widget-container")).toHaveLength(4));
-  expect(view.container.querySelector(".tv-widget-ticker-tape")).not.toBeNull();
-  expect(view.container.querySelector(".tv-widget-market-overview")).not.toBeNull();
+  // The market overview is a web component; the calendar and top stories are
+  // framed iframe widgets. (The global tape lives in the app shell and is
+  // exercised by the shell-level test in MorningBriefingApp.test.tsx.)
+  await waitFor(() => expect(view.container.querySelectorAll(".tv-wc-host")).toHaveLength(1));
+  expect(view.container.querySelector(".tv-market-overview-host")).not.toBeNull();
   expect(view.container.querySelector(".tv-widget-events")).not.toBeNull();
   expect(view.container.querySelector(".tv-widget-timeline")).not.toBeNull();
-  // Each widget carries the required TradingView attribution element.
-  expect(view.container.querySelectorAll(".tradingview-widget-copyright")).toHaveLength(4);
+  // The iframe widgets carry the required TradingView attribution element.
+  expect(view.container.querySelectorAll(".tradingview-widget-copyright")).toHaveLength(2);
 });
 
 it("renders only qualified ideas and the pre-market edition label", async () => {
@@ -119,18 +121,20 @@ it("shows restrained TradingView widget states instead of fabricated market data
   vi.mocked(fetch).mockImplementation(async () => new Response(null, { status: 503 }));
   const view = renderApp();
 
-  // All four widgets mount in their framed containers. Third-party scripts do
-  // not load in jsdom, so each stays in its loading state until we signal a
-  // script failure.
-  await waitFor(() => expect(view.container.querySelectorAll(".tv-widget-container")).toHaveLength(4));
-  expect(view.container.querySelectorAll(".tv-widget-state.tv-widget-loading")).toHaveLength(4);
-  expect(view.container.querySelectorAll("script[data-tv-widget]")).toHaveLength(4);
+  // The market-overview web component and the two iframe widgets all mount.
+  // The WC module import cannot load in jsdom, so the host surfaces its error
+  // state; the iframe scripts stay loading until we signal a script failure.
+  await waitFor(() => expect(view.container.querySelectorAll(".tv-wc-error")).toHaveLength(1));
+  expect(view.container.querySelectorAll(".tv-widget-state.tv-widget-loading")).toHaveLength(2);
+  expect(view.container.querySelectorAll("script[data-tv-iframe-widget]")).toHaveLength(2);
 
-  view.container.querySelectorAll("script[data-tv-widget]").forEach((script) => {
+  view.container.querySelectorAll("script[data-tv-iframe-widget]").forEach((script) => {
     script.dispatchEvent(new Event("error"));
   });
-  await waitFor(() => expect(view.container.querySelectorAll(".tv-widget-error")).toHaveLength(4));
+  await waitFor(() => expect(view.container.querySelectorAll(".tv-widget-error")).toHaveLength(2));
   expect(view.container).toHaveTextContent("Market widget temporarily unavailable");
+  // The web-component fallback renders alongside the iframe ones.
+  expect(view.container).toHaveTextContent("Market overview temporarily unavailable");
   // No fabricated/demo market figures anywhere.
   expect(view.container).not.toHaveTextContent("6,427.18");
   expect(view.container).not.toHaveTextContent("NVDA");
@@ -289,7 +293,7 @@ it("renders the briefing without waiting for a stalled X request", async () => {
 
   const view = renderApp();
   await waitFor(() => expect(view.container.querySelector(".opportunity-row")).toHaveTextContent("NVDA"));
-  expect(view.container.querySelector(".welcome-card")).toHaveTextContent("WEDNESDAY · 12 AUGUST · PRE-MARKET");
+  expect(view.container.querySelector(".hero")).toHaveTextContent("WEDNESDAY · 12 AUGUST · PRE-MARKET");
 });
 
 it("keeps the last X posts when a later refresh fails", async () => {

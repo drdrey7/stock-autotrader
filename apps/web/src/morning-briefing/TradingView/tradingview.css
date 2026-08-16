@@ -1,0 +1,71 @@
+/*
+ * Host surfaces for the official TradingView widgets (PR #48).
+ *
+ * Web-component widgets (ticker tape, market overview) render into closed
+ * shadow roots and own their entire look via `color-theme`; these rules only
+ * size and frame the hosts and surface the restrained module-loading error
+ * state. The ticker host lives in the app shell (uses shell tokens); the
+ * market-overview host lives inside the briefing pages (uses page tokens).
+ */
+
+.tv-wc-host {
+  position: relative;
+  width: 100%;
+}
+
+/* ---- Global ticker tape (shell) ---- */
+.tv-ticker-host {
+  /* The tape is thin and sits directly under the shell header: no padding, no
+     card wrapper. The official component sizes its host to the compact item
+     height (48px) — the item rows are compact, but the component's internal
+     layout reserves extra space around the tape, so the strip would render
+     ~78px tall. We pin the shell host to the official compact tape height and
+     clip the overhang; the tape content (the 32px quote rows) sits at the top
+     of the host and is never clipped. Sizing our own host is allowed — we do
+     not touch TradingView's shadow-DOM internals. */
+  height: 48px;
+  overflow: hidden;
+}
+
+/* When the TradingView module itself fails to load, the fallback message must
+   be allowed to grow the strip instead of being clipped away. */
+.tv-ticker-host[data-tv-status="error"] {
+  height: auto;
+  overflow: visible;
+  min-height: 36px;
+}
+
+/* ---- Market overview (briefing pages) ---- */
+.tv-market-overview-host {
+  /* Keep the fold stable while the module + quotes load. */
+  min-height: 320px;
+}
+
+/* Restrained fallback shown only when the TradingView module itself fails to
+   load — never used to fabricate market data. */
+.tv-wc-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 22px 14px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.tv-ticker-host .tv-wc-error {
+  color: var(--shell-muted);
+}
+
+.mb-demo .tv-market-overview-host .tv-wc-error {
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+}
+
+@media (max-width: 700px) {
+  .tv-market-overview-host {
+    min-height: 300px;
+  }
+}

@@ -36,14 +36,28 @@ it("ships restrictive Cloudflare static-asset headers", () => {
 });
 
 it("allows only the official TradingView hosts in the CSP", () => {
-  // The homepage embeds official TradingView widgets: their bootstrap scripts
-  // load from s3.tradingview.com and the widget iframes render from
-  // tradingview-widget.com (with s.tradingview.com as the fallback host). No
-  // other third party, and no inline scripts.
-  expect(cloudflareHeaders).toContain("script-src 'self' https://s3.tradingview.com;");
-  expect(cloudflareHeaders).toContain("frame-src https://www.tradingview-widget.com https://s.tradingview.com;");
-  expect(cloudflareHeaders).toContain("connect-src 'self';");
-  // Inline styles are allowed (the theme uses them), but inline scripts are not.
+  // The homepage embeds official TradingView widgets: the ES-module web
+  // components load from widgets.tradingview-widget.com and fetch their datafeed
+  // from the same host (script-src/connect-src + the internal datafeed iframe in
+  // frame-src); the iframe widgets' bootstrap scripts load from s3.tradingview.com
+  // and render from tradingview-widget.com (s.tradingview.com fallback), sending
+  // TradingView's own analytics beacon to snowplow-pixel.tradingview.com
+  // (connect-src); symbol logos load from s3-symbol-logo.tradingview.com
+  // (img-src). No other third party, and no inline scripts.
+  expect(cloudflareHeaders).toContain(
+    "script-src 'self' https://s3.tradingview.com https://widgets.tradingview-widget.com;",
+  );
+  expect(cloudflareHeaders).toContain(
+    "connect-src 'self' https://widgets.tradingview-widget.com https://snowplow-pixel.tradingview.com;",
+  );
+  expect(cloudflareHeaders).toContain(
+    "img-src 'self' data: https://s3-symbol-logo.tradingview.com https://widgets.tradingview-widget.com;",
+  );
+  expect(cloudflareHeaders).toContain(
+    "frame-src https://www.tradingview-widget.com https://s.tradingview.com https://widgets.tradingview-widget.com;",
+  );
+  // Inline styles are allowed (the theme and shadow DOM use them), but inline
+  // scripts are not.
   expect(cloudflareHeaders).not.toContain("script-src 'self' 'unsafe-inline'");
 });
 

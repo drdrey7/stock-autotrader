@@ -1,0 +1,2 @@
+MAIN http://127.0.0.1:43763/
+     https://widgets.tradingview-widget.com/datafeed/tv.html?page_url=http%3A%2F%2F127.0.0.1%3A43763%2F

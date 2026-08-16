@@ -33,13 +33,31 @@ test.describe("desktop shell", () => {
   test("primary navigation works without a full-page reload", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
 
+    // The global tape is a thin compact strip that survives route changes
+    // without remounting (it lives in the app shell, outside <Routes>).
+    const tape = page.locator(".global-ticker");
+    await expect(tape).toBeVisible();
+    const tapeElement = page.locator("tv-ticker-tape");
+    const tapeHandle = await tapeElement.elementHandle();
+    const compactHeight = async () => {
+      const box = await tape.boundingBox();
+      return box && box.height < 64;
+    };
+    expect(await compactHeight(), "tape starts compact").toBeTruthy();
+
     await page.getByRole("link", { name: "X Pulse" }).first().click();
     await expect(page).toHaveURL(/\/x$/);
     await expect(page.getByRole("link", { name: "X Pulse" }).first()).toHaveAttribute("aria-current", "page");
+    await expect(tape).toBeVisible();
+    expect(await tapeHandle.evaluate((el) => el.isConnected), "tape element must not remount on route change").toBeTruthy();
+    expect(await compactHeight(), "tape stays compact on X Pulse").toBeTruthy();
 
     await page.getByRole("link", { name: "Earnings" }).first().click();
     await expect(page).toHaveURL(/\/earnings$/);
     await expect(page.getByRole("link", { name: "Earnings" }).first()).toHaveAttribute("aria-current", "page");
+    await expect(tape).toBeVisible();
+    expect(await tapeHandle.evaluate((el) => el.isConnected), "tape element must not remount on route change").toBeTruthy();
+    expect(await compactHeight(), "tape stays compact on Earnings").toBeTruthy();
   });
 });
 

@@ -1,0 +1,10 @@
+body
+  h3 "Ticker tape"
+  div
+    tv-ticker-tape
+  h3 "Market overview"
+  div
+    tv-market-overview ""
+  script
+  script
+  iframe

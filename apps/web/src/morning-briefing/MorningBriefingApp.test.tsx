@@ -160,14 +160,27 @@ describe("Morning Briefing frontend demo", () => {
     }
   });
 
-  it("remounts TradingView widgets with the active theme when the theme changes", async () => {
+  it("keeps TradingView widgets in sync with the active theme", async () => {
     renderApp();
     await screen.findByRole("heading", { name: "Good afternoon." });
-    const marketScript = () => document.querySelector("script[data-tv-widget='market-overview']");
-    await waitFor(() => expect(marketScript()?.textContent).toContain('"colorTheme":"light"'));
+    const ticker = () => document.querySelector("tv-ticker-tape");
+    const marketOverview = () => document.querySelector("tv-market-overview");
+    // The global tape + market overview are web components: the theme updates in
+    // place via the color-theme attribute (no script remount).
+    await waitFor(() => expect(marketOverview()?.getAttribute("color-theme")).toBe("light"));
+    expect(ticker()?.getAttribute("color-theme")).toBe("light");
+
     fireEvent.click(screen.getAllByRole("button", { name: "Switch to dark mode" })[0]!);
-    await waitFor(() => expect(marketScript()?.textContent).toContain('"colorTheme":"dark"'));
+    await waitFor(() => expect(marketOverview()?.getAttribute("color-theme")).toBe("dark"));
+    expect(ticker()?.getAttribute("color-theme")).toBe("dark");
     expect(document.documentElement.dataset.theme).toBe("dark");
+
+    // The iframe widgets re-inject their script with the new colorTheme.
+    const storiesScript = document.querySelector("script[data-tv-iframe-widget='timeline']");
+    expect(storiesScript).not.toBeNull();
+    await waitFor(() =>
+      expect(JSON.parse(storiesScript!.textContent ?? "{}").colorTheme).toBe("dark"),
+    );
   });
 
   it("shows one filter per tracked account without technical source badges", async () => {

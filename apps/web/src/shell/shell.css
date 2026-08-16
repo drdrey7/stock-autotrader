@@ -202,6 +202,16 @@
   background: var(--shell-bg);
 }
 
+/* ---- Global market tape ---- */
+.global-ticker {
+  /* Thin full-width strip directly below the header. No card wrapper, no
+     padding — the TradingView tape owns its height and its own continuous
+     scroll. */
+  position: relative;
+  border-bottom: 1px solid var(--shell-line);
+  background: var(--shell-surface);
+}
+
 /* ---- Mobile top bar + drawer ---- */
 .shell-topbar,
 .shell-drawer-backdrop {
