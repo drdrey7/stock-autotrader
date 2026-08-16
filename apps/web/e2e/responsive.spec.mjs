@@ -130,6 +130,65 @@ for (const viewport of VIEWPORTS) {
       await expect(page.locator(".sentiment-card")).not.toContainText("Momentum");
       await expect(page.locator(".sentiment-card")).not.toContainText("Risk appetite");
 
+      // The Fear & Greed gauge stays horizontally centred inside its card on
+      // every breakpoint. The score and its label live inside the gauge, so
+      // centring the gauge centres the whole reading.
+      const fgCentering = await page.evaluate(() => {
+        const card = document.querySelector(".sentiment-card");
+        const gauge = card?.querySelector(".gauge");
+        if (!card || !gauge) return null;
+        const cardRect = card.getBoundingClientRect();
+        const gaugeRect = gauge.getBoundingClientRect();
+        const strong = gauge.querySelector(".gauge-mask strong");
+        const strongRect = strong?.getBoundingClientRect();
+        return {
+          gaugeOffset: gaugeRect.left + gaugeRect.width / 2 - (cardRect.left + cardRect.width / 2),
+          strongOffset: strongRect
+            ? strongRect.left + strongRect.width / 2 - (gaugeRect.left + gaugeRect.width / 2)
+            : null,
+        };
+      });
+      expect(fgCentering, `sentiment card + gauge present at ${viewport.label} (${theme})`).not.toBeNull();
+      expect(Math.abs(fgCentering.gaugeOffset), `gauge centred in card at ${viewport.label} (${theme})`).toBeLessThanOrEqual(4);
+      if (fgCentering.strongOffset !== null) {
+        expect(Math.abs(fgCentering.strongOffset), `score centred in gauge at ${viewport.label} (${theme})`).toBeLessThanOrEqual(4);
+      }
+
+      if (viewport.width >= 981) {
+        // Desktop landing row: the Fear & Greed area blends into the page —
+        // no card surface of its own — while staying aligned to the greeting
+        // block beside it so the two read as one hero area.
+        const fgSurface = await page.evaluate(() => {
+          const cs = getComputedStyle(document.querySelector(".sentiment-card"));
+          const heroRect = document.querySelector(".mb-hero").getBoundingClientRect();
+          const fgRect = document.querySelector(".sentiment-card").getBoundingClientRect();
+          return { bg: cs.backgroundColor, shadow: cs.boxShadow, topGap: fgRect.top - heroRect.top, heightGap: fgRect.height - heroRect.height };
+        });
+        expect(["rgba(0, 0, 0, 0)", "transparent"], `Fear & Greed card transparent on desktop (${theme})`).toContain(fgSurface.bg);
+        expect(fgSurface.shadow, `Fear & Greed card has no shadow on desktop (${theme})`).toBe("none");
+        expect(Math.abs(fgSurface.topGap), `Fear & Greed top aligns with greeting on desktop (${theme})`).toBeLessThanOrEqual(2);
+        expect(Math.abs(fgSurface.heightGap), `Fear & Greed height matches greeting on desktop (${theme})`).toBeLessThanOrEqual(4);
+
+        // Desktop row 2: Market Overview and the Economic Calendar stretch to
+        // one shared height — same top, same bottom, same visible card height.
+        const cols = await page.evaluate(() => {
+          const market = document.querySelector(".market-overview-block").getBoundingClientRect();
+          const calendar = document.querySelector(".calendar-block").getBoundingClientRect();
+          const marketFrame = document.querySelector(".market-overview-frame").getBoundingClientRect();
+          const calendarFrame = document.querySelector(".calendar-block .tv-widget-container").getBoundingClientRect();
+          return {
+            heightGap: market.height - calendar.height,
+            topGap: market.top - calendar.top,
+            frameHeightGap: marketFrame.height - calendarFrame.height,
+            frameBottomGap: marketFrame.bottom - calendarFrame.bottom,
+          };
+        });
+        expect(Math.abs(cols.heightGap), `Market/Calendar blocks same height on desktop (${theme})`).toBeLessThanOrEqual(4);
+        expect(Math.abs(cols.topGap), `Market/Calendar blocks same top on desktop (${theme})`).toBeLessThanOrEqual(2);
+        expect(Math.abs(cols.frameHeightGap), `Market/Calendar frames same height on desktop (${theme})`).toBeLessThanOrEqual(4);
+        expect(Math.abs(cols.frameBottomGap), `Market/Calendar frames share a bottom edge on desktop (${theme})`).toBeLessThanOrEqual(4);
+      }
+
       // DOM order must equal the logical visual order (Hero, Fear & Greed,
       // Market Overview, Economic Calendar, Top Stories) with no CSS `order`
       // rearrangements, on every breakpoint.
