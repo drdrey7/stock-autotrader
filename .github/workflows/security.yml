@@ -1,7 +1,6 @@
 name: Security
 
 on:
-  pull_request:
   push:
     branches: [main]
   workflow_dispatch:
@@ -15,6 +14,7 @@ concurrency:
 
 jobs:
   dependencies:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
