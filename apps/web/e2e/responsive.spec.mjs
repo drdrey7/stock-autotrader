@@ -1,7 +1,8 @@
 // Responsive reality check: the homepage must hold together at the mobile
-// widths that matter (390px phone, 820px tablet) and on desktop (1440px), in
-// both themes, with no page-level horizontal overflow, no console errors and
-// no TradingView error states. Runs the viewport matrix on the desktop project
+// widths that matter (390px and 430px phones, 820px tablet) and on desktop
+// (1440px), in both themes, with no page-level horizontal overflow, no console
+// errors, no TradingView error states, and the DOM/visual section order
+// matching the logical layout. Runs the viewport matrix on the desktop project
 // (setViewportSize overrides the project viewport); mobile reality is also
 // exercised by the mobile-chromium runs of smoke/tv-csp/tv-live.
 
@@ -12,6 +13,7 @@ test.skip(({ isMobile }) => isMobile, "Responsive matrix runs on the desktop pro
 
 const VIEWPORTS = [
   { width: 390, height: 844, label: "390px phone" },
+  { width: 430, height: 932, label: "430px phone" },
   { width: 820, height: 1180, label: "820px tablet" },
   { width: 1440, height: 900, label: "1440px desktop" },
 ];
@@ -121,6 +123,30 @@ for (const viewport of VIEWPORTS) {
       await expect(page.locator(".mb-hero")).toBeVisible();
       await expect(page.locator(".market-overview-frame")).toBeVisible();
       await expect(page.locator(".sentiment-card")).toBeVisible();
+
+      // The simplified Fear & Greed card keeps only the title, gauge, score,
+      // one label and the "Updated" timestamp — the Momentum / Risk appetite
+      // rows are gone.
+      await expect(page.locator(".sentiment-card")).not.toContainText("Momentum");
+      await expect(page.locator(".sentiment-card")).not.toContainText("Risk appetite");
+
+      // DOM order must equal the logical visual order (Hero, Fear & Greed,
+      // Market Overview, Economic Calendar, Top Stories) with no CSS `order`
+      // rearrangements, on every breakpoint.
+      const order = await page.evaluate(() => {
+        const children = [...document.querySelectorAll(".homepage-grid > *")];
+        const selectors = [".mb-hero", ".sentiment-card", ".market-overview-block", ".calendar-block", ".stories-block"];
+        const domIndex = selectors.map((s) => children.indexOf(document.querySelector(s)));
+        // Reading order by (top, left) — rows top-down, then left-right.
+        const readingKey = selectors.map((s) => {
+          const rect = document.querySelector(s).getBoundingClientRect();
+          return Math.round(rect.top * 100000 + rect.left);
+        });
+        const sorted = [...readingKey].sort((a, b) => a - b);
+        return { domIndex, inOrder: domIndex.every((v, i) => v === i) && readingKey.every((v, i) => v === sorted[i]) };
+      });
+      expect(order.domIndex, `DOM order at ${viewport.label} (${theme})`).toEqual([0, 1, 2, 3, 4]);
+      expect(order.inOrder, `visual order must match DOM order at ${viewport.label} (${theme})`).toBeTruthy();
     }
 
     expect(errors, `no console errors at ${viewport.label}`).toEqual([]);

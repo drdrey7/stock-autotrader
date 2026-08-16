@@ -9,8 +9,8 @@ import cloudflareHeaders from "../public/_headers?raw";
 
 beforeEach(() => {
   localStorage.clear();
-  // Pin the greeting: 2026-08-12T16:00:00Z is 16:00 in the pinned UTC test
-  // timezone, which is the local afternoon → "Good afternoon.".
+  // A fixed instant for the data fetches; the hero's local-time greeting/date
+  // are deliberately NOT asserted here (they live in the pure-helper tests).
   vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-08-12T16:00:00Z"));
   vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline test fallback")));
   Object.defineProperty(window, "matchMedia", {
@@ -63,7 +63,7 @@ it("allows only the official TradingView hosts in the CSP", () => {
 });
 
 it("ships Morning Briefing metadata in the static HTML fallback", () => {
-  expect(indexHtml).toContain("<title>Morning Briefing — Markets, Opportunities &amp; Insights</title>");
+  expect(indexHtml).toContain("<title>Morning Briefing — Markets, Sentiment &amp; Economic Calendar</title>");
   expect(indexHtml).toContain('name="application-name" content="Morning Briefing"');
   expect(indexHtml).not.toContain("Stock Autotrader");
   expect(indexHtml).not.toContain("Stock Daily Briefing");
@@ -87,11 +87,12 @@ it("shows an accessible recovery state when a lazy page fails", async () => {
 describe("Morning Briefing public experience", () => {
   it.each(["/", "/dashboard"])("opens Morning Briefing at %s", (path) => {
     render(<MemoryRouter initialEntries={[path]}><App /></MemoryRouter>);
-    expect(screen.getByRole("heading", { name: "Good afternoon." })).toBeInTheDocument();
+    // The hero greeting is the visitor's local time (covered by pure-function
+    // helper tests); the subtitle is static and TZ-independent.
+    expect(screen.getByText(/economic calendar and top stories/)).toBeInTheDocument();
     // The homepage keeps only Market Overview, Economic Calendar, Fear & Greed
     // and Top Stories — Top Opportunities is removed for now.
     expect(screen.queryByText("Top Opportunities")).not.toBeInTheDocument();
-    expect(screen.getByText(/economic calendar and top stories/)).toBeInTheDocument();
     expect(screen.queryByText(/log in|sign in/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /buy|sell|trade/i })).not.toBeInTheDocument();
   });
@@ -112,7 +113,9 @@ describe("Morning Briefing public experience", () => {
     "/portfolio", "/market-data", "/activity",
   ])("redirects legacy route %s to Morning Briefing", async (path) => {
     render(<MemoryRouter initialEntries={[path]}><App /></MemoryRouter>);
-    expect(await screen.findByRole("heading", { name: "Good afternoon." })).toBeInTheDocument();
+    // Static hero subtitle confirms the briefing landed, independent of the
+    // machine timezone the local-time greeting depends on.
+    expect(await screen.findByText(/economic calendar and top stories/)).toBeInTheDocument();
   });
 
   it.each([["/status", "System status"]])("keeps public information route %s", (path, heading) => {

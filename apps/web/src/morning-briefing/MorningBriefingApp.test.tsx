@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, useLocation, useNavigate } from "react-router-dom";
 import App from "../App";
 import MorningBriefingApp from "./MorningBriefingApp";
+import { localDateLabel, marketGreeting } from "./local-time";
 import { ThemeProvider } from "../shell/theme";
 
 // The Morning Briefing pages now live inside the dashboard shell, which owns
@@ -91,7 +92,7 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 describe("Morning Briefing frontend demo", () => {
   it("opens on Morning Briefing and navigates between the three areas via the shell", async () => {
     render(<MemoryRouter initialEntries={["/"]}><RoutedApp/></MemoryRouter>);
-    expect(screen.getByRole("heading", { name: "Good afternoon." })).toBeInTheDocument();
+    expect(screen.getByText(/economic calendar and top stories/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("link", { name: "X Pulse" }));
     expect(await screen.findByRole("heading", { level: 1, name: /X Pulse/ })).toBeInTheDocument();
@@ -140,32 +141,34 @@ describe("Morning Briefing frontend demo", () => {
     expect(screen.getByRole("heading", { level: 2, name: "August 2026" })).toBeInTheDocument();
   });
 
-  it("uses the visitor's local date in the fallback briefing header", () => {
-    vi.mocked(Date.now).mockReturnValue(Date.parse("2026-09-01T01:00:00Z"));
-    renderApp();
-    // The pinned test timezone is UTC, so the local date is Tuesday 1 September.
-    expect(screen.getByText("TUESDAY · 1 SEPTEMBER")).toBeInTheDocument();
+  it("greets by the visitor's local hour regardless of machine timezone", () => {
+    // A local-time Date constructor interprets the components in the machine's
+    // own timezone, so getHours() is deterministic on Linux, macOS and Windows
+    // without any process-level TZ pinning.
+    expect(marketGreeting(new Date(2026, 7, 12, 10, 0, 0))).toBe("Good morning.");
+    expect(marketGreeting(new Date(2026, 7, 12, 16, 0, 0))).toBe("Good afternoon.");
+    expect(marketGreeting(new Date(2026, 7, 12, 22, 30, 0))).toBe("Good evening.");
   });
 
-  it("greets by the visitor's local time of day", () => {
-    // The greeting follows the browser's local clock (UTC in the test env),
-    // not the New York market time.
-    const cases: Array<[string, string]> = [
-      ["2026-08-12T10:00:00Z", "Good morning."],   // 10:00 local
-      ["2026-08-12T16:00:00Z", "Good afternoon."], // 16:00 local
-      ["2026-08-12T22:30:00Z", "Good evening."],   // 22:30 local
-    ];
-    for (const [iso, greeting] of cases) {
-      vi.mocked(Date.now).mockReturnValue(Date.parse(iso));
-      const view = renderApp();
-      expect(screen.getByRole("heading", { name: greeting })).toBeInTheDocument();
-      view.unmount();
-    }
+  it("covers the greeting hour boundaries at 5am and 5pm local", () => {
+    expect(marketGreeting(new Date(2026, 7, 12, 4, 59, 0))).toBe("Good evening.");
+    expect(marketGreeting(new Date(2026, 7, 12, 5, 0, 0))).toBe("Good morning.");
+    expect(marketGreeting(new Date(2026, 7, 12, 11, 59, 0))).toBe("Good morning.");
+    expect(marketGreeting(new Date(2026, 7, 12, 12, 0, 0))).toBe("Good afternoon.");
+    expect(marketGreeting(new Date(2026, 7, 12, 16, 59, 0))).toBe("Good afternoon.");
+    expect(marketGreeting(new Date(2026, 7, 12, 17, 0, 0))).toBe("Good evening.");
+  });
+
+  it("labels the visitor's local day and date", () => {
+    // The weekday is a calendar fact (the same in every timezone); the local
+    // constructor keeps the day-of-month and month fixed on any machine.
+    expect(localDateLabel(new Date(2026, 7, 12, 10, 0, 0))).toBe("WEDNESDAY · 12 AUGUST");
+    expect(localDateLabel(new Date(2026, 8, 1, 1, 0, 0))).toBe("TUESDAY · 1 SEPTEMBER");
   });
 
   it("keeps TradingView widgets in sync with the active theme", async () => {
     renderApp();
-    await screen.findByRole("heading", { name: "Good afternoon." });
+    await screen.findByText(/economic calendar and top stories/);
     const ticker = () => document.querySelector("tv-ticker-tape");
     const marketOverview = () => document.querySelector("tv-market-overview");
     // The global tape + market overview are web components: the theme updates in
@@ -223,7 +226,7 @@ describe("Morning Briefing frontend demo", () => {
     fireEvent.click(await screen.findByRole("button", { name: /MSFT.*AMC/ }));
     expect(await screen.findByRole("dialog", { name: "Earnings Detail" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Browser Back" }));
-    expect(await screen.findByRole("heading", { name: "Good afternoon." })).toBeInTheDocument();
+    expect(await screen.findByText(/economic calendar and top stories/)).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     await waitFor(() => expect(document.body.style.overflow).toBe(""));
   });

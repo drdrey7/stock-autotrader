@@ -19,6 +19,7 @@ import {
   useMorningBriefingData,
 } from "./MorningBriefingData";
 import { Card, formatUpdatedAt, LazyPageErrorBoundary, PageLoadingFallback, SectionTitle, spring } from "./shared";
+import { localDateLabel, marketGreeting } from "./local-time";
 // morning-briefing.css is imported by the app entry (src/main.tsx), ordered
 // AFTER the global stylesheets, so its scoped component rules reliably win the
 // cascade against the global .hero/.eyebrow/.table-head/.empty-state classes.
@@ -31,24 +32,6 @@ const XPulsePage = lazy(() => import("./XPulsePage"));
 const EarningsPage = lazy(() => import("./EarningsCalendarPage"));
 
 type Page = "briefing" | "surge" | "earnings";
-
-function localDateLabel(now: Date = new Date(Date.now())): string {
-  // The hero's day/date follows the visitor's own clock and locale, so a
-  // morning visitor on the other side of the world sees their local day, not
-  // the New York market date.
-  const weekday = new Intl.DateTimeFormat("en", { weekday: "long" }).format(now);
-  const month = new Intl.DateTimeFormat("en", { month: "long" }).format(now);
-  return `${weekday} · ${now.getDate()} ${month}`.toUpperCase();
-}
-
-function marketGreeting(now: Date = new Date(Date.now())): string {
-  // Time-of-day greeting in the visitor's local timezone (the browser clock,
-  // not the market's): a morning visitor sees "Good morning.".
-  const hour = now.getHours();
-  if (hour >= 5 && hour < 12) return "Good morning.";
-  if (hour >= 12 && hour < 17) return "Good afternoon.";
-  return "Good evening.";
-}
 
 const SENTIMENT_META: Record<string, { label: string; color: string }> = {
   extreme_fear: { label: "Extreme Fear", color: "#e5484d" },
@@ -64,15 +47,13 @@ const GAUGE_ARC_LENGTH = Math.PI * 65;
 function Sentiment() {
   const { sentiment } = useMorningBriefingData();
   if (!sentiment) {
-    return <Card className="sentiment-card"><SectionTitle title="Fear & Greed"/><div className="gauge gauge-unavailable"><svg viewBox="0 0 160 86" aria-hidden="true"><path className="gauge-bg" d="M15 75 A65 65 0 0 1 145 75"/></svg><div className="gauge-mask"><strong>Not available</strong><span>Fear & Greed</span></div></div><h3>Momentum <span className="neutral">Not available</span></h3><p><i/> Risk appetite <span className="neutral">Not available</span></p></Card>;
+    return <Card className="sentiment-card"><SectionTitle title="Fear & Greed"/><div className="gauge gauge-unavailable"><svg viewBox="0 0 160 86" aria-hidden="true"><path className="gauge-bg" d="M15 75 A65 65 0 0 1 145 75"/></svg><div className="gauge-mask"><strong>Not available</strong><span>Fear & Greed</span></div></div></Card>;
   }
   const meta = SENTIMENT_META[sentiment.rating] ?? { label: "Neutral", color: "#8b8d98" };
   const dash = (sentiment.score / 100) * GAUGE_ARC_LENGTH;
-  const riskAppetite = sentiment.score >= 50 ? "Risk-on" : "Risk-off";
   return (
     <Card className="sentiment-card">
       <SectionTitle title="Fear & Greed"/>
-      <p className="card-subtitle">Updated {formatUpdatedAt(sentiment.asOf)}</p>
       <div className="gauge">
         <svg viewBox="0 0 160 86" aria-hidden="true">
           <path className="gauge-bg" d="M15 75 A65 65 0 0 1 145 75"/>
@@ -83,20 +64,17 @@ function Sentiment() {
           <span style={{ color: meta.color }}>{meta.label}</span>
         </div>
       </div>
-      <h3>Momentum <span style={{ color: meta.color }}>{meta.label}</span></h3>
-      <p><i style={{ background: meta.color }}/> Risk appetite <span style={{ color: meta.color }}>{riskAppetite}</span></p>
+      <p className="card-subtitle">Updated {formatUpdatedAt(sentiment.asOf)}</p>
     </Card>
   );
 }
 
 function MorningBriefing() {
-  const { editionType } = useMorningBriefingData();
   const { theme } = useShellTheme();
-  const editionLabel = editionType ? ` · ${editionType === "post_close" ? "POST-CLOSE" : "PRE-MARKET"}` : "";
   return <div className="page-content">
     <div className="homepage-grid">
       <section className="mb-hero" aria-label="Morning briefing">
-        <span className="eyebrow">{localDateLabel()}{editionLabel}</span>
+        <span className="eyebrow">{localDateLabel()}</span>
         <h1>{marketGreeting()}</h1>
         <p>Markets, economic calendar and top stories — at a glance.</p>
       </section>

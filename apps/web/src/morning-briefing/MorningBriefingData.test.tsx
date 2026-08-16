@@ -77,22 +77,6 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it("greets by the visitor's local time of day", () => {
-  // The greeting follows the browser's local clock (UTC in the pinned test
-  // timezone), not the New York market time.
-  const cases: Array<[string, string]> = [
-    ["2026-08-12T10:00:00Z", "Good morning."],  // 10:00 local
-    ["2026-08-12T16:00:00Z", "Good afternoon."], // 16:00 local
-    ["2026-08-12T22:30:00Z", "Good evening."],   // 22:30 local
-  ];
-  for (const [iso, greeting] of cases) {
-    vi.mocked(Date.now).mockReturnValue(Date.parse(iso));
-    const view = renderApp();
-    expect(screen.getByRole("heading", { name: greeting })).toBeInTheDocument();
-    view.unmount();
-  }
-});
-
 it("mounts the TradingView widget sections on the homepage", async () => {
   const view = renderApp();
   // The market overview is a web component; the calendar and top stories are
@@ -106,10 +90,10 @@ it("mounts the TradingView widget sections on the homepage", async () => {
   expect(view.container.querySelectorAll(".tradingview-widget-copyright")).toHaveLength(2);
 });
 
-it("renders the pre-market edition label without a Top Opportunities section", async () => {
+it("renders the homepage without a Top Opportunities section", async () => {
   useFixtureClock();
   const view = renderApp();
-  await waitFor(() => expect(view.container.querySelector(".mb-hero")).toHaveTextContent("WEDNESDAY · 12 AUGUST · PRE-MARKET"));
+  await waitFor(() => expect(view.container.querySelector(".market-overview-frame")).not.toBeNull());
   // Top Opportunities is removed from the homepage for now: no heading, no
   // rows, and the idea moves that used to feed them must not appear.
   expect(screen.queryByText("Top Opportunities")).not.toBeInTheDocument();
@@ -147,14 +131,15 @@ it("keeps unavailable sentiment explicit without fixture numbers", async () => {
   const view = renderApp();
 
   expect(screen.getByRole("heading", { name: "Fear & Greed" })).toBeInTheDocument();
-  expect(screen.getByRole("heading", { name: /Momentum Not available/ })).toBeInTheDocument();
+  // No synthetic reading: the gauge itself says "Not available".
+  expect(view.container.querySelector(".gauge-mask strong")).toHaveTextContent("Not available");
   expect(view.container.querySelector(".sentiment-card")).toHaveTextContent("Not available");
   expect(view.container).not.toHaveTextContent("72");
   expect(view.container).not.toHaveTextContent("4.28%");
   expect(view.container).not.toHaveTextContent("$80.21");
 });
 
-it("labels a post-close edition instead of showing a pre-market greeting", async () => {
+it("never renders the backend edition tag in the hero", async () => {
   const postCloseBriefing = { ...briefing, editionType: "post_close", title: "Closing briefing" };
   vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
     const url = String(input);
@@ -163,12 +148,14 @@ it("labels a post-close edition instead of showing a pre-market greeting", async
     return new Response(null, { status: 404 });
   });
 
-  renderApp();
-  expect(await screen.findByText("WEDNESDAY · 12 AUGUST · POST-CLOSE")).toBeInTheDocument();
-  // At 22:30 local the greeting reflects the visitor's local time of day, not
-  // the edition or the market's timezone.
-  expect(screen.getByRole("heading", { name: "Good evening." })).toBeInTheDocument();
-  expect(screen.queryByRole("heading", { name: "Good morning." })).not.toBeInTheDocument();
+  const view = renderApp();
+  await screen.findByText(/economic calendar and top stories/);
+  // The hero shows only the visitor's local day/date + greeting — no
+  // PRE-MARKET / POST-CLOSE / edition tag anywhere on the homepage, even when
+  // the backend labels the publication as post-close.
+  expect(view.container).not.toHaveTextContent("POST-CLOSE");
+  expect(view.container).not.toHaveTextContent("PRE-MARKET");
+  expect(screen.getByRole("heading", { level: 1 })).toBeInTheDocument();
 });
 
 it("announces the full date for earnings calendar events", async () => {
@@ -275,7 +262,7 @@ it("renders the briefing without waiting for a stalled X request", async () => {
   });
 
   const view = renderApp();
-  await waitFor(() => expect(view.container.querySelector(".mb-hero")).toHaveTextContent("WEDNESDAY · 12 AUGUST · PRE-MARKET"));
+  await waitFor(() => expect(view.container.querySelector(".market-overview-frame")).not.toBeNull());
 });
 
 it("keeps the last X posts when a later refresh fails", async () => {
@@ -392,7 +379,7 @@ it("clears earnings when the endpoint fails after a success", async () => {
   vi.useRealTimers();
 });
 
-it("keeps the edition label during a transient briefing failure while the analysis is still valid", async () => {
+it("keeps the homepage stable during a transient briefing failure", async () => {
   let briefRequests = 0;
   const originalFetch = vi.mocked(fetch).getMockImplementation()!;
   vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -404,16 +391,19 @@ it("keeps the edition label during a transient briefing failure while the analys
   });
 
   const view = renderApp();
-  await waitFor(() => expect(view.container.querySelector(".mb-hero")).toHaveTextContent("PRE-MARKET"));
+  await waitFor(() => expect(view.container.querySelector(".market-overview-frame")).not.toBeNull());
   document.dispatchEvent(new Event("visibilitychange"));
   await waitFor(() => expect(briefRequests).toBeGreaterThan(1));
-  // A still-valid daily edition survives the transient failure.
-  expect(view.container.querySelector(".mb-hero")).toHaveTextContent("PRE-MARKET");
+  // A transient brief failure must not blank the homepage: the static widget
+  // sections and the sentiment card remain mounted.
+  expect(view.container.querySelector(".market-overview-frame")).not.toBeNull();
+  expect(view.container.querySelector(".calendar-block")).not.toBeNull();
+  expect(view.container.querySelector(".sentiment-card")).not.toBeNull();
 });
 
 it("does not render source-health badges anywhere", async () => {
   const view = renderApp();
-  await waitFor(() => expect(view.container.querySelector(".mb-hero")).toHaveTextContent("PRE-MARKET"));
+  await waitFor(() => expect(view.container.querySelector(".market-overview-frame")).not.toBeNull());
   expect(view.container.querySelectorAll(".data-source")).toHaveLength(0);
   expect(view.container).not.toHaveTextContent("Live");
   expect(view.container).not.toHaveTextContent("Cached");
@@ -430,7 +420,7 @@ it("ignores malformed stored X posts instead of rendering partial objects", asyn
   expect(screen.queryByText("Missing fields")).not.toBeInTheDocument();
 });
 
-it("clears the edition label and sentiment after the backend stops publishing", async () => {
+it("clears the sentiment card after the backend stops publishing", async () => {
   let coreAvailable = true;
   const originalFetch = vi.mocked(fetch).getMockImplementation()!;
   vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -438,19 +428,25 @@ it("clears the edition label and sentiment after the backend stops publishing", 
     if (!coreAvailable && ["/api/briefs/latest", "/api/status"].includes(url)) {
       return new Response(null, { status: 503 });
     }
+    if (url === "/api/status") {
+      return new Response(JSON.stringify({
+        briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt },
+        sentiment: { provider: "cnn-fear-greed", score: 62, rating: "greed", asOf: "2026-08-12T21:00:00Z" },
+      }), { status: 200 });
+    }
     return originalFetch(input, init);
   });
 
   const view = renderApp();
-  await waitFor(() => expect(view.container.querySelector(".mb-hero")).toHaveTextContent("PRE-MARKET"));
+  await waitFor(() => expect(view.container.querySelector(".sentiment-card")).toHaveTextContent("Greed"));
 
   coreAvailable = false;
-  // Advance beyond the 72h analysis window so the retained daily
-  // publication expires and the edition label must clear.
+  // Advance beyond the 72h sentiment window so the retained reading expires
+  // and the card must clear to "Not available".
   vi.mocked(Date.now).mockReturnValue(Date.parse("2026-08-16T01:00:00Z"));
   document.dispatchEvent(new Event("visibilitychange"));
-  await waitFor(() => expect(view.container.querySelector(".mb-hero")).not.toHaveTextContent("PRE-MARKET"));
-  await waitFor(() => expect(view.container.querySelector(".sentiment-card")).toHaveTextContent("Not available"));
+  await waitFor(() => expect(view.container.querySelector(".sentiment-card .gauge-mask strong")).toHaveTextContent("Not available"));
+  expect(view.container.querySelector(".sentiment-card .gauge-mask span")).toHaveTextContent("Fear & Greed");
 });
 
 it("refreshes earnings silently after the internal refresh interval", async () => {
@@ -528,7 +524,9 @@ it("renders the fear & greed number and gauge from the status sentiment", async 
     "stroke-dasharray",
     expect.stringMatching(/^126\.\d+/),
   );
-  expect(view.container.querySelector(".sentiment-card")).toHaveTextContent("Risk-on");
+  // The simplified card shows the score, one label, the gauge and a small
+  // "Updated ..." timestamp — no Momentum / Risk appetite rows.
+  expect(view.container.querySelector(".sentiment-card .card-subtitle")).toHaveTextContent("Updated");
   expect(view.container.querySelector(".sentiment-card")).not.toHaveTextContent("Not available");
 });
 
@@ -545,6 +543,5 @@ it("keeps the sentiment card unavailable when the reading is stale", async () =>
 
   const view = renderApp();
   await waitFor(() => expect(view.container.querySelector(".sentiment-card")).toHaveTextContent("Not available"));
-  expect(view.container.querySelector(".sentiment-card")).not.toHaveTextContent("Risk-on");
   expect(view.container.querySelector(".sentiment-card .gauge-value")).toBeNull();
 });
