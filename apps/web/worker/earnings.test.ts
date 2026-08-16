@@ -118,6 +118,13 @@ class MemoryStatement {
         .sort((left, right) => String(right.scheduled_date).localeCompare(String(left.scheduled_date)) || String(left.symbol).localeCompare(String(right.symbol)));
       return { results: results as T[] };
     }
+    if (this.sql.includes("FROM app_meta") && this.sql.includes("LIKE")) {
+      const prefix = this.sql.match(/LIKE '([^']+)%/)?.[1] ?? "";
+      const results = [...this.db.meta.entries()]
+        .filter(([key]) => key.startsWith(prefix))
+        .map(([key, value]) => ({ key, value }));
+      return { results: results as T[] };
+    }
     if (this.sql.includes("FROM earnings_universe")) {
       const activeOnly = this.sql.includes("active = 1") && this.sql.includes("source = 'core'");
       const candidatesOnly = this.sql.includes("metadata_updated_at IS NULL");
@@ -630,7 +637,7 @@ describe("earnings D1 write model and API", () => {
       calendar,
       consensus: calendar as never,
       official,
-    })).resolves.toMatchObject({ status: "ok" });
+    }, 0)).resolves.toMatchObject({ status: "ok" });
     expect(requestedRange).toEqual({ from: "2026-07-14", to: "2026-10-12" });
     expect(requestedUniverse).toEqual(new Set(CORE_UNIVERSE));
     expect([...db.events.values()].map((event) => event.symbol)).toEqual(["MSFT"]);
@@ -654,7 +661,7 @@ describe("earnings D1 write model and API", () => {
       calendar,
       consensus: calendar as never,
       official,
-    })).resolves.toMatchObject({ status: "degraded" });
+    }, 0)).resolves.toMatchObject({ status: "degraded" });
     expect((await readEarningsEvents(db, { from: "2026-09-20", to: "2026-09-20" }))[0]).toMatchObject({ status: "scheduled", scheduledDate: "2026-09-20" });
     expect(db.meta.get("earningsEngineUpdatedAt")).toBeUndefined();
     expect(db.meta.get("earningsEngineLastAttemptAt")).toBe("2026-08-13T06:00:00.000Z");
@@ -691,7 +698,7 @@ describe("earnings D1 write model and API", () => {
     };
     const providers = { calendar, consensus: calendar as never, official };
 
-    await expect(runEarningsJob({ DB: db } as never, new Date("2026-08-13T06:00:00.000Z"), "calendar", providers))
+    await expect(runEarningsJob({ DB: db } as never, new Date("2026-08-13T06:00:00.000Z"), "calendar", providers, 0))
       .resolves.toMatchObject({ status: "degraded" });
     failCalendar = false;
     await expect(runEarningsJob({ DB: db } as never, new Date("2026-08-13T19:30:00.000Z"), "monitor", providers))
@@ -727,7 +734,7 @@ describe("earnings D1 write model and API", () => {
       calendar,
       consensus: calendar as never,
       official,
-    })).resolves.toMatchObject({ status: "degraded" });
+    }, 0)).resolves.toMatchObject({ status: "degraded" });
 
     expect((await readEarningsEvents(db, { from: "2026-08-20", to: "2026-08-20" }))[0]).toMatchObject({
       symbol: "AAPL",
@@ -749,8 +756,8 @@ describe("earnings D1 write model and API", () => {
       findRelevantFiling: async () => null,
     };
     const providers = { calendar, consensus: calendar as never, official };
-    await runEarningsJob({ DB: db } as never, new Date("2026-08-13T06:00:00.000Z"), "calendar", providers);
-    await runEarningsJob({ DB: db } as never, new Date("2026-08-13T06:00:00.000Z"), "calendar", providers);
+    await runEarningsJob({ DB: db } as never, new Date("2026-08-13T06:00:00.000Z"), "calendar", providers, 0);
+    await runEarningsJob({ DB: db } as never, new Date("2026-08-13T06:00:00.000Z"), "calendar", providers, 0);
     expect(db.events.size).toBe(1);
   });
 
@@ -789,7 +796,7 @@ describe("earnings D1 write model and API", () => {
       calendar,
       consensus: calendar as never,
       official,
-    });
+    }, 0);
     expect((await readEarningsEvents(db, { from: "2026-09-20", to: "2026-09-20" }))[0]?.status).toBe("scheduled");
   });
 
@@ -972,7 +979,7 @@ describe("SEC EDGAR enrichment decoupling (issue #35)", () => {
       calendar,
       consensus: calendar as never,
       official,
-    });
+    }, 0);
     // SEC enrichment failure is observable in diagnostics + job log, but the
     // critical job status and calendar/monitor failure keys must stay clean.
     expect(result.status).toBe("ok");
@@ -1001,7 +1008,7 @@ describe("SEC EDGAR enrichment decoupling (issue #35)", () => {
       calendar,
       consensus: calendar as never,
       official,
-    });
+    }, 0);
     expect(result.status).toBe("ok");
     expect(db.meta.get("earningsCalendarLastError")).toBeUndefined();
     expect(db.meta.get("earningsMonitorLastError")).toBeUndefined();
@@ -1034,7 +1041,7 @@ describe("SEC EDGAR enrichment decoupling (issue #35)", () => {
       calendar,
       consensus: calendar as never,
       official,
-    });
+    }, 0);
     expect(result.status).toBe("degraded");
     // Critical health reflects the Finnhub calendar failure regardless of SEC.
     expect(db.meta.get("earningsCalendarLastError")).toContain("Finnhub HTTP 503");
@@ -1072,7 +1079,7 @@ describe("SEC EDGAR enrichment decoupling (issue #35)", () => {
       calendar,
       consensus: calendar as never,
       official,
-    });
+    }, 0);
     expect(result.status).toBe("ok");
     expect(db.meta.get("earningsCalendarLastError")).toBeUndefined();
     expect(db.meta.get("earningsSecLastSuccessAt")).toBe("2026-08-13T06:00:00.000Z");
@@ -1157,12 +1164,12 @@ describe("SEC EDGAR enrichment decoupling (issue #35)", () => {
       consensus: calendar as never,
       official,
     };
-    await expect(runEarningsJob({ DB: db } as never, new Date("2026-08-13T06:00:00.000Z"), "calendar", providers)).resolves.toMatchObject({ status: "ok" });
+    await expect(runEarningsJob({ DB: db } as never, new Date("2026-08-13T06:00:00.000Z"), "calendar", providers, 0)).resolves.toMatchObject({ status: "ok" });
     // SEC goes down; the same Finnhub calendar rows are synced again. The
     // critical job status stays ok — SEC is enrichment-only — while the SEC
     // diagnostics record the failure.
     secHealthy = false;
-    await expect(runEarningsJob({ DB: db } as never, new Date("2026-08-13T06:00:00.000Z"), "calendar", providers)).resolves.toMatchObject({ status: "ok" });
+    await expect(runEarningsJob({ DB: db } as never, new Date("2026-08-13T06:00:00.000Z"), "calendar", providers, 0)).resolves.toMatchObject({ status: "ok" });
     // Critical health stays clean; SEC diagnostics show the new failure.
     expect(db.meta.get("earningsCalendarLastError")).toBeUndefined();
     expect(db.meta.get("earningsSecLastError")).toContain("403");
@@ -1253,28 +1260,32 @@ describe("earnings universe metadata enrichment", () => {
       },
     };
     const providers = { profile: provider } as unknown as EarningsProviderBundle;
-    const first = await enrichUniverseMetadata({ DB: db } as never, providers, "2026-08-16T06:00:00.000Z");
-    expect(first.requests).toBe(15);
-    expect(first.successes).toBe(15);
-    expect(fetched).toHaveLength(15);
+    const first = await enrichUniverseMetadata({ DB: db } as never, providers, "2026-08-16T06:00:00.000Z", 0);
+    // Zero metadata coverage triggers the initial bootstrap pass: batches of
+    // METADATA_BOOTSTRAP_BATCH (20) until coverage rises above the threshold.
+    expect(first.bootstrap).toBe(true);
+    expect(first.requests).toBe(20);
+    expect(first.successes).toBe(20);
+    expect(fetched).toHaveLength(20);
     const row = db.universe.get(fetched[0]!);
     expect(row?.logo_url).toBe(`https://static2.finnhub.io/logo/${fetched[0]}.png`);
     expect(row?.industry).toBe("Semiconductors");
     expect(row?.website_url).toBe(`https://www.${fetched[0]!.toLowerCase()}.com`);
     expect(row?.metadata_provider).toBe("finnhub-company-profile");
     expect(row?.metadata_updated_at).toBe("2026-08-16T06:00:00.000Z");
-    // The 50-member Core fills across capped runs; the final run is a no-op.
+    // The 50-member Core fills across bootstrap batches; the final run is a
+    // no-op. 20 + 20 + 10 = 50.
     let runs = 1;
     let total = first.successes;
     for (let index = 0; index < 10; index += 1) {
-      const next = await enrichUniverseMetadata({ DB: db } as never, providers, "2026-08-16T07:00:00.000Z");
+      const next = await enrichUniverseMetadata({ DB: db } as never, providers, "2026-08-16T07:00:00.000Z", 0);
       runs += 1;
       total += next.successes;
-      expect(next.requests).toBeLessThanOrEqual(15);
+      expect(next.requests).toBeLessThanOrEqual(20);
       expect(fetched).toHaveLength(total);
       if (next.requests === 0) break;
     }
-    expect(runs).toBe(5);
+    expect(runs).toBe(4);
     expect(total).toBe(50);
     expect(fetched).toHaveLength(50);
   });
@@ -1282,12 +1293,12 @@ describe("earnings universe metadata enrichment", () => {
   it("re-enriches members whose metadata_updated_at is older than the TTL", async () => {
     const db = new MemoryD1();
     await seedActiveCoreUniverse(db);
-    const first = await enrichUniverseMetadata({ DB: db } as never, { profile: profileProvider } as unknown as EarningsProviderBundle, "2026-08-16T06:00:00.000Z");
+    const first = await enrichUniverseMetadata({ DB: db } as never, { profile: profileProvider } as unknown as EarningsProviderBundle, "2026-08-16T06:00:00.000Z", 0);
     expect(first.successes).toBeGreaterThan(0);
     // Age one row beyond the 14-day TTL.
     const symbol = first.symbols[0]!;
     db.universe.get(symbol)!.metadata_updated_at = "2026-08-01T06:00:00.000Z";
-    const refreshed = await enrichUniverseMetadata({ DB: db } as never, { profile: profileProvider } as unknown as EarningsProviderBundle, "2026-08-16T08:00:00.000Z");
+    const refreshed = await enrichUniverseMetadata({ DB: db } as never, { profile: profileProvider } as unknown as EarningsProviderBundle, "2026-08-16T08:00:00.000Z", 0);
     expect(refreshed.symbols).toContain(symbol);
   });
 
@@ -1309,11 +1320,11 @@ describe("earnings universe metadata enrichment", () => {
       fetchProfile: async () => { throw new Error("profile provider HTTP 429"); },
     };
     const providers = { calendar, consensus: calendar as never, official, profile: failingProfile } as unknown as EarningsProviderBundle;
-    const result = await runEarningsJob({ DB: db } as never, new Date("2026-08-16T06:00:00.000Z"), "calendar", providers);
+    const result = await runEarningsJob({ DB: db } as never, new Date("2026-08-16T06:00:00.000Z"), "calendar", providers, 0);
     expect(result.status).toBe("ok");
     expect(db.meta.get("earningsCalendarLastError")).toBeUndefined();
     expect(db.meta.get("earningsMetadataLastError")).toContain("profile provider HTTP 429");
-    expect(db.meta.get("earningsMetadataConsecutiveFailures")).toBe("15");
+    expect(db.meta.get("earningsMetadataConsecutiveFailures")).toBe("20");
     // The calendar event still landed despite every profile call failing.
     expect(db.events.size).toBeGreaterThan(0);
   });
@@ -1325,9 +1336,9 @@ describe("earnings universe metadata enrichment", () => {
       name: "finnhub-company-profile",
       fetchProfile: async () => { throw new Error("boom"); },
     };
-    await enrichUniverseMetadata({ DB: db } as never, { profile: failingProfile } as unknown as EarningsProviderBundle, "2026-08-16T06:00:00.000Z");
-    expect(db.meta.get("earningsMetadataConsecutiveFailures")).toBe("15");
-    await enrichUniverseMetadata({ DB: db } as never, { profile: profileProvider } as unknown as EarningsProviderBundle, "2026-08-16T06:30:00.000Z");
+    await enrichUniverseMetadata({ DB: db } as never, { profile: failingProfile } as unknown as EarningsProviderBundle, "2026-08-16T06:00:00.000Z", 0);
+    expect(db.meta.get("earningsMetadataConsecutiveFailures")).toBe("20");
+    await enrichUniverseMetadata({ DB: db } as never, { profile: profileProvider } as unknown as EarningsProviderBundle, "2026-08-16T06:30:00.000Z", 0);
     expect(db.meta.get("earningsMetadataLastError")).toBeUndefined();
     expect(db.meta.get("earningsMetadataConsecutiveFailures")).toBe("0");
   });
@@ -1367,5 +1378,189 @@ describe("earnings read model company metadata", () => {
     const future = await readEarningsApi({ DB: db } as never, new URLSearchParams("from=2026-08-13&to=2026-09-12"), new Date("2026-08-13T12:00:00.000Z"));
     expect(future.summary.next30Days).toBe(1);
     expect(future.summary).not.toHaveProperty("next60Days");
+  });
+});
+
+describe("targeted historical recovery (PR #50)", () => {
+  const recoveryCalendar = (bySymbol: Record<string, EarningsCalendarObservation[]>, queried?: string[]): EarningsCalendarProvider => {
+    const calendar: EarningsCalendarProvider = {
+      name: "finnhub-earnings-calendar",
+      supportsForwardCalendar: true,
+      fetchCalendar: async () => ({ provider: "finnhub-earnings-calendar", observations: [], warnings: [], updatedAt: "2026-08-16T06:00:00.000Z" }),
+      fetchSymbolHistory: async (symbol: string) => {
+        queried?.push(symbol);
+        return { provider: "finnhub-earnings-calendar", observations: bySymbol[symbol] ?? [], warnings: [], updatedAt: "2026-08-16T06:00:00.000Z" };
+      },
+    };
+    return calendar;
+  };
+
+  const silentOfficial: OfficialFilingsProvider = {
+    name: "sec-edgar",
+    fetchCompanyMetadata: async () => ({ provider: "sec-edgar", observations: [], warnings: [], updatedAt: "2026-08-16T06:00:00.000Z" }),
+    findRelevantFiling: async () => null,
+  };
+
+  const msftJuly = () => eventObservation({
+    symbol: "MSFT", company: "Microsoft Corporation", scheduledDate: "2026-07-29", scheduledTime: "amc", timing: "AMC",
+    fiscalYear: 2026, fiscalQuarter: 4, fiscalPeriod: "Q4",
+    epsEstimate: 4.3274, epsActual: 4.74, revenueEstimate: 89373722644, revenueActual: 90007000000,
+    providerEventId: "finnhub:MSFT:2026:4:2026-07-29",
+  });
+
+  const aaplJuly = () => eventObservation({
+    symbol: "AAPL", company: "Apple Inc.", scheduledDate: "2026-07-30", scheduledTime: "amc", timing: "AMC",
+    fiscalYear: 2026, fiscalQuarter: 3, fiscalPeriod: "Q3",
+    epsEstimate: 1.9271, epsActual: 1.91, revenueEstimate: 110823804698, revenueActual: 109417000000,
+    providerEventId: "finnhub:AAPL:2026:3:2026-07-30",
+  });
+
+  it("recovers bulk-omitted MSFT/AAPL history, persists each event once and exposes them in Past Earnings", async () => {
+    const db = new MemoryD1();
+    await seedActiveCoreUniverse(db);
+    // Complete metadata coverage so recovery runs at the steady-state cap
+    // (5 symbols/run): MSFT (index 27 of 50) lands on run 6, inside the
+    // 30-day rolling window.
+    for (const row of db.universe.values()) {
+      row.logo_url = `https://static2.finnhub.io/logo/${row.symbol}.png`;
+      row.industry = "Semiconductors";
+      row.metadata_updated_at = "2026-08-16T00:00:00.000Z";
+    }
+    const calendar = recoveryCalendar({ MSFT: [msftJuly()], AAPL: [aaplJuly()] });
+    const providers = { calendar, consensus: calendar as never, official: silentOfficial } as unknown as EarningsProviderBundle;
+    const first = await runEarningsJob({ DB: db } as never, new Date("2026-08-16T06:00:00.000Z"), "calendar", providers, 0);
+    expect(first.status).toBe("ok");
+    for (let day = 0; day < 12; day += 1) {
+      const runAt = new Date(Date.parse("2026-08-17T06:00:00.000Z") + day * 24 * 60 * 60 * 1000);
+      await runEarningsJob({ DB: db } as never, runAt, "calendar", providers, 0);
+      if ([...db.events.values()].some((row) => row.symbol === "MSFT")) break;
+    }
+    const msftRows = [...db.events.values()].filter((row) => row.symbol === "MSFT");
+    const aaplRows = [...db.events.values()].filter((row) => row.symbol === "AAPL");
+    expect(msftRows).toHaveLength(1);
+    expect(aaplRows).toHaveLength(1);
+    expect(msftRows[0]).toMatchObject({ status: "reported", eps_actual: 4.74, eps_estimate: 4.3274, revenue_actual: 90007000000, scheduled_date: "2026-07-29" });
+    expect(aaplRows[0]).toMatchObject({ status: "reported", eps_actual: 1.91, revenue_actual: 109417000000 });
+    // Read model: both recovered events land inside the Past Earnings window.
+    const response = await readEarningsApi({ DB: db } as never, new URLSearchParams("from=2026-07-17&to=2026-08-16"), new Date("2026-08-16T12:00:00.000Z"));
+    const reported = response.events.filter((event) => event.status === "reported");
+    expect(reported.map((event) => event.symbol).sort()).toEqual(["AAPL", "MSFT"]);
+    expect(reported.find((event) => event.symbol === "MSFT")).toMatchObject({
+      epsActual: 4.74,
+      epsSurprisePct: expect.any(Number),
+      revenueActual: 90007000000,
+      overallResult: "Beat",
+      timing: "AMC",
+    });
+  });
+
+  it("skips symbols the bulk covers and symbols that already hold a recent reported row in D1", async () => {
+    const db = new MemoryD1();
+    await seedActiveCoreUniverse(db);
+    await upsertEarningsEvent(db as never, normalizedEvent({
+      symbol: "NVDA", scheduledDate: "2026-08-10", fiscalYear: 2026, fiscalQuarter: 1,
+      epsEstimate: 2.5, epsActual: 3, providerEventId: "nvda-1",
+    }, "2026-08-16"));
+    const queried: string[] = [];
+    const calendar: EarningsCalendarProvider = {
+      name: "finnhub-earnings-calendar",
+      supportsForwardCalendar: true,
+      fetchCalendar: async () => ({
+        provider: "finnhub-earnings-calendar",
+        observations: [eventObservation({ symbol: "WMT", scheduledDate: "2026-08-15", fiscalYear: 2026, fiscalQuarter: 2, providerEventId: "wmt-1" })],
+        warnings: [],
+        updatedAt: "2026-08-16T06:00:00.000Z",
+      }),
+      fetchSymbolHistory: async (symbol: string) => {
+        queried.push(symbol);
+        return { provider: "finnhub-earnings-calendar", observations: [], warnings: [], updatedAt: "2026-08-16T06:00:00.000Z" };
+      },
+    };
+    const providers = { calendar, consensus: calendar as never, official: silentOfficial } as unknown as EarningsProviderBundle;
+    await runEarningsJob({ DB: db } as never, new Date("2026-08-16T06:00:00.000Z"), "calendar", providers, 0);
+    expect(queried).toContain("AAPL");
+    expect(queried).not.toContain("NVDA");
+    expect(queried).not.toContain("WMT");
+  });
+
+  it("isolates recovery failures: job stays ok, no calendar error, recovery diagnostics recorded", async () => {
+    const db = new MemoryD1();
+    await seedActiveCoreUniverse(db);
+    const failingCalendar: EarningsCalendarProvider = {
+      name: "finnhub-earnings-calendar",
+      supportsForwardCalendar: true,
+      fetchCalendar: async () => ({ provider: "finnhub-earnings-calendar", observations: [], warnings: [], updatedAt: "2026-08-16T06:00:00.000Z" }),
+      fetchSymbolHistory: async (symbol: string) => { throw new Error(`recovery boom ${symbol}`); },
+    };
+    const providers = { calendar: failingCalendar, consensus: failingCalendar as never, official: silentOfficial } as unknown as EarningsProviderBundle;
+    const result = await runEarningsJob({ DB: db } as never, new Date("2026-08-16T06:00:00.000Z"), "calendar", providers, 0);
+    expect(result.status).toBe("ok");
+    expect(db.meta.get("earningsCalendarLastError")).toBeUndefined();
+    expect(db.meta.get("earningsRecoveryLastAttemptAt")).toBe("2026-08-16T06:00:00.000Z");
+    expect(db.meta.get("earningsRecoveryLastError")).toContain("recovery boom");
+  });
+
+  it("deduplicates a recovered event that the bulk already returned", async () => {
+    const db = new MemoryD1();
+    await seedActiveCoreUniverse(db);
+    const calendar: EarningsCalendarProvider = {
+      name: "finnhub-earnings-calendar",
+      supportsForwardCalendar: true,
+      fetchCalendar: async () => ({
+        provider: "finnhub-earnings-calendar",
+        observations: [eventObservation({ symbol: "MSFT", scheduledDate: "2026-07-29", fiscalYear: 2026, fiscalQuarter: 4, providerEventId: "finnhub:MSFT:2026:4:2026-07-29" })],
+        warnings: [],
+        updatedAt: "2026-08-16T06:00:00.000Z",
+      }),
+      fetchSymbolHistory: async () => ({ provider: "finnhub-earnings-calendar", observations: [msftJuly()], warnings: [], updatedAt: "2026-08-16T06:00:00.000Z" }),
+    };
+    const providers = { calendar, consensus: calendar as never, official: silentOfficial } as unknown as EarningsProviderBundle;
+    await runEarningsJob({ DB: db } as never, new Date("2026-08-16T06:00:00.000Z"), "calendar", providers, 0);
+    expect([...db.events.values()].filter((row) => row.symbol === "MSFT")).toHaveLength(1);
+  });
+
+  it("keeps the steady-state recovery cap at 5 symbols/run once metadata coverage is complete", async () => {
+    const db = new MemoryD1();
+    await seedActiveCoreUniverse(db);
+    // Complete metadata coverage: every active Core member has logo/industry.
+    for (const row of db.universe.values()) {
+      row.logo_url = `https://static2.finnhub.io/logo/${row.symbol}.png`;
+      row.industry = "Semiconductors";
+      row.metadata_updated_at = "2026-08-16T00:00:00.000Z";
+    }
+    const queried: string[] = [];
+    const calendar = recoveryCalendar({}, queried);
+    const providers = { calendar, consensus: calendar as never, official: silentOfficial } as unknown as EarningsProviderBundle;
+    await runEarningsJob({ DB: db } as never, new Date("2026-08-16T06:00:00.000Z"), "calendar", providers, 0);
+    expect(queried).toHaveLength(5);
+  });
+});
+
+describe("targeted historical recovery anti-starvation", () => {
+  it("does not let empty probes block alphabetically-later symbols", async () => {
+    const db = new MemoryD1();
+    await seedActiveCoreUniverse(db);
+    const queried: string[] = [];
+    const calendar: EarningsCalendarProvider = {
+      name: "finnhub-earnings-calendar",
+      supportsForwardCalendar: true,
+      fetchCalendar: async () => ({ provider: "finnhub-earnings-calendar", observations: [], warnings: [], updatedAt: "2026-08-16T06:00:00.000Z" }),
+      fetchSymbolHistory: async (symbol: string) => {
+        queried.push(symbol);
+        return { provider: "finnhub-earnings-calendar", observations: [], warnings: [], updatedAt: "2026-08-16T06:00:00.000Z" };
+      },
+    };
+    const providers = { calendar, consensus: calendar as never, official: {
+      name: "sec-edgar",
+      fetchCompanyMetadata: async () => ({ provider: "sec-edgar", observations: [], warnings: [], updatedAt: "2026-08-16T06:00:00.000Z" }),
+      findRelevantFiling: async () => null,
+    } } as unknown as EarningsProviderBundle;
+    for (let day = 0; day < 6; day += 1) {
+      const runAt = new Date(Date.parse("2026-08-16T06:00:00.000Z") + day * 24 * 60 * 60 * 1000);
+      await runEarningsJob({ DB: db } as never, runAt, "calendar", providers, 0);
+    }
+    // 6 runs at the 2-symbol bootstrap cap with 7-day rest stamps: the first
+    // probes must not be re-queried, so unique symbols grow well past 2.
+    expect(new Set(queried).size).toBeGreaterThanOrEqual(10);
   });
 });

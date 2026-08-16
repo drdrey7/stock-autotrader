@@ -73,6 +73,17 @@ export interface EarningsCalendarProvider {
     universe: ReadonlySet<string>,
     collectedAt: string,
   ): Promise<EarningsProviderResult<EarningsCalendarObservation>>;
+  /**
+   * Optional targeted historical query for one symbol. Used by the daily
+   * recovery pass for active Core symbols whose recent reported history is
+   * missing from the bulk calendar response. Absent on adapters that cannot
+   * scope a query to a symbol.
+   */
+  fetchSymbolHistory?(
+    symbol: string,
+    range: EarningsDateRange,
+    collectedAt: string,
+  ): Promise<EarningsProviderResult<EarningsCalendarObservation>>;
 }
 
 export interface EarningsConsensusProvider {

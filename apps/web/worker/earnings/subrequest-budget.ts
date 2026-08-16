@@ -17,6 +17,26 @@ export const MAX_SEC_INDEX_QUARTERS_PER_CALENDAR = 3;
  */
 export const MAX_FINNHUB_PROFILE_REQUESTS_PER_JOB = 15;
 
+/**
+ * Targeted historical recovery budget: one symbol-scoped Finnhub calendar
+ * request per symbol, only for active Core symbols whose recent reported
+ * history is missing from the bulk response. Normal runs recover 5
+ * symbols/day; bootstrap days (metadata coverage below threshold) reserve
+ * more of the shared rate budget for profile enrichment and recover 2.
+ * Verified against production: the symbol-scoped query is the only endpoint
+ * that returns MSFT/AAPL late-July events (bulk caps at ~1500 rows).
+ */
+export const MAX_HISTORICAL_RECOVERY_SYMBOLS_PER_JOB = 5;
+export const MAX_HISTORICAL_RECOVERY_SYMBOLS_PER_BOOTSTRAP = 2;
+
+/**
+ * Conservative inter-request pacing for Finnhub calls sharing the free-tier
+ * 60 calls/minute budget with the production monitor. 1100ms keeps the
+ * calendar run at ~54 calls/min — the 2026-08-16 production probe observed
+ * HTTP 429 when calls were burst, and zero 429s at this spacing.
+ */
+export const FINNHUB_RATE_PACING_MS = 1100;
+
 export const MAX_SEC_METADATA_REQUESTS = MAX_PROVIDER_ATTEMPTS;
 export const MAX_SEC_FULL_INDEX_REQUESTS = MAX_SEC_INDEX_QUARTERS_PER_CALENDAR * MAX_PROVIDER_ATTEMPTS;
 export const MAX_SEC_FILING_REQUESTS = MAX_SEC_FILING_LOOKUPS_PER_JOB * MAX_PROVIDER_ATTEMPTS;

@@ -222,7 +222,7 @@ function normalizedFmpRow(
   };
 }
 
-function deduplicateCalendarRows(rows: EarningsCalendarObservation[]): EarningsCalendarObservation[] {
+export function deduplicateCalendarRows(rows: EarningsCalendarObservation[]): EarningsCalendarObservation[] {
   const byKey = new Map<string, EarningsCalendarObservation>();
   for (const row of rows) {
     const key = row.providerEventId ?? `${row.symbol}:${row.scheduledDate}`;
@@ -413,6 +413,53 @@ export class FinnhubEarningsProvider implements EarningsCalendarProvider, Earnin
   ): Promise<EarningsProviderResult<EarningsCalendarObservation>> {
     const result = await this.fetchRows(range, universe, collectedAt);
     return { provider: this.name, observations: result.observations, warnings: result.warnings, updatedAt: collectedAt, complete: result.complete };
+  }
+
+  /**
+   * Symbol-scoped historical recovery (verified in production 2026-08-16).
+   * The bulk calendar endpoint caps its payload at ~1500 rows dominated by
+   * near-term dates, so MSFT (2026-07-29) and AAPL (2026-07-30) were absent
+   * from the bulk window while the symbol-scoped call returned them with
+   * full EPS/revenue estimates AND actuals.
+   */
+  async fetchSymbolHistory(
+    symbol: string,
+    range: EarningsDateRange,
+    collectedAt: string,
+  ): Promise<EarningsProviderResult<EarningsCalendarObservation>> {
+    if (!this.apiKey.trim()) throw new Error("FINNHUB_API_KEY is not configured");
+    const url = new URL(FINNHUB_URL);
+    url.searchParams.set("from", range.from);
+    url.searchParams.set("to", range.to);
+    url.searchParams.set("symbol", symbol);
+    const payload = await fetchJsonWithRetry(
+      this.fetcher,
+      url,
+      {
+        headers: {
+          Accept: "application/json",
+          "X-Finnhub-Token": this.apiKey,
+        },
+      },
+      this.sleeper,
+      this.timeoutMs,
+    );
+    const rawRows = finnhubRowsFromPayload(payload);
+    const observations = rawRows.flatMap((row) => {
+      const normalized = normalizedFinnhubRow(row, collectedAt, new Set([symbol]));
+      return normalized.observation && normalized.observation.scheduledDate !== null
+        && normalized.observation.scheduledDate >= range.from
+        && normalized.observation.scheduledDate <= range.to
+        ? [normalized.observation]
+        : [];
+    });
+    return {
+      provider: this.name,
+      observations: deduplicateCalendarRows(observations),
+      warnings: [],
+      updatedAt: collectedAt,
+      complete: true,
+    };
   }
 
   async fetchConsensus(

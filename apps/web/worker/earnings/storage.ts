@@ -3,7 +3,7 @@ import { calculateMetric, calculateOverallResult, canonicalFiscalPeriod } from "
 import type { NormalizedEarningsEvent } from "./types";
 import { ACTIVE_UNIVERSE_PREDICATE } from "../stock-universe";
 
-type Database = Pick<D1Database, "prepare"> & Partial<Pick<D1Database, "batch">>;
+export type Database = Pick<D1Database, "prepare"> & Partial<Pick<D1Database, "batch">>;
 
 interface EarningsRow extends Record<string, unknown> {
   id?: unknown;
@@ -467,6 +467,41 @@ export interface EarningsQuery {
   to: string;
   symbol?: string;
   status?: "scheduled" | "reported" | "cancelled" | "unknown";
+}
+
+/**
+ * Active-Core symbols that already hold a reported event inside the window.
+ * Targeted historical recovery skips these: a D1 reported row is authoritative
+ * proof the provider's recent history was already ingested.
+ */
+export async function readRecentReportedSymbols(db: Database, from: string, to: string): Promise<ReadonlySet<string>> {
+  const result = await db.prepare(
+    `SELECT DISTINCT e.symbol
+     FROM earnings_events AS e
+     JOIN earnings_universe AS u ON u.symbol = e.symbol AND ${ACTIVE_UNIVERSE_PREDICATE}
+     WHERE e.status = 'reported' AND e.scheduled_date IS NOT NULL AND e.scheduled_date >= ? AND e.scheduled_date <= ?`,
+  ).bind(from, to).all<{ symbol: string }>();
+  return new Set(result.results.map((row) => row.symbol));
+}
+
+const RECOVERY_CHECKED_KEY_PREFIX = "earningsRecoveryChecked:";
+
+export const recoveryCheckedMetaKey = (symbol: string): string => `${RECOVERY_CHECKED_KEY_PREFIX}${symbol}`;
+
+/**
+ * Symbols already probed by targeted recovery since `cutoff` (ISO). A probe
+ * that returned no history must not block later symbols forever: the stamp
+ * keeps it out of the candidate set until it expires, then it is retried.
+ */
+export async function readRecentlyCheckedRecoverySymbols(db: Database, cutoff: string): Promise<ReadonlySet<string>> {
+  const result = await db.prepare(
+    `SELECT key, value FROM app_meta WHERE key LIKE '${RECOVERY_CHECKED_KEY_PREFIX}%'`,
+  ).all<{ key: string; value: string }>();
+  const checked = new Set<string>();
+  for (const row of result.results) {
+    if (row.value >= cutoff) checked.add(row.key.slice(RECOVERY_CHECKED_KEY_PREFIX.length));
+  }
+  return checked;
 }
 
 export async function readEarningsEvents(db: Database, query: EarningsQuery): Promise<EarningsEngineEvent[]> {
