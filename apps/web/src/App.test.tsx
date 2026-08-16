@@ -9,6 +9,8 @@ import cloudflareHeaders from "../public/_headers?raw";
 
 beforeEach(() => {
   localStorage.clear();
+  // Pin the greeting: 2026-08-12T16:00:00Z is 12:00 ET, "Good afternoon.".
+  vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-08-12T16:00:00Z"));
   vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline test fallback")));
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
@@ -24,12 +26,39 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 it("ships restrictive Cloudflare static-asset headers", () => {
   expect(cloudflareHeaders).toContain("Content-Security-Policy:");
   expect(cloudflareHeaders).toContain("frame-ancestors 'none'");
   expect(cloudflareHeaders).toContain("X-Frame-Options: DENY");
+});
+
+it("allows only the official TradingView hosts in the CSP", () => {
+  // The homepage embeds official TradingView widgets: the ES-module web
+  // components load from widgets.tradingview-widget.com and fetch their datafeed
+  // from the same host (script-src/connect-src + the internal datafeed iframe in
+  // frame-src); the iframe widgets' bootstrap scripts load from s3.tradingview.com
+  // and render from tradingview-widget.com (s.tradingview.com fallback), sending
+  // TradingView's own analytics beacon to snowplow-pixel.tradingview.com
+  // (connect-src); symbol logos load from s3-symbol-logo.tradingview.com
+  // (img-src). No other third party, and no inline scripts.
+  expect(cloudflareHeaders).toContain(
+    "script-src 'self' https://s3.tradingview.com https://widgets.tradingview-widget.com;",
+  );
+  expect(cloudflareHeaders).toContain(
+    "connect-src 'self' https://widgets.tradingview-widget.com https://snowplow-pixel.tradingview.com;",
+  );
+  expect(cloudflareHeaders).toContain(
+    "img-src 'self' data: https://s3-symbol-logo.tradingview.com https://widgets.tradingview-widget.com;",
+  );
+  expect(cloudflareHeaders).toContain(
+    "frame-src https://www.tradingview-widget.com https://s.tradingview.com https://widgets.tradingview-widget.com;",
+  );
+  // Inline styles are allowed (the theme and shadow DOM use them), but inline
+  // scripts are not.
+  expect(cloudflareHeaders).not.toContain("script-src 'self' 'unsafe-inline'");
 });
 
 it("ships Morning Briefing metadata in the static HTML fallback", () => {
@@ -57,7 +86,7 @@ it("shows an accessible recovery state when a lazy page fails", async () => {
 describe("Morning Briefing public experience", () => {
   it.each(["/", "/dashboard"])("opens Morning Briefing at %s", (path) => {
     render(<MemoryRouter initialEntries={[path]}><App /></MemoryRouter>);
-    expect(screen.getByRole("heading", { name: "Good morning." })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Good afternoon." })).toBeInTheDocument();
     expect(screen.getByText("Top Opportunities")).toBeInTheDocument();
     expect(screen.queryByText(/log in|sign in/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /buy|sell|trade/i })).not.toBeInTheDocument();
@@ -79,7 +108,7 @@ describe("Morning Briefing public experience", () => {
     "/portfolio", "/market-data", "/activity",
   ])("redirects legacy route %s to Morning Briefing", async (path) => {
     render(<MemoryRouter initialEntries={[path]}><App /></MemoryRouter>);
-    expect(await screen.findByRole("heading", { name: "Good morning." })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Good afternoon." })).toBeInTheDocument();
   });
 
   it.each([["/status", "System status"]])("keeps public information route %s", (path, heading) => {

@@ -1,0 +1,2 @@
+NAME US10Y	US10Y United States 10 Year Government B	
+NAME EUREX:FGBL1!	FGBL1! Euro-Bund Futures 124.40 EUR -0.5	

@@ -4,6 +4,7 @@ import { ThemeProvider, ThemeToggle } from "./theme";
 import { SidebarNavigation, ShellBrand } from "./SidebarNavigation";
 import { MobileHeader } from "./MobileHeader";
 import { MobileNavigationDrawer } from "./MobileNavigationDrawer";
+import { GlobalTicker } from "./GlobalTicker";
 import "./shell.css";
 
 /**
@@ -94,7 +95,12 @@ export function AppShell({ children }: { children: ReactNode }) {
         <MobileNavigationDrawer ref={closeButtonRef} open={menuOpen} onClose={closeMenu} />
         {/* The drawer is modal while open: background content is inert so it
             cannot receive focus or be reached by assistive technology. */}
-        <main className="shell-main" inert={menuOpen}>{children}</main>
+        <main className="shell-main" inert={menuOpen}>
+          {/* Global tape below the header, outside <Routes>: persists across
+              every route change without remounting. */}
+          <GlobalTicker />
+          {children}
+        </main>
       </div>
     </ThemeProvider>
   );

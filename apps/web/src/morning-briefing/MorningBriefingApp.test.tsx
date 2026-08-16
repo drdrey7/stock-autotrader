@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, useLocation, useNavigate } from "react-router-dom";
 import App from "../App";
 import MorningBriefingApp from "./MorningBriefingApp";
+import { ThemeProvider } from "../shell/theme";
 
 // The Morning Briefing pages now live inside the dashboard shell, which owns
 // navigation (sidebar links / mobile drawer) and the theme toggle. Rendering the
@@ -14,7 +15,7 @@ function RoutedApp() {
 }
 function HistoryApp() {
   const navigate = useNavigate();
-  return <><button onClick={() => navigate(-1)}>Browser Back</button><MorningBriefingApp/></>;
+  return <><button onClick={() => navigate(-1)}>Browser Back</button><ThemeProvider><MorningBriefingApp/></ThemeProvider></>;
 }
 
 const liveBriefingForDetails = {
@@ -90,7 +91,7 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 describe("Morning Briefing frontend demo", () => {
   it("opens on Morning Briefing and navigates between the three areas via the shell", async () => {
     render(<MemoryRouter initialEntries={["/"]}><RoutedApp/></MemoryRouter>);
-    expect(screen.getByRole("heading", { name: "Good morning." })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Good afternoon." })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("link", { name: "X Pulse" }));
     expect(await screen.findByRole("heading", { level: 1, name: /X Pulse/ })).toBeInTheDocument();
@@ -145,6 +146,43 @@ describe("Morning Briefing frontend demo", () => {
     expect(screen.getByText("MONDAY · 31 AUGUST")).toBeInTheDocument();
   });
 
+  it("greets by the New York time of day", () => {
+    const cases: Array<[string, string]> = [
+      ["2026-08-12T10:00:00Z", "Good morning."],   // 06:00 ET
+      ["2026-08-12T16:00:00Z", "Good afternoon."], // 12:00 ET
+      ["2026-08-12T22:30:00Z", "Good evening."],   // 18:30 ET
+    ];
+    for (const [iso, greeting] of cases) {
+      vi.mocked(Date.now).mockReturnValue(Date.parse(iso));
+      const view = renderApp();
+      expect(screen.getByRole("heading", { name: greeting })).toBeInTheDocument();
+      view.unmount();
+    }
+  });
+
+  it("keeps TradingView widgets in sync with the active theme", async () => {
+    renderApp();
+    await screen.findByRole("heading", { name: "Good afternoon." });
+    const ticker = () => document.querySelector("tv-ticker-tape");
+    const marketOverview = () => document.querySelector("tv-market-overview");
+    // The global tape + market overview are web components: the theme updates in
+    // place via the color-theme attribute (no script remount).
+    await waitFor(() => expect(marketOverview()?.getAttribute("color-theme")).toBe("light"));
+    expect(ticker()?.getAttribute("color-theme")).toBe("light");
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Switch to dark mode" })[0]!);
+    await waitFor(() => expect(marketOverview()?.getAttribute("color-theme")).toBe("dark"));
+    expect(ticker()?.getAttribute("color-theme")).toBe("dark");
+    expect(document.documentElement.dataset.theme).toBe("dark");
+
+    // The iframe widgets re-inject their script with the new colorTheme.
+    const storiesScript = document.querySelector("script[data-tv-iframe-widget='timeline']");
+    expect(storiesScript).not.toBeNull();
+    await waitFor(() =>
+      expect(JSON.parse(storiesScript!.textContent ?? "{}").colorTheme).toBe("dark"),
+    );
+  });
+
   it("shows one filter per tracked account without technical source badges", async () => {
     const view = renderApp();
     fireEvent.click(screen.getByRole("link", { name: "X Pulse" }));
@@ -191,7 +229,7 @@ describe("Morning Briefing frontend demo", () => {
     fireEvent.click(await screen.findByRole("button", { name: /MSFT.*AMC/ }));
     expect(await screen.findByRole("dialog", { name: "Earnings Detail" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Browser Back" }));
-    expect(await screen.findByRole("heading", { name: "Good morning." })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Good afternoon." })).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     await waitFor(() => expect(document.body.style.overflow).toBe(""));
   });
