@@ -83,6 +83,18 @@ class MemoryStatement {
         .sort((left, right) => String(right.scheduled_date).localeCompare(String(left.scheduled_date)));
       return { results: results as T[] };
     }
+    if (this.sql.includes("SELECT DISTINCT e.symbol") && this.sql.includes("status = 'reported'")) {
+      const from = String(this.args[0]);
+      const to = String(this.args[1]);
+      const symbols = [...new Set([...this.db.events.values()]
+        .filter((row) => this.db.isActiveUniverseSymbol(String(row.symbol))
+          && row.status === "reported"
+          && typeof row.scheduled_date === "string"
+          && row.scheduled_date >= from
+          && row.scheduled_date <= to)
+        .map((row) => String(row.symbol)))];
+      return { results: symbols.map((symbol) => ({ symbol })) as T[] };
+    }
     if (this.sql.includes("FROM earnings_events") && this.sql.includes("status = 'reported'")) {
       const today = String(this.args[0]);
       const results = [...this.db.events.values()].filter((row) => this.db.isActiveUniverseSymbol(String(row.symbol)) && row.scheduled_date === today
@@ -1477,10 +1489,59 @@ describe("targeted historical recovery (PR #50)", () => {
       },
     };
     const providers = { calendar, consensus: calendar as never, official: silentOfficial } as unknown as EarningsProviderBundle;
-    await runEarningsJob({ DB: db } as never, new Date("2026-08-16T06:00:00.000Z"), "calendar", providers, 0);
+    for (let day = 0; day < 12; day += 1) {
+      const runAt = new Date(Date.parse("2026-08-16T06:00:00.000Z") + day * 24 * 60 * 60 * 1000);
+      await runEarningsJob({ DB: db } as never, runAt, "calendar", providers, 0);
+    }
     expect(queried).toContain("AAPL");
     expect(queried).not.toContain("NVDA");
     expect(queried).not.toContain("WMT");
+  });
+
+  it("still recovers a missing last-30-day report when bulk only has a future date for that symbol", async () => {
+    const db = new MemoryD1();
+    await seedActiveCoreUniverse(db);
+    for (const row of db.universe.values()) {
+      row.logo_url = `https://static2.finnhub.io/logo/${row.symbol}.png`;
+      row.industry = "Semiconductors";
+      row.metadata_updated_at = "2026-08-16T00:00:00.000Z";
+    }
+    const queried: string[] = [];
+    const calendar: EarningsCalendarProvider = {
+      name: "finnhub-earnings-calendar",
+      supportsForwardCalendar: true,
+      fetchCalendar: async () => ({
+        provider: "finnhub-earnings-calendar",
+        observations: [eventObservation({
+          symbol: "MSFT",
+          scheduledDate: "2026-10-22",
+          fiscalYear: 2027,
+          fiscalQuarter: 1,
+          providerEventId: "msft-next",
+        })],
+        warnings: [],
+        updatedAt: "2026-08-16T06:00:00.000Z",
+      }),
+      fetchSymbolHistory: async (symbol: string) => {
+        queried.push(symbol);
+        return {
+          provider: "finnhub-earnings-calendar",
+          observations: symbol === "MSFT" ? [msftJuly()] : [],
+          warnings: [],
+          updatedAt: "2026-08-16T06:00:00.000Z",
+        };
+      },
+    };
+    const providers = { calendar, consensus: calendar as never, official: silentOfficial } as unknown as EarningsProviderBundle;
+    for (let day = 0; day < 12; day += 1) {
+      const runAt = new Date(Date.parse("2026-08-16T06:00:00.000Z") + day * 24 * 60 * 60 * 1000);
+      await runEarningsJob({ DB: db } as never, runAt, "calendar", providers, 0);
+      if ([...db.events.values()].some((row) => row.symbol === "MSFT" && row.scheduled_date === "2026-07-29")) break;
+    }
+    expect(queried).toContain("MSFT");
+    const msftRows = [...db.events.values()].filter((row) => row.symbol === "MSFT");
+    expect(msftRows.some((row) => row.scheduled_date === "2026-07-29" && row.status === "reported")).toBe(true);
+    expect(msftRows.some((row) => row.scheduled_date === "2026-10-22")).toBe(true);
   });
 
   it("isolates recovery failures: job stays ok, no calendar error, recovery diagnostics recorded", async () => {

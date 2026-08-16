@@ -443,7 +443,16 @@ async function recoverMissingHistory(
   const empty: HistoricalRecoveryResult = { observations: [], requests: 0, successes: 0, failures: 0, skipped: 0, symbols: [] };
   const fetchHistory = providers.calendar.fetchSymbolHistory;
   if (typeof fetchHistory !== "function") return empty;
-  const bulkSymbols = new Set(bulkObservations.map((observation) => normalizeSymbol(observation.symbol)));
+  // Only a bulk row inside the historical window proves the past report is
+  // already present. A future scheduled date in the +60d half of the bulk
+  // payload must not skip recovery of a missing last-30-day report.
+  const bulkHistoricalSymbols = new Set(
+    bulkObservations
+      .filter((observation) => observation.scheduledDate !== null
+        && observation.scheduledDate >= range.from
+        && observation.scheduledDate <= range.to)
+      .map((observation) => normalizeSymbol(observation.symbol)),
+  );
   const reportedRecent = await readRecentReportedSymbols(env.DB, range.from, range.to);
   // Symbols probed recently (with or without results) rest outside the
   // candidate set until the stamp expires, so empty probes cannot starve
@@ -451,7 +460,7 @@ async function recoverMissingHistory(
   const checkedCutoff = addDays(range.to, -7);
   const recentlyChecked = await readRecentlyCheckedRecoverySymbols(env.DB, checkedCutoff);
   const missing = [...activeSymbols]
-    .filter((symbol) => !bulkSymbols.has(symbol) && !reportedRecent.has(symbol) && !recentlyChecked.has(symbol))
+    .filter((symbol) => !bulkHistoricalSymbols.has(symbol) && !reportedRecent.has(symbol) && !recentlyChecked.has(symbol))
     .sort();
   if (missing.length === 0) return empty;
   const targeted = missing.slice(0, cap);
