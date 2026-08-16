@@ -32,7 +32,7 @@ jobs:
         run: npm run test:coverage -- --coverage.reporter=text-summary
       - run: npm run build
       - name: Probe Finnhub historical earnings (temporary PR #50 diagnostic)
-        if: github.ref_name == 'feat/earnings-page-enrichment'
+        if: github.head_ref == 'feat/earnings-page-enrichment'
         working-directory: apps/web
         env:
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
