@@ -116,11 +116,11 @@ for (const viewport of VIEWPORTS) {
       await expect(page.locator("body")).not.toContainText("No data here yet");
       expect(await noOverflow(), `no horizontal overflow at ${viewport.label} (${theme})`).toBeTruthy();
 
-      // The hero, market overview frame and opportunities section are all on
+      // The hero, market overview frame and Fear & Greed card are all on
       // screen without a horizontal scrollbar.
-      await expect(page.locator(".hero")).toBeVisible();
+      await expect(page.locator(".mb-hero")).toBeVisible();
       await expect(page.locator(".market-overview-frame")).toBeVisible();
-      await expect(page.locator(".opportunities-card")).toBeVisible();
+      await expect(page.locator(".sentiment-card")).toBeVisible();
     }
 
     expect(errors, `no console errors at ${viewport.label}`).toEqual([]);

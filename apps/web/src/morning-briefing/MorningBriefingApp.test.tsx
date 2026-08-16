@@ -140,17 +140,20 @@ describe("Morning Briefing frontend demo", () => {
     expect(screen.getByRole("heading", { level: 2, name: "August 2026" })).toBeInTheDocument();
   });
 
-  it("uses the New York market date in the fallback briefing header", () => {
+  it("uses the visitor's local date in the fallback briefing header", () => {
     vi.mocked(Date.now).mockReturnValue(Date.parse("2026-09-01T01:00:00Z"));
     renderApp();
-    expect(screen.getByText("MONDAY · 31 AUGUST")).toBeInTheDocument();
+    // The pinned test timezone is UTC, so the local date is Tuesday 1 September.
+    expect(screen.getByText("TUESDAY · 1 SEPTEMBER")).toBeInTheDocument();
   });
 
-  it("greets by the New York time of day", () => {
+  it("greets by the visitor's local time of day", () => {
+    // The greeting follows the browser's local clock (UTC in the test env),
+    // not the New York market time.
     const cases: Array<[string, string]> = [
-      ["2026-08-12T10:00:00Z", "Good morning."],   // 06:00 ET
-      ["2026-08-12T16:00:00Z", "Good afternoon."], // 12:00 ET
-      ["2026-08-12T22:30:00Z", "Good evening."],   // 18:30 ET
+      ["2026-08-12T10:00:00Z", "Good morning."],   // 10:00 local
+      ["2026-08-12T16:00:00Z", "Good afternoon."], // 16:00 local
+      ["2026-08-12T22:30:00Z", "Good evening."],   // 22:30 local
     ];
     for (const [iso, greeting] of cases) {
       vi.mocked(Date.now).mockReturnValue(Date.parse(iso));
@@ -201,18 +204,9 @@ describe("Morning Briefing frontend demo", () => {
     expect(view.container.querySelector(".backend-ribbon")).toBeNull();
   });
 
-  it("opens opportunity and earnings details", async () => {
+  it("opens earnings details", async () => {
     stubEarningsSchedule();
     renderApp();
-    const opportunityTrigger = (await screen.findAllByRole("button", { name: /NVDA.*NVIDIA Corporation/ }))[0]!;
-    opportunityTrigger.focus();
-    fireEvent.click(opportunityTrigger);
-    const opportunityDialog = screen.getByRole("dialog", { name: /NVDA/ });
-    expect(opportunityDialog).toHaveTextContent("OPPORTUNITY DETAIL");
-    expect(screen.getByRole("button", { name: "Close" })).toHaveFocus();
-
-    fireEvent.keyDown(document, { key: "Escape" });
-    await waitFor(() => expect(opportunityTrigger).toHaveFocus());
     fireEvent.click(screen.getByRole("link", { name: "Earnings" }));
     await screen.findByRole("heading", { name: /Earnings Calendar/ });
     fireEvent.click(await screen.findByRole("button", { name: /MSFT.*AMC/ }));

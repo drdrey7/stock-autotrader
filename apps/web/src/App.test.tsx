@@ -9,7 +9,8 @@ import cloudflareHeaders from "../public/_headers?raw";
 
 beforeEach(() => {
   localStorage.clear();
-  // Pin the greeting: 2026-08-12T16:00:00Z is 12:00 ET, "Good afternoon.".
+  // Pin the greeting: 2026-08-12T16:00:00Z is 16:00 in the pinned UTC test
+  // timezone, which is the local afternoon → "Good afternoon.".
   vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-08-12T16:00:00Z"));
   vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline test fallback")));
   Object.defineProperty(window, "matchMedia", {
@@ -87,7 +88,10 @@ describe("Morning Briefing public experience", () => {
   it.each(["/", "/dashboard"])("opens Morning Briefing at %s", (path) => {
     render(<MemoryRouter initialEntries={[path]}><App /></MemoryRouter>);
     expect(screen.getByRole("heading", { name: "Good afternoon." })).toBeInTheDocument();
-    expect(screen.getByText("Top Opportunities")).toBeInTheDocument();
+    // The homepage keeps only Market Overview, Economic Calendar, Fear & Greed
+    // and Top Stories — Top Opportunities is removed for now.
+    expect(screen.queryByText("Top Opportunities")).not.toBeInTheDocument();
+    expect(screen.getByText(/economic calendar and top stories/)).toBeInTheDocument();
     expect(screen.queryByText(/log in|sign in/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /buy|sell|trade/i })).not.toBeInTheDocument();
   });

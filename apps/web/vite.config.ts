@@ -9,6 +9,9 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     setupFiles: "./src/test-setup.ts",
+    // Pin the process timezone so the local-time hero greeting/date tests are
+    // deterministic on every machine (CI runners and local dev alike).
+    env: { TZ: "UTC" },
     exclude: [...configDefaults.exclude, "e2e/**"],
     coverage: {
       include: ["src/**/*.{ts,tsx}"],
