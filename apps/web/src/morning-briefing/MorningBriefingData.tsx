@@ -1,7 +1,6 @@
 /* eslint-disable react-refresh/only-export-components */
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
-import type { DailyBriefing, EarningsApiResponse, EarningsEngineEvent } from "@stock-autotrader/contracts";
-import { type Opportunity } from "./data/opportunities";
+import type { EarningsApiResponse, EarningsEngineEvent } from "@stock-autotrader/contracts";
 import { type XPost } from "./data/xSurge";
 import { eventWithViewMetadata, type EarningsCompany } from "./data/earnings-view";
 
@@ -36,47 +35,22 @@ type XApiPost = {
 type XResponse = { posts?: XApiPost[]; count?: number };
 
 export type MorningBriefingData = {
-  opportunities: Opportunity[];
   xPosts: XPost[];
   earnings: EarningsCompany[];
   earningsAvailable: boolean;
-  // The published edition shown, with the timestamps that label the data.
-  editionDate: string | null;
-  editionType: DailyBriefing["editionType"] | null;
-  opportunitiesUpdatedAt: string | null;
   sentiment: NonNullable<StatusResponse["sentiment"]> | null;
 };
 
 const initialData: MorningBriefingData = {
   // Financially actionable sections stay empty until the backend publishes
   // validated data. Earnings has no financial fixture fallback.
-  opportunities: [],
   xPosts: [],
   earnings: [],
   earningsAvailable: false,
-  editionDate: null,
-  editionType: null,
-  opportunitiesUpdatedAt: null,
   sentiment: null,
 };
 
 const MorningBriefingDataContext = createContext<MorningBriefingData>(initialData);
-
-const numberFrom = (value: string | number | null | undefined): number | null => {
-  if (typeof value === "number") return Number.isFinite(value) ? value : null;
-  if (!value || !/[0-9]/.test(value)) return null;
-  const parsed = Number(value.replace(/[−–—]/g, "-").replace(/[^0-9.-]/g, ""));
-  return Number.isFinite(parsed) ? parsed : null;
-};
-
-const changeFrom = (value: string | null | undefined): number | null => numberFrom(value);
-
-const tickerColour = (ticker: string): string => {
-  let hash = 0;
-  for (const character of ticker) hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
-  const colors = ["#176b47", "#4385f5", "#a8730b", "#7c3aed", "#1675d1", "#dc3f48", "#0f766e"];
-  return colors[hash % colors.length] ?? colors[0]!;
-};
 
 const relativeTime = (iso: string): string => {
   const then = Date.parse(iso);
@@ -94,9 +68,6 @@ const relativeTime = (iso: string): string => {
 const REQUEST_TIMEOUT_MS = 8_000;
 const EARNINGS_REFRESH_INTERVAL_MS = 60 * 60_000;
 const X_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
-// Everything else (opportunities, earnings) is a daily publication: hours or
-// even a couple of days of age are fine as long as the edition date is shown.
-const BRIEFING_MAX_AGE_MS = 72 * 60 * 60_000;
 
 async function fetchJson<T>(path: string): Promise<T | null> {
   const controller = new AbortController();
@@ -116,29 +87,6 @@ function isWithinWindow(value: string | null | undefined, maxAgeMs: number, now 
   const timestamp = Date.parse(value ?? "");
   const ageMs = now - timestamp;
   return Number.isFinite(timestamp) && ageMs >= 0 && ageMs <= maxAgeMs;
-}
-
-function opportunitiesFromBriefing(
-  briefing: DailyBriefing,
-): Opportunity[] {
-  return briefing.ideas.filter((idea) => idea.verdict === "Potential Entry").map((idea) => {
-    return {
-      ticker: idea.symbol,
-      company: idea.company,
-      change: changeFrom(idea.change),
-      confidence: null,
-      score: null,
-      thesis: idea.thesis,
-      trigger: idea.levels.trigger,
-      invalidation: idea.levels.invalidation,
-      objective: idea.levels.objective,
-      risk: idea.levels.invalidation,
-      verdict: idea.verdict,
-      reference: idea.source.reference,
-      color: tickerColour(idea.symbol),
-      source: "live",
-    };
-  });
 }
 
 // Market sentiment (PR #11): the CNN Fear & Greed reading is published once or
@@ -330,47 +278,21 @@ export function MorningBriefingDataProvider({ children }: { children: React.Reac
 
     const refreshCore = async () => {
       const currentRequest = ++coreRequestId;
-      const [briefing, status] = await Promise.all([
-        fetchJson<DailyBriefing>("/api/briefs/latest"),
-        fetchJson<StatusResponse>("/api/status"),
-      ]);
+      // The briefing feed (opportunities / edition label) was retired with the
+      // homepage opportunities section, so the only core payload the homepage
+      // still consumes is the /api/status sentiment reading.
+      const status = await fetchJson<StatusResponse>("/api/status");
       if (cancelled || currentRequest !== coreRequestId) return;
-
-      const briefingUpdatedAt = briefing
-        ? status?.briefing?.publishedAt ?? briefing.preparedAt
-        : null;
-      // Opportunities: a daily publication may be hours old (even 1-2 days)
-      // and still be shown, labelled with its analysis date.
-      const analysisBriefing = briefing
-        && isWithinWindow(briefingUpdatedAt, BRIEFING_MAX_AGE_MS)
-        ? briefing
-        : null;
-      const liveOpportunities = analysisBriefing ? opportunitiesFromBriefing(analysisBriefing) : null;
       const sentiment = sentimentFromStatus(status);
 
       setData((previous) => {
-        // A transient refresh failure must not blank a still-valid daily
-        // analysis: retain the previous publication while its timestamp is
-        // inside the 72h window.
-        const retained = isWithinWindow(previous.opportunitiesUpdatedAt, BRIEFING_MAX_AGE_MS);
-        const nextOpportunities = liveOpportunities ?? (retained ? previous.opportunities : []);
+        // A transient refresh failure must not blank a still-valid reading:
+        // retain the previous sentiment while its timestamp is inside the
+        // freshness window.
         const retainedSentiment = previous.sentiment && isWithinWindow(previous.sentiment.asOf, SENTIMENT_GATE_MS)
           ? previous.sentiment
           : null;
-        // The welcome card's date/edition label only describes what is being
-        // shown: expire it together with the analysis instead of keeping an
-        // old date under a post-close greeting for a cleared section. The
-        // retention is timestamp-based so a valid empty publication (zero
-        // ideas) keeps its edition label too.
-        const nextEditionDate = analysisBriefing?.editionDate ?? (retained ? previous.editionDate : null);
-        return {
-          ...previous,
-          opportunities: nextOpportunities,
-          opportunitiesUpdatedAt: liveOpportunities !== null && briefingUpdatedAt ? briefingUpdatedAt : previous.opportunitiesUpdatedAt,
-          editionDate: nextEditionDate,
-          editionType: nextEditionDate !== null ? (analysisBriefing?.editionType ?? previous.editionType) : null,
-          sentiment: sentiment ?? retainedSentiment,
-        };
+        return { ...previous, sentiment: sentiment ?? retainedSentiment };
       });
     };
 

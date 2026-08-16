@@ -19,39 +19,13 @@ function HistoryApp() {
   return <><button onClick={() => navigate(-1)}>Browser Back</button><ThemeProvider><MorningBriefingApp/></ThemeProvider></>;
 }
 
-const liveBriefingForDetails = {
-  example: false,
-  editionDate: "2026-08-12",
-  editionType: "pre_market",
-  timezone: "America/New_York",
-  preparedAt: "2026-08-12T12:30:00Z",
-  title: "Pre-market briefing",
-  marketSummary: "Constructive session.",
-  market: [
-    { name: "S&P 500", symbol: "SP:SPX", value: "6412.10", change: "+0.31%", state: "Constructive", note: "Holding." },
-    { name: "Nasdaq-100", symbol: "NASDAQ:NDX", value: "23830.02", change: "+0.55%", state: "Leading", note: "Leading." },
-    { name: "VIX", symbol: "CBOE:VIX", value: "15.40", change: "-2.10%", state: "Contained", note: "Calm." },
-  ],
-  ideas: [{
-    symbol: "NVDA", company: "NVIDIA Corporation", universe: "Both", verdict: "Potential Entry",
-    price: "$183.10", change: "+1.75%", thesis: "Relative strength supports the setup.",
-    source: { handle: "@nolimitgains", reference: "https://x.com/nolimitgains/status/1234", originalTimestamp: null, collectedTimestamp: null, summary: "Source." },
-    technical: ["Strong"], financial: ["Healthy"], news: ["Clear"], risks: ["Gap risk"],
-    levels: { trigger: "Above $183.60", invalidation: "Below $179.20", objective: "$194", rewardRisk: "2.6R", rewardRiskRatio: 2.6 },
-  }],
-  schedule: [],
-};
-
 const stubEarningsSchedule = () => {
   vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
     const url = String(input);
-    if (url === "/api/briefs/latest") {
-      return new Response(JSON.stringify(liveBriefingForDetails), { status: 200 });
-    }
     if (url === "/api/status") {
       return new Response(JSON.stringify({
         candidates: [],
-        briefing: { available: true, freshness: "fresh", publishedAt: liveBriefingForDetails.preparedAt },
+        briefing: { available: true, freshness: "fresh", publishedAt: "2026-08-12T12:30:00Z" },
       }), { status: 200 });
     }
     if (url === "/api/earnings") {
