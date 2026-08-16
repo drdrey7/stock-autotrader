@@ -211,7 +211,7 @@ describe("Morning Briefing frontend demo", () => {
         return new Response(JSON.stringify({
           from: "2026-01-01",
           to: "2026-10-12",
-          summary: { today: 1, thisWeek: 2, next60Days: 1 },
+          summary: { today: 1, thisWeek: 2, next30Days: 1 },
           events: [{
             id: "MSFT-2026-Q1", symbol: "MSFT", company: "Microsoft", cik: "0000789012",
             fiscalYear: 2026, fiscalQuarter: 1, fiscalPeriod: "Q1", fiscalPeriodEnd: "2026-06-30",
@@ -247,7 +247,7 @@ describe("Morning Briefing frontend demo", () => {
     const summary = await screen.findByLabelText("Earnings summary");
     expect(summary).toHaveTextContent(/TODAY\s*1/);
     expect(summary).toHaveTextContent(/THIS WEEK\s*1/);
-    expect(summary).toHaveTextContent(/NEXT 60 DAYS\s*2/);
+    expect(summary).toHaveTextContent(/NEXT 30 DAYS\s*2/);
     expect(view.container).toHaveTextContent("Mixed");
     const ticker = (await screen.findAllByText("MSFT")).find((element) => element.tagName === "B");
     expect(ticker).toBeDefined();
@@ -298,5 +298,166 @@ describe("Morning Briefing frontend demo", () => {
     renderApp("/earnings");
     const summary = await screen.findByLabelText("Earnings summary");
     await waitFor(() => expect(summary).toHaveTextContent(/THIS WEEK\s*0/));
+  });
+});
+
+describe("Earnings page data population and enrichment", () => {
+  const earningsPayload = () => ({
+    from: "2026-01-01",
+    to: "2026-10-12",
+    summary: { today: 1, thisWeek: 1, next30Days: 1 },
+    events: [
+      {
+        id: "MSFT-2026-Q1", symbol: "MSFT", company: "Microsoft", cik: "0000789012",
+        fiscalYear: 2026, fiscalQuarter: 1, fiscalPeriod: "Q1", fiscalPeriodEnd: "2026-06-30",
+        scheduledDate: "2026-08-12", scheduledTime: "16:00:00", timing: "AMC", status: "reported",
+        scheduled: false, reported: true, cancelled: false, unknown: false,
+        epsEstimate: 3, epsActual: 3.3, epsSurprise: 0.3, epsSurprisePct: 10, epsResult: "Beat",
+        revenueEstimate: 100, revenueActual: 90, revenueSurprise: -10, revenueSurprisePct: -10, revenueResult: "Miss",
+        overallResult: "Mixed", reportedAt: null,
+        calendarProvider: "finnhub-earnings-calendar", consensusProvider: "finnhub-earnings-calendar",
+        providerEventId: "msft-event", providerUpdatedAt: "2026-08-12T20:10:00.000Z",
+        officialReportUrl: "https://example.test/msft-release", investorRelationsUrl: "https://example.test/msft-ir",
+        secFilingUrl: "https://www.sec.gov/Archives/edgar/data/789012/000078901226000001/msft8k.htm",
+        secAccession: "0000789012-26-000001", secForm: "8-K", secFiledAt: "2026-08-12T00:00:00.000Z",
+        createdAt: "2026-08-12T20:00:00.000Z", updatedAt: "2026-08-12T20:10:00.000Z", lastCheckedAt: "2026-08-12T20:15:00.000Z",
+        logoUrl: "https://example.test/msft.png", industry: "Application Software", websiteUrl: "https://www.microsoft.com/",
+      },
+      {
+        id: "XOM-2026-Q2", symbol: "XOM", company: "Exxon Mobil", cik: null,
+        fiscalYear: 2026, fiscalQuarter: 2, fiscalPeriod: "Q2", fiscalPeriodEnd: null,
+        scheduledDate: "2026-08-11", scheduledTime: "07:00:00", timing: "BMO", status: "reported",
+        scheduled: false, reported: true, cancelled: false, unknown: false,
+        epsEstimate: 2, epsActual: 2, epsSurprise: 0, epsSurprisePct: 0, epsResult: "In Line",
+        revenueEstimate: null, revenueActual: null, revenueSurprise: null, revenueSurprisePct: null, revenueResult: "Not Available",
+        overallResult: "In Line", reportedAt: null,
+        calendarProvider: "finnhub-earnings-calendar", consensusProvider: "finnhub-earnings-calendar",
+        providerEventId: "xom-event", providerUpdatedAt: "2026-08-11T20:10:00.000Z",
+        officialReportUrl: null, investorRelationsUrl: null, secFilingUrl: null, secAccession: null, secForm: null, secFiledAt: null,
+        createdAt: "2026-08-11T20:00:00.000Z", updatedAt: "2026-08-11T20:10:00.000Z", lastCheckedAt: null,
+        logoUrl: null, industry: "Oil & Gas", websiteUrl: null,
+      },
+      {
+        id: "AAPL-2026-Q3", symbol: "AAPL", company: "Apple", cik: null,
+        fiscalYear: 2026, fiscalQuarter: 3, fiscalPeriod: "Q3", fiscalPeriodEnd: null,
+        scheduledDate: "2026-08-13", scheduledTime: null, timing: "BMO", status: "scheduled",
+        scheduled: true, reported: false, cancelled: false, unknown: false,
+        epsEstimate: null, epsActual: null, epsSurprise: null, epsSurprisePct: null, epsResult: "Not Available",
+        revenueEstimate: null, revenueActual: null, revenueSurprise: null, revenueSurprisePct: null, revenueResult: "Not Available",
+        overallResult: "Not Available", reportedAt: null,
+        calendarProvider: "finnhub-earnings-calendar", consensusProvider: "finnhub-earnings-calendar",
+        providerEventId: "aapl-event", providerUpdatedAt: "2026-08-12T20:10:00.000Z",
+        officialReportUrl: null, investorRelationsUrl: null, secFilingUrl: null, secAccession: null, secForm: null, secFiledAt: null,
+        createdAt: "2026-08-12T20:00:00.000Z", updatedAt: "2026-08-12T20:10:00.000Z", lastCheckedAt: null,
+        logoUrl: null, industry: null, websiteUrl: null,
+      },
+      {
+        id: "OLD-2026-Q2", symbol: "OLD", company: "Outside Window Corp", cik: null,
+        fiscalYear: 2026, fiscalQuarter: 2, fiscalPeriod: "Q2", fiscalPeriodEnd: null,
+        scheduledDate: "2026-07-10", scheduledTime: null, timing: "AMC", status: "reported",
+        scheduled: false, reported: true, cancelled: false, unknown: false,
+        epsEstimate: 1, epsActual: 1.1, epsSurprise: 0.1, epsSurprisePct: 10, epsResult: "Beat",
+        revenueEstimate: null, revenueActual: null, revenueSurprise: null, revenueSurprisePct: null, revenueResult: "Not Available",
+        overallResult: "Not Available", reportedAt: null,
+        calendarProvider: "finnhub-earnings-calendar", consensusProvider: "finnhub-earnings-calendar",
+        providerEventId: "old-event", providerUpdatedAt: "2026-07-10T20:10:00.000Z",
+        officialReportUrl: null, investorRelationsUrl: null, secFilingUrl: null, secAccession: null, secForm: null, secFiledAt: null,
+        createdAt: "2026-07-10T20:00:00.000Z", updatedAt: "2026-07-10T20:10:00.000Z", lastCheckedAt: null,
+        logoUrl: null, industry: null, websiteUrl: null,
+      },
+      {
+        id: "FUT-2026-Q3", symbol: "FUT", company: "Future Unknown Corp", cik: null,
+        fiscalYear: 2026, fiscalQuarter: 3, fiscalPeriod: "Q3", fiscalPeriodEnd: null,
+        scheduledDate: "2026-08-25", scheduledTime: null, timing: "TBD", status: "unknown",
+        scheduled: false, reported: false, cancelled: false, unknown: true,
+        epsEstimate: null, epsActual: null, epsSurprise: null, epsSurprisePct: null, epsResult: "Not Available",
+        revenueEstimate: null, revenueActual: null, revenueSurprise: null, revenueSurprisePct: null, revenueResult: "Not Available",
+        overallResult: "Not Available", reportedAt: null,
+        calendarProvider: "finnhub-earnings-calendar", consensusProvider: "finnhub-earnings-calendar",
+        providerEventId: "fut-event", providerUpdatedAt: "2026-08-12T20:10:00.000Z",
+        officialReportUrl: null, investorRelationsUrl: null, secFilingUrl: null, secAccession: null, secForm: null, secFiledAt: null,
+        createdAt: "2026-08-12T20:00:00.000Z", updatedAt: "2026-08-12T20:10:00.000Z", lastCheckedAt: null,
+        logoUrl: null, industry: null, websiteUrl: null,
+      },
+    ],
+  });
+
+  const stubEarningsPayload = () => {
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/earnings") return new Response(JSON.stringify(earningsPayload()), { status: 200 });
+      return new Response(null, { status: 503 });
+    });
+  };
+
+  it("shows company logos with deterministic fallbacks in calendar and past rows", async () => {
+    stubEarningsPayload();
+    const view = renderApp("/earnings");
+    await screen.findByRole("heading", { name: /Earnings Calendar/ });
+    await waitFor(() => expect(view.container.querySelector(".calendar-events img.company-logo-img")).toHaveAttribute("src", "https://example.test/msft.png"));
+    // AAPL has no logo: the calendar cell falls back to the ticker initial.
+    expect(screen.getByText("A", { selector: ".calendar-logo.company-logo-fallback" })).toBeInTheDocument();
+    // Past rows use the same logic.
+    await screen.findByText("Exxon Mobil");
+    expect(screen.getByText("X", { selector: ".table-logo.company-logo-fallback" })).toBeInTheDocument();
+  });
+
+  it("falls back to the ticker initial when a logo URL fails to load", async () => {
+    stubEarningsPayload();
+    const view = renderApp("/earnings");
+    await screen.findByRole("heading", { name: /Earnings Calendar/ });
+    await waitFor(() => expect(view.container.querySelector(".calendar-events img.company-logo-img")).toHaveAttribute("src", "https://example.test/msft.png"));
+    const img = view.container.querySelector(".calendar-events img.company-logo-img")!;
+    fireEvent.error(img);
+    expect(view.container.querySelector(".calendar-events img.company-logo-img")).toBeNull();
+    expect(screen.getByText("M", { selector: ".calendar-logo.company-logo-fallback" })).toBeInTheDocument();
+  });
+
+  it("shows Past Earnings for the last 30 days with badges and no result filters", async () => {
+    stubEarningsPayload();
+    const view = renderApp("/earnings");
+    await screen.findByRole("heading", { name: /Earnings Calendar/ });
+    await screen.findByText("Exxon Mobil");
+    // Only the last-30-days reported events appear: OLD (2026-07-10) and FUT (future) do not.
+    expect(screen.queryByText("Outside Window Corp")).not.toBeInTheDocument();
+    expect(screen.queryByText("Future Unknown Corp")).not.toBeInTheDocument();
+    expect(screen.getByText("Microsoft")).toBeInTheDocument();
+    // Result badges render; Met translates In Line.
+    expect(screen.getByText("Mixed")).toBeInTheDocument();
+    expect(screen.getByText("Met")).toBeInTheDocument();
+    // The All/Beat/Miss/Mixed/Met/N/A filter row is gone.
+    for (const label of ["All", "Beat", "Miss", "N/A"]) {
+      expect(screen.queryByRole("button", { name: label })).toBeNull();
+    }
+    // N/A is rendered honestly when the provider has no revenue figures.
+    expect(view.container.querySelector(".earnings-table")).toHaveTextContent("N/A");
+  });
+
+  it("filters Past Earnings by company or ticker", async () => {
+    stubEarningsPayload();
+    renderApp("/earnings");
+    await screen.findByRole("heading", { name: /Earnings Calendar/ });
+    await screen.findByText("Exxon Mobil");
+    const search = screen.getByPlaceholderText("Search company or ticker");
+    fireEvent.change(search, { target: { value: "xom" } });
+    expect(screen.queryByText("Microsoft")).not.toBeInTheDocument();
+    expect(screen.getByText("Exxon Mobil")).toBeInTheDocument();
+    fireEvent.change(search, { target: { value: "no-such-company" } });
+    expect(screen.getByText("No company matches the search.")).toBeInTheDocument();
+  });
+
+  it("keeps the drawer enriched: logo, fiscal period, trading session and EPS/revenue", async () => {
+    stubEarningsPayload();
+    const view = renderApp("/earnings");
+    await screen.findByRole("heading", { name: /Earnings Calendar/ });
+    const row = (await screen.findAllByText("MSFT")).find((element) => element.tagName === "B");
+    fireEvent.click(row!.closest("button")!);
+    const drawer = await screen.findByRole("dialog", { name: "Earnings Detail" });
+    expect(view.container.querySelector(".earnings-drawer img.company-logo-img")).toHaveAttribute("src", "https://example.test/msft.png");
+    expect(drawer).toHaveTextContent(/MSFT · Q1 2026 · August 12, 2026 · After Close/);
+    expect(drawer).toHaveTextContent("3.3");
+    expect(drawer).toHaveTextContent("+10.00%");
+    expect(drawer).toHaveTextContent("Mixed");
+    expect(screen.getByRole("link", { name: /Official Earnings Report/ })).toHaveAttribute("href", "https://example.test/msft-release");
+    expect(screen.getByRole("link", { name: /Investor Relations/ })).toHaveAttribute("href", "https://example.test/msft-ir");
   });
 });

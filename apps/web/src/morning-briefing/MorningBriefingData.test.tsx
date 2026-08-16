@@ -121,7 +121,7 @@ it("announces the full date for earnings calendar events", async () => {
   sessionStorage.clear();
   renderApp("/earnings");
   expect(await screen.findByRole("heading", { name: "Earnings Calendar" })).toBeInTheDocument();
-  expect(await screen.findByRole("button", { name: /Future Corp, Scheduled · BMO, Friday, August 14, 2026/i })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: /Future Corp, BMO, Friday, August 14, 2026/i })).toBeInTheDocument();
 });
 
 it("fails closed when the earnings payload has an invalid event list", async () => {
@@ -136,7 +136,7 @@ it("fails closed when the earnings payload has an invalid event list", async () 
   // must present itself as unavailable rather than pretend it has data.
   await waitFor(() => expect(view.container.querySelector(".earnings-top-summary")).toHaveTextContent("—"));
   expect(view.container.querySelector(".earnings-top-summary")).toHaveTextContent("N/A");
-  expect(view.container.querySelector(".past-card")).toHaveTextContent("No recent earnings published.");
+  expect(view.container.querySelector(".past-card")).toHaveTextContent("Earnings data is not available yet.");
 });
 
 it("fails closed when an earnings event contains an invalid date", async () => {
@@ -168,7 +168,7 @@ it("accepts a full-shape earnings payload exactly as the worker emits it", async
         secFilingUrl: null, secAccession: null, secForm: null, secFiledAt: null,
         createdAt: "2026-08-12T10:00:00Z", updatedAt: "2026-08-12T10:00:00Z", lastCheckedAt: null,
       }],
-      summary: { today: 0, thisWeek: 0, next60Days: 1 },
+      summary: { today: 0, thisWeek: 0, next30Days: 1 },
       from: "2026-01-01", to: "2026-10-11",
     }), { status: 200 });
     return new Response(null, { status: 404 });
@@ -197,7 +197,7 @@ it("treats a valid empty earnings publication as available, not unavailable", as
   vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
     if (String(input) === "/api/earnings") return new Response(JSON.stringify({
       events: [],
-      summary: { today: 0, thisWeek: 0, next60Days: 0 },
+      summary: { today: 0, thisWeek: 0, next30Days: 0 },
       from: "2026-01-01", to: "2026-10-11",
     }), { status: 200 });
     return new Response(null, { status: 404 });
@@ -313,7 +313,7 @@ it("does not show static earnings when the first backend request fails", async (
   const view = renderApp("/earnings");
   await waitFor(() => expect(view.container.querySelector(".earnings-top-summary")).toHaveTextContent("—"));
   expect(view.container).not.toHaveTextContent("Future Corp");
-  expect(view.container.querySelector(".past-card")).toHaveTextContent("No recent earnings published.");
+  expect(view.container.querySelector(".past-card")).toHaveTextContent("Earnings data is not available yet.");
 });
 
 it("clears earnings when the endpoint fails after a success", async () => {

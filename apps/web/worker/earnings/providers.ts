@@ -1,6 +1,8 @@
 import type { EarningsEngineEvent } from "@stock-autotrader/contracts";
 import type {
   CompanyMetadata,
+  CompanyProfileObservation,
+  CompanyProfileProvider,
   EarningsCalendarObservation,
   EarningsCalendarProvider,
   EarningsConsensusObservation,
@@ -19,6 +21,7 @@ type Sleeper = (milliseconds: number) => Promise<void>;
 
 const FMP_URL = "https://financialmodelingprep.com/stable/earnings-calendar";
 const FINNHUB_URL = "https://finnhub.io/api/v1/calendar/earnings";
+const FINNHUB_PROFILE_URL = "https://finnhub.io/api/v1/stock/profile2";
 const SEC_TICKERS_URL = "https://www.sec.gov/files/company_tickers_exchange.json";
 const SEC_SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK";
 const SEC_FULL_INDEX_URL = "https://www.sec.gov/Archives/edgar/full-index";
@@ -441,6 +444,69 @@ export class FinnhubEarningsProvider implements EarningsCalendarProvider, Earnin
   }
 }
 
+/**
+ * Finnhub Company Profile 2 — stable company metadata enrichment
+ * (name, logo, industry, website, exchange).
+ *
+ * Deliberately NOT on the critical earnings path: fetchProfile failures are
+ * recorded as enrichment diagnostics by the caller but never degrade the
+ * calendar/monitor health gate. The raw binary is never stored — only the
+ * external logo URL is persisted in D1.
+ */
+function normalizedFinnhubProfile(
+  payload: unknown,
+  symbol: string,
+): CompanyProfileObservation {
+  const object = rowObject(payload);
+  if (!object) return { symbol, company: null, logoUrl: null, industry: null, websiteUrl: null, exchange: null };
+  const logoUrl = httpUrlValue(object.logo);
+  const websiteUrl = httpUrlValue(object.weburl);
+  return {
+    symbol,
+    company: stringValue(object.name),
+    logoUrl,
+    industry: stringValue(object.finnhubIndustry),
+    websiteUrl,
+    exchange: stringValue(object.exchange),
+  };
+}
+
+export class FinnhubCompanyProfileProvider implements CompanyProfileProvider {
+  readonly name = "finnhub-company-profile";
+
+  constructor(
+    private readonly apiKey: string,
+    private readonly fetcher: Fetcher = fetch,
+    private readonly sleeper: Sleeper = defaultSleep,
+    private readonly timeoutMs = PROVIDER_TIMEOUT_MS,
+  ) {}
+
+  async fetchProfile(symbol: string): Promise<CompanyProfileObservation> {
+    if (!this.apiKey.trim()) throw new Error("FINNHUB_API_KEY is not configured");
+    const url = new URL(FINNHUB_PROFILE_URL);
+    url.searchParams.set("symbol", symbol);
+    const payload = await fetchJsonWithRetry(
+      this.fetcher,
+      url,
+      {
+        headers: {
+          Accept: "application/json",
+          // Keep the token out of URLs, logs and downstream request metadata.
+          "X-Finnhub-Token": this.apiKey,
+        },
+      },
+      this.sleeper,
+      this.timeoutMs,
+    );
+    const profile = normalizedFinnhubProfile(payload, symbol);
+    if (profile.company === null && profile.logoUrl === null
+      && profile.industry === null && profile.websiteUrl === null && profile.exchange === null) {
+      throw new Error(`malformed Finnhub company profile response for ${symbol}`);
+    }
+    return profile;
+  }
+}
+
 function padCik(value: unknown): string | null {
   const digits = String(value ?? "").replace(/\D/g, "");
   return digits ? digits.padStart(10, "0").slice(-10) : null;
@@ -716,5 +782,6 @@ export function createDefaultEarningsProviders(finnhubApiKey: string | undefined
     calendar: finnhub,
     consensus: finnhub,
     official: sec,
+    profile: new FinnhubCompanyProfileProvider(finnhubApiKey ?? ""),
   };
 }

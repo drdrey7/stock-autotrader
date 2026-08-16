@@ -46,10 +46,14 @@ import {
   readEarningsMonitoringEvents,
 } from "./storage";
 import { MAX_SEC_FILING_LOOKUPS_PER_JOB } from "./subrequest-budget";
+import { enrichUniverseMetadata } from "./metadata";
 export { MAX_SEC_FILING_LOOKUPS_PER_JOB } from "./subrequest-budget";
 
 export const EARNINGS_BACKFILL_DAYS = 30;
 export const EARNINGS_WINDOW_DAYS = 60;
+// The top summary counts its own 30-day window (label: NEXT 30 DAYS) while
+// the engine keeps the 60-day provider window for the calendar.
+export const EARNINGS_SUMMARY_WINDOW_DAYS = 30;
 export const EARNINGS_QUERY_MAX_DAYS = 450;
 export const EARNINGS_ENGINE_STALE_AFTER_SECONDS = 26 * 60 * 60;
 
@@ -222,7 +226,7 @@ async function syncUniverse(
 
 async function findFiling(
   providers: EarningsProviderBundle,
-  event: EarningsEngineEvent,
+  event: Pick<EarningsEngineEvent, "symbol" | "scheduledDate" | "fiscalPeriodEnd" | "cik">,
   today: string,
   sec: SecEnrichmentDiagnostics,
 ): Promise<OfficialFiling | null> {
@@ -465,6 +469,24 @@ async function runCalendarSync(env: Env, scheduledTime: Date, providers: Earning
   if (warnings.length > 0) await rememberEarningsFailure(env, "calendar", collectedAt, warnings[0]!);
   else await clearEarningsFailure(env, "calendar");
   await flushSecDiagnostics(env, collectedAt, sec);
+  // Best-effort Finnhub Company Profile 2 enrichment. Runs AFTER the calendar
+  // outcome and failure keys are recorded so a profile outage can never
+  // degrade the critical earnings health gate; the result is only observable
+  // through the metadata diagnostics meta keys (/healthz/sources enrichment).
+  const metadataResult = await enrichUniverseMetadata(env, providers, collectedAt).catch((error) => {
+    console.warn(JSON.stringify({ message: "earnings universe metadata enrichment degraded", error: errorMessage(error).slice(0, 180) }));
+    return { requests: 0, successes: 0, failures: 0, symbols: [] };
+  });
+  if (metadataResult.requests > 0) {
+    console.info(JSON.stringify({
+      job: "earnings-metadata",
+      provider: providers.profile?.name ?? "none",
+      requests: metadataResult.requests,
+      successes: metadataResult.successes,
+      failures: metadataResult.failures,
+      symbols: metadataResult.symbols,
+    }));
+  }
   // Job status mirrors the critical Earnings/calendar pipeline only. SEC
   // enrichment failures remain visible in the SEC diagnostics (meta keys +
   // secAttempts/secFailures on the log line) but never degrade the job.
@@ -625,7 +647,7 @@ export async function readEarningsApi(
     summary: {
       today: events.filter((event) => event.scheduledDate === today).length,
       thisWeek: events.filter((event) => isWithinInclusive(event.scheduledDate, startOfWeek(today), endOfWeek(today))).length,
-      next60Days: events.filter((event) => isWithinInclusive(event.scheduledDate, today, addDays(today, EARNINGS_WINDOW_DAYS))).length,
+      next30Days: events.filter((event) => isWithinInclusive(event.scheduledDate, today, addDays(today, EARNINGS_SUMMARY_WINDOW_DAYS))).length,
     },
     from,
     to,

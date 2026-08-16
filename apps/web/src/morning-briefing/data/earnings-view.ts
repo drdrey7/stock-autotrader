@@ -132,6 +132,9 @@ export function eventWithViewMetadata(input: EarningsInput): EarningsCompany {
     createdAt: stringValue(input.createdAt) ?? "1970-01-01T00:00:00.000Z",
     updatedAt: stringValue(input.updatedAt) ?? "1970-01-01T00:00:00.000Z",
     lastCheckedAt: stringValue(input.lastCheckedAt),
+    logoUrl: stringValue(input.logoUrl),
+    industry: stringValue(input.industry),
+    websiteUrl: stringValue(input.websiteUrl),
   };
   return { ...event, color: tickerColour(event.symbol), result: displayResult(event) };
 }
@@ -151,4 +154,22 @@ export function resultClass(value: string): string {
   if (value === "Miss") return "miss";
   if (value === "Mixed" || value === "In Line" || value === "Met") return "mixed";
   return "pending";
+}
+
+/** BMO/AMC/TBD → human-readable trading-session label for the detail drawer. */
+export function displayTiming(timing: EarningsCompany["timing"]): string {
+  if (timing === "BMO") return "Before Open";
+  if (timing === "AMC") return "After Close";
+  return "TBD";
+}
+
+/** "Q3 2026" from engine fiscal fields; "N/A" when nothing is known. */
+export function fiscalPeriodLabel(
+  fiscalYear: number | null,
+  fiscalQuarter: number | null,
+  fiscalPeriod: string | null,
+): string {
+  const period = fiscalPeriod?.trim() || (fiscalQuarter !== null ? `Q${fiscalQuarter}` : null);
+  if (!period && fiscalYear === null) return "N/A";
+  return [period, fiscalYear].filter((value) => value !== null && value !== "").join(" ") || "N/A";
 }

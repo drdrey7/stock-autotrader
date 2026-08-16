@@ -35,6 +35,7 @@ const EARNINGS_STRING_FIELDS = [
   "fiscalPeriod", "fiscalPeriodEnd", "reportedAt", "calendarProvider", "consensusProvider",
   "providerEventId", "providerUpdatedAt", "officialReportUrl", "investorRelationsUrl",
   "secFilingUrl", "secAccession", "secForm", "secFiledAt", "createdAt", "updatedAt", "lastCheckedAt",
+  "logoUrl", "industry", "websiteUrl",
 ] as const;
 
 const EARNINGS_NUMBER_FIELDS = [

@@ -7,6 +7,16 @@ export const MAX_PROVIDER_ATTEMPTS = 2;
 export const MAX_SEC_FILING_LOOKUPS_PER_JOB = 16;
 export const MAX_SEC_INDEX_QUARTERS_PER_CALENDAR = 3;
 
+/**
+ * Bounded Finnhub Company Profile 2 enrichment budget (one symbol per
+ * request). This is a separate best-effort enrichment envelope, deliberately
+ * NOT folded into EXTERNAL_SUBREQUEST_BUDGET: profile failures are
+ * non-critical diagnostics and the calendar path must keep its own worst-case
+ * accounting untouched. Enrichment runs only inside the daily calendar job,
+ * so its maximum daily contribution is this constant.
+ */
+export const MAX_FINNHUB_PROFILE_REQUESTS_PER_JOB = 15;
+
 export const MAX_SEC_METADATA_REQUESTS = MAX_PROVIDER_ATTEMPTS;
 export const MAX_SEC_FULL_INDEX_REQUESTS = MAX_SEC_INDEX_QUARTERS_PER_CALENDAR * MAX_PROVIDER_ATTEMPTS;
 export const MAX_SEC_FILING_REQUESTS = MAX_SEC_FILING_LOOKUPS_PER_JOB * MAX_PROVIDER_ATTEMPTS;

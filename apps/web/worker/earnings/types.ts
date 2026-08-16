@@ -92,6 +92,24 @@ export interface CompanyMetadata {
   investorRelationsUrl?: string | null;
 }
 
+/**
+ * Stable company profile metadata from Finnhub Company Profile 2. All fields
+ * are optional on the wire; only `symbol` must survive normalization.
+ */
+export interface CompanyProfileObservation {
+  symbol: string;
+  company: string | null;
+  logoUrl: string | null;
+  industry: string | null;
+  websiteUrl: string | null;
+  exchange: string | null;
+}
+
+export interface CompanyProfileProvider {
+  readonly name: string;
+  fetchProfile(symbol: string, collectedAt: string): Promise<CompanyProfileObservation>;
+}
+
 export interface OfficialFilingsProvider {
   readonly name: string;
   fetchCompanyMetadata(collectedAt: string): Promise<EarningsProviderResult<CompanyMetadata>>;
@@ -105,6 +123,12 @@ export interface EarningsProviderBundle {
   calendar: EarningsCalendarProvider;
   consensus: EarningsConsensusProvider;
   official: OfficialFilingsProvider;
+  /**
+   * Best-effort company profile enrichment (Finnhub Company Profile 2 in
+   * production). Never on the critical earnings path: provider/profile
+   * failures must not degrade the calendar/monitor health gate.
+   */
+  profile?: CompanyProfileProvider;
 }
 
 export interface NormalizedEarningsEvent {
@@ -149,4 +173,10 @@ export interface NormalizedEarningsEvent {
   createdAt: string;
   updatedAt: string;
   lastCheckedAt: string | null;
+  // Read-model-only company metadata: joined from earnings_universe at read
+  // time, never written through the event write path (which owns the
+  // earnings_events columns only).
+  logoUrl: string | null;
+  industry: string | null;
+  websiteUrl: string | null;
 }

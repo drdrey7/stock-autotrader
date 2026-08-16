@@ -1,9 +1,11 @@
 import { useEffect, useRef } from "react";
-import type { CSSProperties } from "react";
 import { ArrowLeft, ExternalLink, X } from "lucide-react";
 import { motion } from "motion/react";
+import { CompanyLogo } from "./EarningsLogo";
 import {
   displayMetricResult,
+  displayTiming,
+  fiscalPeriodLabel,
   formatMetric,
   formatPercent,
   resultClass,
@@ -71,6 +73,7 @@ export default function EarningsDetail({ item, onClose }: { item: EarningsCompan
         year: "numeric",
       })
     : "N/A";
+  const fiscalLabel = fiscalPeriodLabel(item.fiscalYear, item.fiscalQuarter, item.fiscalPeriod);
 
   const link = (label: string, url: string | null) => url
     ? <a className="official-link" href={url} target="_blank" rel="noreferrer">{label} <ExternalLink/></a>
@@ -119,18 +122,16 @@ export default function EarningsDetail({ item, onClose }: { item: EarningsCompan
         </div>
 
         <div className="drawer-company">
-          <span className="company-icon large" style={{ "--company": item.color } as CSSProperties}>
-            {item.symbol.slice(0, 1)}
-          </span>
+          <CompanyLogo event={item} className="drawer-logo"/>
           <div>
             <h2>{item.company}</h2>
-            <p>{item.symbol} · {formattedDate} · {item.timing}</p>
+            <p>{item.symbol} · {fiscalLabel} · {formattedDate} · {displayTiming(item.timing)}</p>
           </div>
           <em className={`result ${resultClass(item.result)}`}>{item.result}</em>
         </div>
 
         <div className="drawer-metadata">
-          <span>Fiscal quarter<strong>{item.fiscalPeriod ?? "N/A"}</strong></span>
+          <span>Fiscal quarter<strong>{fiscalLabel}</strong></span>
           <span>Status<strong>{item.status}</strong></span>
         </div>
 
