@@ -31,6 +31,12 @@ jobs:
         working-directory: apps/web
         run: npm run test:coverage -- --coverage.reporter=text-summary
       - run: npm run build
+      - name: Probe Finnhub historical earnings (temporary PR #50 diagnostic)
+        if: github.ref_name == 'feat/earnings-page-enrichment'
+        working-directory: apps/web
+        env:
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+        run: node scripts/probe-finnhub.mjs
       - name: Test deferred review policy
         run: node .github/scripts/test-deferred-review-workflow.mjs
       - name: Validate production Worker dry-run and cron budget
