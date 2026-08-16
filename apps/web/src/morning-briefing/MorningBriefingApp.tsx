@@ -2,8 +2,8 @@ import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { AnimatePresence, MotionConfig, motion, useReducedMotion } from "motion/react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
-  ArrowDownRight, ArrowLeft, ArrowUpRight, BarChart3,
-  ChevronRight, ExternalLink, Moon, Sun, TrendingUp, X,
+  ArrowDownRight, ArrowLeft, ArrowUpRight,
+  ChevronRight, ExternalLink, TrendingUp, X,
 } from "lucide-react";
 import { marketIndexes as marketCardDefinitions, quickStats } from "./data/market";
 import { type Opportunity } from "./data/opportunities";
@@ -30,12 +30,6 @@ const XPulsePage = lazy(() => import("./XPulsePage"));
 const EarningsPage = lazy(() => import("./EarningsCalendarPage"));
 
 type Page = "briefing" | "surge" | "earnings";
-type Theme = "light" | "dark";
-const tabs: { id: Page; label: string }[] = [
-  { id: "briefing", label: "Morning Briefing" },
-  { id: "surge", label: "X Pulse" },
-  { id: "earnings", label: "Earnings" },
-];
 const pagePaths: Record<Page, string> = { briefing: "/", surge: "/x", earnings: "/earnings" };
 
 function formatBriefingDate(key: string | null): string {
@@ -45,26 +39,6 @@ function formatBriefingDate(key: string | null): string {
   return `${weekday} · ${date.getDate()} ${month}`.toUpperCase();
 }
 
-function Brand() {
-  return <div className="brand"><span className="brand-mark"><BarChart3 size={20}/></span><span><strong>Morning Briefing</strong><small>Markets • Opportunities • Insights</small></span></div>;
-}
-
-function ThemeToggle({ theme, onToggle }: { theme: Theme; onToggle: () => void }) {
-  return <button className="theme-toggle" onClick={onToggle} aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}>
-    <Sun size={16}/><span className="toggle-track"><i/></span><Moon size={15}/>
-  </button>;
-}
-
-function AppHeader({ page, setPage, theme, setTheme }: { page: Page; setPage: (p: Page) => void; theme: Theme; setTheme: (t: Theme) => void }) {
-  return <header className="app-header">
-    <div className="header-top"><Brand/><nav className="desktop-tabs" aria-label="Primary navigation"><TabButtons page={page} setPage={setPage}/></nav><ThemeToggle theme={theme} onToggle={() => setTheme(theme === "light" ? "dark" : "light")}/></div>
-    <nav className="mobile-tabs" aria-label="Primary navigation"><TabButtons page={page} setPage={setPage}/></nav>
-  </header>;
-}
-
-function TabButtons({ page, setPage }: { page: Page; setPage: (p: Page) => void }) {
-  return <>{tabs.map(tab => <button key={tab.id} aria-current={page === tab.id ? "page" : undefined} className={page === tab.id ? "active" : ""} onClick={() => setPage(tab.id)}>{page === tab.id && <motion.span layoutId="active-tab" className="tab-highlight"/>}<span>{tab.label}</span></button>)}</>;
-}
 
 function formatAnalysisDate(key: string | null): string | null {
   if (!key || !/^\d{4}-\d{2}-\d{2}$/.test(key)) return null;
@@ -229,20 +203,14 @@ function EarningsDetail({ item, onClose }: { item: EarningsCompany; onClose: () 
 function MorningBriefingShell() {
   const location = useLocation(); const navigate = useNavigate();
   const page: Page = location.pathname === "/x" ? "surge" : location.pathname === "/earnings" ? "earnings" : "briefing";
-  const setPage = (next: Page) => navigate(pagePaths[next]); const [theme, setTheme] = useState<Theme>("light");
+  const setPage = (next: Page) => navigate(pagePaths[next]);
   const [selectedOpportunity, setSelectedOpportunity] = useState<Opportunity | null>(null); const [selectedEarnings, setSelectedEarnings] = useState<EarningsCompany | null>(null);
-  useEffect(() => { const stored = localStorage.getItem("morning-briefing-theme") as Theme | null; const preferred = typeof window.matchMedia === "function" && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"; const timer = window.setTimeout(() => setTheme(stored || preferred), 0); return () => window.clearTimeout(timer); }, []);
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    localStorage.setItem("morning-briefing-theme", theme);
-    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", theme === "dark" ? "#0b0d10" : "#f7f8f7");
-  }, [theme]);
   useEffect(() => {
     const reduced = typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     window.scrollTo({ top: 0, behavior: reduced ? "auto" : "smooth" });
   }, [page]);
   useEffect(() => { setSelectedOpportunity(null); setSelectedEarnings(null); }, [page]);
-  return <div className="mb-demo app-shell"><AppHeader page={page} setPage={setPage} theme={theme} setTheme={setTheme}/><AnimatePresence mode="wait"><motion.main key={page} initial={{opacity:0,y:8}} animate={{opacity:1,y:0}} exit={{opacity:0,y:-4}} transition={spring}><LazyPageErrorBoundary resetKey={page}><Suspense fallback={<PageLoadingFallback/>}>{page === "briefing" && <MorningBriefing setPage={setPage} selectOpportunity={setSelectedOpportunity} selectEarnings={setSelectedEarnings}/>} {page === "surge" && <XPulsePage/>} {page === "earnings" && <EarningsPage onSelect={setSelectedEarnings}/>}</Suspense></LazyPageErrorBoundary></motion.main></AnimatePresence><footer><span>Morning Briefing</span><p>Public, read-only market intelligence.</p></footer><AnimatePresence>{selectedOpportunity && <OpportunityModal item={selectedOpportunity} onClose={() => setSelectedOpportunity(null)}/>} {selectedEarnings && <EarningsDetail item={selectedEarnings} onClose={() => setSelectedEarnings(null)}/>}</AnimatePresence></div>;
+  return <div className="mb-demo"><AnimatePresence mode="wait"><motion.div key={page} initial={{opacity:0,y:8}} animate={{opacity:1,y:0}} exit={{opacity:0,y:-4}} transition={spring}><LazyPageErrorBoundary resetKey={page}><Suspense fallback={<PageLoadingFallback/>}>{page === "briefing" && <MorningBriefing setPage={setPage} selectOpportunity={setSelectedOpportunity} selectEarnings={setSelectedEarnings}/>} {page === "surge" && <XPulsePage/>} {page === "earnings" && <EarningsPage onSelect={setSelectedEarnings}/>}</Suspense></LazyPageErrorBoundary></motion.div></AnimatePresence><footer><span>Morning Briefing</span><p>Public, read-only market intelligence.</p></footer><AnimatePresence>{selectedOpportunity && <OpportunityModal item={selectedOpportunity} onClose={() => setSelectedOpportunity(null)}/>} {selectedEarnings && <EarningsDetail item={selectedEarnings} onClose={() => setSelectedEarnings(null)}/>}</AnimatePresence></div>;
 }
 
 

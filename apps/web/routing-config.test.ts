@@ -95,9 +95,7 @@ const frontendPaths = [
   "/x",
   "/earnings",
   "/dashboard",
-  "/methodology",
   "/status",
-  "/disclaimer",
   "/index.html",
   // Any asset path (hashed filenames change on every build) must stay
   // asset-first; the routing invariant does not depend on a real file.
