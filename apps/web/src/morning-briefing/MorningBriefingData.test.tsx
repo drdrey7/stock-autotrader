@@ -416,7 +416,7 @@ it("clears the sentiment card after the backend stops publishing", async () => {
 it("refreshes earnings silently after the internal refresh interval", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   vi.setSystemTime(new Date("2026-08-12T16:00:00Z"));
-  renderApp();
+  renderApp("/earnings");
   await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input) === "/api/earnings")).toHaveLength(1));
   await vi.advanceTimersByTimeAsync(60 * 60_000);
   await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input) === "/api/earnings")).toHaveLength(2));
@@ -425,7 +425,7 @@ it("refreshes earnings silently after the internal refresh interval", async () =
 });
 
 it("does not force an earnings fetch when the tab becomes visible before the cadence is due", async () => {
-  renderApp();
+  renderApp("/earnings");
   await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input) === "/api/earnings")).toHaveLength(1));
   document.dispatchEvent(new Event("visibilitychange"));
   await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input) === "/api/earnings")).toHaveLength(1));
@@ -438,7 +438,7 @@ it("treats an empty earnings response as a successful daily refresh", async () =
     if (String(input) === "/api/earnings") return new Response(JSON.stringify([]), { status: 200 });
     return originalFetch(input, init);
   });
-  renderApp();
+  renderApp("/earnings");
   await vi.advanceTimersByTimeAsync(60_000);
   expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input) === "/api/earnings")).toHaveLength(1);
 });

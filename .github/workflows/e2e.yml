@@ -1,9 +1,8 @@
 name: E2E
 
+# Playwright is intentionally manual-only while GitHub-hosted Actions minutes
+# are constrained. Run it explicitly when a PR needs browser-level validation.
 on:
-  pull_request:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
