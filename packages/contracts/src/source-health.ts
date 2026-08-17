@@ -41,13 +41,35 @@ export const secEnrichmentHealthSchema = enrichmentDiagnosticsSchema;
 export type SecEnrichmentHealth = EnrichmentDiagnostics;
 
 /**
- * Earnings best-effort enrichment bundle. SEC EDGAR (filings/CIK) and Finnhub
- * Company Profile 2 (logos/industry) are independent diagnostic paths; either
- * can fail without degrading critical calendar health.
+ * Earnings best-effort enrichment bundle. SEC EDGAR (filings/CIK), Finnhub
+ * Company Profile 2 (logos/industry) and the official-metric backfill
+ * (SEC XBRL GAAP actuals) are independent diagnostic paths; any can fail
+ * without degrading critical calendar health.
  */
 export const earningsEnrichmentHealthSchema = z.object({
   sec: enrichmentDiagnosticsSchema,
   metadata: enrichmentDiagnosticsSchema,
+  /**
+   * One-shot official-metric backfill diagnostics (VPS/Hermes script). Counts
+   * are the latest audit tallies; the per-event verdicts live in the
+   * earnings_events.data_quality_status column.
+   */
+  officialMetrics: z.object({
+    provider: z.string().trim().min(1).max(128),
+    lastAttempt: isoTimestampSchema.nullable(),
+    lastSuccess: isoTimestampSchema.nullable(),
+    lastError: z.string().trim().max(500).nullable(),
+    counts: z.object({
+      audited: z.number().int().nonnegative(),
+      match: z.number().int().nonnegative(),
+      differentBasis: z.number().int().nonnegative(),
+      conflict: z.number().int().nonnegative(),
+      officialOnly: z.number().int().nonnegative(),
+      finnhubOnly: z.number().int().nonnegative(),
+      unresolved: z.number().int().nonnegative(),
+      pending: z.number().int().nonnegative(),
+    }).optional(),
+  }).optional(),
 });
 
 export type EarningsEnrichmentHealth = z.infer<typeof earningsEnrichmentHealthSchema>;

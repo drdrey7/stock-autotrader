@@ -72,6 +72,14 @@ const EARNINGS_META_KEYS = {
   secLastSuccess: "earningsSecLastSuccessAt",
   secLastError: "earningsSecLastError",
   secConsecutiveFailures: "earningsSecConsecutiveFailures",
+  // Official-metric backfill diagnostics — written by the one-shot VPS script
+  // (scripts/earnings-official-last-quarter-backfill.ts), read by the
+  // /healthz/sources earnings enrichment block. Never part of the critical
+  // calendar/monitor health gate.
+  officialAuditLastAttempt: "earningsOfficialAuditLastAttemptAt",
+  officialAuditLastSuccess: "earningsOfficialAuditLastSuccessAt",
+  officialAuditLastError: "earningsOfficialAuditLastError",
+  officialAuditCounts: "earningsOfficialAuditCounts",
 } as const;
 
 export class EarningsQueryError extends Error {

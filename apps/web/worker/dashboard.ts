@@ -130,6 +130,39 @@ const latestTimestamp = (...values: Array<string | null | undefined>): string | 
   return latestMs === null ? null : new Date(latestMs).toISOString();
 };
 
+const OFFICIAL_AUDIT_COUNT_KEYS = [
+  "audited", "match", "differentBasis", "conflict", "officialOnly", "finnhubOnly", "unresolved", "pending",
+] as const;
+
+/**
+ * Parse the JSON counts snapshot written by the official-metric backfill.
+ * Values are clamped to non-negative integers; malformed keys fall back to 0
+ * so a bad snapshot can never fail the strict source-health schema.
+ */
+const parseOfficialAuditCounts = (raw: string): Record<(typeof OFFICIAL_AUDIT_COUNT_KEYS)[number], number> => {
+  const fallback: Record<(typeof OFFICIAL_AUDIT_COUNT_KEYS)[number], number> = {
+    audited: 0,
+    match: 0,
+    differentBasis: 0,
+    conflict: 0,
+    officialOnly: 0,
+    finnhubOnly: 0,
+    unresolved: 0,
+    pending: 0,
+  };
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (typeof parsed !== "object" || parsed === null) return fallback;
+    for (const key of OFFICIAL_AUDIT_COUNT_KEYS) {
+      const value = parsed[key];
+      if (typeof value === "number" && Number.isFinite(value)) fallback[key] = Math.max(0, Math.floor(value));
+    }
+    return fallback;
+  } catch {
+    return fallback;
+  }
+};
+
 /**
  * Single, honest freshness boundary shared by every public data source.
  * Sources without a validated success stay Unavailable/Error; a success
@@ -293,6 +326,10 @@ export async function buildSources(
   let metadataLastSuccess: string | null = null;
   let metadataLastError: string | null = null;
   let metadataConsecutiveFailures = 0;
+  let officialAuditLastAttempt: string | null = null;
+  let officialAuditLastSuccess: string | null = null;
+  let officialAuditLastError: string | null = null;
+  let officialAuditCounts: string | null = null;
   try {
     // Publication metadata records a successful empty calendar too: a valid
     // update with zero rows is healthy. Universe count is checked separately
@@ -301,7 +338,7 @@ export async function buildSources(
     // feed earningsError, so a SEC or Finnhub-profile outage cannot degrade
     // the critical gate.
     const row = await env.DB.prepare(
-      "SELECT (SELECT value FROM app_meta WHERE key = 'earningsEngineUpdatedAt') AS updated_at, (SELECT value FROM app_meta WHERE key = 'earningsEngineCheckedAt') AS checked_at, (SELECT value FROM app_meta WHERE key = 'earningsEngineLastAttemptAt') AS attempt_at, (SELECT value FROM app_meta WHERE key = 'earningsCalendarLastError') AS calendar_error, (SELECT value FROM app_meta WHERE key = 'earningsMonitorLastError') AS monitor_error, (SELECT value FROM app_meta WHERE key = 'earningsEngineLastError') AS last_error, (SELECT value FROM app_meta WHERE key = 'earningsSecLastAttemptAt') AS sec_attempt_at, (SELECT value FROM app_meta WHERE key = 'earningsSecLastSuccessAt') AS sec_success_at, (SELECT value FROM app_meta WHERE key = 'earningsSecLastError') AS sec_error, (SELECT value FROM app_meta WHERE key = 'earningsSecConsecutiveFailures') AS sec_failures, (SELECT value FROM app_meta WHERE key = 'earningsMetadataLastAttemptAt') AS metadata_attempt_at, (SELECT value FROM app_meta WHERE key = 'earningsMetadataLastSuccessAt') AS metadata_success_at, (SELECT value FROM app_meta WHERE key = 'earningsMetadataLastError') AS metadata_error, (SELECT value FROM app_meta WHERE key = 'earningsMetadataConsecutiveFailures') AS metadata_failures, (SELECT COUNT(*) FROM earnings_universe WHERE active = 1 AND source = 'core') AS universe_count",
+      "SELECT (SELECT value FROM app_meta WHERE key = 'earningsEngineUpdatedAt') AS updated_at, (SELECT value FROM app_meta WHERE key = 'earningsEngineCheckedAt') AS checked_at, (SELECT value FROM app_meta WHERE key = 'earningsEngineLastAttemptAt') AS attempt_at, (SELECT value FROM app_meta WHERE key = 'earningsCalendarLastError') AS calendar_error, (SELECT value FROM app_meta WHERE key = 'earningsMonitorLastError') AS monitor_error, (SELECT value FROM app_meta WHERE key = 'earningsEngineLastError') AS last_error, (SELECT value FROM app_meta WHERE key = 'earningsSecLastAttemptAt') AS sec_attempt_at, (SELECT value FROM app_meta WHERE key = 'earningsSecLastSuccessAt') AS sec_success_at, (SELECT value FROM app_meta WHERE key = 'earningsSecLastError') AS sec_error, (SELECT value FROM app_meta WHERE key = 'earningsSecConsecutiveFailures') AS sec_failures, (SELECT value FROM app_meta WHERE key = 'earningsMetadataLastAttemptAt') AS metadata_attempt_at, (SELECT value FROM app_meta WHERE key = 'earningsMetadataLastSuccessAt') AS metadata_success_at, (SELECT value FROM app_meta WHERE key = 'earningsMetadataLastError') AS metadata_error, (SELECT value FROM app_meta WHERE key = 'earningsMetadataConsecutiveFailures') AS metadata_failures, (SELECT value FROM app_meta WHERE key = 'earningsOfficialAuditLastAttemptAt') AS official_attempt_at, (SELECT value FROM app_meta WHERE key = 'earningsOfficialAuditLastSuccessAt') AS official_success_at, (SELECT value FROM app_meta WHERE key = 'earningsOfficialAuditLastError') AS official_error, (SELECT value FROM app_meta WHERE key = 'earningsOfficialAuditCounts') AS official_counts, (SELECT COUNT(*) FROM earnings_universe WHERE active = 1 AND source = 'core') AS universe_count",
     ).first<{
       updated_at: string | null;
       checked_at: string | null;
@@ -317,6 +354,10 @@ export async function buildSources(
       metadata_success_at: string | null;
       metadata_error: string | null;
       metadata_failures: string | null;
+      official_attempt_at: string | null;
+      official_success_at: string | null;
+      official_error: string | null;
+      official_counts: string | null;
       universe_count: number | string | null;
     }>();
     const updatedAt = parseIsoTimestamp(row?.updated_at);
@@ -342,6 +383,10 @@ export async function buildSources(
     metadataConsecutiveFailures = typeof metadataFailuresRaw === "string" && /^\d+$/.test(metadataFailuresRaw)
       ? Number(metadataFailuresRaw)
       : 0;
+    officialAuditLastAttempt = parseIsoTimestamp(row?.official_attempt_at);
+    officialAuditLastSuccess = parseIsoTimestamp(row?.official_success_at);
+    officialAuditLastError = row?.official_error?.trim().slice(0, 500) || null;
+    officialAuditCounts = row?.official_counts?.trim() || null;
   } catch {
     earningsError = "Earnings store is unavailable.";
   }
@@ -422,6 +467,15 @@ export async function buildSources(
           lastError: metadataLastError,
           consecutiveFailures: metadataConsecutiveFailures,
         },
+        officialMetrics: officialAuditCounts !== null || officialAuditLastAttempt !== null
+          ? {
+              provider: "sec-xbrl",
+              lastAttempt: officialAuditLastAttempt,
+              lastSuccess: officialAuditLastSuccess,
+              lastError: officialAuditLastError,
+              counts: officialAuditCounts === null ? undefined : parseOfficialAuditCounts(officialAuditCounts),
+            }
+          : undefined,
       },
     },
     sentiment: options.marketContext?.sentiment
