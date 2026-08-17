@@ -15,6 +15,7 @@ import {
 } from "./logic";
 import {
   createDefaultEarningsProviders,
+  deduplicateCalendarRows,
 } from "./providers";
 import type {
   EarningsCalendarObservation,
@@ -34,6 +35,9 @@ import {
   markPastScheduledEventsUnknown,
   markUnseenScheduledEventsUnknown,
   readEarningsEvents,
+  readRecentReportedSymbols,
+  readRecentlyCheckedRecoverySymbols,
+  recoveryCheckedMetaKey,
   readUniverseMetadata,
   rowToEarningsEvent,
   readEarningsMeta,
@@ -45,11 +49,15 @@ import {
   readActiveUniverseSymbols,
   readEarningsMonitoringEvents,
 } from "./storage";
-import { MAX_SEC_FILING_LOOKUPS_PER_JOB } from "./subrequest-budget";
+import { MAX_SEC_FILING_LOOKUPS_PER_JOB, FINNHUB_RATE_PACING_MS, MAX_HISTORICAL_RECOVERY_SYMBOLS_PER_JOB } from "./subrequest-budget";
+import { enrichUniverseMetadata } from "./metadata";
 export { MAX_SEC_FILING_LOOKUPS_PER_JOB } from "./subrequest-budget";
 
 export const EARNINGS_BACKFILL_DAYS = 30;
 export const EARNINGS_WINDOW_DAYS = 60;
+// The top summary counts its own 30-day window (label: NEXT 30 DAYS) while
+// the engine keeps the 60-day provider window for the calendar.
+export const EARNINGS_SUMMARY_WINDOW_DAYS = 30;
 export const EARNINGS_QUERY_MAX_DAYS = 450;
 export const EARNINGS_ENGINE_STALE_AFTER_SECONDS = 26 * 60 * 60;
 
@@ -222,7 +230,7 @@ async function syncUniverse(
 
 async function findFiling(
   providers: EarningsProviderBundle,
-  event: EarningsEngineEvent,
+  event: Pick<EarningsEngineEvent, "symbol" | "scheduledDate" | "fiscalPeriodEnd" | "cik">,
   today: string,
   sec: SecEnrichmentDiagnostics,
 ): Promise<OfficialFiling | null> {
@@ -357,6 +365,11 @@ async function readProviderCalendar(
   });
   try {
     const calendar = await providers.calendar.fetchCalendar(range, activeSymbols, collectedAt);
+    // Production createDefaultEarningsProviders() sets calendar === consensus to
+    // the SAME FinnhubEarningsProvider instance. That is one physical bulk HTTP
+    // operation (retries counted via MAX_PROVIDER_ATTEMPTS), not two bulk fetches.
+    // Optional test adapters may pass distinct calendar/consensus providers; only
+    // then does fetchConsensus run as a second request.
     if (Object.is(providers.calendar, providers.consensus)) {
       return {
         observations: activeObservations(calendar.observations),
@@ -393,7 +406,105 @@ async function readProviderCalendar(
   }
 }
 
-async function runCalendarSync(env: Env, scheduledTime: Date, providers: EarningsProviderBundle): Promise<{ status: "ok" | "degraded"; detail: string }> {
+const RECOVERY_META_KEYS = {
+  lastAttempt: "earningsRecoveryLastAttemptAt",
+  lastSuccess: "earningsRecoveryLastSuccessAt",
+  lastError: "earningsRecoveryLastError",
+} as const;
+
+interface HistoricalRecoveryResult {
+  observations: EarningsCalendarObservation[];
+  requests: number;
+  successes: number;
+  failures: number;
+  skipped: number;
+  symbols: string[];
+}
+
+/**
+ * Targeted historical recovery (verified against production 2026-08-16).
+ *
+ * The bulk Earnings Calendar caps its payload at ~1500 rows dominated by
+ * near-term dates, so recently reported large caps (MSFT 2026-07-29, AAPL
+ * 2026-07-30) are absent from the bulk response while the symbol-scoped
+ * query returns them with full EPS/revenue estimates AND actuals.
+ *
+ * Recovery only covers active Core symbols that (a) are absent from the bulk
+ * response for this window AND (b) hold no reported event in D1 for the
+ * window. It is capped per run and paced to the free-tier rate budget.
+ * Failures are recorded in their own diagnostics keys and NEVER feed the
+ * critical calendar health gate: the bulk pipeline stays authoritative.
+ */
+async function recoverMissingHistory(
+  env: Env,
+  providers: EarningsProviderBundle,
+  activeSymbols: ReadonlySet<string>,
+  bulkObservations: EarningsCalendarObservation[],
+  range: EarningsDateRange,
+  collectedAt: string,
+  cap: number,
+): Promise<HistoricalRecoveryResult> {
+  const empty: HistoricalRecoveryResult = { observations: [], requests: 0, successes: 0, failures: 0, skipped: 0, symbols: [] };
+  const fetchHistory = providers.calendar.fetchSymbolHistory;
+  if (typeof fetchHistory !== "function") return empty;
+  // Only a bulk row inside the historical window proves the past report is
+  // already present. A future scheduled date in the +60d half of the bulk
+  // payload must not skip recovery of a missing last-30-day report.
+  const bulkHistoricalSymbols = new Set(
+    bulkObservations
+      .filter((observation) => observation.scheduledDate !== null
+        && observation.scheduledDate >= range.from
+        && observation.scheduledDate <= range.to)
+      .map((observation) => normalizeSymbol(observation.symbol)),
+  );
+  const reportedRecent = await readRecentReportedSymbols(env.DB, range.from, range.to);
+  // Symbols probed recently (with or without results) rest outside the
+  // candidate set until the stamp expires, so empty probes cannot starve
+  // alphabetically-later symbols.
+  const checkedCutoff = addDays(range.to, -7);
+  const recentlyChecked = await readRecentlyCheckedRecoverySymbols(env.DB, checkedCutoff);
+  const missing = [...activeSymbols]
+    .filter((symbol) => !bulkHistoricalSymbols.has(symbol) && !reportedRecent.has(symbol) && !recentlyChecked.has(symbol))
+    .sort();
+  if (missing.length === 0) return empty;
+  const targeted = missing.slice(0, cap);
+  const observations: EarningsCalendarObservation[] = [];
+  const symbols: string[] = [];
+  const failures: string[] = [];
+  for (const symbol of targeted) {
+    // Finnhub physical-request pacing lives in FinnhubRequestGate (per attempt,
+    // including retries). Do not sleep again here — that double-paced symbols.
+    try {
+      const result = await fetchHistory.call(providers.calendar, symbol, range, collectedAt);
+      observations.push(...result.observations);
+      symbols.push(symbol);
+    } catch (error) {
+      failures.push(`${symbol}: ${errorMessage(error).slice(0, 160)}`);
+    }
+    // Stamp the probe regardless of outcome so empty results expire out of
+    // the candidate set (7-day rest) instead of blocking later symbols.
+    await setEarningsMeta(env.DB, recoveryCheckedMetaKey(symbol), collectedAt);
+  }
+  await setEarningsMeta(env.DB, RECOVERY_META_KEYS.lastAttempt, collectedAt);
+  if (symbols.length > 0) await setEarningsMeta(env.DB, RECOVERY_META_KEYS.lastSuccess, collectedAt);
+  if (failures.length > 0) await setEarningsMeta(env.DB, RECOVERY_META_KEYS.lastError, failures[0]!.slice(0, 240));
+  else await clearEarningsMeta(env.DB, RECOVERY_META_KEYS.lastError);
+  return {
+    observations,
+    requests: targeted.length,
+    successes: symbols.length,
+    failures: failures.length,
+    skipped: missing.length - targeted.length,
+    symbols,
+  };
+}
+
+async function runCalendarSync(
+  env: Env,
+  scheduledTime: Date,
+  providers: EarningsProviderBundle,
+  pacingMs = FINNHUB_RATE_PACING_MS,
+): Promise<{ status: "ok" | "degraded"; detail: string }> {
   const startedAt = Date.now();
   const collectedAt = scheduledTime.toISOString();
   const today = newYorkDate(scheduledTime);
@@ -437,7 +548,35 @@ async function runCalendarSync(env: Env, scheduledTime: Date, providers: Earning
   // failure key that drives critical earnings health.
   const warnings = [...calendar.warnings];
   const enrichmentWarnings = [...universe.warnings];
-  for (const observation of calendar.observations) {
+  // Targeted historical recovery: active Core symbols absent from the bulk
+  // response (bulk caps at ~1500 rows, dominated by near-term dates) get one
+  // symbol-scoped query for the past-30-day window. Recovery diagnostics stay
+  // out of the critical failure keys; failures are isolated per symbol.
+  // Maintenance-only after external bootstrap — no aggressive multi-day mode.
+  const recovery = await recoverMissingHistory(
+    env,
+    providers,
+    universe.activeSymbols,
+    calendar.observations,
+    { from: providerRange.from, to: today },
+    collectedAt,
+    MAX_HISTORICAL_RECOVERY_SYMBOLS_PER_JOB,
+  );
+  if (recovery.requests > 0) {
+    console.info(JSON.stringify({
+      job: "earnings-recovery",
+      requests: recovery.requests,
+      successes: recovery.successes,
+      failures: recovery.failures,
+      skipped: recovery.skipped,
+      symbols: recovery.symbols,
+    }));
+  }
+  // Bulk observations stay authoritative; recovery only contributes symbols
+  // the bulk omitted, deduplicated deterministically by provider event id /
+  // symbol:date before normalization.
+  const observations = deduplicateCalendarRows([...calendar.observations, ...recovery.observations]);
+  for (const observation of observations) {
     try {
       normalized.push(await normalizeObservation(providers, observation, today, collectedAt, metadata, filingLookups, sec));
       written += 1;
@@ -465,16 +604,34 @@ async function runCalendarSync(env: Env, scheduledTime: Date, providers: Earning
   if (warnings.length > 0) await rememberEarningsFailure(env, "calendar", collectedAt, warnings[0]!);
   else await clearEarningsFailure(env, "calendar");
   await flushSecDiagnostics(env, collectedAt, sec);
+  // Best-effort Finnhub Company Profile 2 enrichment. Runs AFTER the calendar
+  // outcome and failure keys are recorded so a profile outage can never
+  // degrade the critical earnings health gate; the result is only observable
+  // through the metadata diagnostics meta keys (/healthz/sources enrichment).
+  const metadataResult = await enrichUniverseMetadata(env, providers, collectedAt, pacingMs).catch((error) => {
+    console.warn(JSON.stringify({ message: "earnings universe metadata enrichment degraded", error: errorMessage(error).slice(0, 180) }));
+    return { requests: 0, successes: 0, failures: 0, symbols: [] };
+  });
+  if (metadataResult.requests > 0) {
+    console.info(JSON.stringify({
+      job: "earnings-metadata",
+      provider: providers.profile?.name ?? "none",
+      requests: metadataResult.requests,
+      successes: metadataResult.successes,
+      failures: metadataResult.failures,
+      symbols: metadataResult.symbols,
+    }));
+  }
   // Job status mirrors the critical Earnings/calendar pipeline only. SEC
   // enrichment failures remain visible in the SEC diagnostics (meta keys +
   // secAttempts/secFailures on the log line) but never degrade the job.
   const status = warnings.length > 0 ? "degraded" : "ok";
-  const detail = `${written}/${calendar.observations.length} events in ${range.from}..${range.to}`;
+  const detail = `${written}/${observations.length} events in ${range.from}..${range.to}`;
   logEarningsJob({
     job: "calendar",
     provider: providers.calendar.name,
     range,
-    observations: calendar.observations.length,
+    observations: observations.length,
     normalized: normalized.length,
     written,
     secLookups: filingLookups.used,
@@ -586,8 +743,9 @@ export async function runEarningsJob(
   scheduledTime: Date,
   mode: EarningsJobMode,
   providers: EarningsProviderBundle = createDefaultEarningsProviders(env.FINNHUB_API_KEY, env.SEC_USER_AGENT),
+  pacingMs = FINNHUB_RATE_PACING_MS,
 ): Promise<{ status: "ok" | "degraded" | "skipped"; detail: string }> {
-  if (mode === "calendar") return runCalendarSync(env, scheduledTime, providers);
+  if (mode === "calendar") return runCalendarSync(env, scheduledTime, providers, pacingMs);
   return runMonitoring(env, scheduledTime, providers);
 }
 
@@ -625,7 +783,7 @@ export async function readEarningsApi(
     summary: {
       today: events.filter((event) => event.scheduledDate === today).length,
       thisWeek: events.filter((event) => isWithinInclusive(event.scheduledDate, startOfWeek(today), endOfWeek(today))).length,
-      next60Days: events.filter((event) => isWithinInclusive(event.scheduledDate, today, addDays(today, EARNINGS_WINDOW_DAYS))).length,
+      next30Days: events.filter((event) => isWithinInclusive(event.scheduledDate, today, addDays(today, EARNINGS_SUMMARY_WINDOW_DAYS))).length,
     },
     from,
     to,

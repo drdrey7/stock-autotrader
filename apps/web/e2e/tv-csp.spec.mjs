@@ -1,6 +1,7 @@
 // CSP E2E: proves the production Content-Security-Policy (the single source of
 // truth in public/_headers, served by scripts/preview-server.mjs) actually
-// permits the official TradingView widgets end to end.
+// permits the official TradingView widgets end to end, and that Finnhub logo
+// CDNs used by the Earnings page are not blocked.
 //
 // The deterministic header test asserts the allowlist. The live-enforcement
 // group runs a real browser against the built app: the cross-origin web
@@ -30,6 +31,10 @@ const EXPECTED_IMG_SRC = [
   "data:",
   "https://s3-symbol-logo.tradingview.com",
   "https://widgets.tradingview-widget.com",
+  "https://static.finnhub.io",
+  "https://static2.finnhub.io",
+  // static2 302s to static9 for real logo bytes (verified 2026-08-17).
+  "https://static9.finnhub.io",
 ];
 
 test("serves the production CSP that permits exactly the official TradingView hosts", async ({ page }) => {
@@ -58,6 +63,48 @@ test("serves the production CSP that permits exactly the official TradingView ho
   expect(csp.get("frame-ancestors")).toEqual(["'none'"]);
   expect(csp.get("base-uri")).toEqual(["'self'"]);
   expect(csp.get("form-action")).toEqual(["'none'"]);
+});
+
+test("serves Finnhub logo hosts on /earnings and does not CSP-block a Finnhub logo image", async ({ page }) => {
+  const violations = collectCspViolations(page);
+  const response = await page.goto("/earnings", { waitUntil: "domcontentloaded" });
+  const header = response?.headers()["content-security-policy"];
+  expect(header, "Content-Security-Policy header must be served on /earnings").toBeTruthy();
+  const imgSrc = parseCsp(header).get("img-src") ?? [];
+  expect(imgSrc).toContain("https://static.finnhub.io");
+  expect(imgSrc).toContain("https://static2.finnhub.io");
+  expect(imgSrc).toContain("https://static9.finnhub.io");
+  // No wildcards on img-src — only the explicit Finnhub static hosts.
+  expect(imgSrc.every((source) => !source.includes("*"))).toBeTruthy();
+
+  // Local E2E has no production API, so inject a Finnhub-hosted logo the same
+  // way CompanyLogo would and prove CSP does not refuse the load. Use the
+  // final static9 host (static2 302s there) so the browser does not emit a
+  // CSP violation on the redirect target.
+  const logoUrl = "https://static9.finnhub.io/file/publicdatany/finnhubimage/stock_logo/AAPL.png";
+  const loadResult = await page.evaluate(async (src) => {
+    const img = document.createElement("img");
+    img.referrerPolicy = "no-referrer";
+    img.alt = "csp-finnhub-probe";
+    img.src = src;
+    document.body.appendChild(img);
+    return new Promise((resolve) => {
+      const done = (ok) => resolve({ ok, naturalWidth: img.naturalWidth || 0 });
+      img.addEventListener("load", () => done(true), { once: true });
+      img.addEventListener("error", () => done(false), { once: true });
+      // Network/provider outages must not hang the suite.
+      setTimeout(() => done(img.complete && img.naturalWidth > 0), 8_000);
+    });
+  }, logoUrl);
+
+  await page.waitForTimeout(500);
+  const finnhubCspBlocks = violations.filter((text) => /static\d*\.finnhub\.io|finnhub/i.test(text));
+  expect(finnhubCspBlocks, "Finnhub logo must not be CSP-blocked").toEqual([]);
+  // If Finnhub CDN is reachable, the image should decode. If the CDN is down
+  // we still pass as long as CSP did not refuse the request.
+  if (loadResult.ok) {
+    expect(loadResult.naturalWidth).toBeGreaterThan(0);
+  }
 });
 
 test.describe("live enforcement", () => {

@@ -90,6 +90,13 @@ export interface EarningsEngineEvent {
   fiscalQuarter: number | null;
   fiscalPeriod: string | null;
   fiscalPeriodEnd: string | null;
+  // Provider-neutral stable company metadata enriched from Finnhub Company
+  // Profile 2 and joined from earnings_universe at read time. Null when the
+  // company has not been enriched yet; the frontend falls back to a
+  // deterministic ticker icon in that case.
+  logoUrl: string | null;
+  industry: string | null;
+  websiteUrl: string | null;
   scheduledDate: string | null;
   scheduledTime: string | null;
   timing: "BMO" | "AMC" | "TBD";
@@ -128,7 +135,7 @@ export interface EarningsEngineEvent {
 export interface EarningsApiSummary {
   today: number;
   thisWeek: number;
-  next60Days: number;
+  next30Days: number;
 }
 
 export interface EarningsApiResponse {

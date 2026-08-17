@@ -1,6 +1,8 @@
 import type { EarningsEngineEvent } from "@stock-autotrader/contracts";
 import type {
   CompanyMetadata,
+  CompanyProfileObservation,
+  CompanyProfileProvider,
   EarningsCalendarObservation,
   EarningsCalendarProvider,
   EarningsConsensusObservation,
@@ -12,13 +14,14 @@ import type {
   OfficialFilingsProvider,
 } from "./types";
 import { isInEarningsUniverse, normalizeSymbol } from "./universe";
-import { MAX_PROVIDER_ATTEMPTS } from "./subrequest-budget";
+import { FINNHUB_RATE_PACING_MS, MAX_PROVIDER_ATTEMPTS } from "./subrequest-budget";
 
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 type Sleeper = (milliseconds: number) => Promise<void>;
 
 const FMP_URL = "https://financialmodelingprep.com/stable/earnings-calendar";
 const FINNHUB_URL = "https://finnhub.io/api/v1/calendar/earnings";
+const FINNHUB_PROFILE_URL = "https://finnhub.io/api/v1/stock/profile2";
 const SEC_TICKERS_URL = "https://www.sec.gov/files/company_tickers_exchange.json";
 const SEC_SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK";
 const SEC_FULL_INDEX_URL = "https://www.sec.gov/Archives/edgar/full-index";
@@ -29,6 +32,28 @@ const SEC_MIN_REQUEST_INTERVAL_MS = 125;
 const SEC_CALENDAR_FORMS = new Set(["10-Q", "10-K"]);
 
 const defaultSleep: Sleeper = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+/**
+ * Shared Finnhub physical-request gate. Every HTTP attempt (including retries)
+ * waits until FINNHUB_RATE_PACING_MS has elapsed since the previous attempt,
+ * unless Retry-After already delayed longer. Production calendar + recovery +
+ * profile providers share one gate so free-tier bursts cannot form.
+ */
+export class FinnhubRequestGate {
+  private lastRequestAt = 0;
+
+  constructor(
+    private readonly minIntervalMs: number = FINNHUB_RATE_PACING_MS,
+    private readonly sleeper: Sleeper = defaultSleep,
+    private readonly now: () => number = () => Date.now(),
+  ) {}
+
+  async beforeAttempt(): Promise<void> {
+    const wait = Math.max(0, this.lastRequestAt + this.minIntervalMs - this.now());
+    if (wait > 0) await this.sleeper(wait);
+    this.lastRequestAt = this.now();
+  }
+}
 
 function finiteNumber(value: unknown): number | null {
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
@@ -219,7 +244,7 @@ function normalizedFmpRow(
   };
 }
 
-function deduplicateCalendarRows(rows: EarningsCalendarObservation[]): EarningsCalendarObservation[] {
+export function deduplicateCalendarRows(rows: EarningsCalendarObservation[]): EarningsCalendarObservation[] {
   const byKey = new Map<string, EarningsCalendarObservation>();
   for (const row of rows) {
     const key = row.providerEventId ?? `${row.symbol}:${row.scheduledDate}`;
@@ -352,13 +377,17 @@ function normalizedFinnhubRow(
 export class FinnhubEarningsProvider implements EarningsCalendarProvider, EarningsConsensusProvider {
   readonly name = "finnhub-earnings-calendar";
   readonly supportsForwardCalendar = true;
+  private readonly gate: FinnhubRequestGate;
 
   constructor(
     private readonly apiKey: string,
     private readonly fetcher: Fetcher = fetch,
     private readonly sleeper: Sleeper = defaultSleep,
     private readonly timeoutMs = PROVIDER_TIMEOUT_MS,
-  ) {}
+    gate?: FinnhubRequestGate,
+  ) {
+    this.gate = gate ?? new FinnhubRequestGate(FINNHUB_RATE_PACING_MS, sleeper);
+  }
 
   private async fetchRows(
     range: EarningsDateRange,
@@ -381,6 +410,7 @@ export class FinnhubEarningsProvider implements EarningsCalendarProvider, Earnin
       },
       this.sleeper,
       this.timeoutMs,
+      () => this.gate.beforeAttempt(),
     );
     const rawRows = finnhubRowsFromPayload(payload);
     let malformedCount = 0;
@@ -412,6 +442,54 @@ export class FinnhubEarningsProvider implements EarningsCalendarProvider, Earnin
     return { provider: this.name, observations: result.observations, warnings: result.warnings, updatedAt: collectedAt, complete: result.complete };
   }
 
+  /**
+   * Symbol-scoped historical recovery (verified in production 2026-08-16).
+   * The bulk calendar endpoint caps its payload at ~1500 rows dominated by
+   * near-term dates, so MSFT (2026-07-29) and AAPL (2026-07-30) were absent
+   * from the bulk window while the symbol-scoped call returned them with
+   * full EPS/revenue estimates AND actuals.
+   */
+  async fetchSymbolHistory(
+    symbol: string,
+    range: EarningsDateRange,
+    collectedAt: string,
+  ): Promise<EarningsProviderResult<EarningsCalendarObservation>> {
+    if (!this.apiKey.trim()) throw new Error("FINNHUB_API_KEY is not configured");
+    const url = new URL(FINNHUB_URL);
+    url.searchParams.set("from", range.from);
+    url.searchParams.set("to", range.to);
+    url.searchParams.set("symbol", symbol);
+    const payload = await fetchJsonWithRetry(
+      this.fetcher,
+      url,
+      {
+        headers: {
+          Accept: "application/json",
+          "X-Finnhub-Token": this.apiKey,
+        },
+      },
+      this.sleeper,
+      this.timeoutMs,
+      () => this.gate.beforeAttempt(),
+    );
+    const rawRows = finnhubRowsFromPayload(payload);
+    const observations = rawRows.flatMap((row) => {
+      const normalized = normalizedFinnhubRow(row, collectedAt, new Set([symbol]));
+      return normalized.observation && normalized.observation.scheduledDate !== null
+        && normalized.observation.scheduledDate >= range.from
+        && normalized.observation.scheduledDate <= range.to
+        ? [normalized.observation]
+        : [];
+    });
+    return {
+      provider: this.name,
+      observations: deduplicateCalendarRows(observations),
+      warnings: [],
+      updatedAt: collectedAt,
+      complete: true,
+    };
+  }
+
   async fetchConsensus(
     range: EarningsDateRange,
     universe: ReadonlySet<string>,
@@ -438,6 +516,75 @@ export class FinnhubEarningsProvider implements EarningsCalendarProvider, Earnin
       updatedAt: collectedAt,
       complete: result.complete,
     };
+  }
+}
+
+/**
+ * Finnhub Company Profile 2 — stable company metadata enrichment
+ * (name, logo, industry, website, exchange).
+ *
+ * Deliberately NOT on the critical earnings path: fetchProfile failures are
+ * recorded as enrichment diagnostics by the caller but never degrade the
+ * calendar/monitor health gate. The raw binary is never stored — only the
+ * external logo URL is persisted in D1.
+ */
+function normalizedFinnhubProfile(
+  payload: unknown,
+  symbol: string,
+): CompanyProfileObservation {
+  const object = rowObject(payload);
+  if (!object) return { symbol, company: null, logoUrl: null, industry: null, websiteUrl: null, exchange: null };
+  const logoUrl = httpUrlValue(object.logo);
+  const websiteUrl = httpUrlValue(object.weburl);
+  return {
+    symbol,
+    company: stringValue(object.name),
+    logoUrl,
+    industry: stringValue(object.finnhubIndustry),
+    websiteUrl,
+    exchange: stringValue(object.exchange),
+  };
+}
+
+export class FinnhubCompanyProfileProvider implements CompanyProfileProvider {
+  readonly name = "finnhub-company-profile";
+  private readonly gate: FinnhubRequestGate;
+
+  constructor(
+    private readonly apiKey: string,
+    private readonly fetcher: Fetcher = fetch,
+    private readonly sleeper: Sleeper = defaultSleep,
+    private readonly timeoutMs = PROVIDER_TIMEOUT_MS,
+    gate?: FinnhubRequestGate,
+  ) {
+    this.gate = gate ?? new FinnhubRequestGate(FINNHUB_RATE_PACING_MS, sleeper);
+  }
+
+  async fetchProfile(symbol: string, collectedAt?: string): Promise<CompanyProfileObservation> {
+    void collectedAt;
+    if (!this.apiKey.trim()) throw new Error("FINNHUB_API_KEY is not configured");
+    const url = new URL(FINNHUB_PROFILE_URL);
+    url.searchParams.set("symbol", symbol);
+    const payload = await fetchJsonWithRetry(
+      this.fetcher,
+      url,
+      {
+        headers: {
+          Accept: "application/json",
+          // Keep the token out of URLs, logs and downstream request metadata.
+          "X-Finnhub-Token": this.apiKey,
+        },
+      },
+      this.sleeper,
+      this.timeoutMs,
+      () => this.gate.beforeAttempt(),
+    );
+    const profile = normalizedFinnhubProfile(payload, symbol);
+    if (profile.company === null && profile.logoUrl === null
+      && profile.industry === null && profile.websiteUrl === null && profile.exchange === null) {
+      throw new Error(`malformed Finnhub company profile response for ${symbol}`);
+    }
+    return profile;
   }
 }
 
@@ -711,10 +858,15 @@ export class SecEdgarProvider implements OfficialFilingsProvider, EarningsCalend
 
 export function createDefaultEarningsProviders(finnhubApiKey: string | undefined, secUserAgent?: string): EarningsProviderBundle {
   const sec = new SecEdgarProvider(secUserAgent?.trim() || undefined);
-  const finnhub = new FinnhubEarningsProvider(finnhubApiKey ?? "");
+  // One shared Finnhub gate for bulk calendar, symbol recovery and profile2 so
+  // every physical Finnhub HTTP attempt (incl. retries) is paced at >= 1.1s.
+  // calendar === consensus is intentional: production must not double-fetch bulk.
+  const finnhubGate = new FinnhubRequestGate();
+  const finnhub = new FinnhubEarningsProvider(finnhubApiKey ?? "", fetch, defaultSleep, PROVIDER_TIMEOUT_MS, finnhubGate);
   return {
     calendar: finnhub,
     consensus: finnhub,
     official: sec,
+    profile: new FinnhubCompanyProfileProvider(finnhubApiKey ?? "", fetch, defaultSleep, PROVIDER_TIMEOUT_MS, finnhubGate),
   };
 }

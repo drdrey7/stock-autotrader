@@ -196,6 +196,9 @@ export function normalizeEvent(
     // provenance when production is Finnhub + SEC.
     calendarProvider: null,
     consensusProvider: null,
+    logoUrl: null,
+    industry: null,
+    websiteUrl: null,
     providerEventId: observation.providerEventId,
     providerUpdatedAt: observation.providerUpdatedAt ?? collectedAt,
     officialReportUrl: observation.officialReportUrl ?? effectiveOfficial?.url ?? null,

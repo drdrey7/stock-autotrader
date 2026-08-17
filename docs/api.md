@@ -133,7 +133,7 @@ README's "Automated Earnings Engine" section for why the two are separate).
 - Any invalid value → `400 {"error":"invalid_earnings_query"}`.
 - Store failure → `503 {"error":"earnings_store_unavailable"}`.
 
-Response: `{ events: EarningsEngineEvent[], summary: { today, thisWeek, next60Days }, from, to }`.
+Response: `{ events: EarningsEngineEvent[], summary: { today, thisWeek, next30Days }, from, to }`.
 
 ## `GET /api/market-data`
 

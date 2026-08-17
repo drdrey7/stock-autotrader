@@ -1,16 +1,21 @@
 import { useEffect, useRef, useState } from "react";
-import type { CSSProperties } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import { CompanyLogo } from "./EarningsLogo";
 import {
   formatPercent,
   resultClass,
   type EarningsCompany,
 } from "./data/earnings-view";
-import { Card, dateFromKey, dateKeyFromDate, SectionTitle } from "./shared";
-import { mondayBasedWeekday, monthDays } from "../lib/calendar";
-import { marketTodayKey, useEarnings } from "./useEarnings";
-
-type CalendarPeriod = { year: number; month: number };
+import { Card, dateFromKey, SectionTitle } from "./shared";
+import { monthDays } from "../lib/calendar";
+import {
+  type CalendarPeriod,
+  marketTodayKey,
+  useEarningsMonth,
+  useEarningsSummary,
+  usePastEarnings,
+  EARNINGS_CLIENT_PAST_DAYS,
+} from "./useEarnings";
 
 function EarningsCalendar({
   period,
@@ -37,14 +42,6 @@ function EarningsCalendar({
     const today = dateFromKey(marketTodayKey());
     setPeriod({ year: today.getFullYear(), month: today.getMonth() });
   };
-
-  const eventLabel = (event: EarningsCompany) => event.status === "scheduled"
-    ? `Scheduled · ${event.timing}`
-    : event.status === "reported"
-      ? `Reported · ${event.timing}`
-      : event.status === "cancelled"
-        ? "Cancelled"
-        : `Unknown · ${event.timing}`;
 
   return (
     <Card className="calendar-card">
@@ -86,13 +83,13 @@ function EarningsCalendar({
                     {reports.map((event) => (
                       <button
                         key={event.id}
-                        aria-label={`${event.symbol} ${event.company}, ${eventLabel(event)}, ${calendarDateLabel}`}
+                        aria-label={`${event.symbol} ${event.company}, ${event.timing}, ${calendarDateLabel}`}
                         onClick={() => onSelect(event)}
-                        title={`${event.company} · ${eventLabel(event)}`}
+                        title={`${event.company} · ${event.timing}`}
                       >
-                        <i style={{ "--company": event.color } as CSSProperties}/>
+                        <CompanyLogo event={event} className="calendar-logo"/>
                         <b>{event.symbol}</b>
-                        <small>{eventLabel(event)}</small>
+                        <small>{event.timing}</small>
                       </button>
                     ))}
                   </div>
@@ -107,24 +104,23 @@ function EarningsCalendar({
 }
 
 function PastEarnings({
-  year,
   onSelect,
   earnings,
+  available,
 }: {
-  year: number;
   onSelect: (event: EarningsCompany) => void;
   earnings: EarningsCompany[];
+  available: boolean;
 }) {
-  const [filter, setFilter] = useState("All");
-  const past = earnings
-    .filter((event) => (
-      event.scheduledDate?.startsWith(`${year}-`)
-      && event.status !== "scheduled"
-      && (filter === "All" || event.result === filter)
+  const [query, setQuery] = useState("");
+  const normalizedQuery = query.trim().toLowerCase();
+  const visible = normalizedQuery
+    ? earnings.filter((event) => (
+      event.symbol.toLowerCase().includes(normalizedQuery)
+      || event.company.toLowerCase().includes(normalizedQuery)
     ))
-    .sort((a, b) => (b.scheduledDate ?? "").localeCompare(a.scheduledDate ?? ""));
+    : earnings;
 
-  const filters = ["All", "Beat", "Miss", "Mixed", "Met", "N/A"];
   const stateLabel = (event: EarningsCompany) => event.status === "reported"
     ? `Reported · ${event.timing}`
     : event.status === "cancelled"
@@ -133,19 +129,16 @@ function PastEarnings({
 
   return (
     <Card className="past-card">
-      <SectionTitle title={`Recent Earnings — ${year}`}/>
-      <div className="filter-row small">
-        {filters.map((item) => (
-          <button
-            key={item}
-            aria-pressed={filter === item}
-            className={filter === item ? "active" : ""}
-            onClick={() => setFilter(item)}
-          >
-            {item}
-          </button>
-        ))}
-      </div>
+      <SectionTitle title="Past Earnings" meta={`Last ${EARNINGS_CLIENT_PAST_DAYS} days`}/>
+      <label className="earnings-search">
+        <span className="visually-hidden">Search company or ticker</span>
+        <input
+          type="search"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search company or ticker"
+        />
+      </label>
 
       <div className="earnings-table">
         <div className="table-head">
@@ -156,25 +149,35 @@ function PastEarnings({
           <span>Result</span>
         </div>
 
-        {past.length ? past.map((event) => (
-          <button key={event.id} onClick={() => onSelect(event)}>
-            <span className="table-company">
-              <i style={{ "--company": event.color } as CSSProperties}>{event.symbol.slice(0, 1)}</i>
-              <b>{event.company}</b>
-              <small>{event.symbol}</small>
-            </span>
-            <span className="table-date-state">
-              {event.scheduledDate
-                ? dateFromKey(event.scheduledDate).toLocaleDateString("en", { month: "short", day: "numeric" })
-                : "N/A"}
-              <small>{stateLabel(event)}</small>
-            </span>
-            <span>{formatPercent(event.epsSurprisePct)}</span>
-            <span>{formatPercent(event.revenueSurprisePct)}</span>
-            <span><em className={`result ${resultClass(event.result)}`}>{event.result}</em></span>
-            <ChevronRight/>
-          </button>
-        )) : <p className="empty-state">No recent earnings published.</p>}
+        {available ? (
+          visible.length ? visible.map((event) => (
+            <button key={event.id} onClick={() => onSelect(event)}>
+              <span className="table-company">
+                <CompanyLogo event={event} className="table-logo"/>
+                <b>{event.company}</b>
+                <small>{event.symbol}</small>
+              </span>
+              <span className="table-date-state">
+                {event.scheduledDate
+                  ? dateFromKey(event.scheduledDate).toLocaleDateString("en", { month: "short", day: "numeric" })
+                  : "N/A"}
+                <small>{stateLabel(event)}</small>
+              </span>
+              <span data-label="EPS surprise">{formatPercent(event.epsSurprisePct)}</span>
+              <span data-label="Revenue surprise">{formatPercent(event.revenueSurprisePct)}</span>
+              <span><em className={`result ${resultClass(event.result)}`}>{event.result}</em></span>
+              <ChevronRight/>
+            </button>
+          )) : (
+            <p className="empty-state">
+              {normalizedQuery
+                ? "No company matches the search."
+                : `No earnings in the last ${EARNINGS_CLIENT_PAST_DAYS} days.`}
+            </p>
+          )
+        ) : (
+          <p className="empty-state">Earnings data is not available yet.</p>
+        )}
       </div>
     </Card>
   );
@@ -182,8 +185,6 @@ function PastEarnings({
 
 /** Lazy-loaded via React.lazy() in MorningBriefingApp.tsx so earnings code/data stays out of the initial bundle. */
 export default function EarningsCalendarPage({ onSelect }: { onSelect: (event: EarningsCompany) => void }) {
-  const { earnings: storedEarnings, earningsAvailable } = useEarnings();
-  const earnings = earningsAvailable ? storedEarnings : [];
   const today = dateFromKey(marketTodayKey());
   const manualPeriod = useRef(false);
 
@@ -219,8 +220,6 @@ export default function EarningsCalendarPage({ onSelect }: { onSelect: (event: E
     }
   };
 
-  const todayKey = marketTodayKey();
-
   useEffect(() => {
     const syncCalendarMonth = () => {
       const current = dateFromKey(marketTodayKey());
@@ -237,35 +236,13 @@ export default function EarningsCalendarPage({ onSelect }: { onSelect: (event: E
     return () => window.clearInterval(timer);
   }, []);
 
-  const offsetDate = (days: number) => {
-    const date = new Date(today);
-    date.setDate(date.getDate() + days);
-    return dateKeyFromDate(date);
-  };
+  // Three independent D1 surfaces — never Finnhub from the browser.
+  const month = useEarningsMonth(period);
+  const past = usePastEarnings();
+  const summary = useEarningsSummary();
 
-  const thisWeekStartDate = new Date(today);
-  thisWeekStartDate.setDate(today.getDate() - mondayBasedWeekday(today));
-  const thisWeekStart = dateKeyFromDate(thisWeekStartDate);
-  const thisWeekEndDate = new Date(thisWeekStartDate);
-  thisWeekEndDate.setDate(thisWeekStartDate.getDate() + 6);
-  const thisWeekEnd = dateKeyFromDate(thisWeekEndDate);
-
-  const counts = {
-    today: earnings.filter((event) => event.scheduledDate === todayKey).length,
-    week: earnings.filter((event) => (
-      event.scheduledDate !== null
-      && event.scheduledDate >= thisWeekStart
-      && event.scheduledDate <= thisWeekEnd
-    )).length,
-    next60: earnings.filter((event) => (
-      event.scheduledDate !== null
-      && event.scheduledDate >= todayKey
-      && event.scheduledDate <= offsetDate(60)
-    )).length,
-  };
-
-  const count = (value: number) => earningsAvailable ? String(value) : "—";
-  const countLabel = earningsAvailable ? "reports" : "N/A";
+  const count = (value: number) => summary.available ? String(value) : "—";
+  const countLabel = summary.available ? "reports" : "N/A";
 
   return (
     <div className="page-content inner-page">
@@ -276,18 +253,18 @@ export default function EarningsCalendarPage({ onSelect }: { onSelect: (event: E
       </div>
 
       <div className="earnings-top-summary" aria-label="Earnings summary">
-        <Card><span>TODAY</span><strong>{count(counts.today)}</strong><small>{countLabel}</small></Card>
-        <Card><span>THIS WEEK</span><strong>{count(counts.week)}</strong><small>{countLabel}</small></Card>
-        <Card><span>NEXT 60 DAYS</span><strong>{count(counts.next60)}</strong><small>{countLabel}</small></Card>
+        <Card><span>TODAY</span><strong>{count(summary.today)}</strong><small>{countLabel}</small></Card>
+        <Card><span>THIS WEEK</span><strong>{count(summary.thisWeek)}</strong><small>{countLabel}</small></Card>
+        <Card><span>NEXT 30 DAYS</span><strong>{count(summary.next30Days)}</strong><small>{countLabel}</small></Card>
       </div>
 
       <EarningsCalendar
         period={period}
         setPeriod={setManualPeriod}
         onSelect={onSelect}
-        earnings={earnings}
+        earnings={month.earnings}
       />
-      <PastEarnings year={period.year} onSelect={onSelect} earnings={earnings}/>
+      <PastEarnings onSelect={onSelect} earnings={past.earnings} available={past.available}/>
     </div>
   );
 }

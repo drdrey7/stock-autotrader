@@ -36,7 +36,7 @@ it("ships restrictive Cloudflare static-asset headers", () => {
   expect(cloudflareHeaders).toContain("X-Frame-Options: DENY");
 });
 
-it("allows only the official TradingView hosts in the CSP", () => {
+it("allows only the official TradingView hosts plus Finnhub logo CDNs in the CSP", () => {
   // The homepage embeds official TradingView widgets: the ES-module web
   // components load from widgets.tradingview-widget.com and fetch their datafeed
   // from the same host (script-src/connect-src + the internal datafeed iframe in
@@ -44,6 +44,7 @@ it("allows only the official TradingView hosts in the CSP", () => {
   // and render from tradingview-widget.com (s.tradingview.com fallback), sending
   // TradingView's own analytics beacon to snowplow-pixel.tradingview.com
   // (connect-src); symbol logos load from s3-symbol-logo.tradingview.com
+  // (img-src). Earnings company logos load from Finnhub's static CDNs only
   // (img-src). No other third party, and no inline scripts.
   expect(cloudflareHeaders).toContain(
     "script-src 'self' https://s3.tradingview.com https://widgets.tradingview-widget.com;",
@@ -52,7 +53,7 @@ it("allows only the official TradingView hosts in the CSP", () => {
     "connect-src 'self' https://widgets.tradingview-widget.com https://snowplow-pixel.tradingview.com;",
   );
   expect(cloudflareHeaders).toContain(
-    "img-src 'self' data: https://s3-symbol-logo.tradingview.com https://widgets.tradingview-widget.com;",
+    "img-src 'self' data: https://s3-symbol-logo.tradingview.com https://widgets.tradingview-widget.com https://static.finnhub.io https://static2.finnhub.io https://static9.finnhub.io;",
   );
   expect(cloudflareHeaders).toContain(
     "frame-src https://www.tradingview-widget.com https://s.tradingview.com https://widgets.tradingview-widget.com;",
@@ -60,6 +61,7 @@ it("allows only the official TradingView hosts in the CSP", () => {
   // Inline styles are allowed (the theme and shadow DOM use them), but inline
   // scripts are not.
   expect(cloudflareHeaders).not.toContain("script-src 'self' 'unsafe-inline'");
+  expect(cloudflareHeaders).not.toMatch(/img-src[^;]*\*/);
 });
 
 it("ships Morning Briefing metadata in the static HTML fallback", () => {

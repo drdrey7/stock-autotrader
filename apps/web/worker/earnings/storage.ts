@@ -3,7 +3,7 @@ import { calculateMetric, calculateOverallResult, canonicalFiscalPeriod } from "
 import type { NormalizedEarningsEvent } from "./types";
 import { ACTIVE_UNIVERSE_PREDICATE } from "../stock-universe";
 
-type Database = Pick<D1Database, "prepare"> & Partial<Pick<D1Database, "batch">>;
+export type Database = Pick<D1Database, "prepare"> & Partial<Pick<D1Database, "batch">>;
 
 interface EarningsRow extends Record<string, unknown> {
   id?: unknown;
@@ -47,6 +47,10 @@ interface EarningsRow extends Record<string, unknown> {
   created_at?: unknown;
   updated_at?: unknown;
   last_checked_at?: unknown;
+  // Joined from earnings_universe at read time (never written to events).
+  logo_url?: unknown;
+  industry?: unknown;
+  website_url?: unknown;
 }
 
 const text = (value: unknown): string | null => value === null || value === undefined ? null : String(value);
@@ -105,6 +109,9 @@ export function rowToEarningsEvent(row: EarningsRow): EarningsEngineEvent {
     createdAt: requiredText(row.created_at, "1970-01-01T00:00:00.000Z"),
     updatedAt: requiredText(row.updated_at, "1970-01-01T00:00:00.000Z"),
     lastCheckedAt: text(row.last_checked_at),
+    logoUrl: text(row.logo_url),
+    industry: text(row.industry),
+    websiteUrl: text(row.website_url),
   };
 }
 
@@ -462,6 +469,41 @@ export interface EarningsQuery {
   status?: "scheduled" | "reported" | "cancelled" | "unknown";
 }
 
+/**
+ * Active-Core symbols that already hold a reported event inside the window.
+ * Targeted historical recovery skips these: a D1 reported row is authoritative
+ * proof the provider's recent history was already ingested.
+ */
+export async function readRecentReportedSymbols(db: Database, from: string, to: string): Promise<ReadonlySet<string>> {
+  const result = await db.prepare(
+    `SELECT DISTINCT e.symbol
+     FROM earnings_events AS e
+     JOIN earnings_universe AS u ON u.symbol = e.symbol AND ${ACTIVE_UNIVERSE_PREDICATE}
+     WHERE e.status = 'reported' AND e.scheduled_date IS NOT NULL AND e.scheduled_date >= ? AND e.scheduled_date <= ?`,
+  ).bind(from, to).all<{ symbol: string }>();
+  return new Set(result.results.map((row) => row.symbol));
+}
+
+const RECOVERY_CHECKED_KEY_PREFIX = "earningsRecoveryChecked:";
+
+export const recoveryCheckedMetaKey = (symbol: string): string => `${RECOVERY_CHECKED_KEY_PREFIX}${symbol}`;
+
+/**
+ * Symbols already probed by targeted recovery since `cutoff` (ISO). A probe
+ * that returned no history must not block later symbols forever: the stamp
+ * keeps it out of the candidate set until it expires, then it is retried.
+ */
+export async function readRecentlyCheckedRecoverySymbols(db: Database, cutoff: string): Promise<ReadonlySet<string>> {
+  const result = await db.prepare(
+    `SELECT key, value FROM app_meta WHERE key LIKE '${RECOVERY_CHECKED_KEY_PREFIX}%'`,
+  ).all<{ key: string; value: string }>();
+  const checked = new Set<string>();
+  for (const row of result.results) {
+    if (row.value >= cutoff) checked.add(row.key.slice(RECOVERY_CHECKED_KEY_PREFIX.length));
+  }
+  return checked;
+}
+
 export async function readEarningsEvents(db: Database, query: EarningsQuery): Promise<EarningsEngineEvent[]> {
   const conditions = ["e.scheduled_date IS NOT NULL", "e.scheduled_date >= ?", "e.scheduled_date <= ?"];
   const values: unknown[] = [query.from, query.to];
@@ -474,7 +516,8 @@ export async function readEarningsEvents(db: Database, query: EarningsQuery): Pr
     values.push(query.status);
   }
   const result = await db.prepare(
-    `SELECT e.* FROM earnings_events AS e
+    `SELECT e.*, u.logo_url AS logo_url, u.industry AS industry, u.website_url AS website_url
+     FROM earnings_events AS e
      JOIN earnings_universe AS u ON u.symbol = e.symbol AND ${ACTIVE_UNIVERSE_PREDICATE}
      WHERE ${conditions.join(" AND ")}
      ORDER BY e.scheduled_date DESC, e.symbol ASC, e.id ASC LIMIT 5000`,
@@ -484,7 +527,8 @@ export async function readEarningsEvents(db: Database, query: EarningsQuery): Pr
 
 export async function readEarningsMonitoringEvents(db: Database, today: string): Promise<EarningsEngineEvent[]> {
   const result = await db.prepare(
-    `SELECT e.* FROM earnings_events AS e
+    `SELECT e.*, u.logo_url AS logo_url, u.industry AS industry, u.website_url AS website_url
+     FROM earnings_events AS e
      JOIN earnings_universe AS u ON u.symbol = e.symbol AND ${ACTIVE_UNIVERSE_PREDICATE}
      WHERE e.scheduled_date = ?
        AND (e.status = 'scheduled' OR (e.status = 'reported' AND (e.eps_actual IS NULL OR e.revenue_actual IS NULL OR e.sec_filing_url IS NULL)))
@@ -495,7 +539,8 @@ export async function readEarningsMonitoringEvents(db: Database, today: string):
 
 export async function readEarningsEventById(db: Database, id: string): Promise<EarningsEngineEvent | null> {
   const row = await db.prepare(
-    `SELECT e.* FROM earnings_events AS e
+    `SELECT e.*, u.logo_url AS logo_url, u.industry AS industry, u.website_url AS website_url
+     FROM earnings_events AS e
      JOIN earnings_universe AS u ON u.symbol = e.symbol AND ${ACTIVE_UNIVERSE_PREDICATE}
      WHERE e.id = ? LIMIT 1`,
   ).bind(id).first<EarningsRow>();
@@ -511,7 +556,13 @@ export interface EarningsUniverseMember {
   exchange: string | null;
   investorRelationsUrl?: string | null;
   indexes: string[];
+  // Finnhub Company Profile 2 enrichment (stored, never binary — only URLs).
+  logoUrl?: string | null;
+  industry?: string | null;
+  websiteUrl?: string | null;
   updatedAt: string;
+  metadataProvider?: string;
+  metadataUpdatedAt?: string | null;
 }
 
 export interface TrackedUniverseRow {
@@ -593,7 +644,11 @@ function universeMetadataStatement(db: Database, member: EarningsUniverseMember)
          exchange = COALESCE(?, exchange),
          investor_relations_url = COALESCE(?, investor_relations_url),
          index_memberships = ?,
-         metadata_provider = ?,
+         logo_url = COALESCE(?, logo_url),
+         industry = COALESCE(?, industry),
+         website_url = COALESCE(?, website_url),
+         metadata_provider = COALESCE(?, metadata_provider),
+         metadata_updated_at = COALESCE(?, metadata_updated_at),
          updated_at = ?
      WHERE symbol = ? AND active = 1 AND source = 'core'`,
   ).bind(
@@ -602,7 +657,13 @@ function universeMetadataStatement(db: Database, member: EarningsUniverseMember)
     member.exchange,
     member.investorRelationsUrl ?? null,
     JSON.stringify(member.indexes),
-    "sec-edgar",
+    member.logoUrl ?? null,
+    member.industry ?? null,
+    member.websiteUrl ?? null,
+    // Only stamp provenance when the caller explicitly provided one.
+    // Core/SEC reconciliation without a provider must preserve Finnhub.
+    member.metadataProvider ?? null,
+    member.metadataUpdatedAt ?? null,
     member.updatedAt,
     member.symbol,
   );
@@ -624,6 +685,19 @@ export async function upsertUniverseMember(db: Database, member: EarningsUnivers
   await upsertUniverseMembers(db, [member]);
 }
 
+/** Persist a Finnhub profile attempt timestamp (success or failure) for cooldown. */
+export async function stampUniverseMetadataAttempt(
+  db: Database,
+  symbol: string,
+  attemptedAt: string,
+): Promise<void> {
+  await db.prepare(
+    `UPDATE earnings_universe
+     SET metadata_attempted_at = ?
+     WHERE symbol = ? AND active = 1 AND source = 'core'`,
+  ).bind(attemptedAt, symbol).run();
+}
+
 export async function readUniverseMetadata(db: Database): Promise<Map<string, { company: string; cik: string | null; investorRelationsUrl: string | null }>> {
   // Include inactive rows so a re-added symbol keeps its previously enriched
   // metadata. Public reads use readActiveUniverseSymbols/active joins instead.
@@ -638,6 +712,59 @@ export async function readActiveUniverseSymbols(db: Database): Promise<ReadonlyS
     "SELECT symbol FROM earnings_universe WHERE active = 1 AND source = 'core' ORDER BY symbol",
   ).all<{ symbol: string }>();
   return new Set(result.results.map((row) => row.symbol));
+}
+
+export interface UniverseMetadataCandidate {
+  symbol: string;
+  company: string;
+  hasLogo: boolean;
+  hasIndustry: boolean;
+  metadataUpdatedAt: string | null;
+  metadataAttemptedAt: string | null;
+}
+
+/**
+ * Active Core members whose Finnhub profile metadata is missing or stale AND
+ * whose last profile attempt is outside the cooldown window.
+ *
+ * `staleBefore` / `cooldownBefore` are ISO timestamps. Ordering prefers never-
+ * attempted symbols, then oldest attempts, then missing metadata, then symbol
+ * — so alphabetically-early failures cannot starve later Core members under
+ * the maintenance cap of 2/run.
+ */
+export async function readUniverseMetadataCandidates(
+  db: Database,
+  staleBefore: string,
+  cooldownBefore: string,
+  limit: number,
+): Promise<UniverseMetadataCandidate[]> {
+  const result = await db.prepare(
+    `SELECT symbol, company, logo_url, industry, metadata_updated_at, metadata_attempted_at
+     FROM earnings_universe
+     WHERE active = 1 AND source = 'core'
+       AND (logo_url IS NULL OR industry IS NULL OR metadata_updated_at IS NULL OR metadata_updated_at < ?)
+       AND (metadata_attempted_at IS NULL OR metadata_attempted_at < ?)
+     ORDER BY (metadata_attempted_at IS NULL) DESC,
+              metadata_attempted_at ASC,
+              (metadata_updated_at IS NULL) DESC,
+              symbol ASC
+     LIMIT ?`,
+  ).bind(staleBefore, cooldownBefore, limit).all<{
+    symbol: string;
+    company: string;
+    logo_url: string | null;
+    industry: string | null;
+    metadata_updated_at: string | null;
+    metadata_attempted_at: string | null;
+  }>();
+  return result.results.map((row) => ({
+    symbol: row.symbol,
+    company: row.company,
+    hasLogo: row.logo_url != null,
+    hasIndustry: row.industry != null,
+    metadataUpdatedAt: row.metadata_updated_at,
+    metadataAttemptedAt: row.metadata_attempted_at,
+  }));
 }
 
 export async function readTrackedUniverse(db: Database): Promise<TrackedUniverseRow[]> {
