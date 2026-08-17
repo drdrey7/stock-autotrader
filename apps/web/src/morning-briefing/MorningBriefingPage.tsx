@@ -1,6 +1,6 @@
 import { useShellTheme } from "../shell/theme";
 import { EconomicCalendar, MarketOverview, TopStories, MARKET_OVERVIEW_SECTIONS } from "./TradingView";
-import { Card, formatUpdatedAt, SectionTitle } from "./shared";
+import { Card, SectionTitle } from "./shared";
 import { localDateLabel, marketGreeting } from "./local-time";
 import { useSentiment } from "./useSentiment";
 
@@ -55,7 +55,6 @@ function Sentiment() {
           <span style={{ color: meta.color }}>{meta.label}</span>
         </div>
       </div>
-      <p className="card-subtitle">Updated {formatUpdatedAt(sentiment.asOf)}</p>
     </Card>
   );
 }

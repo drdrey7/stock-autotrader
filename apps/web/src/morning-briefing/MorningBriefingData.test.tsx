@@ -408,8 +408,8 @@ it("clears the sentiment card after the backend stops publishing", async () => {
   await waitFor(() => expect(view.container.querySelector(".sentiment-card")).toHaveTextContent("Greed"));
 
   coreAvailable = false;
-  // Advance beyond the 72h sentiment window so the retained reading expires
-  // and the card must clear to "Not available".
+  // Advance beyond the sentiment retention window so the retained reading
+  // expires and the card must clear to "Not available".
   vi.mocked(Date.now).mockReturnValue(Date.parse("2026-08-16T01:00:00Z"));
   document.dispatchEvent(new Event("visibilitychange"));
   await waitFor(() => expect(view.container.querySelector(".sentiment-card .gauge-mask strong")).toHaveTextContent("Not available"));
@@ -500,6 +500,7 @@ it("renders the fear & greed number and gauge from the status sentiment", async 
     if (url === "/api/status") return new Response(JSON.stringify({
       briefing: { available: false, freshness: "unavailable", publishedAt: null },
       sentiment: { provider: "cnn-fear-greed", score: 62, rating: "greed", asOf: freshIso },
+      sources: { sentiment: { state: "Live" } },
     }), { status: 200 });
     return new Response(null, { status: 404 });
   });
@@ -514,10 +515,92 @@ it("renders the fear & greed number and gauge from the status sentiment", async 
     "stroke-dasharray",
     expect.stringMatching(/^126\.\d+/),
   );
-  // The simplified card shows the score, one label, the gauge and a small
-  // "Updated ..." timestamp — no Momentum / Risk appetite rows.
-  expect(view.container.querySelector(".sentiment-card .card-subtitle")).toHaveTextContent("Updated");
+  // The simplified card shows only score + label + gauge — no "Updated ..."
+  // operational timestamp, provider or freshness text on the homepage.
+  expect(view.container.querySelector(".sentiment-card .card-subtitle")).toBeNull();
+  expect(view.container).not.toHaveTextContent(/Updated 12 Aug/);
+  expect(view.container.querySelector(".sentiment-card")).not.toHaveTextContent("cnn-fear-greed");
   expect(view.container.querySelector(".sentiment-card")).not.toHaveTextContent("Not available");
+});
+
+it("renders Not available when the reading is market-stale even if a number exists", async () => {
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === "/api/status") return new Response(JSON.stringify({
+      briefing: { available: false, freshness: "unavailable", publishedAt: null },
+      sentiment: { provider: "cnn-fear-greed", score: 62, rating: "greed", asOf: "2026-08-11T14:00:00Z" },
+      // Session day: the Worker marks a ~2-day-old value Stale (market-aware,
+      // not the flat 72h gate).
+      sources: { sentiment: { state: "Stale" } },
+    }), { status: 200 });
+    return new Response(null, { status: 404 });
+  });
+
+  const view = renderApp();
+  await waitFor(() => expect(view.container.querySelector(".sentiment-card")).toHaveTextContent("Not available"));
+  expect(view.container.querySelector(".sentiment-card .gauge-value")).toBeNull();
+  expect(view.container.querySelector(".sentiment-card .gauge-mask strong")).toHaveTextContent("Not available");
+});
+
+it("clears a previously rendered reading when the backend later marks it Stale", async () => {
+  let statusRequests = 0;
+  const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input) === "/api/status") {
+      statusRequests += 1;
+      if (statusRequests === 1) {
+        return new Response(JSON.stringify({
+          briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt },
+          sentiment: { provider: "cnn-fear-greed", score: 62, rating: "greed", asOf: "2026-08-12T21:00:00Z" },
+          sources: { sentiment: { state: "Live" } },
+        }), { status: 200 });
+      }
+      // Same reading shape, but the Worker now classifies the value as
+      // market-stale (session gate 2.5h). The previously rendered number must
+      // NOT be retained just because it is inside the 72h fallback window.
+      return new Response(JSON.stringify({
+        briefing: { available: false, freshness: "unavailable", publishedAt: null },
+        sentiment: { provider: "cnn-fear-greed", score: 62, rating: "greed", asOf: "2026-08-11T14:00:00Z" },
+        sources: { sentiment: { state: "Stale" } },
+      }), { status: 200 });
+    }
+    return originalFetch(input, init);
+  });
+
+  const view = renderApp();
+  await waitFor(() => expect(view.container.querySelector(".sentiment-card")).toHaveTextContent("Greed"));
+  document.dispatchEvent(new Event("visibilitychange"));
+  await waitFor(() => expect(statusRequests).toBeGreaterThan(1));
+  await waitFor(() => expect(view.container.querySelector(".sentiment-card")).toHaveTextContent("Not available"));
+  expect(view.container.querySelector(".sentiment-card .gauge-value")).toBeNull();
+});
+
+it("polls the sentiment status on a ~5-minute cadence", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  vi.setSystemTime(new Date("2026-08-12T16:00:00Z"));
+  let statusRequests = 0;
+  const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input) === "/api/status") {
+      statusRequests += 1;
+      return new Response(JSON.stringify({
+        briefing: { available: false, freshness: "unavailable", publishedAt: null },
+        sentiment: { provider: "cnn-fear-greed", score: 62, rating: "greed", asOf: "2026-08-12T15:30:00Z" },
+        sources: { sentiment: { state: "Live" } },
+      }), { status: 200 });
+    }
+    return originalFetch(input, init);
+  });
+
+  renderApp();
+  await waitFor(() => expect(statusRequests).toBe(1));
+  // 1 minute in: cadence not due yet — no extra /api/status polling.
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(statusRequests).toBe(1);
+  // ~5 minutes in: second poll fires.
+  await vi.advanceTimersByTimeAsync(4 * 60_000);
+  expect(statusRequests).toBe(2);
+  vi.useRealTimers();
 });
 
 it("keeps the sentiment card unavailable when the reading is stale", async () => {

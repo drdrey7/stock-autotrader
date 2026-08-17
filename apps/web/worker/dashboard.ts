@@ -23,9 +23,10 @@ import { EARNINGS_ENGINE_STALE_AFTER_SECONDS } from "./earnings";
 import {
   INDEX_DEFINITIONS,
   MARKET_CONTEXT_STALE_AFTER_SECONDS,
-  SENTIMENT_STALE_AFTER_SECONDS,
   marketCollectionWindow,
   readMarketContextHealth,
+  readSentimentHealth,
+  sentimentStaleAfterSeconds,
   type MarketContextHealthRecord,
   type MarketContextReadModel,
 } from "./market-context";
@@ -137,7 +138,7 @@ const latestTimestamp = (...values: Array<string | null | undefined>): string | 
 export function buildSourceHealth(
   lastSuccessAt: string | null,
   lastAttemptAt: string | null,
-  options: { provider: string; staleAfterSeconds: number; error?: string | null; nowMs?: number },
+  options: { provider: string; staleAfterSeconds: number; error?: string | null; nowMs?: number; ageOverridesError?: boolean },
 ): SourceHealth {
   const nowMs = options.nowMs ?? Date.now();
   const lastSuccessMs = parseSafeTimestamp(lastSuccessAt);
@@ -157,7 +158,9 @@ export function buildSourceHealth(
   const state = !hasValidSuccess
     ? hasError ? "Error" : "Unavailable"
     : hasError
-      ? "Cached"
+      ? options.ageOverridesError && ageSeconds !== null && ageSeconds > options.staleAfterSeconds
+        ? "Stale"
+        : "Cached"
       : ageSeconds !== null && ageSeconds <= options.staleAfterSeconds ? "Live" : "Stale";
   return {
     provider: options.provider,
@@ -262,6 +265,7 @@ export async function buildSources(
   const marketContextHealth = options.marketContextHealth !== undefined
     ? options.marketContextHealth
     : options.marketContext ? await readMarketContextHealth(env.DB) : null;
+  const sentimentHealth = options.marketContext ? await readSentimentHealth(env.DB) : null;
 
   let xLastSuccess: string | null = null;
   let xError: string | null = null;
@@ -421,16 +425,20 @@ export async function buildSources(
       },
     },
     sentiment: options.marketContext?.sentiment
-      ? buildSourceHealth(options.marketContext.sentiment.asOf, options.marketContext.sentiment.asOf, {
+      ? buildSourceHealth(options.marketContext.sentiment.asOf, sentimentHealth?.lastAttemptAt ?? options.marketContext.sentiment.asOf, {
           provider: options.marketContext.sentiment.provider,
-          staleAfterSeconds: SENTIMENT_STALE_AFTER_SECONDS,
-          error: null,
+          staleAfterSeconds: sentimentStaleAfterSeconds(new Date(nowMs)),
+          error: sentimentHealth?.lastError ?? null,
+          // A persistent provider failure must never pin an over-age reading
+          // to Cached: the freshness gate wins for sentiment.
+          ageOverridesError: true,
           nowMs,
         })
-      : buildSourceHealth(null, null, {
-          provider: "unavailable",
-          staleAfterSeconds: SENTIMENT_STALE_AFTER_SECONDS,
-          error: null,
+      : buildSourceHealth(null, sentimentHealth?.lastAttemptAt ?? null, {
+          provider: sentimentHealth?.provider ?? "unavailable",
+          staleAfterSeconds: sentimentStaleAfterSeconds(new Date(nowMs)),
+          error: sentimentHealth?.lastError ?? null,
+          ageOverridesError: true,
           nowMs,
         }),
     quickStats: buildSourceHealth(null, null, {
