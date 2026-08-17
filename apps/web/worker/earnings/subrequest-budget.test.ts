@@ -30,7 +30,7 @@ describe("Workers Free external subrequest budget", () => {
       monitorWithFinnhub: 39,
       monitorWithFmp: 39,
       monitorWithSec: 45,
-      // 2 SEC meta + 2 bulk Finnhub + 32 filings + 4 recovery + 4 profile = 44
+      // 2 SEC meta + 2 bulk Finnhub (ONE bulk op × retries, calendar===consensus) + 32 filings + 4 recovery + 4 profile = 44
       dailyWithFinnhub: 44,
       dailyWithFmp: 44,
       dailyWithSec: 48,

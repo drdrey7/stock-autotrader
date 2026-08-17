@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { EarningsApiResponse, EarningsEngineEvent } from "@stock-autotrader/contracts";
+import { dateFromKey, dateKeyFromDate } from "./shared";
 import { eventWithViewMetadata, type EarningsCompany } from "./data/earnings-view";
 import { fetchJson } from "./api-client";
 
@@ -10,13 +11,49 @@ type EarningsState = {
 
 const EARNINGS_REFRESH_INTERVAL_MS = 60 * 60_000;
 
-export function marketTodayKey(): string {
+/** Inclusive past window for "Past Earnings — Last 30 days" (today + 29 prior days). */
+export const EARNINGS_CLIENT_PAST_DAYS = 30;
+/**
+ * Forward window requested from /api/earnings. Matches the Worker
+ * EARNINGS_WINDOW_DAYS default so the monthly calendar and NEXT 30 DAYS
+ * summary keep the same data surface they had with the default API range.
+ */
+export const EARNINGS_CLIENT_FUTURE_DAYS = 60;
+
+export function marketTodayKey(now = Date.now()): string {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: "America/New_York",
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
-  }).format(new Date(Date.now()));
+  }).format(new Date(now));
+}
+
+/**
+ * Pure calendar-day arithmetic on an America/New_York market date key.
+ * dateFromKey builds noon local components for Y-M-D so DST midnight edges
+ * cannot shift the day; dateKeyFromDate reads those same components back.
+ */
+export function shiftMarketDateKey(key: string, deltaDays: number): string {
+  const date = dateFromKey(key);
+  date.setDate(date.getDate() + deltaDays);
+  return dateKeyFromDate(date);
+}
+
+/**
+ * Explicit /api/earnings range covering Past Earnings (rolling 30 days,
+ * including Dec→Jan) and the existing forward calendar window.
+ */
+export function earningsApiQueryRange(today = marketTodayKey()): { from: string; to: string } {
+  return {
+    from: shiftMarketDateKey(today, -(EARNINGS_CLIENT_PAST_DAYS - 1)),
+    to: shiftMarketDateKey(today, EARNINGS_CLIENT_FUTURE_DAYS),
+  };
+}
+
+export function earningsApiPath(today = marketTodayKey()): string {
+  const { from, to } = earningsApiQueryRange(today);
+  return `/api/earnings?from=${from}&to=${to}`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -117,7 +154,9 @@ export function useEarnings(): EarningsState {
       lastAttemptAt = now;
       lastAttemptDate = today;
       const currentRequest = ++requestId;
-      const response = await fetchJson<EarningsApiResponse | EarningsEngineEvent[]>("/api/earnings");
+      // Explicit from/to so Past Earnings always spans a full rolling 30 days
+      // across Dec→Jan (API default otherwise starts at year boundary).
+      const response = await fetchJson<EarningsApiResponse | EarningsEngineEvent[]>(earningsApiPath(today));
       if (cancelled || currentRequest !== requestId) return;
 
       const apiEarnings = response ? earningsFromApi(response) : null;

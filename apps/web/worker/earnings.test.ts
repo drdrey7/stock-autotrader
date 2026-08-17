@@ -16,9 +16,11 @@ import {
   createDefaultEarningsProviders,
   FinnhubCompanyProfileProvider,
   FinnhubEarningsProvider,
+  FinnhubRequestGate,
   FmpEarningsCalendarProvider,
   SecEdgarProvider,
 } from "./earnings/providers";
+import { FINNHUB_RATE_PACING_MS } from "./earnings/subrequest-budget";
 import {
   enrichUniverseMetadata,
 } from "./earnings/metadata";
@@ -1787,5 +1789,179 @@ describe("targeted historical recovery anti-starvation", () => {
     // 6 runs at the 2-symbol maintenance cap with 7-day rest stamps: the first
     // probes must not be re-queried, so unique symbols grow well past 2.
     expect(new Set(queried).size).toBeGreaterThanOrEqual(10);
+  });
+});
+
+describe("Finnhub per-attempt pacing (FinnhubRequestGate)", () => {
+  const range = { from: "2026-08-20", to: "2026-08-23" };
+  const universe = new Set(["MSFT"]);
+
+  function fakeClock() {
+    let now = 0;
+    const sleeper = vi.fn(async (ms: number) => {
+      now += ms;
+    });
+    const gate = new FinnhubRequestGate(FINNHUB_RATE_PACING_MS, sleeper, () => now);
+    return { now: () => now, sleeper, gate, advance: (ms: number) => { now += ms; } };
+  }
+
+  it("paces the second physical request after a 429 with no Retry-After", async () => {
+    const clock = fakeClock();
+    let calls = 0;
+    const requestAt: number[] = [];
+    const provider = new FinnhubEarningsProvider("test-key", async () => {
+      requestAt.push(clock.now());
+      calls += 1;
+      return calls === 1
+        ? new Response("busy", { status: 429 })
+        : jsonResponse({ earningsCalendar: [] });
+    }, clock.sleeper, 8_000, clock.gate);
+
+    await expect(provider.fetchCalendar(range, universe, "2026-08-13T13:00:00.000Z")).resolves.toMatchObject({ observations: [] });
+    expect(calls).toBe(2);
+    expect(requestAt[1]! - requestAt[0]!).toBeGreaterThanOrEqual(FINNHUB_RATE_PACING_MS);
+  });
+
+  it("paces the second physical request after a 5xx the same way", async () => {
+    const clock = fakeClock();
+    let calls = 0;
+    const requestAt: number[] = [];
+    const provider = new FinnhubEarningsProvider("test-key", async () => {
+      requestAt.push(clock.now());
+      calls += 1;
+      return calls === 1
+        ? new Response("error", { status: 503 })
+        : jsonResponse({ earningsCalendar: [] });
+    }, clock.sleeper, 8_000, clock.gate);
+
+    await expect(provider.fetchCalendar(range, universe, "2026-08-13T13:00:00.000Z")).resolves.toMatchObject({ observations: [] });
+    expect(calls).toBe(2);
+    expect(requestAt[1]! - requestAt[0]!).toBeGreaterThanOrEqual(FINNHUB_RATE_PACING_MS);
+  });
+
+  it("lets Retry-After longer than pacing win", async () => {
+    const clock = fakeClock();
+    let calls = 0;
+    const requestAt: number[] = [];
+    const provider = new FinnhubEarningsProvider("test-key", async () => {
+      requestAt.push(clock.now());
+      calls += 1;
+      return calls === 1
+        ? new Response("busy", { status: 429, headers: { "Retry-After": "3" } })
+        : jsonResponse({ earningsCalendar: [] });
+    }, clock.sleeper, 8_000, clock.gate);
+
+    await expect(provider.fetchCalendar(range, universe, "2026-08-13T13:00:00.000Z")).resolves.toMatchObject({ observations: [] });
+    expect(calls).toBe(2);
+    // Retry-After 3s + residual gate to reach min interval: gap >= 3000ms.
+    expect(requestAt[1]! - requestAt[0]!).toBeGreaterThanOrEqual(3_000);
+    expect(clock.sleeper).toHaveBeenCalledWith(3_000);
+  });
+
+  it("does not retry a successful first request", async () => {
+    const clock = fakeClock();
+    let calls = 0;
+    const provider = new FinnhubEarningsProvider("test-key", async () => {
+      calls += 1;
+      return jsonResponse({ earningsCalendar: [] });
+    }, clock.sleeper, 8_000, clock.gate);
+
+    await expect(provider.fetchCalendar(range, universe, "2026-08-13T13:00:00.000Z")).resolves.toMatchObject({ observations: [] });
+    expect(calls).toBe(1);
+  });
+
+  it("paces Finnhub profile retries independently of SEC", async () => {
+    const clock = fakeClock();
+    let calls = 0;
+    const requestAt: number[] = [];
+    const profile = new FinnhubCompanyProfileProvider("test-key", async () => {
+      requestAt.push(clock.now());
+      calls += 1;
+      return calls === 1
+        ? new Response("busy", { status: 429 })
+        : jsonResponse({ name: "Apple Inc", logo: "https://static2.finnhub.io/file/publicdatany/finnhubimage/stock_logo/AAPL.png", finnhubIndustry: "Technology", weburl: "https://www.apple.com", exchange: "NASDAQ" });
+    }, clock.sleeper, 8_000, clock.gate);
+
+    await expect(profile.fetchProfile("AAPL")).resolves.toMatchObject({ company: "Apple Inc" });
+    expect(calls).toBe(2);
+    expect(requestAt[1]! - requestAt[0]!).toBeGreaterThanOrEqual(FINNHUB_RATE_PACING_MS);
+  });
+
+  it("leaves SEC Retry-After pacing unchanged (no Finnhub gate)", async () => {
+    let calls = 0;
+    const sleeper = vi.fn(async (ms: number) => { void ms; });
+    const provider = new SecEdgarProvider("StockAutotraderTest/1.0", async () => {
+      calls += 1;
+      return calls === 1
+        ? new Response("busy", { status: 429, headers: { "Retry-After": "1" } })
+        : jsonResponse({ filings: { recent: { form: [] } } });
+    }, sleeper);
+    await expect(provider.findRelevantFiling({ cik: "0000789012", scheduledDate: "2026-08-12", fiscalPeriodEnd: "2026-06-30" }, "2026-08-13")).resolves.toBeNull();
+    expect(calls).toBe(2);
+    expect(sleeper).toHaveBeenCalledWith(1000);
+    // SEC should never wait the Finnhub 1100ms gate as its only retry delay.
+    expect(sleeper.mock.calls.some((call) => call[0] === FINNHUB_RATE_PACING_MS)).toBe(false);
+  });
+});
+describe("production Finnhub bulk calendar is a single physical request", () => {
+  it("createDefaultEarningsProviders shares calendar === consensus", () => {
+    const bundle = createDefaultEarningsProviders("test-key");
+    expect(Object.is(bundle.calendar, bundle.consensus)).toBe(true);
+    expect(bundle.calendar).toBeInstanceOf(FinnhubEarningsProvider);
+    expect(bundle.profile).toBeInstanceOf(FinnhubCompanyProfileProvider);
+  });
+
+  it("readProviderCalendar path issues one bulk Finnhub HTTP call when calendar === consensus", async () => {
+    const db = new MemoryD1();
+    await seedActiveCoreUniverse(db);
+    let bulkCalls = 0;
+    let symbolCalls = 0;
+    let profileCalls = 0;
+    let consensusCalls = 0;
+    const sleeper = vi.fn(async () => undefined);
+    const gate = new FinnhubRequestGate(FINNHUB_RATE_PACING_MS, sleeper, () => Date.now());
+    const finnhub = new FinnhubEarningsProvider("test-key", async (input) => {
+      const url = String(input);
+      if (url.includes("symbol=")) {
+        symbolCalls += 1;
+        return jsonResponse({ earningsCalendar: [] });
+      }
+      bulkCalls += 1;
+      return jsonResponse({ earningsCalendar: [] });
+    }, sleeper, 8_000, gate);
+    const originalFetchConsensus = finnhub.fetchConsensus.bind(finnhub);
+    finnhub.fetchConsensus = async (...args) => {
+      consensusCalls += 1;
+      return originalFetchConsensus(...args);
+    };
+    const profile = new FinnhubCompanyProfileProvider("test-key", async () => {
+      profileCalls += 1;
+      return jsonResponse({
+        name: "Apple Inc",
+        logo: "https://static2.finnhub.io/file/publicdatany/finnhubimage/stock_logo/AAPL.png",
+        finnhubIndustry: "Technology",
+        weburl: "https://www.apple.com",
+        exchange: "NASDAQ",
+      });
+    }, sleeper, 8_000, gate);
+    const providers = {
+      calendar: finnhub,
+      consensus: finnhub,
+      official: {
+        name: "sec-edgar",
+        fetchCompanyMetadata: async () => ({ provider: "sec-edgar", observations: [], warnings: [], updatedAt: "2026-08-16T06:00:00.000Z" }),
+        findRelevantFiling: async () => null,
+      },
+      profile,
+    } as unknown as EarningsProviderBundle;
+
+    await runEarningsJob({ DB: db, FINNHUB_API_KEY: "test-key" } as never, new Date("2026-08-16T06:00:00.000Z"), "calendar", providers, 0);
+
+    expect(Object.is(providers.calendar, providers.consensus)).toBe(true);
+    expect(bulkCalls).toBe(1);
+    expect(consensusCalls).toBe(0);
+    // Maintenance caps still apply (recovery + profile), but bulk is one.
+    expect(symbolCalls).toBeLessThanOrEqual(2);
+    expect(profileCalls).toBeLessThanOrEqual(2);
   });
 });

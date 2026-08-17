@@ -30,7 +30,7 @@ beforeEach(() => {
       { id: "older", author: "@nolimitgains", text: "Older post", created_at: "2026-08-11T19:30:00Z", url: "https://x.com/nolimitgains/status/older", symbol: null, company: null, price: null, change: null },
       { id: "newer", author: "@nolimitgains", text: "Newest post", created_at: "2026-08-12T20:30:00Z", url: "https://x.com/nolimitgains/status/newer", symbol: null, company: null, price: null, change: null },
     ], count: 2 }), { status: 200 });
-    if (url === "/api/earnings") return new Response(JSON.stringify([
+    if (url.startsWith("/api/earnings")) return new Response(JSON.stringify([
       { symbol: "OLD", company: "Past Corp", date: "2026-08-03", timing: "AMC", eventSignal: "Confirmed" },
       { symbol: "NEW", company: "Future Corp", date: "2026-08-14", timing: "BMO", eventSignal: "Confirmed" },
     ]), { status: 200 });
@@ -127,7 +127,7 @@ it("announces the full date for earnings calendar events", async () => {
 it("fails closed when the earnings payload has an invalid event list", async () => {
   const originalFetch = vi.mocked(fetch).getMockImplementation()!;
   vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
-    if (String(input) === "/api/earnings") return new Response(JSON.stringify({ events: {} }), { status: 200 });
+    if (String(input).startsWith("/api/earnings")) return new Response(JSON.stringify({ events: {} }), { status: 200 });
     return originalFetch(input, init);
   });
 
@@ -141,7 +141,7 @@ it("fails closed when the earnings payload has an invalid event list", async () 
 
 it("fails closed when an earnings event contains an invalid date", async () => {
   vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
-    if (String(input) === "/api/earnings") return new Response(JSON.stringify([
+    if (String(input).startsWith("/api/earnings")) return new Response(JSON.stringify([
       { symbol: "BAD", company: "Malformed Corp", date: "2026-99-99", timing: "BMO" },
     ]), { status: 200 });
     return new Response(null, { status: 404 });
@@ -154,7 +154,7 @@ it("fails closed when an earnings event contains an invalid date", async () => {
 
 it("accepts a full-shape earnings payload exactly as the worker emits it", async () => {
   vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
-    if (String(input) === "/api/earnings") return new Response(JSON.stringify({
+    if (String(input).startsWith("/api/earnings")) return new Response(JSON.stringify({
       events: [{
         id: "evt-1", symbol: "FULL", company: "Full Shape Corp", cik: "0001045810",
         fiscalYear: 2027, fiscalQuarter: 2, fiscalPeriod: "2027 Q2", fiscalPeriodEnd: "2026-07-31",
@@ -180,7 +180,7 @@ it("accepts a full-shape earnings payload exactly as the worker emits it", async
 
 it("drops only the invalid records and keeps the valid ones", async () => {
   vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
-    if (String(input) === "/api/earnings") return new Response(JSON.stringify([
+    if (String(input).startsWith("/api/earnings")) return new Response(JSON.stringify([
       { symbol: "GOOD", company: "Valid Corp", date: "2026-08-19", timing: "BMO" },
       { symbol: "BAD", company: "Malformed Corp", date: "2026-99-99", timing: "BMO" },
     ]), { status: 200 });
@@ -195,7 +195,7 @@ it("drops only the invalid records and keeps the valid ones", async () => {
 it("treats a valid empty earnings publication as available, not unavailable", async () => {
   sessionStorage.clear();
   vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
-    if (String(input) === "/api/earnings") return new Response(JSON.stringify({
+    if (String(input).startsWith("/api/earnings")) return new Response(JSON.stringify({
       events: [],
       summary: { today: 0, thisWeek: 0, next30Days: 0 },
       from: "2026-01-01", to: "2026-10-11",
@@ -215,7 +215,7 @@ it("renders the homepage without waiting for a stalled X request", async () => {
     const url = String(input);
     if (url === "/api/status") return new Response(JSON.stringify({ candidates: [], briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt } }), { status: 200 });
     if (url.startsWith("/api/x/posts")) return await new Promise<Response>(() => undefined);
-    if (url === "/api/earnings") return new Response(JSON.stringify([{ symbol: "NEW", company: "Future Corp", date: "2026-08-14", timing: "BMO", eventSignal: "Confirmed" }]), { status: 200 });
+    if (url.startsWith("/api/earnings")) return new Response(JSON.stringify([{ symbol: "NEW", company: "Future Corp", date: "2026-08-14", timing: "BMO", eventSignal: "Confirmed" }]), { status: 200 });
     return new Response(null, { status: 404 });
   });
 
@@ -306,7 +306,7 @@ it("renders retained X posts immediately while the network is unavailable", () =
 it("does not show static earnings when the first backend request fails", async () => {
   const originalFetch = vi.mocked(fetch).getMockImplementation()!;
   vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
-    if (String(input) === "/api/earnings") return new Response(null, { status: 503 });
+    if (String(input).startsWith("/api/earnings")) return new Response(null, { status: 503 });
     return originalFetch(input, init);
   });
 
@@ -322,7 +322,7 @@ it("clears earnings when the endpoint fails after a success", async () => {
   let earningsCalls = 0;
   const originalFetch = vi.mocked(fetch).getMockImplementation()!;
   vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
-    if (String(input) === "/api/earnings") {
+    if (String(input).startsWith("/api/earnings")) {
       earningsCalls += 1;
       if (earningsCalls > 1) return new Response(null, { status: 503 });
     }
@@ -417,30 +417,30 @@ it("refreshes earnings silently after the internal refresh interval", async () =
   vi.useFakeTimers({ shouldAdvanceTime: true });
   vi.setSystemTime(new Date("2026-08-12T16:00:00Z"));
   renderApp("/earnings");
-  await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input) === "/api/earnings")).toHaveLength(1));
+  await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input).startsWith("/api/earnings"))).toHaveLength(1));
   await vi.advanceTimersByTimeAsync(60 * 60_000);
-  await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input) === "/api/earnings")).toHaveLength(2));
+  await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input).startsWith("/api/earnings"))).toHaveLength(2));
   expect(screen.queryByText("Backend connected")).not.toBeInTheDocument();
   expect(screen.queryByText("Last update")).not.toBeInTheDocument();
 });
 
 it("does not force an earnings fetch when the tab becomes visible before the cadence is due", async () => {
   renderApp("/earnings");
-  await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input) === "/api/earnings")).toHaveLength(1));
+  await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input).startsWith("/api/earnings"))).toHaveLength(1));
   document.dispatchEvent(new Event("visibilitychange"));
-  await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input) === "/api/earnings")).toHaveLength(1));
+  await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input).startsWith("/api/earnings"))).toHaveLength(1));
 });
 
 it("treats an empty earnings response as a successful daily refresh", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   const originalFetch = vi.mocked(fetch).getMockImplementation()!;
   vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
-    if (String(input) === "/api/earnings") return new Response(JSON.stringify([]), { status: 200 });
+    if (String(input).startsWith("/api/earnings")) return new Response(JSON.stringify([]), { status: 200 });
     return originalFetch(input, init);
   });
   renderApp("/earnings");
   await vi.advanceTimersByTimeAsync(60_000);
-  expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input) === "/api/earnings")).toHaveLength(1);
+  expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input).startsWith("/api/earnings"))).toHaveLength(1);
 });
 
 it("reclassifies earnings and refreshes once when the New York market date changes", async () => {
@@ -448,7 +448,7 @@ it("reclassifies earnings and refreshes once when the New York market date chang
   vi.setSystemTime(new Date("2026-08-13T03:59:00Z")); // 23:59 ET on 12 Aug
   const originalFetch = vi.mocked(fetch).getMockImplementation()!;
   vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
-    if (String(input) === "/api/earnings") return new Response(JSON.stringify([
+    if (String(input).startsWith("/api/earnings")) return new Response(JSON.stringify([
       { symbol: "ROLL", company: "Rollover Corp", date: "2026-08-12", timing: "AMC", eventSignal: "Confirmed" },
     ]), { status: 200 });
     return originalFetch(input, init);
@@ -461,7 +461,7 @@ it("reclassifies earnings and refreshes once when the New York market date chang
   expect(todayCount()).toBe("1");
   vi.setSystemTime(new Date("2026-08-13T04:01:00Z")); // 00:01 ET on 13 Aug
   await vi.advanceTimersByTimeAsync(60_000);
-  await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input) === "/api/earnings")).toHaveLength(2));
+  await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input).startsWith("/api/earnings"))).toHaveLength(2));
   await waitFor(() => expect(todayCount()).toBe("0"));
   vi.useRealTimers();
 });

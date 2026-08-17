@@ -8,10 +8,7 @@ import {
   stampUniverseMetadataAttempt,
   upsertUniverseMembers,
 } from "./storage";
-import {
-  FINNHUB_RATE_PACING_MS,
-  MAX_FINNHUB_PROFILE_REQUESTS_PER_JOB,
-} from "./subrequest-budget";
+import { MAX_FINNHUB_PROFILE_REQUESTS_PER_JOB } from "./subrequest-budget";
 import type { Database } from "./storage";
 import type { EarningsProviderBundle } from "./types";
 
@@ -36,6 +33,9 @@ import type { EarningsProviderBundle } from "./types";
  *
  * Per-symbol `metadata_attempted_at` cools failed/partial candidates so the
  * cap of 2/run cannot starve later Core symbols forever.
+ *
+ * Physical Finnhub pacing is enforced by FinnhubRequestGate inside the
+ * provider (every HTTP attempt, including retries). Do not re-sleep here.
  */
 
 export const METADATA_PROFILE_TTL_MS = 14 * 24 * 60 * 60 * 1000;
@@ -69,8 +69,6 @@ export interface MetadataCoverage {
 
 const errorMessage = (error: unknown): string => error instanceof Error ? error.message : String(error);
 
-const sleep = (milliseconds: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, milliseconds));
-
 /**
  * Active Core members and how many of them have never been enriched.
  * `missing` counts members with no logo/industry and no metadata stamp at
@@ -94,15 +92,17 @@ export async function readMetadataCoverage(db: Database): Promise<MetadataCovera
  * Rows keep their last known good metadata because the universe update uses
  * COALESCE — a failed run cannot erase an existing logo/industry/website.
  *
- * `pacingMs` spaces out Finnhub calls to respect the free-tier 60 calls/min
- * budget shared with the production monitor; tests pass 0.
+ * Finnhub pacing is provider-level (FinnhubRequestGate). The optional
+ * `pacingMs` argument is retained only for call-site compatibility and is ignored.
  */
 export async function enrichUniverseMetadata(
   env: Env,
   providers: EarningsProviderBundle,
   collectedAt: string,
-  pacingMs = FINNHUB_RATE_PACING_MS,
+  // retained for call-site compatibility; pacing is provider-level now
+  pacingMs = 0,
 ): Promise<MetadataEnrichmentResult> {
+  void pacingMs;
   const profile = providers.profile;
   if (!profile) return { requests: 0, successes: 0, failures: 0, symbols: [], bootstrap: false };
   const cap = MAX_FINNHUB_PROFILE_REQUESTS_PER_JOB;
@@ -116,9 +116,7 @@ export async function enrichUniverseMetadata(
   const symbols: string[] = [];
   const failures: string[] = [];
   for (const candidate of candidates) {
-    if (pacingMs > 0) await sleep(pacingMs);
-    // Stamp the attempt before the network call so a crash mid-loop still
-    // cools the symbol and cannot monopolise the next daily run.
+    // Finnhub physical-request pacing lives in FinnhubRequestGate (per attempt).
     await stampUniverseMetadataAttempt(env.DB, candidate.symbol, collectedAt);
     try {
       const profileObservation = await profile.fetchProfile(candidate.symbol, collectedAt);

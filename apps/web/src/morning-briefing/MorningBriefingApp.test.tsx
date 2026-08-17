@@ -28,7 +28,7 @@ const stubEarningsSchedule = () => {
         briefing: { available: true, freshness: "fresh", publishedAt: "2026-08-12T12:30:00Z" },
       }), { status: 200 });
     }
-    if (url === "/api/earnings") {
+    if (url.startsWith("/api/earnings")) {
       return new Response(JSON.stringify([
         { symbol: "MSFT", company: "Microsoft", date: "2026-08-15", timing: "AMC", eventSignal: "Confirmed", officialReportUrl: "https://www.microsoft.com/en-us/Investor" },
       ]), { status: 200 });
@@ -207,7 +207,7 @@ describe("Morning Briefing frontend demo", () => {
 
   it("renders reported results, real summary counts and official links", async () => {
     vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
-      if (String(input) === "/api/earnings") {
+      if (String(input).startsWith("/api/earnings")) {
         return new Response(JSON.stringify({
           from: "2026-01-01",
           to: "2026-10-12",
@@ -288,7 +288,7 @@ describe("Morning Briefing frontend demo", () => {
     // week, so THIS WEEK must be 0 — a Sunday-anchored week would report 1.
     vi.mocked(Date.now).mockReturnValue(Date.parse("2026-08-17T16:00:00Z"));
     vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
-      if (String(input) === "/api/earnings") {
+      if (String(input).startsWith("/api/earnings")) {
         return new Response(JSON.stringify([
           { symbol: "TST", company: "Test Corp", date: "2026-08-16", timing: "BMO", eventSignal: "Confirmed" },
         ]), { status: 200 });
@@ -384,7 +384,7 @@ describe("Earnings page data population and enrichment", () => {
 
   const stubEarningsPayload = () => {
     vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
-      if (String(input) === "/api/earnings") return new Response(JSON.stringify(earningsPayload()), { status: 200 });
+      if (String(input).startsWith("/api/earnings")) return new Response(JSON.stringify(earningsPayload()), { status: 200 });
       return new Response(null, { status: 503 });
     });
   };

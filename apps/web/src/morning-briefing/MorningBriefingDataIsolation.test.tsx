@@ -29,7 +29,7 @@ beforeEach(() => {
     if (url.startsWith("/api/x/posts")) {
       return new Response(JSON.stringify({ posts: [], count: 0 }), { status: 200 });
     }
-    if (url === "/api/earnings") {
+    if (url.startsWith("/api/earnings")) {
       return new Response(JSON.stringify({ events: [] }), { status: 200 });
     }
     return new Response(null, { status: 404 });
@@ -63,5 +63,6 @@ it("keeps Earnings data isolated from Morning Briefing and X", async () => {
   render(<EarningsProbe/>);
   await waitFor(() => expect(vi.mocked(fetch).mock.calls.length).toBe(1));
   const urls = vi.mocked(fetch).mock.calls.map(([input]) => String(input));
-  expect(urls).toEqual(["/api/earnings"]);
+  expect(urls).toHaveLength(1);
+  expect(urls[0]).toMatch(/^\/api\/earnings\?from=\d{4}-\d{2}-\d{2}&to=\d{4}-\d{2}-\d{2}$/);
 });

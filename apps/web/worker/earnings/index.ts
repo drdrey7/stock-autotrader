@@ -365,6 +365,11 @@ async function readProviderCalendar(
   });
   try {
     const calendar = await providers.calendar.fetchCalendar(range, activeSymbols, collectedAt);
+    // Production createDefaultEarningsProviders() sets calendar === consensus to
+    // the SAME FinnhubEarningsProvider instance. That is one physical bulk HTTP
+    // operation (retries counted via MAX_PROVIDER_ATTEMPTS), not two bulk fetches.
+    // Optional test adapters may pass distinct calendar/consensus providers; only
+    // then does fetchConsensus run as a second request.
     if (Object.is(providers.calendar, providers.consensus)) {
       return {
         observations: activeObservations(calendar.observations),
@@ -438,7 +443,6 @@ async function recoverMissingHistory(
   range: EarningsDateRange,
   collectedAt: string,
   cap: number,
-  pacingMs: number,
 ): Promise<HistoricalRecoveryResult> {
   const empty: HistoricalRecoveryResult = { observations: [], requests: 0, successes: 0, failures: 0, skipped: 0, symbols: [] };
   const fetchHistory = providers.calendar.fetchSymbolHistory;
@@ -468,7 +472,8 @@ async function recoverMissingHistory(
   const symbols: string[] = [];
   const failures: string[] = [];
   for (const symbol of targeted) {
-    if (pacingMs > 0) await new Promise((resolve) => setTimeout(resolve, pacingMs));
+    // Finnhub physical-request pacing lives in FinnhubRequestGate (per attempt,
+    // including retries). Do not sleep again here — that double-paced symbols.
     try {
       const result = await fetchHistory.call(providers.calendar, symbol, range, collectedAt);
       observations.push(...result.observations);
@@ -556,7 +561,6 @@ async function runCalendarSync(
     { from: providerRange.from, to: today },
     collectedAt,
     MAX_HISTORICAL_RECOVERY_SYMBOLS_PER_JOB,
-    pacingMs,
   );
   if (recovery.requests > 0) {
     console.info(JSON.stringify({

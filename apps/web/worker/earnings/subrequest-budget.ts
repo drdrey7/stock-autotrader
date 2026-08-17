@@ -27,11 +27,11 @@ export const MAX_FINNHUB_PROFILE_REQUESTS_PER_JOB = 2;
 export const MAX_HISTORICAL_RECOVERY_SYMBOLS_PER_JOB = 2;
 
 /**
- * Conservative inter-request pacing for Finnhub calls sharing the free-tier
- * 60 calls/minute budget with the production monitor. 1100ms keeps the
- * calendar run well under the free-tier rate limit — the 2026-08-16
- * production probe observed HTTP 429 when calls were burst, and zero 429s
- * at this spacing.
+ * Conservative inter-request pacing for every physical Finnhub HTTP attempt
+ * (bulk calendar, symbol recovery, profile2, and their retries). Enforced by
+ * FinnhubRequestGate.beforeAttempt — not by outer symbol loops. 1100ms keeps
+ * free-tier runs under 60 calls/min; the 2026-08-16 probe saw 429s on bursts
+ * and zero 429s at this spacing. Retry-After longer than this pacing wins.
  */
 export const FINNHUB_RATE_PACING_MS = 1100;
 
@@ -39,6 +39,11 @@ export const MAX_SEC_METADATA_REQUESTS = MAX_PROVIDER_ATTEMPTS;
 export const MAX_SEC_FULL_INDEX_REQUESTS = MAX_SEC_INDEX_QUARTERS_PER_CALENDAR * MAX_PROVIDER_ATTEMPTS;
 export const MAX_SEC_FILING_REQUESTS = MAX_SEC_FILING_LOOKUPS_PER_JOB * MAX_PROVIDER_ATTEMPTS;
 export const MAX_FINNHUB_CALENDAR_REQUESTS = MAX_PROVIDER_ATTEMPTS;
+// Production path: createDefaultEarningsProviders() sets calendar === consensus
+// (one FinnhubEarningsProvider). readProviderCalendar short-circuits on
+// Object.is and never issues a second bulk fetchConsensus(). This constant is
+// therefore ONE physical bulk calendar operation with retries (2 attempts), not
+// calendar+consensus. Optional dual-adapter tests are non-production.
 // Kept as a compatibility export for callers/tests that still enumerate the
 // optional FMP adapter. Production earnings no longer selects this adapter.
 export const MAX_FMP_CALENDAR_REQUESTS = MAX_PROVIDER_ATTEMPTS;
