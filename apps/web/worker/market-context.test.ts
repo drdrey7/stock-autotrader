@@ -9,8 +9,12 @@ import {
   isUsMarketHoliday,
   marketCollectionWindow,
   readMarketContext,
+  readSentimentHealth,
   runMarketContextJob,
   runSentimentJob,
+  sentimentStaleAfterSeconds,
+  SENTIMENT_OFF_SESSION_STALE_AFTER_SECONDS,
+  SENTIMENT_SESSION_STALE_AFTER_SECONDS,
   writeMarketIndices,
   type MarketIndexObservation,
   type SentimentObservation,
@@ -350,6 +354,7 @@ describe("market context providers and persistence", () => {
     };
     await runMarketContextJob(envFor(db), new Date("2026-08-13T19:30:00Z"), provider);
     await runSentimentJob(envFor(db), new Date("2026-08-13T19:30:00Z"), {
+      name: "test-sentiment",
       collect: async () => ({
         score: 62,
         rating: "greed",
@@ -429,10 +434,16 @@ describe("sentiment provider and schedules", () => {
   it("requires a source timestamp and preserves the last valid sentiment on failure", async () => {
     const db = new MemoryD1();
     const valid: SentimentObservation = { score: 62, rating: "greed", sourceTimestamp: "2026-08-13T12:00:00.000Z", collectedAt: "2026-08-13T14:00:00.000Z", provider: "test-sentiment" };
-    const first = await runSentimentJob(envFor(db), new Date("2026-08-13T14:00:00Z"), { collect: async () => valid });
+    const first = await runSentimentJob(envFor(db), new Date("2026-08-13T14:00:00Z"), {
+      name: "test-sentiment",
+      collect: async () => valid,
+    });
     expect(first.status).toBe("ok");
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const second = await runSentimentJob(envFor(db), new Date("2026-08-13T19:00:00Z"), { collect: async () => { throw new Error("temporary outage"); } });
+    const second = await runSentimentJob(envFor(db), new Date("2026-08-13T19:00:00Z"), {
+      name: "test-sentiment",
+      collect: async () => { throw new Error("temporary outage"); },
+    });
     errorSpy.mockRestore();
     expect(second.status).toBe("degraded");
     expect((await readMarketContext(db as unknown as D1Database)).sentiment).toMatchObject({ score: 62, rating: "greed" });
@@ -457,5 +468,99 @@ describe("sentiment provider and schedules", () => {
     expect(marketCollectionWindow(new Date("2027-07-02T18:00:00Z"))).toBe("regular"); // 2:00pm ET, regular
     expect(marketCollectionWindow(new Date("2027-07-05T14:30:00Z"))).toBeNull(); // observed holiday
     expect(marketCollectionWindow(new Date("2022-12-23T18:00:00Z"))).toBe("regular"); // Dec 25, 2022 Sunday -> no Dec-23 early close
+  });
+
+  it("does not write a duplicate row when the CNN source timestamp is unchanged", async () => {
+    const db = new MemoryD1();
+    const observation: SentimentObservation = {
+      score: 65,
+      rating: "greed",
+      sourceTimestamp: "2026-08-14T18:58:07.000Z",
+      collectedAt: "2026-08-14T19:00:37.690Z",
+      provider: "test-sentiment",
+    };
+    const first = await runSentimentJob(envFor(db), new Date("2026-08-14T20:30:00Z"), {
+      name: "test-sentiment",
+      collect: async () => observation,
+    });
+    expect(first.status).toBe("ok");
+    expect(db.sentiments).toHaveLength(1);
+
+    // Same source timestamp again: no-op, still exactly one row.
+    const second = await runSentimentJob(envFor(db), new Date("2026-08-14T21:00:00Z"), {
+      name: "test-sentiment",
+      collect: async () => observation,
+    });
+    expect(second.status).toBe("ok");
+    expect(second.detail).toContain("noop");
+    expect(db.sentiments).toHaveLength(1);
+
+    // New source timestamp: persisted as a second row.
+    const newer = { ...observation, score: 64, sourceTimestamp: "2026-08-14T19:28:00.000Z", collectedAt: "2026-08-14T19:30:00.000Z" };
+    const third = await runSentimentJob(envFor(db), new Date("2026-08-14T21:30:00Z"), {
+      name: "test-sentiment",
+      collect: async () => newer,
+    });
+    expect(third.status).toBe("ok");
+    expect(third.detail).toBe("2026-08-14T19:28:00.000Z");
+    expect(db.sentiments).toHaveLength(2);
+  });
+
+  it("records sentiment health diagnostics (attempt/success/error) without touching rows on failure", async () => {
+    const db = new MemoryD1();
+    const valid: SentimentObservation = {
+      score: 60,
+      rating: "fear",
+      sourceTimestamp: "2026-08-14T13:56:18.000Z",
+      collectedAt: "2026-08-14T14:00:37.800Z",
+      provider: "test-sentiment",
+    };
+    await runSentimentJob(envFor(db), new Date("2026-08-14T14:00:00Z"), {
+      name: "test-sentiment",
+      collect: async () => valid,
+    });
+    const health = await readSentimentHealth(db as unknown as D1Database);
+    expect(health).toMatchObject({
+      provider: "test-sentiment",
+      status: "ok",
+      lastSourceTimestamp: "2026-08-14T13:56:18.000Z",
+      consecutiveFailures: 0,
+    });
+    expect(health?.lastSuccessfulUpdate).not.toBeNull();
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const failed = await runSentimentJob(envFor(db), new Date("2026-08-14T14:30:00Z"), {
+      name: "test-sentiment",
+      collect: async () => { throw new Error("provider HTTP 429"); },
+    });
+    errorSpy.mockRestore();
+    expect(failed.status).toBe("degraded");
+    const degraded = await readSentimentHealth(db as unknown as D1Database);
+    expect(degraded).toMatchObject({ status: "degraded", lastError: "provider HTTP 429", consecutiveFailures: 1 });
+    // Last-known-good preserved: row still there, read model still valid.
+    expect(db.sentiments).toHaveLength(1);
+    expect((await readMarketContext(db as unknown as D1Database)).sentiment).toMatchObject({ score: 60 });
+  });
+
+  it("skips sentiment on US market holidays", async () => {
+    const db = new MemoryD1();
+    // 2026-07-03 14:30 UTC = observed Independence Day (Friday), 10:30 ET.
+    const result = await runSentimentJob(envFor(db), new Date("2026-07-03T14:30:00Z"));
+    expect(result.status).toBe("skipped");
+    expect(result.detail).toBe("weekend_or_holiday");
+    expect(db.sentiments).toHaveLength(0);
+  });
+
+  it("applies market-aware sentiment freshness (session vs off-session)", () => {
+    // Tuesday session: a 3h-old value is stale inside market hours.
+    expect(sentimentStaleAfterSeconds(new Date("2026-08-11T15:00:00Z"))).toBe(SENTIMENT_SESSION_STALE_AFTER_SECONDS);
+    // Weekend: 72h+ (Friday close to Monday) stays within the off-session gate.
+    expect(sentimentStaleAfterSeconds(new Date("2026-08-15T12:00:00Z"))).toBe(SENTIMENT_OFF_SESSION_STALE_AFTER_SECONDS);
+    // Holiday Friday 2026-07-03: off-session gate.
+    expect(sentimentStaleAfterSeconds(new Date("2026-07-03T14:30:00Z"))).toBe(SENTIMENT_OFF_SESSION_STALE_AFTER_SECONDS);
+    // Pre-market Monday 06:00 ET: off-session gate (last session still valid).
+    expect(sentimentStaleAfterSeconds(new Date("2026-08-10T10:00:00Z"))).toBe(SENTIMENT_OFF_SESSION_STALE_AFTER_SECONDS);
+    // DST-safe: same UTC wall clock in January (EST) is pre-market, off-session.
+    expect(sentimentStaleAfterSeconds(new Date("2026-01-12T14:30:00Z"))).toBe(SENTIMENT_SESSION_STALE_AFTER_SECONDS);
   });
 });

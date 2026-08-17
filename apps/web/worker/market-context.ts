@@ -1,7 +1,16 @@
 import type { Env } from "./index";
 
 export const MARKET_CONTEXT_STALE_AFTER_SECONDS = 26 * 60 * 60;
+// Legacy flat gate kept for callers that still pass a constant; market-aware
+// sentiment freshness is computed by sentimentStaleAfterSeconds().
 export const SENTIMENT_STALE_AFTER_SECONDS = 72 * 60 * 60;
+// A healthy sentiment run refreshes every 30 minutes during the session; a
+// value older than ~2.5h inside a session means several expected updates
+// were missed and the reading is stale.
+export const SENTIMENT_SESSION_STALE_AFTER_SECONDS = 2.5 * 60 * 60;
+// Outside a session (weekend, holiday, pre-market, overnight) the last value
+// of the previous valid session stays usable for up to 7 days.
+export const SENTIMENT_OFF_SESSION_STALE_AFTER_SECONDS = 7 * 24 * 60 * 60;
 const MAX_SOURCE_FUTURE_SKEW_MS = 5 * 60 * 1000;
 
 export type MarketIndexSymbol = "SPX" | "NDX" | "DJI" | "VIX";
@@ -30,6 +39,7 @@ export interface MarketDataProvider {
 }
 
 export interface SentimentProvider {
+  readonly name: string;
   collect(collectedAt: string): Promise<SentimentObservation>;
 }
 
@@ -68,6 +78,62 @@ export interface MarketContextHealthRecord {
 }
 
 export const MARKET_CONTEXT_HEALTH_META_KEY = "marketContextHealth";
+export const SENTIMENT_HEALTH_META_KEY = "sentimentHealth";
+
+export interface SentimentHealthRecord {
+  provider: string;
+  status: "running" | "ok" | "degraded" | "skipped";
+  lastAttemptAt: string;
+  lastSuccessfulUpdate: string | null;
+  lastSourceTimestamp: string | null;
+  lastError: string | null;
+  consecutiveFailures: number;
+}
+
+export async function readSentimentHealth(db: D1Database): Promise<SentimentHealthRecord | null> {
+  try {
+    const row = await db.prepare("SELECT value FROM app_meta WHERE key = ? LIMIT 1")
+      .bind(SENTIMENT_HEALTH_META_KEY)
+      .first<{ value: string | null }>();
+    if (!row?.value) return null;
+    const parsed = JSON.parse(row.value) as Partial<SentimentHealthRecord>;
+    if (!parsed || typeof parsed.provider !== "string") return null;
+    return {
+      provider: parsed.provider,
+      status: ["running", "ok", "degraded", "skipped"].includes(String(parsed.status))
+        ? parsed.status as SentimentHealthRecord["status"]
+        : "degraded",
+      lastAttemptAt: typeof parsed.lastAttemptAt === "string" ? parsed.lastAttemptAt : new Date(0).toISOString(),
+      lastSuccessfulUpdate: typeof parsed.lastSuccessfulUpdate === "string" ? parsed.lastSuccessfulUpdate : null,
+      lastSourceTimestamp: typeof parsed.lastSourceTimestamp === "string" ? parsed.lastSourceTimestamp : null,
+      lastError: typeof parsed.lastError === "string" ? parsed.lastError : null,
+      consecutiveFailures: Number.isFinite(Number(parsed.consecutiveFailures)) ? Number(parsed.consecutiveFailures) : 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function rememberSentimentHealth(db: D1Database, health: SentimentHealthRecord): Promise<void> {
+  try {
+    await db.prepare(
+      "INSERT INTO app_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    ).bind(SENTIMENT_HEALTH_META_KEY, JSON.stringify(health)).run();
+  } catch (error) {
+    console.error(JSON.stringify({ job: "sentiment", phase: "health-write", status: "failed", error: errorMessage(error).slice(0, 180) }));
+  }
+}
+
+async function readLatestSentimentSourceTimestamp(db: D1Database, provider: string): Promise<string | null> {
+  try {
+    const row = await db.prepare(
+      "SELECT source_timestamp FROM market_sentiment WHERE provider = ? ORDER BY source_timestamp DESC, collected_at DESC, id DESC LIMIT 1",
+    ).bind(provider).first<{ source_timestamp: string | null }>();
+    return row?.source_timestamp ?? null;
+  } catch {
+    return null;
+  }
+}
 
 const validIsoTimestamp = (value: string): boolean => {
   const parsed = Date.parse(value);
@@ -284,7 +350,7 @@ const NEW_YORK_PARTS_FORMATTER = new Intl.DateTimeFormat("en-US", {
   hourCycle: "h23",
 });
 
-function localNewYorkParts(instant: Date): NewYorkParts | null {
+export function localNewYorkParts(instant: Date): NewYorkParts | null {
   if (!Number.isFinite(instant.getTime())) return null;
   const parts = NEW_YORK_PARTS_FORMATTER.formatToParts(instant);
   const value = (type: string) => parts.find((part) => part.type === type)?.value;
@@ -406,6 +472,25 @@ function isEarlyClose(parts: NewYorkParts): boolean {
 export function isNewYorkWeekday(instant: Date): boolean {
   const parts = localNewYorkParts(instant);
   return Boolean(parts && parts.weekday !== "Sat" && parts.weekday !== "Sun");
+}
+
+/**
+ * Market-aware sentiment freshness: during a live NYSE session the reading is
+ * expected to refresh every 30 minutes, so a value older than 2.5h is stale.
+ * Outside the session (weekend, holiday, pre-market, overnight) the last value
+ * of the previous valid session stays usable for up to 7 days — Friday's final
+ * reading must not vanish over the weekend.
+ */
+export function sentimentStaleAfterSeconds(now: Date): number {
+  const parts = localNewYorkParts(now);
+  if (!parts || parts.weekday === "Sat" || parts.weekday === "Sun" || isUsMarketHoliday(now)) {
+    return SENTIMENT_OFF_SESSION_STALE_AFTER_SECONDS;
+  }
+  const minutes = parts.hour * 60 + parts.minute;
+  if (minutes >= 9 * 60 + 30 && minutes <= 16 * 60 + 45) {
+    return SENTIMENT_SESSION_STALE_AFTER_SECONDS;
+  }
+  return SENTIMENT_OFF_SESSION_STALE_AFTER_SECONDS;
 }
 
 export async function writeMarketIndices(db: D1Database, observations: MarketIndexObservation[]): Promise<number> {
@@ -791,13 +876,67 @@ export async function runSentimentJob(
   scheduledTime: Date,
   provider: SentimentProvider = new CnnSentimentProvider(),
 ): Promise<{ status: "ok" | "degraded" | "skipped"; detail: string }> {
-  if (!isNewYorkWeekday(scheduledTime)) return { status: "skipped", detail: "weekend" };
+  const startedAt = Date.now();
+  const providerName = provider.name;
+  if (!isNewYorkWeekday(scheduledTime) || isUsMarketHoliday(scheduledTime)) {
+    return { status: "skipped", detail: "weekend_or_holiday" };
+  }
+  const collectedAt = new Date().toISOString();
+  const previousHealth = await readSentimentHealth(env.DB);
+  const lastSourceTimestamp = previousHealth?.lastSourceTimestamp
+    ?? await readLatestSentimentSourceTimestamp(env.DB, providerName);
+  await rememberSentimentHealth(env.DB, {
+    provider: providerName,
+    status: "running",
+    lastAttemptAt: collectedAt,
+    lastSuccessfulUpdate: previousHealth?.lastSuccessfulUpdate ?? null,
+    lastSourceTimestamp: previousHealth?.lastSourceTimestamp ?? lastSourceTimestamp,
+    lastError: previousHealth?.lastError ?? null,
+    consecutiveFailures: previousHealth?.consecutiveFailures ?? 0,
+  });
   try {
-    const observation = await provider.collect(new Date().toISOString());
+    const observation = await provider.collect(collectedAt);
+    if (observation.sourceTimestamp === lastSourceTimestamp) {
+      // Provider value unchanged since the last persisted row: success/no-op,
+      // no duplicate row, no health failure.
+      await rememberSentimentHealth(env.DB, {
+        provider: providerName,
+        status: "ok",
+        lastAttemptAt: collectedAt,
+        lastSuccessfulUpdate: previousHealth?.lastSuccessfulUpdate ?? collectedAt,
+        lastSourceTimestamp,
+        lastError: null,
+        consecutiveFailures: 0,
+      });
+      console.info(JSON.stringify({ job: "sentiment", phase: "result", status: "ok", noop: true, sourceTimestamp: observation.sourceTimestamp, durationMs: Date.now() - startedAt }));
+      return { status: "ok", detail: `noop:${observation.sourceTimestamp}` };
+    }
     await writeSentiment(env.DB, observation);
+    await rememberSentimentHealth(env.DB, {
+      provider: providerName,
+      status: "ok",
+      lastAttemptAt: collectedAt,
+      lastSuccessfulUpdate: collectedAt,
+      lastSourceTimestamp: observation.sourceTimestamp,
+      lastError: null,
+      consecutiveFailures: 0,
+    });
+    console.info(JSON.stringify({ job: "sentiment", phase: "result", status: "ok", sourceTimestamp: observation.sourceTimestamp, durationMs: Date.now() - startedAt }));
     return { status: "ok", detail: observation.sourceTimestamp };
   } catch (error) {
-    console.error("sentiment collection failed", errorMessage(error));
-    return { status: "degraded", detail: errorMessage(error).slice(0, 200) };
+    const detail = errorMessage(error).slice(0, 200);
+    // Last-known-good stays untouched: failed runs never write rows and keep
+    // the previous source timestamp as the still-displayable value.
+    await rememberSentimentHealth(env.DB, {
+      provider: providerName,
+      status: "degraded",
+      lastAttemptAt: collectedAt,
+      lastSuccessfulUpdate: previousHealth?.lastSuccessfulUpdate ?? null,
+      lastSourceTimestamp: previousHealth?.lastSourceTimestamp ?? lastSourceTimestamp,
+      lastError: detail,
+      consecutiveFailures: Math.min(999, (previousHealth?.consecutiveFailures ?? 0) + 1),
+    });
+    console.error(JSON.stringify({ job: "sentiment", phase: "result", status: "degraded", error: detail, durationMs: Date.now() - startedAt }));
+    return { status: "degraded", detail };
   }
 }
