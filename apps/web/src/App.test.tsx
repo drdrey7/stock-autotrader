@@ -109,6 +109,11 @@ describe("Morning Briefing public experience", () => {
     expect(await screen.findByRole("heading", { name: /Earnings Calendar/ })).toBeInTheDocument();
   });
 
+  it("opens the Heatmap route directly", async () => {
+    render(<MemoryRouter initialEntries={["/heatmap"]}><App /></MemoryRouter>);
+    expect(await screen.findByRole("heading", { level: 1, name: "Heatmap" })).toBeInTheDocument();
+  });
+
   it.each([
     "/scanner", "/signals", "/stocks/NVDA", "/strategies",
     "/strategies/trend_breakout_v1", "/research", "/research/example",
