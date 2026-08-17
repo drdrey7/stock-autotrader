@@ -5,6 +5,7 @@ import {
   readEarningsMeta,
   readUniverseMetadataCandidates,
   setEarningsMeta,
+  stampUniverseMetadataAttempt,
   upsertUniverseMembers,
 } from "./storage";
 import {
@@ -32,9 +33,14 @@ import type { EarningsProviderBundle } from "./types";
  * Production D1 was bootstrapped externally. The Worker stays in maintenance
  * mode only — no aggressive multi-day Core bootstrap inside the daily job.
  * Heavy backfills remain out of scope for the Worker.
+ *
+ * Per-symbol `metadata_attempted_at` cools failed/partial candidates so the
+ * cap of 2/run cannot starve later Core symbols forever.
  */
 
 export const METADATA_PROFILE_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+/** Failed/partial profile attempts rest this long before re-entering the queue. */
+export const METADATA_PROFILE_ATTEMPT_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 /** @deprecated Use MAX_FINNHUB_PROFILE_REQUESTS_PER_JOB — kept as an alias for older tests. */
 export const METADATA_REFRESH_PER_RUN = MAX_FINNHUB_PROFILE_REQUESTS_PER_JOB;
 
@@ -44,6 +50,8 @@ export const METADATA_META_KEYS = {
   lastError: "earningsMetadataLastError",
   consecutiveFailures: "earningsMetadataConsecutiveFailures",
 } as const;
+
+export const METADATA_PROVIDER_NAME = "finnhub-company-profile";
 
 interface MetadataEnrichmentResult {
   requests: number;
@@ -68,13 +76,14 @@ const sleep = (milliseconds: number): Promise<void> => new Promise((resolve) => 
  * `missing` counts members with no logo/industry and no metadata stamp at
  * all — TTL-stale members (metadata older than the refresh window) are NOT
  * missing, they just need a periodic refresh under the normal cap.
+ * Cooldown is ignored here: coverage is about data completeness, not queue eligibility.
  */
 export async function readMetadataCoverage(db: Database): Promise<MetadataCoverage> {
   const [active, candidates] = await Promise.all([
     readActiveUniverseSymbols(db),
-    // epoch staleBefore: metadata_updated_at < 1970 is impossible, so this
-    // reads exactly the never-enriched members.
-    readUniverseMetadataCandidates(db, "1970-01-01T00:00:00.000Z", 1000),
+    // epoch staleBefore + epoch cooldownBefore: every never-enriched member
+    // is counted regardless of recent failed attempts.
+    readUniverseMetadataCandidates(db, "1970-01-01T00:00:00.000Z", "1970-01-01T00:00:00.000Z", 1000),
   ]);
   return { active: active.size, missing: candidates.length };
 }
@@ -97,14 +106,20 @@ export async function enrichUniverseMetadata(
   const profile = providers.profile;
   if (!profile) return { requests: 0, successes: 0, failures: 0, symbols: [], bootstrap: false };
   const cap = MAX_FINNHUB_PROFILE_REQUESTS_PER_JOB;
-  const staleBefore = new Date(Date.now() - METADATA_PROFILE_TTL_MS).toISOString();
-  const candidates = await readUniverseMetadataCandidates(env.DB, staleBefore, cap);
+  const nowMs = Date.parse(collectedAt);
+  const anchorMs = Number.isFinite(nowMs) ? nowMs : Date.now();
+  const staleBefore = new Date(anchorMs - METADATA_PROFILE_TTL_MS).toISOString();
+  const cooldownBefore = new Date(anchorMs - METADATA_PROFILE_ATTEMPT_COOLDOWN_MS).toISOString();
+  const candidates = await readUniverseMetadataCandidates(env.DB, staleBefore, cooldownBefore, cap);
   if (candidates.length === 0) return { requests: 0, successes: 0, failures: 0, symbols: [], bootstrap: false };
 
   const symbols: string[] = [];
   const failures: string[] = [];
   for (const candidate of candidates) {
     if (pacingMs > 0) await sleep(pacingMs);
+    // Stamp the attempt before the network call so a crash mid-loop still
+    // cools the symbol and cannot monopolise the next daily run.
+    await stampUniverseMetadataAttempt(env.DB, candidate.symbol, collectedAt);
     try {
       const profileObservation = await profile.fetchProfile(candidate.symbol, collectedAt);
       await upsertUniverseMembers(env.DB, [{
@@ -124,9 +139,8 @@ export async function enrichUniverseMetadata(
       }]);
       symbols.push(candidate.symbol);
     } catch (error) {
-      // Failed symbols are left untouched (last-known-good preserved) and
-      // stay candidates for the next run — but the per-run cap plus the
-      // 14-day success TTL keep steady-state request volume tiny.
+      // Failed symbols keep last-known-good fields (COALESCE) and rest for
+      // METADATA_PROFILE_ATTEMPT_COOLDOWN_MS via metadata_attempted_at.
       failures.push(`${candidate.symbol}: ${errorMessage(error).slice(0, 160)}`);
     }
   }

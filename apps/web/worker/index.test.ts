@@ -980,14 +980,63 @@ describe("GET /healthz/sources", () => {
       };
       expect(body.sources.earnings?.engineState).toBe("HEALTHY");
       expect(body.sources.earnings?.enrichment).toMatchObject({
-        provider: "sec-edgar",
-        lastError: "provider HTTP 403",
-        consecutiveFailures: 3,
+        sec: {
+          provider: "sec-edgar",
+          lastError: "provider HTTP 403",
+          consecutiveFailures: 3,
+        },
+        metadata: {
+          provider: "finnhub-company-profile",
+          lastError: null,
+          consecutiveFailures: 0,
+        },
       });
       expect(body.down).toEqual([]);
       expect(body.ok).toBe(true);
       expect(response.status).toBe(200);
       expect(response.headers.get("cache-control")).toBe("no-store");
+    });
+  });
+
+  it("stays 200 and exposes Finnhub profile diagnostics without degrading critical earnings health", async () => {
+    await withSystemTime(NOW, async () => {
+      const env = envWith({
+        ...healthyCriticalTables(),
+        earningsEngine: {
+          ...healthyEarningsEngine(),
+          sec_attempt_at: "2026-08-13T12:00:53.000Z",
+          sec_success_at: "2026-08-13T12:00:53.000Z",
+          sec_failures: "0",
+          metadata_attempt_at: "2026-08-13T12:01:00.000Z",
+          metadata_error: "AAPL: profile provider HTTP 429",
+          metadata_failures: "2",
+        },
+      });
+      const response = await worker.fetch(new Request("https://example.test/healthz/sources"), env);
+      const body = (await response.json()) as {
+        ok: boolean;
+        down: string[];
+        sources: Record<string, {
+          engineState?: string;
+          enrichment?: {
+            sec: { provider: string; lastError: string | null; consecutiveFailures: number };
+            metadata: { provider: string; lastError: string | null; consecutiveFailures: number; lastAttempt: string | null };
+          };
+        }>;
+      };
+      expect(body.sources.earnings?.engineState).toBe("HEALTHY");
+      expect(body.sources.earnings?.enrichment).toMatchObject({
+        sec: { provider: "sec-edgar", lastError: null, consecutiveFailures: 0 },
+        metadata: {
+          provider: "finnhub-company-profile",
+          lastError: "AAPL: profile provider HTTP 429",
+          consecutiveFailures: 2,
+          lastAttempt: "2026-08-13T12:01:00.000Z",
+        },
+      });
+      expect(body.down).toEqual([]);
+      expect(body.ok).toBe(true);
+      expect(response.status).toBe(200);
     });
   });
 
@@ -1009,10 +1058,13 @@ describe("GET /healthz/sources", () => {
       const body = (await response.json()) as {
         ok: boolean;
         down: string[];
-        sources: Record<string, { engineState?: string; enrichment?: { lastError: string | null; consecutiveFailures: number } }>;
+        sources: Record<string, { engineState?: string; enrichment?: { sec: { lastError: string | null; consecutiveFailures: number } } }>;
       };
       expect(body.sources.earnings?.engineState).toBe("DEGRADED");
-      expect(body.sources.earnings?.enrichment).toMatchObject({ lastError: null, consecutiveFailures: 0 });
+      expect(body.sources.earnings?.enrichment).toMatchObject({
+        sec: { lastError: null, consecutiveFailures: 0 },
+        metadata: { lastError: null, consecutiveFailures: 0 },
+      });
       expect(body.down).toEqual(["earnings"]);
       expect(body.ok).toBe(false);
       expect(response.status).toBe(503);

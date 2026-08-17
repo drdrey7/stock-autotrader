@@ -139,12 +139,34 @@ class MemoryStatement {
     }
     if (this.sql.includes("FROM earnings_universe")) {
       const activeOnly = this.sql.includes("active = 1") && this.sql.includes("source = 'core'");
-      const candidatesOnly = this.sql.includes("metadata_updated_at IS NULL");
+      const candidatesOnly = this.sql.includes("metadata_updated_at IS NULL") && this.sql.includes("metadata_attempted_at");
       let results = [...this.db.universe.values()];
       if (activeOnly) results = results.filter((row) => this.db.isActiveUniverseSymbol(String(row.symbol)));
       if (candidatesOnly) {
         const staleBefore = String(this.args[0]);
-        results = results.filter((row) => row.logo_url == null || row.industry == null || row.metadata_updated_at == null || String(row.metadata_updated_at) < staleBefore);
+        const cooldownBefore = String(this.args[1]);
+        results = results.filter((row) => {
+          const needs = row.logo_url == null
+            || row.industry == null
+            || row.metadata_updated_at == null
+            || String(row.metadata_updated_at) < staleBefore;
+          const cooled = row.metadata_attempted_at == null
+            || String(row.metadata_attempted_at) < cooldownBefore;
+          return needs && cooled;
+        });
+        results.sort((left, right) => {
+          const leftAttempted = left.metadata_attempted_at == null ? 0 : 1;
+          const rightAttempted = right.metadata_attempted_at == null ? 0 : 1;
+          if (leftAttempted !== rightAttempted) return leftAttempted - rightAttempted;
+          if (left.metadata_attempted_at != null && right.metadata_attempted_at != null) {
+            const byAttempt = String(left.metadata_attempted_at).localeCompare(String(right.metadata_attempted_at));
+            if (byAttempt !== 0) return byAttempt;
+          }
+          const leftMissing = left.metadata_updated_at == null ? 0 : 1;
+          const rightMissing = right.metadata_updated_at == null ? 0 : 1;
+          if (leftMissing !== rightMissing) return leftMissing - rightMissing;
+          return String(left.symbol).localeCompare(String(right.symbol));
+        });
       }
       if (this.sql.includes("LIMIT ?")) results = results.slice(0, Number(this.args.at(-1) ?? results.length));
       return { results: results as T[] };
@@ -264,6 +286,14 @@ class MemoryStatement {
         }
         row.metadata_updated_at = metadataUpdatedAt ?? row.metadata_updated_at ?? null;
         row.updated_at = updatedAt;
+      }
+      return { success: true, meta: { changes: row ? 1 : 0 } };
+    }
+    if (this.sql.includes("UPDATE earnings_universe") && this.sql.includes("SET metadata_attempted_at = ?")) {
+      const [attemptedAt, symbol] = this.args;
+      const row = this.db.universe.get(String(symbol));
+      if (row && Number(row.active) === 1 && row.source === "core") {
+        row.metadata_attempted_at = attemptedAt;
       }
       return { success: true, meta: { changes: row ? 1 : 0 } };
     }
@@ -1332,13 +1362,118 @@ describe("earnings universe metadata enrichment", () => {
   it("re-enriches members whose metadata_updated_at is older than the TTL", async () => {
     const db = new MemoryD1();
     await seedActiveCoreUniverse(db);
-    const first = await enrichUniverseMetadata({ DB: db } as never, { profile: profileProvider } as unknown as EarningsProviderBundle, "2026-08-16T06:00:00.000Z", 0);
-    expect(first.successes).toBeGreaterThan(0);
-    // Age one row beyond the 14-day TTL.
-    const symbol = first.symbols[0]!;
+    const providers = { profile: profileProvider } as unknown as EarningsProviderBundle;
+    // Fill the whole Core so the only remaining candidate is a TTL-stale row.
+    for (let index = 0; index < 40; index += 1) {
+      const batch = await enrichUniverseMetadata({ DB: db } as never, providers, "2026-08-16T06:00:00.000Z", 0);
+      if (batch.requests === 0) break;
+    }
+    const symbol = "AAPL";
+    expect(db.universe.get(symbol)?.logo_url).toBeTruthy();
+    // Age both success and attempt stamps beyond the 14-day TTL (and the
+    // 7-day attempt cooldown). Real success stamps both together.
     db.universe.get(symbol)!.metadata_updated_at = "2026-08-01T06:00:00.000Z";
-    const refreshed = await enrichUniverseMetadata({ DB: db } as never, { profile: profileProvider } as unknown as EarningsProviderBundle, "2026-08-16T08:00:00.000Z", 0);
+    db.universe.get(symbol)!.metadata_attempted_at = "2026-08-01T06:00:00.000Z";
+    const refreshed = await enrichUniverseMetadata({ DB: db } as never, providers, "2026-08-16T08:00:00.000Z", 0);
     expect(refreshed.symbols).toContain(symbol);
+  });
+
+  it("cools failed early-alphabet symbols so later Core members are still selected", async () => {
+    const db = new MemoryD1();
+    await seedActiveCoreUniverse(db);
+    const fetched: string[] = [];
+    const failingEarly = {
+      name: "finnhub-company-profile",
+      fetchProfile: async (symbol: string) => {
+        fetched.push(symbol);
+        if (symbol === "AAPL" || symbol === "ADBE") throw new Error("profile provider HTTP 429");
+        return profileProvider.fetchProfile(symbol);
+      },
+    };
+    const providers = { profile: failingEarly } as unknown as EarningsProviderBundle;
+    const first = await enrichUniverseMetadata({ DB: db } as never, providers, "2026-08-16T06:00:00.000Z", 0);
+    expect(first.requests).toBe(2);
+    expect(first.failures).toBe(2);
+    expect(fetched).toEqual(["AAPL", "ADBE"]);
+    expect(db.universe.get("AAPL")?.metadata_attempted_at).toBe("2026-08-16T06:00:00.000Z");
+    expect(db.universe.get("AAPL")?.logo_url).toBeUndefined();
+
+    // Same-day re-run: cooled AAPL/ADBE must not be reselected; next symbols rotate in.
+    const second = await enrichUniverseMetadata({ DB: db } as never, providers, "2026-08-16T07:00:00.000Z", 0);
+    expect(second.requests).toBe(2);
+    expect(second.symbols).toEqual(["AFRM", "AMAT"]);
+    expect(fetched.slice(-2)).toEqual(["AFRM", "AMAT"]);
+    expect(second.successes).toBe(2);
+
+    // Complete every other Core member so the only remaining incomplete rows
+    // are the cooled AAPL/ADBE failures — proves they re-enter after cooldown
+    // rather than being buried under never-attempted symbols forever.
+    for (const row of db.universe.values()) {
+      if (row.symbol === "AAPL" || row.symbol === "ADBE") continue;
+      row.logo_url = `https://static2.finnhub.io/logo/${row.symbol}.png`;
+      row.industry = "Semiconductors";
+      row.metadata_updated_at = "2026-08-16T07:00:00.000Z";
+      row.metadata_attempted_at = "2026-08-16T07:00:00.000Z";
+    }
+
+    // Still inside the 7-day cooldown: queue is empty (failures cooled).
+    const mid = await enrichUniverseMetadata({ DB: db } as never, providers, "2026-08-20T06:00:00.000Z", 0);
+    expect(mid.requests).toBe(0);
+    expect(mid.symbols).toEqual([]);
+
+    // After cooldown, failed symbols re-enter the queue.
+    const cooled = await enrichUniverseMetadata({ DB: db } as never, providers, "2026-08-24T06:00:00.000Z", 0);
+    expect(cooled.requests).toBe(2);
+    expect(cooled.failures).toBe(2);
+    expect(cooled.symbols).toEqual([]);
+    const thirdFetched = fetched.slice(fetched.length - cooled.requests);
+    expect(thirdFetched.sort()).toEqual(["AAPL", "ADBE"]);
+  });
+
+  it("does not let a partial profile monopolise the maintenance queue", async () => {
+    const db = new MemoryD1();
+    await seedActiveCoreUniverse(db);
+    const fetched: string[] = [];
+    const partialFirst = {
+      name: "finnhub-company-profile",
+      fetchProfile: async (symbol: string) => {
+        fetched.push(symbol);
+        if (symbol === "AAPL") {
+          return {
+            symbol,
+            company: "Apple Inc",
+            logoUrl: null,
+            industry: "Consumer Electronics",
+            websiteUrl: "https://www.apple.com",
+            exchange: "NASDAQ",
+          };
+        }
+        return profileProvider.fetchProfile(symbol);
+      },
+    };
+    const providers = { profile: partialFirst } as unknown as EarningsProviderBundle;
+    const first = await enrichUniverseMetadata({ DB: db } as never, providers, "2026-08-16T06:00:00.000Z", 0);
+    expect(first.symbols).toContain("AAPL");
+    expect(db.universe.get("AAPL")?.industry).toBe("Consumer Electronics");
+    expect(db.universe.get("AAPL")?.logo_url).toBeNull();
+    // Partial AAPL is still "missing" logo but cooled — next run must move on.
+    const second = await enrichUniverseMetadata({ DB: db } as never, providers, "2026-08-16T07:00:00.000Z", 0);
+    expect(second.symbols).not.toContain("AAPL");
+    expect(second.requests).toBe(2);
+    expect(fetched.filter((symbol) => symbol === "AAPL")).toHaveLength(1);
+  });
+
+  it("keeps the per-run profile cap at 2 under repeated failures", async () => {
+    const db = new MemoryD1();
+    await seedActiveCoreUniverse(db);
+    const failing = {
+      name: "finnhub-company-profile",
+      fetchProfile: async () => { throw new Error("boom"); },
+    };
+    const first = await enrichUniverseMetadata({ DB: db } as never, { profile: failing } as unknown as EarningsProviderBundle, "2026-08-16T06:00:00.000Z", 0);
+    const second = await enrichUniverseMetadata({ DB: db } as never, { profile: failing } as unknown as EarningsProviderBundle, "2026-08-16T07:00:00.000Z", 0);
+    expect(first.requests).toBe(2);
+    expect(second.requests).toBe(2);
   });
 
   it("keeps the critical earnings health gate healthy when the profile provider fails", async () => {

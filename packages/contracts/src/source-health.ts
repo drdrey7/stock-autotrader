@@ -21,12 +21,11 @@ export const earningsEngineStateValues = [
 export type EarningsEngineState = (typeof earningsEngineStateValues)[number];
 
 /**
- * Non-critical enrichment diagnostics attached to a source's health. Used to
- * expose best-effort enrichment state (e.g. SEC EDGAR filing enrichment for
- * the earnings calendar) without making it part of the critical gate:
- * `consecutiveFailures` counts failed enrichment calls since the last success.
+ * Non-critical enrichment diagnostics for one best-effort provider path.
+ * Never part of the critical gate: consecutiveFailures counts failed calls
+ * since the last success for that path only.
  */
-export const secEnrichmentHealthSchema = z.object({
+export const enrichmentDiagnosticsSchema = z.object({
   provider: z.string().trim().min(1).max(128),
   lastAttempt: isoTimestampSchema.nullable(),
   lastSuccess: isoTimestampSchema.nullable(),
@@ -34,7 +33,24 @@ export const secEnrichmentHealthSchema = z.object({
   consecutiveFailures: z.number().int().nonnegative(),
 });
 
-export type SecEnrichmentHealth = z.infer<typeof secEnrichmentHealthSchema>;
+export type EnrichmentDiagnostics = z.infer<typeof enrichmentDiagnosticsSchema>;
+
+/** @deprecated Prefer enrichmentDiagnosticsSchema — kept as a stable alias. */
+export const secEnrichmentHealthSchema = enrichmentDiagnosticsSchema;
+/** @deprecated Prefer EnrichmentDiagnostics — kept as a stable alias. */
+export type SecEnrichmentHealth = EnrichmentDiagnostics;
+
+/**
+ * Earnings best-effort enrichment bundle. SEC EDGAR (filings/CIK) and Finnhub
+ * Company Profile 2 (logos/industry) are independent diagnostic paths; either
+ * can fail without degrading critical calendar health.
+ */
+export const earningsEnrichmentHealthSchema = z.object({
+  sec: enrichmentDiagnosticsSchema,
+  metadata: enrichmentDiagnosticsSchema,
+});
+
+export type EarningsEnrichmentHealth = z.infer<typeof earningsEnrichmentHealthSchema>;
 
 /**
  * Provider/read-model freshness metadata shared by every public data domain.
@@ -50,7 +66,7 @@ export const sourceHealthSchema = z.strictObject({
   lastAttempt: isoTimestampSchema.nullable(),
   error: z.string().trim().min(1).max(500).nullable(),
   engineState: z.enum(earningsEngineStateValues).optional(),
-  enrichment: secEnrichmentHealthSchema.optional(),
+  enrichment: earningsEnrichmentHealthSchema.optional(),
 }).superRefine((source, ctx) => {
   const hasData = source.asOf !== null && source.ageSeconds !== null && source.lastSuccess !== null;
   const add = (path: (string | number)[], message: string) =>

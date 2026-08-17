@@ -685,6 +685,19 @@ export async function upsertUniverseMember(db: Database, member: EarningsUnivers
   await upsertUniverseMembers(db, [member]);
 }
 
+/** Persist a Finnhub profile attempt timestamp (success or failure) for cooldown. */
+export async function stampUniverseMetadataAttempt(
+  db: Database,
+  symbol: string,
+  attemptedAt: string,
+): Promise<void> {
+  await db.prepare(
+    `UPDATE earnings_universe
+     SET metadata_attempted_at = ?
+     WHERE symbol = ? AND active = 1 AND source = 'core'`,
+  ).bind(attemptedAt, symbol).run();
+}
+
 export async function readUniverseMetadata(db: Database): Promise<Map<string, { company: string; cik: string | null; investorRelationsUrl: string | null }>> {
   // Include inactive rows so a re-added symbol keeps its previously enriched
   // metadata. Public reads use readActiveUniverseSymbols/active joins instead.
@@ -707,33 +720,42 @@ export interface UniverseMetadataCandidate {
   hasLogo: boolean;
   hasIndustry: boolean;
   metadataUpdatedAt: string | null;
+  metadataAttemptedAt: string | null;
 }
 
 /**
- * Active Core members whose Finnhub profile metadata is missing or stale.
- * `staleBefore` is an ISO timestamp; rows whose metadata_updated_at is older
- * are re-enriched. Missing-first ordering backfills never-enriched symbols
- * (the current 50-symbol Core set) before refreshing older profiles, and the
- * caller caps the per-run request budget.
+ * Active Core members whose Finnhub profile metadata is missing or stale AND
+ * whose last profile attempt is outside the cooldown window.
+ *
+ * `staleBefore` / `cooldownBefore` are ISO timestamps. Ordering prefers never-
+ * attempted symbols, then oldest attempts, then missing metadata, then symbol
+ * — so alphabetically-early failures cannot starve later Core members under
+ * the maintenance cap of 2/run.
  */
 export async function readUniverseMetadataCandidates(
   db: Database,
   staleBefore: string,
+  cooldownBefore: string,
   limit: number,
 ): Promise<UniverseMetadataCandidate[]> {
   const result = await db.prepare(
-    `SELECT symbol, company, logo_url, industry, metadata_updated_at
+    `SELECT symbol, company, logo_url, industry, metadata_updated_at, metadata_attempted_at
      FROM earnings_universe
      WHERE active = 1 AND source = 'core'
        AND (logo_url IS NULL OR industry IS NULL OR metadata_updated_at IS NULL OR metadata_updated_at < ?)
-     ORDER BY (metadata_updated_at IS NULL) DESC, symbol ASC
+       AND (metadata_attempted_at IS NULL OR metadata_attempted_at < ?)
+     ORDER BY (metadata_attempted_at IS NULL) DESC,
+              metadata_attempted_at ASC,
+              (metadata_updated_at IS NULL) DESC,
+              symbol ASC
      LIMIT ?`,
-  ).bind(staleBefore, limit).all<{
+  ).bind(staleBefore, cooldownBefore, limit).all<{
     symbol: string;
     company: string;
     logo_url: string | null;
     industry: string | null;
     metadata_updated_at: string | null;
+    metadata_attempted_at: string | null;
   }>();
   return result.results.map((row) => ({
     symbol: row.symbol,
@@ -741,6 +763,7 @@ export async function readUniverseMetadataCandidates(
     hasLogo: row.logo_url != null,
     hasIndustry: row.industry != null,
     metadataUpdatedAt: row.metadata_updated_at,
+    metadataAttemptedAt: row.metadata_attempted_at,
   }));
 }
 
