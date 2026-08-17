@@ -23,13 +23,6 @@
    order IS the visual, keyboard and screen-reader order on every breakpoint;
    the mobile layout only moves Market/Calendar to full-width rows. */
 .homepage-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;align-items:stretch}.homepage-grid>*{min-width:0}.homepage-grid .widget-block{margin-top:0;display:flex;flex-direction:column}.homepage-grid .mb-hero,.homepage-grid .sentiment-card{align-self:stretch}.homepage-grid .tv-widget-container,.homepage-grid .market-overview-frame{flex:1 1 auto;min-height:0}.homepage-grid .market-overview-frame{display:flex;align-items:center}.homepage-grid .stories-block{grid-column:1/-1}
-@media(min-width:981px){
-/* Desktop landing row: the Fear & Greed area sits beside the greeting without
-   its own card surface — no white box, no shadow, no border — so the top row
-   reads as one hero area. The card keeps its stretch height via the grid; only
-   its paint is removed. */
-.homepage-grid .sentiment-card{background:transparent;border-color:transparent;box-shadow:none}
-.homepage-grid .sentiment-card:hover,[data-theme="dark"] .homepage-grid .sentiment-card:hover{box-shadow:none}}
 .tv-widget-container{position:relative;width:100%;overflow:hidden;border:1px solid var(--border);border-radius:15px;background:var(--surface);box-shadow:var(--shadow);transition:background .2s,border .2s,box-shadow .2s}
 .tv-widget-container iframe{display:block;width:100%}
 .tv-widget-iframe.tv-widget-events{min-height:600px}.tv-widget-iframe.tv-widget-timeline{min-height:600px}.market-overview-frame{border:1px solid var(--border);border-radius:14px;overflow:hidden;background:var(--surface)}

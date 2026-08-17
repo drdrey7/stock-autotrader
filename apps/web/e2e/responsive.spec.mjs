@@ -155,17 +155,32 @@ for (const viewport of VIEWPORTS) {
       }
 
       if (viewport.width >= 981) {
-        // Desktop landing row: the Fear & Greed area blends into the page —
-        // no card surface of its own — while staying aligned to the greeting
-        // block beside it so the two read as one hero area.
+        // Desktop: the Fear & Greed card keeps the standard card surface —
+        // same background, border, radius and shadow as the greeting card it
+        // sits beside — while staying aligned to the greeting block so the two
+        // read as one hero row. Comparing computed styles to the hero is
+        // theme-agnostic and pins the surface without hard-coding palette
+        // values.
         const fgSurface = await page.evaluate(() => {
-          const cs = getComputedStyle(document.querySelector(".sentiment-card"));
-          const heroRect = document.querySelector(".mb-hero").getBoundingClientRect();
-          const fgRect = document.querySelector(".sentiment-card").getBoundingClientRect();
-          return { bg: cs.backgroundColor, shadow: cs.boxShadow, topGap: fgRect.top - heroRect.top, heightGap: fgRect.height - heroRect.height };
+          const fg = document.querySelector(".sentiment-card");
+          const hero = document.querySelector(".mb-hero");
+          const fgcs = getComputedStyle(fg);
+          const herocs = getComputedStyle(hero);
+          const fgRect = fg.getBoundingClientRect();
+          const heroRect = hero.getBoundingClientRect();
+          return {
+            bgMatches: fgcs.backgroundColor === herocs.backgroundColor,
+            borderMatches: fgcs.borderTopColor === herocs.borderTopColor,
+            radiusMatches: fgcs.borderRadius === herocs.borderRadius,
+            shadowMatches: fgcs.boxShadow === herocs.boxShadow,
+            topGap: fgRect.top - heroRect.top,
+            heightGap: fgRect.height - heroRect.height,
+          };
         });
-        expect(["rgba(0, 0, 0, 0)", "transparent"], `Fear & Greed card transparent on desktop (${theme})`).toContain(fgSurface.bg);
-        expect(fgSurface.shadow, `Fear & Greed card has no shadow on desktop (${theme})`).toBe("none");
+        expect(fgSurface.bgMatches, `Fear & Greed background matches greeting card on desktop (${theme})`).toBeTruthy();
+        expect(fgSurface.borderMatches, `Fear & Greed border matches greeting card on desktop (${theme})`).toBeTruthy();
+        expect(fgSurface.radiusMatches, `Fear & Greed radius matches greeting card on desktop (${theme})`).toBeTruthy();
+        expect(fgSurface.shadowMatches, `Fear & Greed shadow matches greeting card on desktop (${theme})`).toBeTruthy();
         expect(Math.abs(fgSurface.topGap), `Fear & Greed top aligns with greeting on desktop (${theme})`).toBeLessThanOrEqual(2);
         expect(Math.abs(fgSurface.heightGap), `Fear & Greed height matches greeting on desktop (${theme})`).toBeLessThanOrEqual(4);
 
