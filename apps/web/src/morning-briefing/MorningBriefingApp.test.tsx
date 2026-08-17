@@ -146,13 +146,13 @@ describe("Morning Briefing frontend demo", () => {
     const ticker = () => document.querySelector("tv-ticker-tape");
     const marketOverview = () => document.querySelector("tv-market-overview");
     // The global tape + market overview are web components: the theme updates in
-    // place via the color-theme attribute (no script remount).
-    await waitFor(() => expect(marketOverview()?.getAttribute("color-theme")).toBe("light"));
-    expect(ticker()?.getAttribute("color-theme")).toBe("light");
+    // place via the official theme attribute (no script remount).
+    await waitFor(() => expect(marketOverview()?.getAttribute("theme")).toBe("light"));
+    expect(ticker()?.getAttribute("theme")).toBe("light");
 
     fireEvent.click(screen.getAllByRole("button", { name: "Switch to dark mode" })[0]!);
-    await waitFor(() => expect(marketOverview()?.getAttribute("color-theme")).toBe("dark"));
-    expect(ticker()?.getAttribute("color-theme")).toBe("dark");
+    await waitFor(() => expect(marketOverview()?.getAttribute("theme")).toBe("dark"));
+    expect(ticker()?.getAttribute("theme")).toBe("dark");
     expect(document.documentElement.dataset.theme).toBe("dark");
 
     // The iframe widgets re-inject their script with the new colorTheme.
