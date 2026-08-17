@@ -5,19 +5,22 @@ import type { EarningsCompany } from "./data/earnings-view";
 import MorningBriefingPage from "./MorningBriefingPage";
 import { LazyPageErrorBoundary, PageLoadingFallback, spring } from "./shared";
 
+const HeatmapPage = lazy(() => import("./HeatmapPage"));
 const XPulsePage = lazy(() => import("./XPulsePage"));
 const EarningsPage = lazy(() => import("./EarningsCalendarPage"));
 const EarningsDetail = lazy(() => import("./EarningsDetail"));
 
-type Page = "briefing" | "surge" | "earnings";
+type Page = "briefing" | "heatmap" | "surge" | "earnings";
 
 function MorningBriefingShell() {
   const location = useLocation();
-  const page: Page = location.pathname === "/x"
-    ? "surge"
-    : location.pathname === "/earnings"
-      ? "earnings"
-      : "briefing";
+  const page: Page = location.pathname === "/heatmap"
+    ? "heatmap"
+    : location.pathname === "/x"
+      ? "surge"
+      : location.pathname === "/earnings"
+        ? "earnings"
+        : "briefing";
   const [selectedEarnings, setSelectedEarnings] = useState<EarningsCompany | null>(null);
 
   useEffect(() => {
@@ -43,6 +46,7 @@ function MorningBriefingShell() {
           <LazyPageErrorBoundary resetKey={page}>
             <Suspense fallback={<PageLoadingFallback/>}>
               {page === "briefing" && <MorningBriefingPage/>}
+              {page === "heatmap" && <HeatmapPage/>}
               {page === "surge" && <XPulsePage/>}
               {page === "earnings" && <EarningsPage onSelect={setSelectedEarnings}/>}
             </Suspense>
