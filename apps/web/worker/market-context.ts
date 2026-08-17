@@ -11,6 +11,11 @@ export const SENTIMENT_SESSION_STALE_AFTER_SECONDS = 2.5 * 60 * 60;
 // Outside a session (weekend, holiday, pre-market, overnight) the last value
 // of the previous valid session stays usable for up to 7 days.
 export const SENTIMENT_OFF_SESSION_STALE_AFTER_SECONDS = 7 * 24 * 60 * 60;
+// Session-open grace: at 09:30 ET the newest row is the prior session's close
+// (17h after a normal day, ~65h after a weekend), which exceeds the 2.5h
+// session gate. Keep the last valid reading usable until the first in-session
+// collection is expected to have landed (09:30 + 90min = 11:00 ET).
+export const SENTIMENT_SESSION_OPEN_GRACE_MINUTES = 90;
 const MAX_SOURCE_FUTURE_SKEW_MS = 5 * 60 * 1000;
 
 export type MarketIndexSymbol = "SPX" | "NDX" | "DJI" | "VIX";
@@ -479,7 +484,9 @@ export function isNewYorkWeekday(instant: Date): boolean {
  * expected to refresh every 30 minutes, so a value older than 2.5h is stale.
  * Outside the session (weekend, holiday, pre-market, overnight) the last value
  * of the previous valid session stays usable for up to 7 days — Friday's final
- * reading must not vanish over the weekend.
+ * reading must not vanish over the weekend. A short session-open grace keeps
+ * the prior session's close usable until the first in-session collection lands
+ * (otherwise every trading day at 09:30 ET the card would blank until 10:00).
  */
 export function sentimentStaleAfterSeconds(now: Date): number {
   const parts = localNewYorkParts(now);
@@ -487,7 +494,7 @@ export function sentimentStaleAfterSeconds(now: Date): number {
     return SENTIMENT_OFF_SESSION_STALE_AFTER_SECONDS;
   }
   const minutes = parts.hour * 60 + parts.minute;
-  if (minutes >= 9 * 60 + 30 && minutes <= 16 * 60 + 45) {
+  if (minutes >= (9 * 60 + 30) + SENTIMENT_SESSION_OPEN_GRACE_MINUTES && minutes <= 16 * 60 + 45) {
     return SENTIMENT_SESSION_STALE_AFTER_SECONDS;
   }
   return SENTIMENT_OFF_SESSION_STALE_AFTER_SECONDS;

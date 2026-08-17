@@ -552,7 +552,7 @@ describe("sentiment provider and schedules", () => {
   });
 
   it("applies market-aware sentiment freshness (session vs off-session)", () => {
-    // Tuesday session: a 3h-old value is stale inside market hours.
+    // Tuesday 11:00 ET: session gate (2.5h) applies.
     expect(sentimentStaleAfterSeconds(new Date("2026-08-11T15:00:00Z"))).toBe(SENTIMENT_SESSION_STALE_AFTER_SECONDS);
     // Weekend: 72h+ (Friday close to Monday) stays within the off-session gate.
     expect(sentimentStaleAfterSeconds(new Date("2026-08-15T12:00:00Z"))).toBe(SENTIMENT_OFF_SESSION_STALE_AFTER_SECONDS);
@@ -560,7 +560,20 @@ describe("sentiment provider and schedules", () => {
     expect(sentimentStaleAfterSeconds(new Date("2026-07-03T14:30:00Z"))).toBe(SENTIMENT_OFF_SESSION_STALE_AFTER_SECONDS);
     // Pre-market Monday 06:00 ET: off-session gate (last session still valid).
     expect(sentimentStaleAfterSeconds(new Date("2026-08-10T10:00:00Z"))).toBe(SENTIMENT_OFF_SESSION_STALE_AFTER_SECONDS);
-    // DST-safe: same UTC wall clock in January (EST) is pre-market, off-session.
-    expect(sentimentStaleAfterSeconds(new Date("2026-01-12T14:30:00Z"))).toBe(SENTIMENT_SESSION_STALE_AFTER_SECONDS);
+    // DST-safe: same UTC wall clock in January (EST) lands inside the
+    // session-open grace, so the off-session gate still applies.
+    expect(sentimentStaleAfterSeconds(new Date("2026-01-12T14:30:00Z"))).toBe(SENTIMENT_OFF_SESSION_STALE_AFTER_SECONDS);
+  });
+
+  it("keeps the prior session's reading usable during the session-open grace", () => {
+    // Monday 10:30 ET (09:30 + 90min grace): prior Friday close stays usable.
+    expect(sentimentStaleAfterSeconds(new Date("2026-08-10T14:30:00Z"))).toBe(SENTIMENT_OFF_SESSION_STALE_AFTER_SECONDS);
+    // Tuesday 10:45 ET: a normal-day open must not blank the card either.
+    expect(sentimentStaleAfterSeconds(new Date("2026-08-11T14:45:00Z"))).toBe(SENTIMENT_OFF_SESSION_STALE_AFTER_SECONDS);
+    // Monday 11:00 ET: grace ends, session gate applies.
+    expect(sentimentStaleAfterSeconds(new Date("2026-08-10T15:00:00Z"))).toBe(SENTIMENT_SESSION_STALE_AFTER_SECONDS);
+    // January (EST): same grace — 09:45 ET off-session, 11:00 ET session.
+    expect(sentimentStaleAfterSeconds(new Date("2026-01-12T14:45:00Z"))).toBe(SENTIMENT_OFF_SESSION_STALE_AFTER_SECONDS);
+    expect(sentimentStaleAfterSeconds(new Date("2026-01-12T16:00:00Z"))).toBe(SENTIMENT_SESSION_STALE_AFTER_SECONDS);
   });
 });
