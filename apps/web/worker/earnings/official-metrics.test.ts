@@ -3,6 +3,7 @@ import type { ResolvedOfficialMetrics } from "./sec-xbrl";
 import {
   buildAuditRow,
   EPS_MATCH_TOLERANCE,
+  officialAdjustedColumnsSetSql,
   REVENUE_MATCH_TOLERANCE_REL,
   SOURCE_FINNHUB_ADJUSTED,
   SOURCE_SEC_XBRL,
@@ -88,6 +89,31 @@ describe("buildAuditRow — decision matrix", () => {
     expect(row.write?.secFilingUrl).toMatch(/https:\/\/www\.sec\.gov\/Archives\/edgar\/data\/320193\//);
     expect(row.write?.secAccession).toBe("0000320193-26-000101");
     expect(row.write?.secForm).toBe("10-Q");
+  });
+
+  it("never stamps the SEC filing acceptance time as the earnings-release time", () => {
+    const row = buildAuditRow(input(), updatedAt);
+    // The SEC acceptance time is an official filing fact, not a market release
+    // instant. reportedAt must stay null (N/A upstream); secFiledAt carries it.
+    expect(row.write?.reportedAt).toBeNull();
+    expect(row.write?.reportedAtSource).toBeNull();
+    expect(row.write?.secFiledAt).toBe("2026-07-29T00:00:00.000Z");
+    expect(row.sec.filedAt).toBe("2026-07-29T13:00:00.000Z");
+  });
+
+  it("backfill adjusted-column SQL is fill-only (never overwrites a divergent provider adjusted)", () => {
+    // Default literal mirrors the backfill's sqlLiteral: numbers bare, strings
+    // single-quoted.
+    const sql = officialAdjustedColumnsSetSql(0.9, "finnhub-adjusted");
+    // own-value COALESCE: the existing adjusted (provider-owned) wins; the write
+    // only fills a NULL. An overwrite form would read
+    // `COALESCE(<write>, eps_actual_adjusted)`.
+    expect(sql).toContain("eps_actual_adjusted = COALESCE(eps_actual_adjusted, 0.9)");
+    expect(sql).toContain("eps_actual_adjusted_source = COALESCE(eps_actual_adjusted_source, 'finnhub-adjusted')");
+    expect(sql).not.toMatch(/COALESCE\(0\.9, eps_actual_adjusted\)/);
+    // nulls fill nothing explicitly (COALESCE keeps the existing value).
+    expect(officialAdjustedColumnsSetSql(null, null))
+      .toContain("eps_actual_adjusted = COALESCE(eps_actual_adjusted, NULL)");
   });
 
   it("decides DIFFERENT_BASIS when the provider adjusted EPS differs from GAAP (AAPL fixture)", () => {

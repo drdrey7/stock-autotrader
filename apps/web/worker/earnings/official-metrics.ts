@@ -46,6 +46,34 @@ export function revenueDefinitionalOutOfBand(provider: number | null, official: 
   return ratio > REVENUE_DEFINITION_MAX_RATIO || ratio < REVENUE_DEFINITION_MIN_RATIO;
 }
 
+export type SqlLiteral = (value: string | number | null) => string;
+
+const DEFAULT_SQL_LITERAL: SqlLiteral = (value) => {
+  if (value === null || value === undefined) return "NULL";
+  if (typeof value === "number") return Number.isFinite(value) ? String(value) : "NULL";
+  return `'${value.replace(/'/g, "''")}'`;
+};
+
+/**
+ * SET fragment for the adjusted EPS columns used by the one-shot backfill's
+ * --apply write. The adjusted mirror is FILL-ONLY (same rule as the Worker's
+ * applyOfficialMetrics): the provider owns it once set, so a write that mirrors
+ * the legacy actual must never overwrite a divergent provider-adjusted value —
+ * overwriting would pair a shown Adjusted actual with a Beat/Miss computed from
+ * a different basis. Canonical GAAP values stay COALESCE-with-write-wins; only
+ * the provider-owned adjusted mirror is own-value-keeps.
+ */
+export function officialAdjustedColumnsSetSql(
+  adjusted: number | null,
+  adjustedSource: string | null,
+  literal: SqlLiteral = DEFAULT_SQL_LITERAL,
+): string {
+  return [
+    `eps_actual_adjusted = COALESCE(eps_actual_adjusted, ${literal(adjusted)})`,
+    `eps_actual_adjusted_source = COALESCE(eps_actual_adjusted_source, ${literal(adjustedSource)})`,
+  ].join(",\n        ");
+}
+
 export interface AuditInput {
   symbol: string;
   company: string | null;
@@ -269,12 +297,14 @@ export function buildAuditRow(input: AuditInput, updatedAt: string): AuditRow {
 
   let write: OfficialMetricsWrite | null = null;
   if (input.status === "reported" && hasWritable) {
-    // SEC acceptance timestamp is authoritative whenever a filing is resolved.
-    const reportedTimestamp = filing.filedAt;
+    // reportedAt is the actual earnings-release timestamp and only when
+    // independently known. The SEC filing acceptance time is NOT the release
+    // time, so it is never stored as reportedAt — it belongs to secFiledAt.
+    // Consumers must not present a sec-filing timestamp as the release time.
     write = {
       eventId: input.eventId,
-      reportedAt: reportedTimestamp,
-      reportedAtSource: reportedTimestamp ? "sec-filing" : null,
+      reportedAt: null,
+      reportedAtSource: null,
       // SEC filing metadata resolved from XBRL (accession/form/filed) so the
       // worker-read sec_* columns are populated without waiting on enrichment.
       secFilingUrl: input.official && input.cik && epsValue !== null && input.official.eps.accn

@@ -38,6 +38,7 @@ import { fileURLToPath } from "node:url";
 import type { EarningsStatus } from "@stock-autotrader/contracts";
 import {
   buildAuditRow,
+  officialAdjustedColumnsSetSql,
   type AuditRow,
 } from "../apps/web/worker/earnings/official-metrics";
 import {
@@ -388,13 +389,16 @@ function applyWrites(rows: AuditRow[], options: CliOptions, updatedAt: string, f
     const write = row.write;
     // Canonical values are never cleared by a null re-resolution: the value
     // columns are COALESCE-wrapped, so a null write keeps the existing GAAP
-    // figure (same rule as applyOfficialMetrics on the Worker side).
+    // figure (same rule as applyOfficialMetrics on the Worker side). The
+    // adjusted mirror is FILL-ONLY (officialAdjustedColumnsSetSql): the
+    // provider owns it once set — the write mirrors the legacy actual but can
+    // never overwrite a divergent provider-adjusted value, keeping displayed
+    // Actual and Beat/Miss on the same basis.
     statements.push(
       `UPDATE earnings_events SET
         eps_actual_gaap = COALESCE(${sqlLiteral(write.epsActualGaap)}, eps_actual_gaap),
         eps_actual_gaap_source = COALESCE(${sqlLiteral(write.epsActualGaapSource)}, eps_actual_gaap_source),
-        eps_actual_adjusted = COALESCE(${sqlLiteral(write.epsActualAdjusted)}, eps_actual_adjusted),
-        eps_actual_adjusted_source = COALESCE(${sqlLiteral(write.epsActualAdjustedSource)}, eps_actual_adjusted_source),
+        ${officialAdjustedColumnsSetSql(write.epsActualAdjusted, write.epsActualAdjustedSource, sqlLiteral)},
         revenue_actual_official = COALESCE(${sqlLiteral(write.revenueActualOfficial)}, revenue_actual_official),
         revenue_actual_source = COALESCE(${sqlLiteral(write.revenueActualSource)}, revenue_actual_source),
         eps_estimate_source = COALESCE(${sqlLiteral(write.epsEstimateSource)}, eps_estimate_source),
