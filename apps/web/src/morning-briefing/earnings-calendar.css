@@ -1,0 +1,46 @@
+/* Earnings calendar responsive polish. Desktop styling remains in morning-briefing.css. */
+@media (max-width: 700px) {
+  .mb-demo .calendar-events {
+    gap: 3px;
+    margin-top: 3px;
+  }
+
+  .mb-demo .calendar-events button {
+    display: grid;
+    grid-template-columns: 14px minmax(0, 1fr);
+    gap: 4px;
+    align-items: center;
+    padding: 2px 0;
+    text-align: left;
+    background: transparent;
+  }
+
+  .mb-demo .calendar-events img.calendar-logo {
+    display: block;
+    width: 14px;
+    height: 14px;
+    border-radius: 4px;
+  }
+
+  .mb-demo .calendar-events .company-logo-fallback.calendar-logo {
+    display: grid;
+    width: 14px;
+    height: 14px;
+    border-radius: 4px;
+    font-size: 6px;
+  }
+
+  .mb-demo .calendar-events b {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text);
+    font-size: 7px;
+    line-height: 1.2;
+  }
+
+  .mb-demo .calendar-events small {
+    display: none;
+  }
+}
