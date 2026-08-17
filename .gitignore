@@ -26,3 +26,6 @@ bot/data/*.db
 bot/data/*.log
 bot/**/data/*.db
 bot/**/data/*.log
+
+# one-shot earnings official-metric audit artifact (VPS backfill dry-run)
+earnings-official-audit.json

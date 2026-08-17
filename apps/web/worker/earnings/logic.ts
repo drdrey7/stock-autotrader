@@ -191,6 +191,21 @@ export function normalizeEvent(
     // A provider collection time is not a report timestamp. Only an SEC
     // acceptance timestamp is authoritative for reportedAt.
     reportedAt: effectiveOfficial?.filedAt ?? null,
+    reportedAtSource: effectiveOfficial ? "sec-filing" : null,
+    // Official SEC GAAP metrics never originate from provider observations.
+    // They are resolved by the one-shot VPS backfill (sec-xbrl) and written
+    // through the dedicated official write path, which never runs here.
+    epsActualGaap: null,
+    epsActualGaapSource: null,
+    epsActualAdjusted: observation.epsActualAdjusted ?? null,
+    epsActualAdjustedSource: observation.epsActualAdjustedSource ?? null,
+    revenueActualOfficial: null,
+    revenueActualSource: null,
+    epsEstimateSource: observation.epsEstimateSource ?? null,
+    revenueEstimateSource: observation.revenueEstimateSource ?? null,
+    // A freshly normalized provider event has not been audited against SEC
+    // GAAP facts yet. `pending` means "not audited", never "values match".
+    dataQualityStatus: "pending",
     // The engine attaches the concrete adapter names after normalization.
     // Keeping this neutral prevents direct normalization from claiming FMP
     // provenance when production is Finnhub + SEC.

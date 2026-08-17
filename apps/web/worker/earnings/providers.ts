@@ -363,6 +363,12 @@ function normalizedFinnhubRow(
       revenueEstimate: finiteNumber(row.revenueEstimate),
       epsActual: finiteNumber(row.epsActual),
       revenueActual: finiteNumber(row.revenueActual),
+      // Finnhub earnings calendar actuals are adjusted/non-GAAP figures. Tag
+      // them explicitly so D1 can never confuse them with SEC GAAP values.
+      epsEstimateSource: "finnhub-consensus",
+      revenueEstimateSource: "finnhub-consensus",
+      epsActualAdjusted: finiteNumber(row.epsActual),
+      epsActualAdjustedSource: "finnhub-adjusted",
       providerEventId: `finnhub:${symbol}:${fiscalYear ?? "unknown"}:${fiscalQuarter ?? "unknown"}:${scheduledDate}`,
       // Finnhub does not publish a report timestamp in this endpoint. The
       // collection timestamp is provenance for the provider observation; SEC
@@ -744,7 +750,9 @@ export class SecEdgarProvider implements OfficialFilingsProvider, EarningsCalend
   private readonly metadataByCik = new Map<string, CompanyMetadata>();
 
   constructor(
-    private readonly userAgent = "StockAutotrader/1.0 (+https://github.com/drdrey7/stock-autotrader)",
+    // SEC EDGAR rejects generic/github-only User-Agents with 403; the contact
+    // email format is required (verified 2026-08-17).
+    private readonly userAgent = "StockAutotrader research contact@barroso-labs.com",
     private readonly fetcher: Fetcher = fetch,
     private readonly sleeper: Sleeper = defaultSleep,
     private readonly timeoutMs = PROVIDER_TIMEOUT_MS,

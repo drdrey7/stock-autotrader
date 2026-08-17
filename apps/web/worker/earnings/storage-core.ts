@@ -34,6 +34,16 @@ interface EarningsRow extends Record<string, unknown> {
   revenue_result?: unknown;
   overall_result?: unknown;
   reported_at?: unknown;
+  reported_at_source?: unknown;
+  eps_actual_gaap?: unknown;
+  eps_actual_gaap_source?: unknown;
+  eps_actual_adjusted?: unknown;
+  eps_actual_adjusted_source?: unknown;
+  revenue_actual_official?: unknown;
+  revenue_actual_source?: unknown;
+  eps_estimate_source?: unknown;
+  revenue_estimate_source?: unknown;
+  data_quality_status?: unknown;
   calendar_provider?: unknown;
   consensus_provider?: unknown;
   provider_event_id?: unknown;
@@ -96,6 +106,16 @@ export function rowToEarningsEvent(row: EarningsRow): EarningsEngineEvent {
     revenueResult: requiredText(row.revenue_result, "Not Available") as EarningsEngineEvent["revenueResult"],
     overallResult: requiredText(row.overall_result, "Not Available") as EarningsEngineEvent["overallResult"],
     reportedAt: text(row.reported_at),
+    reportedAtSource: text(row.reported_at_source) as EarningsEngineEvent["reportedAtSource"],
+    epsActualGaap: numberOrNull(row.eps_actual_gaap),
+    epsActualGaapSource: text(row.eps_actual_gaap_source) as EarningsEngineEvent["epsActualGaapSource"],
+    epsActualAdjusted: numberOrNull(row.eps_actual_adjusted),
+    epsActualAdjustedSource: text(row.eps_actual_adjusted_source) as EarningsEngineEvent["epsActualAdjustedSource"],
+    revenueActualOfficial: numberOrNull(row.revenue_actual_official),
+    revenueActualSource: text(row.revenue_actual_source) as EarningsEngineEvent["revenueActualSource"],
+    epsEstimateSource: text(row.eps_estimate_source) as EarningsEngineEvent["epsEstimateSource"],
+    revenueEstimateSource: text(row.revenue_estimate_source) as EarningsEngineEvent["revenueEstimateSource"],
+    dataQualityStatus: text(row.data_quality_status) as EarningsEngineEvent["dataQualityStatus"],
     calendarProvider: text(row.calendar_provider),
     consensusProvider: text(row.consensus_provider),
     providerEventId: text(row.provider_event_id),
@@ -205,6 +225,28 @@ function mergedEvent(existing: EarningsRow | null, incoming: NormalizedEarningsE
         reportedAt: old.reportedAt,
       }
     : {};
+  // Official SEC GAAP metrics and their provenance are owned by the one-shot
+  // official backfill, never by the provider sync. A provider observation
+  // carries nulls for all of these (dataQualityStatus normalizes to
+  // "pending"), so they must be preserved from the existing row instead of
+  // being clobbered by the incoming spread.
+  const preservedOfficial = {
+    reportedAtSource: old.reportedAtSource,
+    epsActualGaap: old.epsActualGaap,
+    epsActualGaapSource: old.epsActualGaapSource,
+    epsActualAdjusted: incoming.epsActualAdjusted ?? old.epsActualAdjusted,
+    epsActualAdjustedSource: incoming.epsActualAdjustedSource ?? old.epsActualAdjustedSource,
+    revenueActualOfficial: old.revenueActualOfficial,
+    revenueActualSource: old.revenueActualSource,
+    epsEstimateSource: incoming.epsEstimateSource ?? old.epsEstimateSource,
+    revenueEstimateSource: incoming.revenueEstimateSource ?? old.revenueEstimateSource,
+    // "pending" (or unset) from a fresh provider event must never downgrade an
+    // audited status ("different-basis", "conflict", ...). Undefined-safe: the
+    // provider path never sets dataQualityStatus on the incoming event.
+    dataQualityStatus: (incoming.dataQualityStatus ?? "pending") === "pending"
+      ? old.dataQualityStatus ?? "pending"
+      : incoming.dataQualityStatus,
+  };
   const epsEstimate = providerOlder ? old.epsEstimate : incoming.epsEstimate ?? old.epsEstimate;
   const epsActual = providerOlder ? old.epsActual : incoming.epsActual ?? old.epsActual;
   const revenueEstimate = providerOlder ? old.revenueEstimate : incoming.revenueEstimate ?? old.revenueEstimate;
@@ -216,6 +258,7 @@ function mergedEvent(existing: EarningsRow | null, incoming: NormalizedEarningsE
     ...incoming,
     ...providerValues,
     ...preservedLifecycle,
+    ...preservedOfficial,
     id: targetId,
     company: incoming.company || old.company,
     cik: incoming.cik ?? old.cik,
@@ -244,7 +287,10 @@ const VALUES = [
   "id", "symbol", "company", "cik", "fiscal_year", "fiscal_quarter", "fiscal_period", "fiscal_period_end",
   "scheduled_date", "scheduled_time", "timing", "status", "scheduled", "reported", "cancelled", "unknown",
   "eps_estimate", "eps_actual", "eps_surprise", "eps_surprise_pct", "eps_result", "revenue_estimate", "revenue_actual",
-  "revenue_surprise", "revenue_surprise_pct", "revenue_result", "overall_result", "reported_at", "calendar_provider",
+  "revenue_surprise", "revenue_surprise_pct", "revenue_result", "overall_result", "reported_at", "reported_at_source",
+  "eps_actual_gaap", "eps_actual_gaap_source", "eps_actual_adjusted", "eps_actual_adjusted_source",
+  "revenue_actual_official", "revenue_actual_source", "eps_estimate_source", "revenue_estimate_source",
+  "data_quality_status", "calendar_provider",
   "consensus_provider", "provider_event_id", "provider_updated_at", "official_report_url", "investor_relations_url",
   "sec_filing_url", "sec_accession", "sec_form", "sec_filed_at", "created_at", "updated_at", "last_checked_at",
 ] as const;
@@ -256,7 +302,11 @@ function params(event: NormalizedEarningsEvent): unknown[] {
     event.scheduled ? 1 : 0, event.reported ? 1 : 0, event.cancelled ? 1 : 0, event.unknown ? 1 : 0,
     event.epsEstimate, event.epsActual, event.epsSurprise, event.epsSurprisePct, event.epsResult,
     event.revenueEstimate, event.revenueActual, event.revenueSurprise, event.revenueSurprisePct, event.revenueResult,
-    event.overallResult, event.reportedAt, event.calendarProvider, event.consensusProvider, event.providerEventId,
+    event.overallResult, event.reportedAt, event.reportedAtSource,
+    event.epsActualGaap, event.epsActualGaapSource, event.epsActualAdjusted, event.epsActualAdjustedSource,
+    event.revenueActualOfficial, event.revenueActualSource, event.epsEstimateSource, event.revenueEstimateSource,
+    event.dataQualityStatus,
+    event.calendarProvider, event.consensusProvider, event.providerEventId,
     event.providerUpdatedAt, event.officialReportUrl, event.investorRelationsUrl, event.secFilingUrl, event.secAccession,
     event.secForm, event.secFiledAt, event.createdAt, event.updatedAt, event.lastCheckedAt,
   ];
@@ -296,6 +346,20 @@ const EVENT_UPDATES = [
   "revenue_result = CASE WHEN excluded.revenue_result = 'Not Available' THEN earnings_events.revenue_result ELSE excluded.revenue_result END",
   "overall_result = CASE WHEN excluded.overall_result = 'Not Available' THEN earnings_events.overall_result ELSE excluded.overall_result END",
   "reported_at = COALESCE(excluded.reported_at, earnings_events.reported_at)",
+  // Official metric fields are owned by the one-shot backfill: a provider
+  // upsert must never overwrite them (COALESCE keeps the existing value when
+  // the provider row carries null). data_quality_status uses the same
+  // "pending never downgrades an audited verdict" rule as mergedEvent.
+  "reported_at_source = COALESCE(excluded.reported_at_source, earnings_events.reported_at_source)",
+  "eps_actual_gaap = COALESCE(excluded.eps_actual_gaap, earnings_events.eps_actual_gaap)",
+  "eps_actual_gaap_source = COALESCE(excluded.eps_actual_gaap_source, earnings_events.eps_actual_gaap_source)",
+  "eps_actual_adjusted = COALESCE(excluded.eps_actual_adjusted, earnings_events.eps_actual_adjusted)",
+  "eps_actual_adjusted_source = COALESCE(excluded.eps_actual_adjusted_source, earnings_events.eps_actual_adjusted_source)",
+  "revenue_actual_official = COALESCE(excluded.revenue_actual_official, earnings_events.revenue_actual_official)",
+  "revenue_actual_source = COALESCE(excluded.revenue_actual_source, earnings_events.revenue_actual_source)",
+  "eps_estimate_source = COALESCE(excluded.eps_estimate_source, earnings_events.eps_estimate_source)",
+  "revenue_estimate_source = COALESCE(excluded.revenue_estimate_source, earnings_events.revenue_estimate_source)",
+  "data_quality_status = CASE WHEN excluded.data_quality_status = 'pending' OR excluded.data_quality_status IS NULL THEN earnings_events.data_quality_status ELSE excluded.data_quality_status END",
   "calendar_provider = COALESCE(excluded.calendar_provider, earnings_events.calendar_provider)",
   "consensus_provider = COALESCE(excluded.consensus_provider, earnings_events.consensus_provider)",
   "provider_event_id = COALESCE(excluded.provider_event_id, earnings_events.provider_event_id)",
@@ -445,6 +509,112 @@ export async function markPastScheduledEventsUnknown(db: Database, today: string
   await db.prepare(
     "UPDATE earnings_events SET status = 'unknown', scheduled = 0, reported = 0, unknown = 1, updated_at = ?, last_checked_at = ? WHERE scheduled_date IS NOT NULL AND scheduled_date < ? AND status = 'scheduled'",
   ).bind(updatedAt, updatedAt, today).run();
+}
+
+export interface OfficialMetricsWrite {
+  eventId: string;
+  reportedAt: string | null;
+  reportedAtSource: "sec-filing" | null;
+  /** SEC filing metadata resolved from the XBRL fact (optional, COALESCE-wrapped). */
+  secFilingUrl?: string | null;
+  secAccession?: string | null;
+  secForm?: string | null;
+  secFiledAt?: string | null;
+  epsActualGaap: number | null;
+  epsActualGaapSource: "sec-xbrl" | null;
+  epsActualAdjusted: number | null;
+  epsActualAdjustedSource: "finnhub-adjusted" | null;
+  revenueActualOfficial: number | null;
+  revenueActualSource: "sec-xbrl" | null;
+  epsEstimateSource: "finnhub-consensus" | null;
+  revenueEstimateSource: "finnhub-consensus" | null;
+  dataQualityStatus: EarningsEngineEvent["dataQualityStatus"];
+  fiscalPeriodEnd: string | null;
+  updatedAt: string;
+}
+
+/**
+ * Official-metrics write path used by the one-shot VPS backfill
+ * (scripts/earnings-official-last-quarter-backfill.ts).
+ *
+ * Write precedence (documented, never silently mixed):
+ *   1. Official SEC GAAP actuals (sec-xbrl) win over any provider value.
+ *   2. Finnhub adjusted actuals stay in their own column; they are never
+ *      copied into GAAP fields.
+ *   3. Consensus estimates remain consensus; provenance is stamped.
+ *   4. Legacy eps_actual / revenue_actual are never touched here — they keep
+ *      their provider semantics for backward compatibility.
+ *
+ * The UPDATE only sets the official fields; it never rewrites legacy columns
+ * and never clears an existing official value with null. Idempotent: callers
+ * re-run with the same resolved values and nothing changes.
+ */
+export async function applyOfficialMetrics(db: Database, write: OfficialMetricsWrite): Promise<boolean> {
+  const existing = await db.prepare("SELECT * FROM earnings_events WHERE id = ? LIMIT 1").bind(write.eventId).first<EarningsRow>();
+  if (!existing) return false;
+  const previous = rowToEarningsEvent(existing);
+  // Canonical values and their provenance are never cleared with null: a null
+  // write means "keep the existing value" (COALESCE on the write side). The
+  // change test therefore only fires when the write carries a non-null value
+  // that differs, keeping re-runs truly idempotent.
+  const valueChanged = (previousValue: number | null, writtenValue: number | null): boolean =>
+    writtenValue !== null && previousValue !== writtenValue;
+  const sourceChanged = (previousValue: string | null, writtenValue: string | null): boolean =>
+    writtenValue !== null && previousValue !== writtenValue;
+  const changed =
+    valueChanged(previous.epsActualGaap, write.epsActualGaap)
+    || sourceChanged(previous.epsActualGaapSource, write.epsActualGaapSource)
+    || valueChanged(previous.epsActualAdjusted, write.epsActualAdjusted)
+    || sourceChanged(previous.epsActualAdjustedSource, write.epsActualAdjustedSource)
+    || valueChanged(previous.revenueActualOfficial, write.revenueActualOfficial)
+    || sourceChanged(previous.revenueActualSource, write.revenueActualSource)
+    || sourceChanged(previous.epsEstimateSource, write.epsEstimateSource)
+    || sourceChanged(previous.revenueEstimateSource, write.revenueEstimateSource)
+    || (write.reportedAt !== null && previous.reportedAt !== write.reportedAt)
+    || (write.reportedAtSource !== null && previous.reportedAtSource !== write.reportedAtSource)
+    || (write.secFilingUrl !== undefined && write.secFilingUrl !== null && previous.secFilingUrl !== write.secFilingUrl)
+    || (write.secAccession !== undefined && write.secAccession !== null && previous.secAccession !== write.secAccession)
+    || (write.secForm !== undefined && write.secForm !== null && previous.secForm !== write.secForm)
+    || (write.secFiledAt !== undefined && write.secFiledAt !== null && previous.secFiledAt !== write.secFiledAt)
+    || previous.dataQualityStatus !== write.dataQualityStatus
+    || (write.fiscalPeriodEnd !== null && previous.fiscalPeriodEnd !== write.fiscalPeriodEnd);
+  if (!changed) return false;
+  await db.prepare(
+    `UPDATE earnings_events SET
+       eps_actual_gaap = COALESCE(?, eps_actual_gaap),
+       eps_actual_gaap_source = COALESCE(?, eps_actual_gaap_source),
+       eps_actual_adjusted = COALESCE(?, eps_actual_adjusted),
+       eps_actual_adjusted_source = COALESCE(?, eps_actual_adjusted_source),
+       revenue_actual_official = COALESCE(?, revenue_actual_official),
+       revenue_actual_source = COALESCE(?, revenue_actual_source),
+       eps_estimate_source = COALESCE(?, eps_estimate_source),
+       revenue_estimate_source = COALESCE(?, revenue_estimate_source),
+       reported_at = COALESCE(?, reported_at),
+       reported_at_source = COALESCE(?, reported_at_source),
+       fiscal_period_end = COALESCE(?, fiscal_period_end),
+       sec_filing_url = COALESCE(?, sec_filing_url),
+       sec_accession = COALESCE(?, sec_accession),
+       sec_form = COALESCE(?, sec_form),
+       sec_filed_at = COALESCE(?, sec_filed_at),
+       data_quality_status = ?,
+       updated_at = ?
+     WHERE id = ?`,
+  ).bind(
+    write.epsActualGaap, write.epsActualGaapSource,
+    write.epsActualAdjusted, write.epsActualAdjustedSource,
+    write.revenueActualOfficial, write.revenueActualSource,
+    write.epsEstimateSource, write.revenueEstimateSource,
+    write.reportedAt, write.reportedAtSource,
+    write.fiscalPeriodEnd ?? null,
+    write.secFilingUrl ?? null,
+    write.secAccession ?? null,
+    write.secForm ?? null,
+    write.secFiledAt ?? null,
+    write.dataQualityStatus,
+    write.updatedAt,
+    write.eventId,
+  ).run();
+  return true;
 }
 
 export async function markUnseenScheduledEventsUnknown(

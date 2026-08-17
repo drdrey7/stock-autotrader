@@ -1,6 +1,8 @@
 import type {
+  EarningsDataQualityStatus,
   EarningsEngineEvent,
   EarningsMetricResult,
+  EarningsMetricSource,
   EarningsOverallResult,
   EarningsStatus,
 } from "@stock-autotrader/contracts";
@@ -38,6 +40,13 @@ export interface EarningsCalendarObservation {
   officialReportUrl: string | null;
   officialFiling?: OfficialFiling;
   cancelled?: boolean;
+  // Provider-declared provenance. The production Finnhub adapter tags its
+  // estimates as consensus and its calendar actuals as adjusted/non-GAAP;
+  // SEC-derived observations never carry these.
+  epsEstimateSource?: "finnhub-consensus";
+  revenueEstimateSource?: "finnhub-consensus";
+  epsActualAdjusted?: number | null;
+  epsActualAdjustedSource?: "finnhub-adjusted";
 }
 
 export interface EarningsConsensusObservation {
@@ -171,6 +180,16 @@ export interface NormalizedEarningsEvent {
   revenueResult: EarningsMetricResult;
   overallResult: EarningsOverallResult;
   reportedAt: string | null;
+  reportedAtSource: EarningsMetricSource | null;
+  epsActualGaap: number | null;
+  epsActualGaapSource: EarningsMetricSource | null;
+  epsActualAdjusted: number | null;
+  epsActualAdjustedSource: EarningsMetricSource | null;
+  revenueActualOfficial: number | null;
+  revenueActualSource: EarningsMetricSource | null;
+  epsEstimateSource: EarningsMetricSource | null;
+  revenueEstimateSource: EarningsMetricSource | null;
+  dataQualityStatus: EarningsDataQualityStatus | null;
   calendarProvider: string | null;
   consensusProvider: string | null;
   providerEventId: string | null;

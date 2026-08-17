@@ -94,7 +94,10 @@ function isDateKey(value: unknown): value is string {
 
 const EARNINGS_STRING_FIELDS = [
   "id", "symbol", "company", "cik", "date", "scheduledDate", "scheduledTime",
-  "fiscalPeriod", "fiscalPeriodEnd", "reportedAt", "calendarProvider", "consensusProvider",
+  "fiscalPeriod", "fiscalPeriodEnd", "reportedAt", "reportedAtSource",
+  "epsActualGaapSource", "epsActualAdjustedSource", "revenueActualSource",
+  "epsEstimateSource", "revenueEstimateSource", "dataQualityStatus",
+  "calendarProvider", "consensusProvider",
   "providerEventId", "providerUpdatedAt", "officialReportUrl", "investorRelationsUrl",
   "secFilingUrl", "secAccession", "secForm", "secFiledAt", "createdAt", "updatedAt", "lastCheckedAt",
   "logoUrl", "industry", "websiteUrl",
@@ -103,6 +106,7 @@ const EARNINGS_STRING_FIELDS = [
 const EARNINGS_NUMBER_FIELDS = [
   "fiscalYear", "fiscalQuarter", "epsEstimate", "epsActual", "epsSurprise", "epsSurprisePct",
   "revenueEstimate", "revenueActual", "revenueSurprise", "revenueSurprisePct",
+  "epsActualGaap", "epsActualAdjusted", "revenueActualOfficial",
 ] as const;
 
 const EARNINGS_BOOLEAN_FIELDS = ["scheduled", "reported", "cancelled", "unknown"] as const;

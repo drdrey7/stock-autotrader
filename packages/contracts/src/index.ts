@@ -78,6 +78,37 @@ export type EarningsMetricResult = "Beat" | "In Line" | "Miss" | "Not Available"
 export type EarningsOverallResult = "Beat" | "In Line" | "Miss" | "Mixed" | "Not Available";
 
 /**
+ * Explicit provenance for every Earnings metric that can be produced by more
+ * than one source. Vague values ("api", "provider", "official") are forbidden.
+ */
+export type EarningsMetricSource =
+  | "sec-xbrl"
+  | "sec-filing"
+  | "finnhub-consensus"
+  | "finnhub-adjusted";
+
+/**
+ * Data-quality verdict for the latest reported quarter of an earnings event.
+ * Mirrors the backfill audit decision vocabulary:
+ *
+ * - `match`:        provider actual ≈ official GAAP actual (same basis within tolerance)
+ * - `different-basis`: provider actual differs from official GAAP (adjusted vs GAAP)
+ * - `conflict`:     provider and SEC disagree on fiscal identity or context
+ * - `official-only`: only the SEC GAAP value resolved (provider actual missing)
+ * - `finnhub-only`: only the provider value exists (SEC unresolved)
+ * - `unresolved`:   audit could not determine a canonical official value
+ * - `pending`:      not audited yet (default for new provider events)
+ */
+export type EarningsDataQualityStatus =
+  | "match"
+  | "different-basis"
+  | "conflict"
+  | "official-only"
+  | "finnhub-only"
+  | "unresolved"
+  | "pending";
+
+/**
  * Cloudflare-owned earnings read model. This is intentionally provider-neutral:
  * consumers must not depend on Finnhub, SEC, or another adapter's field names.
  */
@@ -106,17 +137,51 @@ export interface EarningsEngineEvent {
   cancelled: boolean;
   unknown: boolean;
   epsEstimate: number | null;
+  /**
+   * Legacy provider actual, kept for backward compatibility with the UI/API.
+   * In production this is the Finnhub calendar actual, which is an
+   * adjusted/non-GAAP figure. Prefer the explicit split: `epsActualGaap`
+   * (official) vs `epsActualAdjusted` (provider). Never compare this legacy
+   * value against `epsEstimate` basis-blind — see `dataQualityStatus`.
+   */
   epsActual: number | null;
   epsSurprise: number | null;
   epsSurprisePct: number | null;
   epsResult: EarningsMetricResult;
   revenueEstimate: number | null;
+  /**
+   * Legacy provider actual (Finnhub calendar, adjusted basis) — same
+   * compatibility semantics as `epsActual`. Official quarterly GAAP revenue
+   * lives in `revenueActualOfficial`.
+   */
   revenueActual: number | null;
   revenueSurprise: number | null;
   revenueSurprisePct: number | null;
   revenueResult: EarningsMetricResult;
   overallResult: EarningsOverallResult;
   reportedAt: string | null;
+  reportedAtSource: EarningsMetricSource | null;
+  /** Official SEC GAAP diluted EPS for the event's fiscal quarter, when resolved. */
+  epsActualGaap: number | null;
+  /** Provenance of `epsActualGaap` — `sec-xbrl` in production. */
+  epsActualGaapSource: EarningsMetricSource | null;
+  /** Provider adjusted/non-GAAP EPS actual, mirrored from the provider path. */
+  epsActualAdjusted: number | null;
+  /** Provenance of `epsActualAdjusted` — `finnhub-adjusted` in production. */
+  epsActualAdjustedSource: EarningsMetricSource | null;
+  /** Official GAAP quarterly revenue (never YTD), when resolved. */
+  revenueActualOfficial: number | null;
+  /** Provenance of `revenueActualOfficial` — `sec-xbrl` in production. */
+  revenueActualSource: EarningsMetricSource | null;
+  /** Provenance of the consensus estimate — `finnhub-consensus` in production. */
+  epsEstimateSource: EarningsMetricSource | null;
+  /** Provenance of the revenue estimate — `finnhub-consensus` in production. */
+  revenueEstimateSource: EarningsMetricSource | null;
+  /**
+   * Audit/quality verdict for the latest reported quarter. NULL/pending means
+   * the official-metric enrichment has not resolved this event yet.
+   */
+  dataQualityStatus: EarningsDataQualityStatus | null;
   calendarProvider: string | null;
   consensusProvider: string | null;
   providerEventId: string | null;

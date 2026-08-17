@@ -8,8 +8,13 @@
     "validate:core-universe": "node scripts/validate-core-universe.mjs",
     "build": "npm run validate:core-universe && npm run build -w @stock-autotrader/contracts && npm run build -w @stock-autotrader/web",
     "lint": "npm run lint --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present"
+    "typecheck": "npm run typecheck --workspaces --if-present && tsc -p scripts/tsconfig.json",
+    "test": "npm run test --workspaces --if-present",
+    "backfill:earnings-official": "npx --yes tsx scripts/earnings-official-last-quarter-backfill.ts"
   },
-  "engines": { "node": ">=20" }
+  "engines": { "node": ">=20" },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.9.2"
+  }
 }
