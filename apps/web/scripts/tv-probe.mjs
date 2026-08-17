@@ -70,11 +70,11 @@ const probeHtml = (symbols, sections) => `<!doctype html><html><head><meta chars
 <body style="margin:0;background:#f7f8f7;font-family:system-ui">
   <h3>Ticker tape</h3>
   <div id="ticker" style="width:900px;border:1px solid #ddd">
-    <tv-ticker-tape symbols="${symbols}" item-size="compact" hide-chart color-theme="light"></tv-ticker-tape>
+    <tv-ticker-tape symbols="${symbols}" item-size="compact" hide-chart theme="light"></tv-ticker-tape>
   </div>
   <h3>Market overview</h3>
   <div id="market" style="width:600px;border:1px solid #ddd">
-    <tv-market-overview mode="custom" time-frame="12M" color-theme="light"
+    <tv-market-overview mode="custom" time-frame="12M" theme="light"
       symbol-sectors='${JSON.stringify(sections)}'>
     </tv-market-overview>
   </div>
