@@ -23,8 +23,8 @@ interface TickerTapeProps {
  * The module is loaded exactly once via `loader.ts`; the element is created
  * immediately (it upgrades in place when the module arrives and shows
  * TradingView's own skeleton while fetching quotes). Theme is applied through
- * the `color-theme` attribute and updates in place — theme changes never tear
- * the tape down and rebuild it.
+ * the official `theme` attribute and updates in place — theme changes never
+ * tear the tape down and rebuild it.
  */
 export function TickerTape({
   symbols,
@@ -48,7 +48,7 @@ export function TickerTape({
     el.setAttribute("item-size", itemSize);
     // Boolean host attribute: present => charts hidden.
     el.toggleAttribute("hide-chart", hideChart);
-    el.setAttribute("color-theme", colorTheme);
+    el.setAttribute("theme", colorTheme);
     host.appendChild(el);
     return () => {
       el.remove();
@@ -59,7 +59,7 @@ export function TickerTape({
   }, [symbolList, itemSize, hideChart, locale]);
 
   useEffect(() => {
-    hostRef.current?.querySelector("tv-ticker-tape")?.setAttribute("color-theme", colorTheme);
+    hostRef.current?.querySelector("tv-ticker-tape")?.setAttribute("theme", colorTheme);
   }, [colorTheme]);
 
   return (
