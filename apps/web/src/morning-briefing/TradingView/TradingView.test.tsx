@@ -44,7 +44,8 @@ describe("TickerTape (web component)", () => {
     expect(el).not.toBeNull();
     expect(el!.getAttribute("symbols")).toBe(TICKER_SYMBOLS.join(","));
     expect(el!.getAttribute("item-size")).toBe("compact");
-    expect(el!.getAttribute("color-theme")).toBe("light");
+    expect(el!.getAttribute("theme")).toBe("light");
+    expect(el!.hasAttribute("color-theme")).toBe(false);
     // The tape is a clean text strip: the mini sparkline is hidden so each item
     // is a compact quote (name + value + change), not a chart that eats the
     // mobile viewport.
@@ -58,7 +59,7 @@ describe("TickerTape (web component)", () => {
     expect(TICKER_SYMBOLS).not.toEqual(expect.arrayContaining(["CME_MINI:ES1!", "CME_MINI:NQ1!", "CBOE:VIX", "TVC:VIX"]));
   });
 
-  it("updates color-theme in place when the theme changes — no element remount", () => {
+  it("updates the official theme attribute in place when the theme changes — no element remount", () => {
     function Harness() {
       const [theme, setTheme] = useState<"light" | "dark">("light");
       return (
@@ -70,11 +71,11 @@ describe("TickerTape (web component)", () => {
     }
     renderWithTheme(<Harness />);
     const first = document.querySelector("tv-ticker-tape")!;
-    expect(first.getAttribute("color-theme")).toBe("light");
+    expect(first.getAttribute("theme")).toBe("light");
 
     fireEvent.click(screen.getByRole("button", { name: "Toggle" }));
     const current = document.querySelector("tv-ticker-tape")!;
-    expect(current.getAttribute("color-theme")).toBe("dark");
+    expect(current.getAttribute("theme")).toBe("dark");
     // Same node, still exactly one element: theme changes never tear down the tape.
     expect(current).toBe(first);
     expect(document.querySelectorAll("tv-ticker-tape")).toHaveLength(1);
