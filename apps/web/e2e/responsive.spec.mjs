@@ -1,7 +1,8 @@
 // Responsive reality check: the homepage must hold together at the mobile
-// widths that matter (390px phone, 820px tablet) and on desktop (1440px), in
-// both themes, with no page-level horizontal overflow, no console errors and
-// no TradingView error states. Runs the viewport matrix on the desktop project
+// widths that matter (390px and 430px phones, 820px tablet) and on desktop
+// (1440px), in both themes, with no page-level horizontal overflow, no console
+// errors, no TradingView error states, and the DOM/visual section order
+// matching the logical layout. Runs the viewport matrix on the desktop project
 // (setViewportSize overrides the project viewport); mobile reality is also
 // exercised by the mobile-chromium runs of smoke/tv-csp/tv-live.
 
@@ -12,6 +13,7 @@ test.skip(({ isMobile }) => isMobile, "Responsive matrix runs on the desktop pro
 
 const VIEWPORTS = [
   { width: 390, height: 844, label: "390px phone" },
+  { width: 430, height: 932, label: "430px phone" },
   { width: 820, height: 1180, label: "820px tablet" },
   { width: 1440, height: 900, label: "1440px desktop" },
 ];
@@ -116,11 +118,109 @@ for (const viewport of VIEWPORTS) {
       await expect(page.locator("body")).not.toContainText("No data here yet");
       expect(await noOverflow(), `no horizontal overflow at ${viewport.label} (${theme})`).toBeTruthy();
 
-      // The hero, market overview frame and opportunities section are all on
+      // The hero, market overview frame and Fear & Greed card are all on
       // screen without a horizontal scrollbar.
-      await expect(page.locator(".hero")).toBeVisible();
+      await expect(page.locator(".mb-hero")).toBeVisible();
       await expect(page.locator(".market-overview-frame")).toBeVisible();
-      await expect(page.locator(".opportunities-card")).toBeVisible();
+      await expect(page.locator(".sentiment-card")).toBeVisible();
+
+      // The simplified Fear & Greed card keeps only the title, gauge, score,
+      // one label and the "Updated" timestamp — the Momentum / Risk appetite
+      // rows are gone.
+      await expect(page.locator(".sentiment-card")).not.toContainText("Momentum");
+      await expect(page.locator(".sentiment-card")).not.toContainText("Risk appetite");
+
+      // The Fear & Greed gauge stays horizontally centred inside its card on
+      // every breakpoint. The score and its label live inside the gauge, so
+      // centring the gauge centres the whole reading.
+      const fgCentering = await page.evaluate(() => {
+        const card = document.querySelector(".sentiment-card");
+        const gauge = card?.querySelector(".gauge");
+        if (!card || !gauge) return null;
+        const cardRect = card.getBoundingClientRect();
+        const gaugeRect = gauge.getBoundingClientRect();
+        const strong = gauge.querySelector(".gauge-mask strong");
+        const strongRect = strong?.getBoundingClientRect();
+        return {
+          gaugeOffset: gaugeRect.left + gaugeRect.width / 2 - (cardRect.left + cardRect.width / 2),
+          strongOffset: strongRect
+            ? strongRect.left + strongRect.width / 2 - (gaugeRect.left + gaugeRect.width / 2)
+            : null,
+        };
+      });
+      expect(fgCentering, `sentiment card + gauge present at ${viewport.label} (${theme})`).not.toBeNull();
+      expect(Math.abs(fgCentering.gaugeOffset), `gauge centred in card at ${viewport.label} (${theme})`).toBeLessThanOrEqual(4);
+      if (fgCentering.strongOffset !== null) {
+        expect(Math.abs(fgCentering.strongOffset), `score centred in gauge at ${viewport.label} (${theme})`).toBeLessThanOrEqual(4);
+      }
+
+      if (viewport.width >= 981) {
+        // Desktop: the Fear & Greed card keeps the standard card surface —
+        // same background, border, radius and shadow as the greeting card it
+        // sits beside — while staying aligned to the greeting block so the two
+        // read as one hero row. Comparing computed styles to the hero is
+        // theme-agnostic and pins the surface without hard-coding palette
+        // values.
+        const fgSurface = await page.evaluate(() => {
+          const fg = document.querySelector(".sentiment-card");
+          const hero = document.querySelector(".mb-hero");
+          const fgcs = getComputedStyle(fg);
+          const herocs = getComputedStyle(hero);
+          const fgRect = fg.getBoundingClientRect();
+          const heroRect = hero.getBoundingClientRect();
+          return {
+            bgMatches: fgcs.backgroundColor === herocs.backgroundColor,
+            borderMatches: fgcs.borderTopColor === herocs.borderTopColor,
+            radiusMatches: fgcs.borderRadius === herocs.borderRadius,
+            shadowMatches: fgcs.boxShadow === herocs.boxShadow,
+            topGap: fgRect.top - heroRect.top,
+            heightGap: fgRect.height - heroRect.height,
+          };
+        });
+        expect(fgSurface.bgMatches, `Fear & Greed background matches greeting card on desktop (${theme})`).toBeTruthy();
+        expect(fgSurface.borderMatches, `Fear & Greed border matches greeting card on desktop (${theme})`).toBeTruthy();
+        expect(fgSurface.radiusMatches, `Fear & Greed radius matches greeting card on desktop (${theme})`).toBeTruthy();
+        expect(fgSurface.shadowMatches, `Fear & Greed shadow matches greeting card on desktop (${theme})`).toBeTruthy();
+        expect(Math.abs(fgSurface.topGap), `Fear & Greed top aligns with greeting on desktop (${theme})`).toBeLessThanOrEqual(2);
+        expect(Math.abs(fgSurface.heightGap), `Fear & Greed height matches greeting on desktop (${theme})`).toBeLessThanOrEqual(4);
+
+        // Desktop row 2: Market Overview and the Economic Calendar stretch to
+        // one shared height — same top, same bottom, same visible card height.
+        const cols = await page.evaluate(() => {
+          const market = document.querySelector(".market-overview-block").getBoundingClientRect();
+          const calendar = document.querySelector(".calendar-block").getBoundingClientRect();
+          const marketFrame = document.querySelector(".market-overview-frame").getBoundingClientRect();
+          const calendarFrame = document.querySelector(".calendar-block .tv-widget-container").getBoundingClientRect();
+          return {
+            heightGap: market.height - calendar.height,
+            topGap: market.top - calendar.top,
+            frameHeightGap: marketFrame.height - calendarFrame.height,
+            frameBottomGap: marketFrame.bottom - calendarFrame.bottom,
+          };
+        });
+        expect(Math.abs(cols.heightGap), `Market/Calendar blocks same height on desktop (${theme})`).toBeLessThanOrEqual(4);
+        expect(Math.abs(cols.topGap), `Market/Calendar blocks same top on desktop (${theme})`).toBeLessThanOrEqual(2);
+        expect(Math.abs(cols.frameHeightGap), `Market/Calendar frames same height on desktop (${theme})`).toBeLessThanOrEqual(4);
+        expect(Math.abs(cols.frameBottomGap), `Market/Calendar frames share a bottom edge on desktop (${theme})`).toBeLessThanOrEqual(4);
+      }
+
+      // DOM order must equal the logical visual order (Hero, Fear & Greed,
+      // Market Overview, Economic Calendar, Top Stories) with no CSS `order`
+      // rearrangements, on every breakpoint.
+      const order = await page.evaluate(() => {
+        const children = [...document.querySelectorAll(".homepage-grid > *")];
+        const selectors = [".mb-hero", ".sentiment-card", ".market-overview-block", ".calendar-block", ".stories-block"];
+        const domIndex = selectors.map((s) => children.indexOf(document.querySelector(s)));
+        // Reading order by (top, left) — rows top-down, then left-right.
+        const readingKey = selectors.map((s) => {
+          const rect = document.querySelector(s).getBoundingClientRect();
+          return Math.round(rect.top * 100000 + rect.left);
+        });
+        const sorted = [...readingKey].sort((a, b) => a - b);
+        return { domIndex, inOrder: domIndex.every((v, i) => v === i) && readingKey.every((v, i) => v === sorted[i]) };
+      });
+      expect(order.domIndex, `DOM order at ${viewport.label} (${theme})`).toEqual([0, 1, 2, 3, 4]);
+      expect(order.inOrder, `visual order must match DOM order at ${viewport.label} (${theme})`).toBeTruthy();
     }
 
     expect(errors, `no console errors at ${viewport.label}`).toEqual([]);

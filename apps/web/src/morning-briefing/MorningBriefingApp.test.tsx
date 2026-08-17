@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, useLocation, useNavigate } from "react-router-dom";
 import App from "../App";
 import MorningBriefingApp from "./MorningBriefingApp";
+import { localDateLabel, marketGreeting } from "./local-time";
 import { ThemeProvider } from "../shell/theme";
 
 // The Morning Briefing pages now live inside the dashboard shell, which owns
@@ -18,39 +19,13 @@ function HistoryApp() {
   return <><button onClick={() => navigate(-1)}>Browser Back</button><ThemeProvider><MorningBriefingApp/></ThemeProvider></>;
 }
 
-const liveBriefingForDetails = {
-  example: false,
-  editionDate: "2026-08-12",
-  editionType: "pre_market",
-  timezone: "America/New_York",
-  preparedAt: "2026-08-12T12:30:00Z",
-  title: "Pre-market briefing",
-  marketSummary: "Constructive session.",
-  market: [
-    { name: "S&P 500", symbol: "SP:SPX", value: "6412.10", change: "+0.31%", state: "Constructive", note: "Holding." },
-    { name: "Nasdaq-100", symbol: "NASDAQ:NDX", value: "23830.02", change: "+0.55%", state: "Leading", note: "Leading." },
-    { name: "VIX", symbol: "CBOE:VIX", value: "15.40", change: "-2.10%", state: "Contained", note: "Calm." },
-  ],
-  ideas: [{
-    symbol: "NVDA", company: "NVIDIA Corporation", universe: "Both", verdict: "Potential Entry",
-    price: "$183.10", change: "+1.75%", thesis: "Relative strength supports the setup.",
-    source: { handle: "@nolimitgains", reference: "https://x.com/nolimitgains/status/1234", originalTimestamp: null, collectedTimestamp: null, summary: "Source." },
-    technical: ["Strong"], financial: ["Healthy"], news: ["Clear"], risks: ["Gap risk"],
-    levels: { trigger: "Above $183.60", invalidation: "Below $179.20", objective: "$194", rewardRisk: "2.6R", rewardRiskRatio: 2.6 },
-  }],
-  schedule: [],
-};
-
 const stubEarningsSchedule = () => {
   vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
     const url = String(input);
-    if (url === "/api/briefs/latest") {
-      return new Response(JSON.stringify(liveBriefingForDetails), { status: 200 });
-    }
     if (url === "/api/status") {
       return new Response(JSON.stringify({
         candidates: [],
-        briefing: { available: true, freshness: "fresh", publishedAt: liveBriefingForDetails.preparedAt },
+        briefing: { available: true, freshness: "fresh", publishedAt: "2026-08-12T12:30:00Z" },
       }), { status: 200 });
     }
     if (url === "/api/earnings") {
@@ -91,7 +66,7 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 describe("Morning Briefing frontend demo", () => {
   it("opens on Morning Briefing and navigates between the three areas via the shell", async () => {
     render(<MemoryRouter initialEntries={["/"]}><RoutedApp/></MemoryRouter>);
-    expect(screen.getByRole("heading", { name: "Good afternoon." })).toBeInTheDocument();
+    expect(screen.getByText(/economic calendar and top stories/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("link", { name: "X Pulse" }));
     expect(await screen.findByRole("heading", { level: 1, name: /X Pulse/ })).toBeInTheDocument();
@@ -140,29 +115,34 @@ describe("Morning Briefing frontend demo", () => {
     expect(screen.getByRole("heading", { level: 2, name: "August 2026" })).toBeInTheDocument();
   });
 
-  it("uses the New York market date in the fallback briefing header", () => {
-    vi.mocked(Date.now).mockReturnValue(Date.parse("2026-09-01T01:00:00Z"));
-    renderApp();
-    expect(screen.getByText("MONDAY · 31 AUGUST")).toBeInTheDocument();
+  it("greets by the visitor's local hour regardless of machine timezone", () => {
+    // A local-time Date constructor interprets the components in the machine's
+    // own timezone, so getHours() is deterministic on Linux, macOS and Windows
+    // without any process-level TZ pinning.
+    expect(marketGreeting(new Date(2026, 7, 12, 10, 0, 0))).toBe("Good morning.");
+    expect(marketGreeting(new Date(2026, 7, 12, 16, 0, 0))).toBe("Good afternoon.");
+    expect(marketGreeting(new Date(2026, 7, 12, 22, 30, 0))).toBe("Good evening.");
   });
 
-  it("greets by the New York time of day", () => {
-    const cases: Array<[string, string]> = [
-      ["2026-08-12T10:00:00Z", "Good morning."],   // 06:00 ET
-      ["2026-08-12T16:00:00Z", "Good afternoon."], // 12:00 ET
-      ["2026-08-12T22:30:00Z", "Good evening."],   // 18:30 ET
-    ];
-    for (const [iso, greeting] of cases) {
-      vi.mocked(Date.now).mockReturnValue(Date.parse(iso));
-      const view = renderApp();
-      expect(screen.getByRole("heading", { name: greeting })).toBeInTheDocument();
-      view.unmount();
-    }
+  it("covers the greeting hour boundaries at 5am and 5pm local", () => {
+    expect(marketGreeting(new Date(2026, 7, 12, 4, 59, 0))).toBe("Good evening.");
+    expect(marketGreeting(new Date(2026, 7, 12, 5, 0, 0))).toBe("Good morning.");
+    expect(marketGreeting(new Date(2026, 7, 12, 11, 59, 0))).toBe("Good morning.");
+    expect(marketGreeting(new Date(2026, 7, 12, 12, 0, 0))).toBe("Good afternoon.");
+    expect(marketGreeting(new Date(2026, 7, 12, 16, 59, 0))).toBe("Good afternoon.");
+    expect(marketGreeting(new Date(2026, 7, 12, 17, 0, 0))).toBe("Good evening.");
+  });
+
+  it("labels the visitor's local day and date", () => {
+    // The weekday is a calendar fact (the same in every timezone); the local
+    // constructor keeps the day-of-month and month fixed on any machine.
+    expect(localDateLabel(new Date(2026, 7, 12, 10, 0, 0))).toBe("WEDNESDAY · 12 AUGUST");
+    expect(localDateLabel(new Date(2026, 8, 1, 1, 0, 0))).toBe("TUESDAY · 1 SEPTEMBER");
   });
 
   it("keeps TradingView widgets in sync with the active theme", async () => {
     renderApp();
-    await screen.findByRole("heading", { name: "Good afternoon." });
+    await screen.findByText(/economic calendar and top stories/);
     const ticker = () => document.querySelector("tv-ticker-tape");
     const marketOverview = () => document.querySelector("tv-market-overview");
     // The global tape + market overview are web components: the theme updates in
@@ -201,18 +181,9 @@ describe("Morning Briefing frontend demo", () => {
     expect(view.container.querySelector(".backend-ribbon")).toBeNull();
   });
 
-  it("opens opportunity and earnings details", async () => {
+  it("opens earnings details", async () => {
     stubEarningsSchedule();
     renderApp();
-    const opportunityTrigger = (await screen.findAllByRole("button", { name: /NVDA.*NVIDIA Corporation/ }))[0]!;
-    opportunityTrigger.focus();
-    fireEvent.click(opportunityTrigger);
-    const opportunityDialog = screen.getByRole("dialog", { name: /NVDA/ });
-    expect(opportunityDialog).toHaveTextContent("OPPORTUNITY DETAIL");
-    expect(screen.getByRole("button", { name: "Close" })).toHaveFocus();
-
-    fireEvent.keyDown(document, { key: "Escape" });
-    await waitFor(() => expect(opportunityTrigger).toHaveFocus());
     fireEvent.click(screen.getByRole("link", { name: "Earnings" }));
     await screen.findByRole("heading", { name: /Earnings Calendar/ });
     fireEvent.click(await screen.findByRole("button", { name: /MSFT.*AMC/ }));
@@ -229,7 +200,7 @@ describe("Morning Briefing frontend demo", () => {
     fireEvent.click(await screen.findByRole("button", { name: /MSFT.*AMC/ }));
     expect(await screen.findByRole("dialog", { name: "Earnings Detail" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Browser Back" }));
-    expect(await screen.findByRole("heading", { name: "Good afternoon." })).toBeInTheDocument();
+    expect(await screen.findByText(/economic calendar and top stories/)).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     await waitFor(() => expect(document.body.style.overflow).toBe(""));
   });

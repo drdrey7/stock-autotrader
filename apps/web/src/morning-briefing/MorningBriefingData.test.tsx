@@ -10,41 +10,10 @@ const useFixtureClock = () => {
   vi.setSystemTime(new Date("2026-08-12T22:30:00Z"));
 };
 
-const briefing = {
-  example: false,
-  editionDate: "2026-08-12",
-  editionType: "pre_market",
-  timezone: "America/New_York",
-  preparedAt: "2026-08-12T12:30:00Z",
-  title: "Pre-market briefing",
-  marketSummary: "Constructive session.",
-  market: [
-    { name: "VIX", symbol: "CBOE:VIX", value: "15.40", change: "-2.10%", state: "Contained", note: "Calm." },
-    { name: "Nasdaq-100", symbol: "NASDAQ:NDX", value: "23,830.02", change: "+0.55%", state: "Leading", note: "Leading." },
-    { name: "S&P 500", symbol: "SP:SPX", value: "6,412.10", change: "+0.31%", state: "Constructive", note: "Holding." },
-  ],
-  ideas: [{
-    symbol: "NVDA", company: "NVIDIA Corporation", universe: "Both",
-    verdict: "Potential Entry", price: "$183.10", change: "+1.75%",
-    thesis: "Relative strength supports the setup.",
-    source: { handle: "@nolimitgains", reference: "https://x.com/nolimitgains/status/1234", originalTimestamp: "2026-08-12T10:15:00Z", collectedTimestamp: "2026-08-12T12:30:00Z", summary: "Source." },
-    technical: ["Strong"], financial: ["Healthy"], news: ["Clear"], risks: ["Gap risk"],
-    levels: { trigger: "Above $183.60", invalidation: "Below $179.20", objective: "$194", rewardRisk: "2.6R", rewardRiskRatio: 2.6 },
-  }, {
-    symbol: "AMD", company: "Advanced Micro Devices", universe: "Both",
-    verdict: "Potential Entry", price: "$184.00", change: "-1.25%",
-    thesis: "Valid setup despite a negative session.",
-    source: { handle: "@nolimitgains", reference: "https://x.com/nolimitgains/status/5678", originalTimestamp: "2026-08-12T10:15:00Z", collectedTimestamp: "2026-08-12T12:30:00Z", summary: "Source." },
-    technical: ["Strong"], financial: ["Healthy"], news: ["Clear"], risks: ["Gap risk"],
-    levels: { trigger: "Above $185", invalidation: "Below $179", objective: "$194", rewardRisk: "2.0R", rewardRiskRatio: 2 },
-  }, {
-    symbol: "TSLA", company: "Tesla", universe: "Both", verdict: "Avoid", price: "$400", change: "+4.00%",
-    thesis: "Explicit rejection.", source: { handle: "@source", reference: "https://x.com/source/1", originalTimestamp: null, collectedTimestamp: "2026-08-12T12:30:00Z", summary: "Source." },
-    technical: ["Weak"], financial: ["Mixed"], news: ["Risk"], risks: ["High risk"],
-    levels: { trigger: "Not applicable", invalidation: "Not applicable", objective: "Not applicable", rewardRisk: "Not applicable", rewardRiskRatio: null },
-  }],
-  schedule: [],
-};
+// The briefing feed that used to drive the Top Opportunities section is
+// retired; the fixture now only survives as the publication timestamp that the
+// /api/status health response echoes back.
+const briefing = { preparedAt: "2026-08-12T12:30:00Z" };
 
 beforeEach(() => {
   localStorage.clear();
@@ -53,7 +22,6 @@ beforeEach(() => {
   Object.defineProperty(window, "scrollTo", { configurable: true, value: vi.fn() });
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
-    if (url === "/api/briefs/latest") return new Response(JSON.stringify(briefing), { status: 200 });
     if (url === "/api/status") return new Response(JSON.stringify({
       candidates: [{ symbol: "NVDA", quantScore: 91 }],
       briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt },
@@ -77,20 +45,6 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it("greets by New York time of day", () => {
-  const cases: Array<[string, string]> = [
-    ["2026-08-12T10:00:00Z", "Good morning."],  // 06:00 ET
-    ["2026-08-12T16:00:00Z", "Good afternoon."], // 12:00 ET
-    ["2026-08-12T22:30:00Z", "Good evening."],   // 18:30 ET
-  ];
-  for (const [iso, greeting] of cases) {
-    vi.mocked(Date.now).mockReturnValue(Date.parse(iso));
-    const view = renderApp();
-    expect(screen.getByRole("heading", { name: greeting })).toBeInTheDocument();
-    view.unmount();
-  }
-});
-
 it("mounts the TradingView widget sections on the homepage", async () => {
   const view = renderApp();
   // The market overview is a web component; the calendar and top stories are
@@ -104,17 +58,16 @@ it("mounts the TradingView widget sections on the homepage", async () => {
   expect(view.container.querySelectorAll(".tradingview-widget-copyright")).toHaveLength(2);
 });
 
-it("renders only qualified ideas and the pre-market edition label", async () => {
+it("renders the homepage without a Top Opportunities section", async () => {
   useFixtureClock();
   const view = renderApp();
-  await waitFor(() => expect(screen.getByText("+1.75%")).toBeInTheDocument());
-  expect(screen.getAllByText("Not published").length).toBeGreaterThan(0);
-  expect(screen.queryByText("TSLA")).not.toBeInTheDocument();
-  const negative = screen.getByText("-1.25%");
-  expect(negative).toHaveClass("negative");
-  expect(screen.queryByText("+-1.25%")).not.toBeInTheDocument();
-  expect(screen.getByText("WEDNESDAY · 12 AUGUST · PRE-MARKET")).toBeInTheDocument();
-  expect(view.container.querySelector(".opportunities-card")).toHaveTextContent("Analysis · 12 Aug");
+  await waitFor(() => expect(view.container.querySelector(".market-overview-frame")).not.toBeNull());
+  // Top Opportunities is removed from the homepage for now: no heading, no
+  // rows, and the provider no longer even fetches the briefing feed that used
+  // to drive them.
+  expect(screen.queryByText("Top Opportunities")).not.toBeInTheDocument();
+  expect(view.container.querySelector(".opportunity-row")).toBeNull();
+  expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input) === "/api/briefs/latest")).toBe(false);
 });
 
 it("shows restrained TradingView widget states instead of fabricated market data when the backend is down", async () => {
@@ -139,7 +92,6 @@ it("shows restrained TradingView widget states instead of fabricated market data
   expect(view.container).not.toHaveTextContent("6,427.18");
   expect(view.container).not.toHaveTextContent("NVDA");
   expect(view.container.querySelectorAll(".opportunity-row")).toHaveLength(0);
-  expect(view.container.querySelector(".opportunities-card .empty-state")).toHaveTextContent("No qualified opportunities");
 });
 
 it("keeps unavailable sentiment explicit without fixture numbers", async () => {
@@ -147,45 +99,22 @@ it("keeps unavailable sentiment explicit without fixture numbers", async () => {
   const view = renderApp();
 
   expect(screen.getByRole("heading", { name: "Fear & Greed" })).toBeInTheDocument();
-  expect(screen.getByRole("heading", { name: /Momentum Not available/ })).toBeInTheDocument();
+  // No synthetic reading: the gauge itself says "Not available".
+  expect(view.container.querySelector(".gauge-mask strong")).toHaveTextContent("Not available");
   expect(view.container.querySelector(".sentiment-card")).toHaveTextContent("Not available");
   expect(view.container).not.toHaveTextContent("72");
   expect(view.container).not.toHaveTextContent("4.28%");
   expect(view.container).not.toHaveTextContent("$80.21");
 });
 
-it("preserves a Unicode minus when rendering negative moves", async () => {
-  const unicodeBriefing = {
-    ...briefing,
-    ideas: briefing.ideas.map((item) => item.symbol === "AMD" ? { ...item, change: "−1.25%" } : item),
-  };
-  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
-    const url = String(input);
-    if (url === "/api/briefs/latest") return new Response(JSON.stringify(unicodeBriefing), { status: 200 });
-    if (url === "/api/status") return new Response(JSON.stringify({ candidates: [], briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt } }), { status: 200 });
-    return new Response(null, { status: 404 });
-  });
-
+it("never renders the backend edition tag in the hero", async () => {
   const view = renderApp();
-  await waitFor(() => expect(view.container.querySelector(".opportunity-row")).toHaveTextContent("NVDA"));
-  expect(screen.getByText("-1.25%")).toHaveClass("negative");
-  expect(screen.queryByText("+-1.25%")).not.toBeInTheDocument();
-});
-
-it("labels a post-close edition instead of showing a pre-market greeting", async () => {
-  const postCloseBriefing = { ...briefing, editionType: "post_close", title: "Closing briefing" };
-  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
-    const url = String(input);
-    if (url === "/api/briefs/latest") return new Response(JSON.stringify(postCloseBriefing), { status: 200 });
-    if (url === "/api/status") return new Response(JSON.stringify({ candidates: [], briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt } }), { status: 200 });
-    return new Response(null, { status: 404 });
-  });
-
-  renderApp();
-  expect(await screen.findByText("WEDNESDAY · 12 AUGUST · POST-CLOSE")).toBeInTheDocument();
-  // At 18:30 ET the greeting reflects the local time of day, not the edition.
-  expect(screen.getByRole("heading", { name: "Good evening." })).toBeInTheDocument();
-  expect(screen.queryByRole("heading", { name: "Good morning." })).not.toBeInTheDocument();
+  await screen.findByText(/economic calendar and top stories/);
+  // The hero shows only the visitor's local day/date + greeting — no
+  // PRE-MARKET / POST-CLOSE / edition tag anywhere on the homepage.
+  expect(view.container).not.toHaveTextContent("POST-CLOSE");
+  expect(view.container).not.toHaveTextContent("PRE-MARKET");
+  expect(screen.getByRole("heading", { level: 1 })).toBeInTheDocument();
 });
 
 it("announces the full date for earnings calendar events", async () => {
@@ -280,11 +209,10 @@ it("treats a valid empty earnings publication as available, not unavailable", as
   expect(view.container.querySelector(".earnings-top-summary")).not.toHaveTextContent("—");
 });
 
-it("renders the briefing without waiting for a stalled X request", async () => {
+it("renders the homepage without waiting for a stalled X request", async () => {
   useFixtureClock();
   vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
     const url = String(input);
-    if (url === "/api/briefs/latest") return new Response(JSON.stringify(briefing), { status: 200 });
     if (url === "/api/status") return new Response(JSON.stringify({ candidates: [], briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt } }), { status: 200 });
     if (url.startsWith("/api/x/posts")) return await new Promise<Response>(() => undefined);
     if (url === "/api/earnings") return new Response(JSON.stringify([{ symbol: "NEW", company: "Future Corp", date: "2026-08-14", timing: "BMO", eventSignal: "Confirmed" }]), { status: 200 });
@@ -292,8 +220,7 @@ it("renders the briefing without waiting for a stalled X request", async () => {
   });
 
   const view = renderApp();
-  await waitFor(() => expect(view.container.querySelector(".opportunity-row")).toHaveTextContent("NVDA"));
-  expect(view.container.querySelector(".hero")).toHaveTextContent("WEDNESDAY · 12 AUGUST · PRE-MARKET");
+  await waitFor(() => expect(view.container.querySelector(".market-overview-frame")).not.toBeNull());
 });
 
 it("keeps the last X posts when a later refresh fails", async () => {
@@ -410,63 +337,37 @@ it("clears earnings when the endpoint fails after a success", async () => {
   vi.useRealTimers();
 });
 
-it("rejects stale analysis even when the status still says fresh", async () => {
-  const oldBriefing = { ...briefing, preparedAt: "2026-08-10T12:30:00Z", editionDate: "2026-08-10" };
-  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
-    const url = String(input);
-    if (url === "/api/briefs/latest") return new Response(JSON.stringify(oldBriefing), { status: 200 });
-    if (url === "/api/status") return new Response(JSON.stringify({
-      candidates: [],
-      briefing: { available: true, freshness: "fresh", publishedAt: oldBriefing.preparedAt },
-    }), { status: 200 });
-    return new Response(null, { status: 404 });
-  });
-
-  const view = renderApp();
-  // The last published analysis (2 days old) stays visible with its date.
-  await waitFor(() => expect(view.container.querySelector(".opportunities-card")).toHaveTextContent("Analysis · 10 Aug"));
-  expect(view.container.querySelectorAll(".opportunity-row").length).toBeGreaterThan(0);
-});
-
-it("keeps opportunities visible when the briefing is not marked fresh", async () => {
-  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
-    const url = String(input);
-    if (url === "/api/briefs/latest") return new Response(JSON.stringify(briefing), { status: 200 });
-    if (url === "/api/status") return new Response(JSON.stringify({
-      candidates: [],
-      briefing: { available: true, freshness: "stale", publishedAt: briefing.preparedAt },
-    }), { status: 200 });
-    return new Response(null, { status: 404 });
-  });
-
-  const view = renderApp();
-  await waitFor(() => expect(view.container.querySelector(".opportunity-row")).toHaveTextContent("NVDA"));
-  expect(view.container.querySelector(".opportunities-card")).toHaveTextContent("Analysis · 12 Aug");
-});
-
-it("keeps opportunities during a transient briefing failure while the analysis is still valid", async () => {
-  let briefRequests = 0;
+it("keeps the homepage stable during a transient status failure", async () => {
+  let statusRequests = 0;
   const originalFetch = vi.mocked(fetch).getMockImplementation()!;
   vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
-    if (String(input) === "/api/briefs/latest") {
-      briefRequests += 1;
-      if (briefRequests > 1) return new Response(null, { status: 503 });
+    if (String(input) === "/api/status") {
+      statusRequests += 1;
+      if (statusRequests === 1) {
+        return new Response(JSON.stringify({
+          briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt },
+          sentiment: { provider: "cnn-fear-greed", score: 62, rating: "greed", asOf: "2026-08-12T21:00:00Z" },
+        }), { status: 200 });
+      }
+      return new Response(null, { status: 503 });
     }
     return originalFetch(input, init);
   });
 
   const view = renderApp();
-  await waitFor(() => expect(view.container.querySelector(".opportunity-row")).toHaveTextContent("NVDA"));
+  await waitFor(() => expect(view.container.querySelector(".sentiment-card")).toHaveTextContent("Greed"));
   document.dispatchEvent(new Event("visibilitychange"));
-  await waitFor(() => expect(briefRequests).toBeGreaterThan(1));
-  // A still-valid daily analysis survives the transient failure.
-  expect(view.container.querySelector(".opportunity-row")).toHaveTextContent("NVDA");
-  expect(view.container.querySelector(".opportunities-card")).toHaveTextContent("Analysis · 12 Aug");
+  await waitFor(() => expect(statusRequests).toBeGreaterThan(1));
+  // A transient failure must not blank the homepage: the retained sentiment
+  // reading and the static widget sections all remain mounted.
+  expect(view.container.querySelector(".sentiment-card")).toHaveTextContent("Greed");
+  expect(view.container.querySelector(".market-overview-frame")).not.toBeNull();
+  expect(view.container.querySelector(".calendar-block")).not.toBeNull();
 });
 
 it("does not render source-health badges anywhere", async () => {
   const view = renderApp();
-  await waitFor(() => expect(view.container.querySelector(".opportunity-row")).toHaveTextContent("NVDA"));
+  await waitFor(() => expect(view.container.querySelector(".market-overview-frame")).not.toBeNull());
   expect(view.container.querySelectorAll(".data-source")).toHaveLength(0);
   expect(view.container).not.toHaveTextContent("Live");
   expect(view.container).not.toHaveTextContent("Cached");
@@ -483,28 +384,33 @@ it("ignores malformed stored X posts instead of rendering partial objects", asyn
   expect(screen.queryByText("Missing fields")).not.toBeInTheDocument();
 });
 
-it("clears financial sections after the backend stops publishing", async () => {
+it("clears the sentiment card after the backend stops publishing", async () => {
   let coreAvailable = true;
   const originalFetch = vi.mocked(fetch).getMockImplementation()!;
   vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
-    if (!coreAvailable && ["/api/briefs/latest", "/api/status"].includes(url)) {
+    if (!coreAvailable && url === "/api/status") {
       return new Response(null, { status: 503 });
+    }
+    if (url === "/api/status") {
+      return new Response(JSON.stringify({
+        briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt },
+        sentiment: { provider: "cnn-fear-greed", score: 62, rating: "greed", asOf: "2026-08-12T21:00:00Z" },
+      }), { status: 200 });
     }
     return originalFetch(input, init);
   });
 
   const view = renderApp();
-  await waitFor(() => expect(view.container.querySelector(".opportunity-row")).toHaveTextContent("NVDA"));
-  expect(view.container.querySelector(".opportunities-card")).toHaveTextContent("Analysis · 12 Aug");
+  await waitFor(() => expect(view.container.querySelector(".sentiment-card")).toHaveTextContent("Greed"));
 
   coreAvailable = false;
-  // Advance beyond the 72h analysis window so the retained daily
-  // publication expires and the sections must clear.
+  // Advance beyond the 72h sentiment window so the retained reading expires
+  // and the card must clear to "Not available".
   vi.mocked(Date.now).mockReturnValue(Date.parse("2026-08-16T01:00:00Z"));
   document.dispatchEvent(new Event("visibilitychange"));
-  await waitFor(() => expect(view.container.querySelector(".opportunity-row")).toBeNull());
-  expect(view.container.querySelector(".opportunities-card .empty-state")).toHaveTextContent("No qualified opportunities");
+  await waitFor(() => expect(view.container.querySelector(".sentiment-card .gauge-mask strong")).toHaveTextContent("Not available"));
+  expect(view.container.querySelector(".sentiment-card .gauge-mask span")).toHaveTextContent("Fear & Greed");
 });
 
 it("refreshes earnings silently after the internal refresh interval", async () => {
@@ -564,7 +470,6 @@ it("renders the fear & greed number and gauge from the status sentiment", async 
   const freshIso = "2026-08-12T22:00:00.000Z";
   vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
     const url = String(input);
-    if (url === "/api/briefs/latest") return new Response(null, { status: 404 });
     if (url === "/api/status") return new Response(JSON.stringify({
       briefing: { available: false, freshness: "unavailable", publishedAt: null },
       sentiment: { provider: "cnn-fear-greed", score: 62, rating: "greed", asOf: freshIso },
@@ -582,14 +487,15 @@ it("renders the fear & greed number and gauge from the status sentiment", async 
     "stroke-dasharray",
     expect.stringMatching(/^126\.\d+/),
   );
-  expect(view.container.querySelector(".sentiment-card")).toHaveTextContent("Risk-on");
+  // The simplified card shows the score, one label, the gauge and a small
+  // "Updated ..." timestamp — no Momentum / Risk appetite rows.
+  expect(view.container.querySelector(".sentiment-card .card-subtitle")).toHaveTextContent("Updated");
   expect(view.container.querySelector(".sentiment-card")).not.toHaveTextContent("Not available");
 });
 
 it("keeps the sentiment card unavailable when the reading is stale", async () => {
   vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
     const url = String(input);
-    if (url === "/api/briefs/latest") return new Response(null, { status: 404 });
     if (url === "/api/status") return new Response(JSON.stringify({
       briefing: { available: false, freshness: "unavailable", publishedAt: null },
       sentiment: { provider: "cnn-fear-greed", score: 62, rating: "greed", asOf: "2026-08-01T12:00:00Z" },
@@ -599,6 +505,5 @@ it("keeps the sentiment card unavailable when the reading is stale", async () =>
 
   const view = renderApp();
   await waitFor(() => expect(view.container.querySelector(".sentiment-card")).toHaveTextContent("Not available"));
-  expect(view.container.querySelector(".sentiment-card")).not.toHaveTextContent("Risk-on");
   expect(view.container.querySelector(".sentiment-card .gauge-value")).toBeNull();
 });

@@ -9,6 +9,9 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     setupFiles: "./src/test-setup.ts",
+    // No process-level TZ pin: the local-time hero greeting/date helpers are
+    // tested as pure functions with explicit Date instances, so the suite must
+    // pass in any machine timezone (Linux, macOS, Windows) as-is.
     exclude: [...configDefaults.exclude, "e2e/**"],
     coverage: {
       include: ["src/**/*.{ts,tsx}"],
