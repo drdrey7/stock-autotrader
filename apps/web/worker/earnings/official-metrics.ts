@@ -40,7 +40,7 @@ export const REVENUE_DEFINITION_MIN_RATIO = 0.4;
 export const REVENUE_DEFINITION_MAX_RATIO = 2.5;
 
 export function revenueDefinitionalOutOfBand(provider: number | null, official: number | null): boolean {
-  if (!provider || !official) return false;
+  if (provider === null || provider === undefined || official === null || official === undefined) return false;
   const ratio = official / provider;
   return ratio > REVENUE_DEFINITION_MAX_RATIO || ratio < REVENUE_DEFINITION_MIN_RATIO;
 }
@@ -196,7 +196,9 @@ export function buildAuditRow(input: AuditInput, updatedAt: string): AuditRow {
         matchedFiling: input.filing?.url ?? null,
         form: input.official.eps.form ?? input.filing?.form ?? null,
         accession: input.official.eps.accn ?? input.filing?.accession ?? null,
-        filedAt: input.filing?.filedAt ?? input.official.eps.filed ? `${input.official.eps.filed}T00:00:00.000Z` : null,
+        // Prefer the explicit worker-resolved SEC acceptance timestamp; fall
+        // back to the filing date carried by the resolved XBRL fact.
+        filedAt: input.filing?.filedAt ?? (input.official.eps.filed ? `${input.official.eps.filed}T00:00:00.000Z` : null),
       }
     : { matchedFiling: input.filing?.url ?? null, form: input.filing?.form ?? null, accession: input.filing?.accession ?? null, filedAt: input.filing?.filedAt ?? null };
 
@@ -250,23 +252,28 @@ export function buildAuditRow(input: AuditInput, updatedAt: string): AuditRow {
 
   // Build the write payload. GAAP values are written ONLY when the resolver
   // returned a validated fact (never low-confidence, never guessed) AND — for
-  // revenue — the concept matches the provider's total revenue line. The
-  // provider adjusted actual is mirrored explicitly so the adjusted column is
-  // not silently empty for legacy events.
-  const gaapEpsWritable = epsValue !== null && epsConfidence !== null && epsConfidence !== "low";
+  // revenue — the concept matches the provider's total revenue line. A
+  // `conflict` verdict means provider and SEC disagree on fiscal identity or
+  // context, so NO GAAP actual is written (conflicts are surfaced, never
+  // paired with a canonical value). The provider adjusted actual is mirrored
+  // explicitly so the adjusted column is not silently empty for legacy events.
+  const conflictDecision = decision === "conflict";
+  const gaapEpsWritable = epsValue !== null && epsConfidence !== null && epsConfidence !== "low"
+    && !conflictDecision;
   const gaapRevenueWritable = revenueValue !== null && revenueConfidence !== null && revenueConfidence !== "low"
-    && !revenueDefinitionMismatch;
+    && !revenueDefinitionMismatch && !conflictDecision;
   const hasWritable = gaapEpsWritable || gaapRevenueWritable
     || input.providerEpsActual !== null || input.providerRevenueActual !== null
     || decision === "different-basis" || decision === "conflict";
 
   let write: OfficialMetricsWrite | null = null;
   if (input.status === "reported" && hasWritable) {
-    const reportedAt = filing.filedAt;
+    // SEC acceptance timestamp is authoritative whenever a filing is resolved.
+    const reportedTimestamp = filing.filedAt;
     write = {
       eventId: input.eventId,
-      reportedAt: reportedAt && reportedAt !== input.scheduledDate ? reportedAt : null,
-      reportedAtSource: reportedAt && reportedAt !== input.scheduledDate ? "sec-filing" : null,
+      reportedAt: reportedTimestamp,
+      reportedAtSource: reportedTimestamp ? "sec-filing" : null,
       epsActualGaap: gaapEpsWritable ? epsValue : null,
       epsActualGaapSource: gaapEpsWritable ? SOURCE_SEC_XBRL : null,
       epsActualAdjusted: input.providerEpsActual,

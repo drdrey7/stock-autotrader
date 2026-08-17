@@ -139,15 +139,30 @@ describe("selectOfficialMetric — EPS diluted (GAAP)", () => {
     expect(strict.blockers.join(" ")).toMatch(/no ContinuingOperationsEarningsPerShareDiluted facts/);
   });
 
-  it("dedupes a duplicate context and prefers the non-amendment instance", () => {
+  it("dedupes a duplicate context preferring the amendment when values agree", () => {
     const parsed = parseCompanyFacts(payload("320193", [
       { concept: "EarningsPerShareDiluted", start: "2026-03-29", end: "2026-06-27", val: 1.63, fy: 2026, fp: "Q3", form: "10-Q", accn: "0000320193-26-000101", filed: "2026-07-29" },
       { concept: "EarningsPerShareDiluted", start: "2026-03-29", end: "2026-06-27", val: 1.63, fy: 2026, fp: "Q3", form: "10-Q/A", accn: "0000320193-26-000102", filed: "2026-08-10" },
     ]));
     const selection = selectOfficialMetric(parsed, ["EarningsPerShareDiluted"], EPS_UNIT, identity);
     expect(selection.value).toBe(1.63);
-    expect(selection.accn).toBe("0000320193-26-000101");
-    expect(selection.form).toBe("10-Q");
+    // Amendment is the operative filing for the period; identical value → high confidence.
+    expect(selection.accn).toBe("0000320193-26-000102");
+    expect(selection.form).toBe("10-Q/A");
+    expect(selection.confidence).toBe("high");
+  });
+
+  it("prefers a restated amendment value over the superseded original (B1 regression)", () => {
+    const parsed = parseCompanyFacts(payload("320193", [
+      { concept: "EarningsPerShareDiluted", start: "2026-03-29", end: "2026-06-27", val: 1.63, fy: 2026, fp: "Q3", form: "10-Q", accn: "0000320193-26-000101", filed: "2026-07-29" },
+      { concept: "EarningsPerShareDiluted", start: "2026-03-29", end: "2026-06-27", val: 1.45, fy: 2026, fp: "Q3", form: "10-Q/A", accn: "0000320193-26-000103", filed: "2026-08-10" },
+    ]));
+    const selection = selectOfficialMetric(parsed, ["EarningsPerShareDiluted"], EPS_UNIT, identity);
+    // The restated value supersedes the original — it must NEVER write 1.63.
+    expect(selection.value).toBe(1.45);
+    expect(selection.form).toBe("10-Q/A");
+    expect(selection.confidence).toBe("medium");
+    expect(selection.blockers.join(" ")).toMatch(/amended\/restated/);
   });
 
   it("flags conflicting values for the same period instead of picking one", () => {

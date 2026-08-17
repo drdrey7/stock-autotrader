@@ -215,7 +215,7 @@ class MemoryStatement {
       }
       return { success: true, meta: { changes: old ? 1 : 0 } };
     }
-    if (this.sql.includes("UPDATE earnings_events") && this.sql.includes("eps_actual_gaap = ?")) {
+    if (this.sql.includes("UPDATE earnings_events") && this.sql.includes("COALESCE(?, eps_actual_gaap)")) {
       // applyOfficialMetrics bind order: eps_actual_gaap, eps_actual_gaap_source,
       // eps_actual_adjusted, eps_actual_adjusted_source, revenue_actual_official,
       // revenue_actual_source, eps_estimate_source, revenue_estimate_source,
@@ -226,14 +226,14 @@ class MemoryStatement {
         fiscalPeriodEnd, qualityStatus, updatedAt, id] = this.args;
       const row = this.db.events.get(String(id));
       if (row) {
-        // Non-COALESCE columns: the writer sets the value verbatim (null allowed).
-        row.eps_actual_gaap = gaap;
-        row.eps_actual_gaap_source = gaapSource;
-        row.eps_actual_adjusted = adjusted;
-        row.eps_actual_adjusted_source = adjustedSource;
-        row.revenue_actual_official = revenueOfficial;
-        row.revenue_actual_source = revenueSource;
-        // COALESCE columns: null keeps the existing value.
+        // COALESCE columns: a null write keeps the existing official value —
+        // canonical values are never cleared by a null re-resolution.
+        row.eps_actual_gaap = gaap ?? row.eps_actual_gaap;
+        row.eps_actual_gaap_source = gaapSource ?? row.eps_actual_gaap_source;
+        row.eps_actual_adjusted = adjusted ?? row.eps_actual_adjusted;
+        row.eps_actual_adjusted_source = adjustedSource ?? row.eps_actual_adjusted_source;
+        row.revenue_actual_official = revenueOfficial ?? row.revenue_actual_official;
+        row.revenue_actual_source = revenueSource ?? row.revenue_actual_source;
         if (epsEstimateSource != null) row.eps_estimate_source = epsEstimateSource;
         if (revenueEstimateSource != null) row.revenue_estimate_source = revenueEstimateSource;
         if (reportedAt != null) row.reported_at = reportedAt;
@@ -2058,6 +2058,29 @@ describe("official-metric storage write precedence (PR: earnings official last q
     const id = await seedReportedEvent(db);
     expect(await applyOfficialMetrics(db as never, officialWrite(id))).toBe(true);
     expect(await applyOfficialMetrics(db as never, officialWrite(id))).toBe(false);
+  });
+
+  it("never clears an accepted canonical value with a null re-resolution", async () => {
+    const db = new MemoryD1();
+    const id = await seedReportedEvent(db);
+    await applyOfficialMetrics(db as never, officialWrite(id));
+    // A later run that fails to resolve the GAAP figure (regression) writes
+    // nulls — the previously accepted canonical value must survive.
+    const regressed = officialWrite(id, {
+      epsActualGaap: null,
+      epsActualGaapSource: null,
+      revenueActualOfficial: null,
+      revenueActualSource: null,
+      // Verdict unchanged — only the value resolution regressed to null.
+      dataQualityStatus: "different-basis",
+    });
+    expect(await applyOfficialMetrics(db as never, regressed)).toBe(false);
+    const rawRow = await db.prepare("SELECT * FROM earnings_events WHERE id = ?").bind(id).first<Row>();
+    const row = rowToEarningsEvent(rawRow as Row);
+    expect(row.epsActualGaap).toBe(1.63);
+    expect(row.epsActualGaapSource).toBe("sec-xbrl");
+    expect(row.revenueActualOfficial).toBe(117_441_000_000);
+    expect(row.dataQualityStatus).toBe("different-basis");
   });
 
   it("fills a missing fiscal_period_end from the resolved SEC period", async () => {

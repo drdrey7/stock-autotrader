@@ -192,6 +192,21 @@ describe("buildAuditRow — decision matrix", () => {
     expect(row.write?.epsActualGaap).toBeNull();
   });
 
+  it("never pairs a conflict verdict with a written GAAP value even when one metric resolved", () => {
+    // Revenue conflicts (no fiscal match) while EPS resolved cleanly: the
+    // verdict is conflict and the GAAP EPS must NOT be written as canonical.
+    const row = buildAuditRow(input({
+      official: official({
+        revenue: { ...official().revenue, value: null, confidence: "low", blockers: ["no RevenueFromContractWithCustomerExcludingAssessedTax facts matching fiscal identity 2026 Q3 (facts span 2026:Q2)"] },
+      }),
+    }), updatedAt);
+    expect(row.decision).toBe("conflict");
+    expect(row.write?.epsActualGaap).toBeNull();
+    expect(row.write?.epsActualGaapSource).toBeNull();
+    expect(row.write?.epsActualAdjusted).toBe(1.91);
+    expect(row.write?.dataQualityStatus).toBe("conflict");
+  });
+
   it("does not downgrade a resolved decision when the same event is re-audited", () => {
     const first = buildAuditRow(input({ official: official({ eps: { ...official().eps, value: 1.63 } }) }), updatedAt);
     expect(first.decision).toBe("different-basis");

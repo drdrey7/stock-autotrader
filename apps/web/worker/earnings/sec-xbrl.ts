@@ -203,14 +203,18 @@ const isWithinPeriodEndSanity = (end: string | null, identity: FiscalIdentity): 
 /**
  * Select the single canonical fact for one metric (EPS or revenue).
  *
- * Validation order (all must pass for a value):
- *   1. concept ∈ explicit list
- *   2. unit exact (EPS: USD/shares; revenue: USD)
- *   3. fiscal identity: fy + fp match the event quarter
- *   4. duration is a single quarter (70-120 days) — rejects YTD/annual/H1
- *   5. period end sanity (matches fiscalPeriodEnd or within release window)
- *   6. form ∈ {10-Q, 10-K, 8-K}; non-amendment preferred
- *   7. single context: no conflicting values for the same (start, end, concept)
+ * Concepts are tried in order (primary first, fallback concepts only when the
+ * primary has NO quarterly match — concepts are never mixed in one decision,
+ * because two concepts for the same period can legitimately carry different
+ * figures). For each concept, ALL of these must pass for a value:
+ *   1. unit exact (EPS: USD/shares; revenue: USD)
+ *   2. fiscal identity: fy + fp match the event quarter
+ *   3. duration is a single quarter (70-120 days) — rejects YTD/annual/H1
+ *   4. period end sanity (matches fiscalPeriodEnd or within release window)
+ *   5. form ∈ {10-Q, 10-K, 8-K} with metadata present
+ *   6. single context per period: two non-amendment instances with different
+ *      values = CONFLICT; an amendment (10-Q/A / 10-K/A) supersedes the
+ *      original filing, so a restated value wins and is flagged as restated
  */
 export function selectOfficialMetric(
   facts: CompanyFacts,
@@ -219,90 +223,96 @@ export function selectOfficialMetric(
   identity: FiscalIdentity,
   options: SelectOptions = {},
 ): OfficialMetricSelection {
+  if (identity.fiscalQuarter === null) {
+    return emptySelection(["event lacks a fiscal quarter identity; quarterly GAAP value not resolvable"]);
+  }
   const blockers: string[] = [];
-  const candidates = facts.facts.filter((fact) => concepts.includes(fact.concept));
+  for (const concept of concepts) {
+    const forConcept = selectForConcept(facts, concept, unit, identity, options);
+    if (forConcept.value !== null) return forConcept;
+    blockers.push(...forConcept.blockers);
+  }
+  if (blockers.length === 0) blockers.push(`no ${concepts.join("/")} facts in companyfacts`);
+  return emptySelection(blockers);
+}
 
+function selectForConcept(
+  facts: CompanyFacts,
+  concept: string,
+  unit: string,
+  identity: FiscalIdentity,
+  options: SelectOptions,
+): OfficialMetricSelection {
+  const blockers: string[] = [];
+  const candidates = facts.facts.filter((fact) => fact.concept === concept);
   if (candidates.length === 0) {
-    blockers.push(`no ${concepts.join("/")} facts in companyfacts`);
+    blockers.push(`no ${concept} facts in companyfacts`);
     return emptySelection(blockers);
   }
 
-  // 1+2. concept + unit
-  let pool = candidates.filter((fact) => fact.unit === unit);
+  // 1. unit
+  const pool = candidates.filter((fact) => fact.unit === unit);
   if (pool.length === 0) {
-    blockers.push(`no ${concepts.join("/")} facts with unit ${unit}`);
+    blockers.push(`no ${concept} facts with unit ${unit}`);
     return emptySelection(blockers);
   }
 
-  // Sanity: the denominator differs between concepts; record which concept shows
-  // the strongest signal, so a secondary concept is only used when primary is empty.
-  const order = new Map(concepts.map((concept, index) => [concept, index]));
-  pool = [...pool].sort((left, right) => (order.get(left.concept) ?? 99) - (order.get(right.concept) ?? 99));
-
-  // 3. fiscal identity
+  // 2. fiscal identity
   const withFiscal = pool.filter((fact) => fact.fy === identity.fiscalYear
-    && fact.fp === (identity.fiscalQuarter === null ? null : `Q${identity.fiscalQuarter}`));
+    && fact.fp === `Q${identity.fiscalQuarter}`);
   if (withFiscal.length === 0) {
     blockers.push(
-      `no facts matching fiscal identity ${identity.fiscalYear} Q${identity.fiscalQuarter ?? "?"}`
+      `no ${concept} facts matching fiscal identity ${identity.fiscalYear} Q${identity.fiscalQuarter}`
       + ` (facts span ${describeFiscalRange(pool)})`,
     );
     return emptySelection(blockers);
   }
 
-  // 4. quarterly duration (quarter-only, never YTD / annual / H1)
+  // 3. quarterly duration (quarter-only, never YTD / annual / H1)
   const quarterly = withFiscal.filter((fact) => isQuarterlyDuration(fact.start, fact.end));
   if (quarterly.length === 0) {
-    blockers.push("only non-quarterly durations present (annual/YTD/H1); quarterly GAAP value not resolvable");
+    blockers.push(`only ${concept} non-quarterly durations present (annual/YTD/H1); quarterly GAAP value not resolvable`);
     return emptySelection(blockers);
   }
 
-  // 5. period-end sanity
+  // 4. period-end sanity
   const inWindow = quarterly.filter((fact) => isWithinPeriodEndSanity(fact.end, identity));
   if (inWindow.length === 0 && identity.fiscalPeriodEnd) {
-    blockers.push(`no facts whose period end matches fiscalPeriodEnd ${identity.fiscalPeriodEnd}`);
+    blockers.push(`no ${concept} facts whose period end matches fiscalPeriodEnd ${identity.fiscalPeriodEnd}`);
     return emptySelection(blockers);
   }
   const windowed = inWindow.length > 0 ? inWindow : quarterly;
 
-  // 6. form acceptance; prefer non-amended 10-Q / 10-K
-  const withForm = windowed.filter((fact) => baseForm(fact.form) === null
-    || ACCEPTED_FORMS.includes(baseForm(fact.form) as (typeof ACCEPTED_FORMS)[number]));
+  // 5. form acceptance (must carry real form metadata ∈ {10-Q, 10-K, 8-K})
+  const withForm = windowed.filter((fact) => baseForm(fact.form) !== null
+    && ACCEPTED_FORMS.includes(baseForm(fact.form) as (typeof ACCEPTED_FORMS)[number]));
   if (withForm.length === 0) {
-    blockers.push(`facts exist only in unsupported forms (${[...new Set(windowed.map((f) => f.form ?? "?"))].join(", ")})`);
+    blockers.push(`${concept} facts exist only without accepted form metadata (${[...new Set(windowed.map((f) => f.form ?? "?"))].join(", ")})`);
     return emptySelection(blockers);
   }
-  const formScore = (fact: XbrlFactInstance): number => {
-    const base = baseForm(fact.form);
-    if (!base) return 99;
-    return FORM_PREFERENCE.get(base) ?? 99;
-  };
+  const formScore = (fact: XbrlFactInstance): number => FORM_PREFERENCE.get(baseForm(fact.form) as string) ?? 99;
   const bestFormScore = Math.min(...withForm.map(formScore));
   const bestForm = withForm.filter((fact) => formScore(fact) === bestFormScore);
 
-  // 7. single context — one (concept, start, end) combination, one value
+  // 6. single context — one (concept, start, end) period, one value
   const byContext = new Map<string, XbrlFactInstance[]>();
   for (const fact of bestForm) {
-    const key = `${fact.concept}|${fact.start ?? ""}|${fact.end ?? ""}`;
+    const key = `${fact.start ?? ""}|${fact.end ?? ""}`;
     const bucket = byContext.get(key) ?? [];
     bucket.push(fact);
     byContext.set(key, bucket);
   }
   const contexts = [...byContext.entries()];
-  if (contexts.length === 0) {
-    blockers.push("no candidate contexts after validation");
-    return emptySelection(blockers);
-  }
   // A context may repeat across a filing and its amendment (10-Q + 10-Q/A) or
   // across a press-release 8-K and the periodic report. Rules (safety first):
   //  - two NON-amendment instances with DIFFERENT values for the same context
   //    = CONFLICT → unresolved (never pick arbitrarily).
-  //  - an amendment (10-Q/A) supersedes the original filing.
-  //  - identical values collapse to the preferred form (10-Q > 10-K > 8-K),
-  //    then the latest filed.
+  //  - an amendment (10-Q/A / 10-K/A) SUPERSEDES the original filing, so a
+  //    restated value is the canonical figure (flagged as restated).
+  //  - synonymous duplicates collapse to the preferred form then latest filed.
   //  - multiple contexts with DIFFERENT values = CONFLICT as well.
   const amendmentOf = (fact: XbrlFactInstance): boolean => Boolean(fact.form?.endsWith("/A"));
-  const pick = (bucket: XbrlFactInstance[]): XbrlFactInstance => {
+  const pickLatestFiled = (bucket: XbrlFactInstance[]): XbrlFactInstance => {
     const sorted = [...bucket].sort((left, right) => {
       const preferred = formScore(left) - formScore(right);
       if (preferred !== 0) return preferred;
@@ -321,22 +331,31 @@ export function selectOfficialMetric(
     }
   }
   if (conflictingValues.length > 0) {
-    blockers.push(`conflicting ${concepts[0]} values for the same period/context (${[...new Set(conflictingValues)].join(", ")})`);
+    blockers.push(`conflicting ${concept} values for the same period/context (${[...new Set(conflictingValues)].join(", ")})`);
     return emptySelection(blockers);
   }
-  const picks = contexts.map(([, bucket]) => {
-    const nonAmendment = bucket.filter((fact) => !amendmentOf(fact));
-    return pick(nonAmendment.length > 0 ? nonAmendment : bucket);
+  const picks = contexts.map(([key, bucket]) => {
+    // Amendment supersedes: when amendments exist, the latest filed amendment
+    // is the operative filing for this period.
+    const amendments = bucket.filter(amendmentOf);
+    return { key, bucket, winner: pickLatestFiled(amendments.length > 0 ? amendments : bucket) };
   });
-  const distinctValues = new Set(picks.map((fact) => fact.val));
-  const crossContextConflict = picks.length > 1 && distinctValues.size > 1;
-  if (crossContextConflict) {
-    blockers.push(`conflicting ${concepts[0]} values across matched contexts (${[...distinctValues].join(", ")})`);
+  const distinctValues = new Set(picks.map(({ winner }) => winner.val));
+  if (picks.length > 1 && distinctValues.size > 1) {
+    blockers.push(`conflicting ${concept} values across matched periods (${[...distinctValues].join(", ")})`);
     return emptySelection(blockers);
   }
-  // Multiple non-conflicting contexts (same value) collapse to the best one.
-  const winner = picks[0]!;
-  const usedFallbackForms = bestFormScore > 0 || picks.some((fact) => baseForm(fact.form) === "8-K");
+  const winner = picks[0]!.winner;
+  // A restated value came from an amendment that differs from the original —
+  // still the official figure, but flag it so the audit surfaces the restatement.
+  const restated = amendmentOf(winner) && picks.some(({ bucket }) => {
+    const originals = bucket.filter((fact) => !amendmentOf(fact));
+    return originals.length > 0 && originals.some((fact) => fact.val !== winner.val);
+  });
+  const usedFallbackForms = bestFormScore > 0 || winner.form === "8-K";
+  const blockersOut: string[] = [];
+  if (usedFallbackForms) blockersOut.push(`resolved from a secondary/fallback form (${winner.form})`);
+  if (restated) blockersOut.push(`resolved from an amended/restated filing (${winner.form})`);
   return {
     value: winner.val,
     concept: winner.concept,
@@ -348,12 +367,8 @@ export function selectOfficialMetric(
     periodStart: winner.start,
     fiscalYear: winner.fy,
     fiscalPeriod: winner.fp,
-    confidence: options.strict === false
-      ? "medium"
-      : usedFallbackForms
-        ? "medium"
-        : "high",
-    blockers: usedFallbackForms ? ["resolved from a secondary/fallback form (8-K)"] : [],
+    confidence: options.strict === false || usedFallbackForms || restated ? "medium" : "high",
+    blockers: blockersOut,
   };
 }
 
@@ -408,7 +423,7 @@ type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Respons
 /** Fetch a company's full XBRL fact set from SEC companyfacts (1 request per company). */
 export async function fetchCompanyFacts(
   cik: string,
-  options: { userAgent?: string; fetcher?: Fetcher; sleepMs?: number; pace?: boolean } = {},
+  options: { userAgent?: string; fetcher?: Fetcher } = {},
 ): Promise<CompanyFacts> {
   const fetcher: Fetcher = options.fetcher ?? fetch;
   const normalized = cik.replace(/\D/g, "").padStart(10, "0");

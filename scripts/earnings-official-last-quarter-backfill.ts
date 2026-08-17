@@ -26,7 +26,6 @@
  *   --pace-ms N            SEC pacing between companyfacts fetches (default 1000)
  *   --db NAME              D1 database name (default stock-autotrader-db)
  *   --wrangler VERSION     wrangler version pin (default 4.122.0)
- *   --cik-map-cache PATH   optional local cache of the SEC ticker->CIK map
  *
  * Idempotent + restartable: re-running --apply emits UPDATEs only for rows
  * whose official values actually changed; --symbol resumes partial runs.
@@ -86,9 +85,13 @@ function parseArgs(argv: string[]): CliOptions {
       case "--dry-run": options.dryRun = true; options.apply = false; break;
       case "--all-core": options.allCore = true; break;
       case "--symbol":
-        options.symbols.push(argv[index + 1]!);
-        options.allCore = false;
-        index += 1;
+        {
+          const value = argv[index + 1];
+          if (!value) throw new Error("--symbol requires a ticker argument");
+          options.symbols.push(value.toUpperCase());
+          options.allCore = false;
+          index += 1;
+        }
         break;
       case "--limit":
         options.limit = Number(argv[index + 1]);
@@ -275,6 +278,7 @@ async function run(): Promise<void> {
 
   const cikMap = await fetchTickerCikMap({ userAgent: SEC_USER_AGENT });
   const rows: AuditRow[] = [];
+  const fetchFailures: string[] = [];
   for (const [index, target] of targets.entries()) {
     const event = target.event;
     const cik = event?.cik ?? cikMap.get(target.symbol) ?? null;
@@ -286,12 +290,15 @@ async function run(): Promise<void> {
     };
     let official = null;
     let fetchError: string | null = null;
-    if (event && cik) {
+    // Only reported events are audited against SEC XBRL. Upcoming/scheduled
+    // events (e.g. NVDA) never receive actuals and need no companyfacts fetch.
+    if (event && cik && event.status === "reported") {
       try {
         const facts = await fetchCompanyFacts(cik, { userAgent: SEC_USER_AGENT });
         official = resolveOfficialMetrics(facts, identity);
       } catch (error) {
         fetchError = error instanceof Error ? error.message : String(error);
+        fetchFailures.push(`${target.symbol}: ${fetchError.slice(0, 160)}`);
       }
     }
     const audit = buildAuditRow({
@@ -335,7 +342,7 @@ async function run(): Promise<void> {
   printSummary(rows);
 
   if (options.apply) {
-    applyWrites(rows, options, startedAt);
+    applyWrites(rows, options, startedAt, fetchFailures);
   }
 }
 
@@ -373,32 +380,37 @@ function sqlLiteral(value: string | number | null): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
-function applyWrites(rows: AuditRow[], options: CliOptions, updatedAt: string): void {
+function applyWrites(rows: AuditRow[], options: CliOptions, updatedAt: string, fetchFailures: string[]): void {
   const statements: string[] = [];
   let changed = 0;
   for (const row of rows) {
     if (!row.write) continue;
     const write = row.write;
+    // Canonical values are never cleared by a null re-resolution: the value
+    // columns are COALESCE-wrapped, so a null write keeps the existing GAAP
+    // figure (same rule as applyOfficialMetrics on the Worker side).
     statements.push(
       `UPDATE earnings_events SET
-         eps_actual_gaap = ${sqlLiteral(write.epsActualGaap)},
-         eps_actual_gaap_source = ${sqlLiteral(write.epsActualGaapSource)},
-         eps_actual_adjusted = ${sqlLiteral(write.epsActualAdjusted)},
-         eps_actual_adjusted_source = ${sqlLiteral(write.epsActualAdjustedSource)},
-         revenue_actual_official = ${sqlLiteral(write.revenueActualOfficial)},
-         revenue_actual_source = ${sqlLiteral(write.revenueActualSource)},
-         eps_estimate_source = COALESCE(${sqlLiteral(write.epsEstimateSource)}, eps_estimate_source),
-         revenue_estimate_source = COALESCE(${sqlLiteral(write.revenueEstimateSource)}, revenue_estimate_source),
-         reported_at = COALESCE(${sqlLiteral(write.reportedAt)}, reported_at),
-         reported_at_source = COALESCE(${sqlLiteral(write.reportedAtSource)}, reported_at_source),
-         fiscal_period_end = COALESCE(${sqlLiteral(write.fiscalPeriodEnd)}, fiscal_period_end),
-         data_quality_status = ${sqlLiteral(write.dataQualityStatus)},
-         updated_at = ${sqlLiteral(updatedAt)}
-       WHERE id = ${sqlLiteral(write.eventId)};`,
+        eps_actual_gaap = COALESCE(${sqlLiteral(write.epsActualGaap)}, eps_actual_gaap),
+        eps_actual_gaap_source = COALESCE(${sqlLiteral(write.epsActualGaapSource)}, eps_actual_gaap_source),
+        eps_actual_adjusted = COALESCE(${sqlLiteral(write.epsActualAdjusted)}, eps_actual_adjusted),
+        eps_actual_adjusted_source = COALESCE(${sqlLiteral(write.epsActualAdjustedSource)}, eps_actual_adjusted_source),
+        revenue_actual_official = COALESCE(${sqlLiteral(write.revenueActualOfficial)}, revenue_actual_official),
+        revenue_actual_source = COALESCE(${sqlLiteral(write.revenueActualSource)}, revenue_actual_source),
+        eps_estimate_source = COALESCE(${sqlLiteral(write.epsEstimateSource)}, eps_estimate_source),
+        revenue_estimate_source = COALESCE(${sqlLiteral(write.revenueEstimateSource)}, revenue_estimate_source),
+        reported_at = COALESCE(${sqlLiteral(write.reportedAt)}, reported_at),
+        reported_at_source = COALESCE(${sqlLiteral(write.reportedAtSource)}, reported_at_source),
+        fiscal_period_end = COALESCE(${sqlLiteral(write.fiscalPeriodEnd)}, fiscal_period_end),
+        data_quality_status = ${sqlLiteral(write.dataQualityStatus)},
+        updated_at = ${sqlLiteral(updatedAt)}
+      WHERE id = ${sqlLiteral(write.eventId)};`,
     );
     changed += 1;
   }
   const counts = tally(rows);
+  // Diagnostics meta keys are stamped on EVERY apply run (even a no-op one)
+  // so lastAttemptAt / counts stay fresh; LastError reflects fetch failures.
   const meta = [
     `INSERT INTO app_meta (key, value) VALUES ('earningsOfficialAuditLastAttemptAt', ${sqlLiteral(updatedAt)}) ON CONFLICT(key) DO UPDATE SET value = excluded.value;`,
     `INSERT INTO app_meta (key, value) VALUES ('earningsOfficialAuditLastSuccessAt', ${sqlLiteral(updatedAt)}) ON CONFLICT(key) DO UPDATE SET value = excluded.value;`,
@@ -413,6 +425,13 @@ function applyWrites(rows: AuditRow[], options: CliOptions, updatedAt: string): 
       pending: counts.pending ?? 0,
     }))}) ON CONFLICT(key) DO UPDATE SET value = excluded.value;`,
   ];
+  if (fetchFailures.length > 0) {
+    meta.push(
+      `INSERT INTO app_meta (key, value) VALUES ('earningsOfficialAuditLastError', ${sqlLiteral(fetchFailures[0]!.slice(0, 480))}) ON CONFLICT(key) DO UPDATE SET value = excluded.value;`,
+    );
+  } else {
+    meta.push(`DELETE FROM app_meta WHERE key = 'earningsOfficialAuditLastError';`);
+  }
   if (changed === 0) {
     console.error("[backfill] --apply: no official writes to perform (all unchanged or unresolved)");
     return;

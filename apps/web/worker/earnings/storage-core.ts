@@ -240,12 +240,12 @@ function mergedEvent(existing: EarningsRow | null, incoming: NormalizedEarningsE
     revenueActualSource: old.revenueActualSource,
     epsEstimateSource: incoming.epsEstimateSource ?? old.epsEstimateSource,
     revenueEstimateSource: incoming.revenueEstimateSource ?? old.revenueEstimateSource,
-    // "pending" from a fresh provider event must never downgrade an audited
-    // status ("different-basis", "conflict", ...).
-    dataQualityStatus:
-      incoming.dataQualityStatus === "pending" || incoming.dataQualityStatus === null
-        ? old.dataQualityStatus ?? "pending"
-        : incoming.dataQualityStatus,
+    // "pending" (or unset) from a fresh provider event must never downgrade an
+    // audited status ("different-basis", "conflict", ...). Undefined-safe: the
+    // provider path never sets dataQualityStatus on the incoming event.
+    dataQualityStatus: (incoming.dataQualityStatus ?? "pending") === "pending"
+      ? old.dataQualityStatus ?? "pending"
+      : incoming.dataQualityStatus,
   };
   const epsEstimate = providerOlder ? old.epsEstimate : incoming.epsEstimate ?? old.epsEstimate;
   const epsActual = providerOlder ? old.epsActual : incoming.epsActual ?? old.epsActual;
@@ -548,25 +548,36 @@ export async function applyOfficialMetrics(db: Database, write: OfficialMetricsW
   const existing = await db.prepare("SELECT * FROM earnings_events WHERE id = ? LIMIT 1").bind(write.eventId).first<EarningsRow>();
   if (!existing) return false;
   const previous = rowToEarningsEvent(existing);
+  // Canonical values and their provenance are never cleared with null: a null
+  // write means "keep the existing value" (COALESCE on the write side). The
+  // change test therefore only fires when the write carries a non-null value
+  // that differs, keeping re-runs truly idempotent.
+  const valueChanged = (previousValue: number | null, writtenValue: number | null): boolean =>
+    writtenValue !== null && previousValue !== writtenValue;
+  const sourceChanged = (previousValue: string | null, writtenValue: string | null): boolean =>
+    writtenValue !== null && previousValue !== writtenValue;
   const changed =
-    previous.epsActualGaap !== write.epsActualGaap
-    || previous.epsActualGaapSource !== write.epsActualGaapSource
-    || previous.epsActualAdjusted !== write.epsActualAdjusted
-    || previous.epsActualAdjustedSource !== write.epsActualAdjustedSource
-    || previous.revenueActualOfficial !== write.revenueActualOfficial
-    || previous.revenueActualSource !== write.revenueActualSource
-    || previous.epsEstimateSource !== write.epsEstimateSource
-    || previous.revenueEstimateSource !== write.revenueEstimateSource
-    || previous.reportedAt !== write.reportedAt
-    || previous.reportedAtSource !== write.reportedAtSource
+    valueChanged(previous.epsActualGaap, write.epsActualGaap)
+    || sourceChanged(previous.epsActualGaapSource, write.epsActualGaapSource)
+    || valueChanged(previous.epsActualAdjusted, write.epsActualAdjusted)
+    || sourceChanged(previous.epsActualAdjustedSource, write.epsActualAdjustedSource)
+    || valueChanged(previous.revenueActualOfficial, write.revenueActualOfficial)
+    || sourceChanged(previous.revenueActualSource, write.revenueActualSource)
+    || sourceChanged(previous.epsEstimateSource, write.epsEstimateSource)
+    || sourceChanged(previous.revenueEstimateSource, write.revenueEstimateSource)
+    || (write.reportedAt !== null && previous.reportedAt !== write.reportedAt)
+    || (write.reportedAtSource !== null && previous.reportedAtSource !== write.reportedAtSource)
     || previous.dataQualityStatus !== write.dataQualityStatus
     || (write.fiscalPeriodEnd !== null && previous.fiscalPeriodEnd !== write.fiscalPeriodEnd);
   if (!changed) return false;
   await db.prepare(
     `UPDATE earnings_events SET
-       eps_actual_gaap = ?, eps_actual_gaap_source = ?,
-       eps_actual_adjusted = ?, eps_actual_adjusted_source = ?,
-       revenue_actual_official = ?, revenue_actual_source = ?,
+       eps_actual_gaap = COALESCE(?, eps_actual_gaap),
+       eps_actual_gaap_source = COALESCE(?, eps_actual_gaap_source),
+       eps_actual_adjusted = COALESCE(?, eps_actual_adjusted),
+       eps_actual_adjusted_source = COALESCE(?, eps_actual_adjusted_source),
+       revenue_actual_official = COALESCE(?, revenue_actual_official),
+       revenue_actual_source = COALESCE(?, revenue_actual_source),
        eps_estimate_source = COALESCE(?, eps_estimate_source),
        revenue_estimate_source = COALESCE(?, revenue_estimate_source),
        reported_at = COALESCE(?, reported_at),
