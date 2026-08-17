@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import "./earnings-calendar.css";
 import { CompanyLogo } from "./EarningsLogo";
 import {
   formatPercent,
