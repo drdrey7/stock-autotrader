@@ -5,6 +5,7 @@ import {
   fetchTickerCikMap,
   parseCompanyFacts,
   resolveOfficialMetrics,
+  secFilingUrl,
   selectOfficialMetric,
 } from "./sec-xbrl";
 
@@ -241,6 +242,12 @@ describe("resolveOfficialMetrics", () => {
 });
 
 describe("fetchTickerCikMap", () => {
+  it("builds the EDGAR index URL for an accession", () => {
+    expect(secFilingUrl("0000320193", "0000320193-26-000101")).toBe(
+      "https://www.sec.gov/Archives/edgar/data/320193/000032019326000101/0000320193-26-000101-index.html",
+    );
+    expect(secFilingUrl("320193", "bad")).toBeNull();
+  });
   it("maps ticker -> zero-padded CIK from the SEC exchange file", async () => {
     const response = new Response(JSON.stringify({
       fields: ["cik", "name", "ticker", "exchange"],

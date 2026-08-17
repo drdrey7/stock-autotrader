@@ -515,6 +515,11 @@ export interface OfficialMetricsWrite {
   eventId: string;
   reportedAt: string | null;
   reportedAtSource: "sec-filing" | null;
+  /** SEC filing metadata resolved from the XBRL fact (optional, COALESCE-wrapped). */
+  secFilingUrl?: string | null;
+  secAccession?: string | null;
+  secForm?: string | null;
+  secFiledAt?: string | null;
   epsActualGaap: number | null;
   epsActualGaapSource: "sec-xbrl" | null;
   epsActualAdjusted: number | null;
@@ -567,6 +572,10 @@ export async function applyOfficialMetrics(db: Database, write: OfficialMetricsW
     || sourceChanged(previous.revenueEstimateSource, write.revenueEstimateSource)
     || (write.reportedAt !== null && previous.reportedAt !== write.reportedAt)
     || (write.reportedAtSource !== null && previous.reportedAtSource !== write.reportedAtSource)
+    || (write.secFilingUrl !== undefined && write.secFilingUrl !== null && previous.secFilingUrl !== write.secFilingUrl)
+    || (write.secAccession !== undefined && write.secAccession !== null && previous.secAccession !== write.secAccession)
+    || (write.secForm !== undefined && write.secForm !== null && previous.secForm !== write.secForm)
+    || (write.secFiledAt !== undefined && write.secFiledAt !== null && previous.secFiledAt !== write.secFiledAt)
     || previous.dataQualityStatus !== write.dataQualityStatus
     || (write.fiscalPeriodEnd !== null && previous.fiscalPeriodEnd !== write.fiscalPeriodEnd);
   if (!changed) return false;
@@ -583,6 +592,10 @@ export async function applyOfficialMetrics(db: Database, write: OfficialMetricsW
        reported_at = COALESCE(?, reported_at),
        reported_at_source = COALESCE(?, reported_at_source),
        fiscal_period_end = COALESCE(?, fiscal_period_end),
+       sec_filing_url = COALESCE(?, sec_filing_url),
+       sec_accession = COALESCE(?, sec_accession),
+       sec_form = COALESCE(?, sec_form),
+       sec_filed_at = COALESCE(?, sec_filed_at),
        data_quality_status = ?,
        updated_at = ?
      WHERE id = ?`,
@@ -593,6 +606,10 @@ export async function applyOfficialMetrics(db: Database, write: OfficialMetricsW
     write.epsEstimateSource, write.revenueEstimateSource,
     write.reportedAt, write.reportedAtSource,
     write.fiscalPeriodEnd ?? null,
+    write.secFilingUrl ?? null,
+    write.secAccession ?? null,
+    write.secForm ?? null,
+    write.secFiledAt ?? null,
     write.dataQualityStatus,
     write.updatedAt,
     write.eventId,

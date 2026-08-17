@@ -219,11 +219,12 @@ class MemoryStatement {
       // applyOfficialMetrics bind order: eps_actual_gaap, eps_actual_gaap_source,
       // eps_actual_adjusted, eps_actual_adjusted_source, revenue_actual_official,
       // revenue_actual_source, eps_estimate_source, revenue_estimate_source,
-      // reported_at, reported_at_source, fiscal_period_end, data_quality_status,
-      // updated_at, id.
+      // reported_at, reported_at_source, fiscal_period_end, sec_filing_url,
+      // sec_accession, sec_form, sec_filed_at, data_quality_status, updated_at, id.
       const [gaap, gaapSource, adjusted, adjustedSource, revenueOfficial, revenueSource,
         epsEstimateSource, revenueEstimateSource, reportedAt, reportedAtSource,
-        fiscalPeriodEnd, qualityStatus, updatedAt, id] = this.args;
+        fiscalPeriodEnd, secUrl, secAccession, secForm, secFiledAt,
+        qualityStatus, updatedAt, id] = this.args;
       const row = this.db.events.get(String(id));
       if (row) {
         // COALESCE columns: a null write keeps the existing official value —
@@ -239,6 +240,10 @@ class MemoryStatement {
         if (reportedAt != null) row.reported_at = reportedAt;
         if (reportedAtSource != null) row.reported_at_source = reportedAtSource;
         if (fiscalPeriodEnd != null) row.fiscal_period_end = fiscalPeriodEnd;
+        if (secUrl != null) row.sec_filing_url = secUrl;
+        if (secAccession != null) row.sec_accession = secAccession;
+        if (secForm != null) row.sec_form = secForm;
+        if (secFiledAt != null) row.sec_filed_at = secFiledAt;
         row.data_quality_status = qualityStatus;
         row.updated_at = updatedAt;
       }
@@ -2002,6 +2007,10 @@ describe("official-metric storage write precedence (PR: earnings official last q
     eventId,
     reportedAt: "2026-07-29T13:00:00.000Z",
     reportedAtSource: "sec-filing",
+    secFilingUrl: "https://www.sec.gov/Archives/edgar/data/320193/000032019326000101/0000320193-26-000101-index.html",
+    secAccession: "0000320193-26-000101",
+    secForm: "10-Q",
+    secFiledAt: "2026-07-29T00:00:00.000Z",
     epsActualGaap: 1.63,
     epsActualGaapSource: "sec-xbrl",
     epsActualAdjusted: 1.91,
@@ -2048,6 +2057,9 @@ describe("official-metric storage write precedence (PR: earnings official last q
     expect(row.revenueActualOfficial).toBe(117_441_000_000);
     expect(row.reportedAtSource).toBe("sec-filing");
     expect(row.dataQualityStatus).toBe("different-basis");
+    expect(row.secFilingUrl).toMatch(/https:\/\/www\.sec\.gov\/Archives\/edgar\/data\/320193\//);
+    expect(row.secAccession).toBe("0000320193-26-000101");
+    expect(row.secForm).toBe("10-Q");
     // Legacy columns are preserved exactly.
     expect(row.epsActual).toBe(1.91);
     expect(row.revenueActual).toBe(117_441_000_000);

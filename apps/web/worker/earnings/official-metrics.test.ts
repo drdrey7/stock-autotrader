@@ -84,6 +84,10 @@ describe("buildAuditRow — decision matrix", () => {
     expect(row.write?.epsActualAdjustedSource).toBe(SOURCE_FINNHUB_ADJUSTED);
     expect(row.write?.revenueActualOfficial).toBe(117_441_000_000);
     expect(row.write?.revenueActualSource).toBe(SOURCE_SEC_XBRL);
+    // SEC filing metadata is attached from the resolved XBRL fact.
+    expect(row.write?.secFilingUrl).toMatch(/https:\/\/www\.sec\.gov\/Archives\/edgar\/data\/320193\//);
+    expect(row.write?.secAccession).toBe("0000320193-26-000101");
+    expect(row.write?.secForm).toBe("10-Q");
   });
 
   it("decides DIFFERENT_BASIS when the provider adjusted EPS differs from GAAP (AAPL fixture)", () => {

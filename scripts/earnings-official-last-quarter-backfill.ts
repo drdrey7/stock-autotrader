@@ -402,6 +402,10 @@ function applyWrites(rows: AuditRow[], options: CliOptions, updatedAt: string, f
         reported_at = COALESCE(${sqlLiteral(write.reportedAt)}, reported_at),
         reported_at_source = COALESCE(${sqlLiteral(write.reportedAtSource)}, reported_at_source),
         fiscal_period_end = COALESCE(${sqlLiteral(write.fiscalPeriodEnd)}, fiscal_period_end),
+        sec_filing_url = COALESCE(${sqlLiteral(write.secFilingUrl ?? null)}, sec_filing_url),
+        sec_accession = COALESCE(${sqlLiteral(write.secAccession ?? null)}, sec_accession),
+        sec_form = COALESCE(${sqlLiteral(write.secForm ?? null)}, sec_form),
+        sec_filed_at = COALESCE(${sqlLiteral(write.secFiledAt ?? null)}, sec_filed_at),
         data_quality_status = ${sqlLiteral(write.dataQualityStatus)},
         updated_at = ${sqlLiteral(updatedAt)}
       WHERE id = ${sqlLiteral(write.eventId)};`,

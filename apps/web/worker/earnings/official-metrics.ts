@@ -12,9 +12,10 @@ import type {
   EarningsDataQualityStatus,
   EarningsStatus,
 } from "@stock-autotrader/contracts";
-import type {
-  OfficialMetricSelection,
-  ResolvedOfficialMetrics,
+import {
+  secFilingUrl as buildSecFilingUrl,
+  type OfficialMetricSelection,
+  type ResolvedOfficialMetrics,
 } from "./sec-xbrl";
 import type { OfficialMetricsWrite } from "./storage-core";
 
@@ -274,6 +275,14 @@ export function buildAuditRow(input: AuditInput, updatedAt: string): AuditRow {
       eventId: input.eventId,
       reportedAt: reportedTimestamp,
       reportedAtSource: reportedTimestamp ? "sec-filing" : null,
+      // SEC filing metadata resolved from XBRL (accession/form/filed) so the
+      // worker-read sec_* columns are populated without waiting on enrichment.
+      secFilingUrl: input.official && input.cik && epsValue !== null && input.official.eps.accn
+        ? buildSecFilingUrl(input.cik, input.official.eps.accn)
+        : null,
+      secAccession: input.official?.eps.accn ?? null,
+      secForm: input.official?.eps.form ?? null,
+      secFiledAt: input.official?.eps.filed ? `${input.official.eps.filed}T00:00:00.000Z` : null,
       epsActualGaap: gaapEpsWritable ? epsValue : null,
       epsActualGaapSource: gaapEpsWritable ? SOURCE_SEC_XBRL : null,
       epsActualAdjusted: input.providerEpsActual,

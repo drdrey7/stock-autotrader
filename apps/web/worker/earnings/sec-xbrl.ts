@@ -410,6 +410,14 @@ export function resolveOfficialMetrics(
 
 export const SEC_COMPANYFACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts";
 export const SEC_TICKERS_URL = "https://www.sec.gov/files/company_tickers_exchange.json";
+
+/** Build the EDGAR filing URL for an accession (index page when no primary document). */
+export function secFilingUrl(cik: string, accession: string): string | null {
+  const normalized = cik.replace(/\D/g, "").padStart(10, "0");
+  if (!/^\d{10}$/.test(normalized) || !/^\d{10}-\d{2}-\d{6}$/.test(accession)) return null;
+  const accessionPath = accession.replace(/-/g, "");
+  return `https://www.sec.gov/Archives/edgar/data/${Number(normalized)}/${accessionPath}/${accession}-index.html`;
+}
 /**
  * SEC EDGAR requires a descriptive User-Agent with a contact email; a generic
  * browser-style or github-only UA is rejected with HTTP 403 (verified against
