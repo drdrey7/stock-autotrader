@@ -542,6 +542,39 @@ it("renders Not available when the reading is market-stale even if a number exis
   expect(view.container.querySelector(".sentiment-card .gauge-mask strong")).toHaveTextContent("Not available");
 });
 
+it("clears a previously rendered reading when the backend later marks it Stale", async () => {
+  let statusRequests = 0;
+  const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input) === "/api/status") {
+      statusRequests += 1;
+      if (statusRequests === 1) {
+        return new Response(JSON.stringify({
+          briefing: { available: true, freshness: "fresh", publishedAt: briefing.preparedAt },
+          sentiment: { provider: "cnn-fear-greed", score: 62, rating: "greed", asOf: "2026-08-12T21:00:00Z" },
+          sources: { sentiment: { state: "Live" } },
+        }), { status: 200 });
+      }
+      // Same reading shape, but the Worker now classifies the value as
+      // market-stale (session gate 2.5h). The previously rendered number must
+      // NOT be retained just because it is inside the 72h fallback window.
+      return new Response(JSON.stringify({
+        briefing: { available: false, freshness: "unavailable", publishedAt: null },
+        sentiment: { provider: "cnn-fear-greed", score: 62, rating: "greed", asOf: "2026-08-11T14:00:00Z" },
+        sources: { sentiment: { state: "Stale" } },
+      }), { status: 200 });
+    }
+    return originalFetch(input, init);
+  });
+
+  const view = renderApp();
+  await waitFor(() => expect(view.container.querySelector(".sentiment-card")).toHaveTextContent("Greed"));
+  document.dispatchEvent(new Event("visibilitychange"));
+  await waitFor(() => expect(statusRequests).toBeGreaterThan(1));
+  await waitFor(() => expect(view.container.querySelector(".sentiment-card")).toHaveTextContent("Not available"));
+  expect(view.container.querySelector(".sentiment-card .gauge-value")).toBeNull();
+});
+
 it("polls the sentiment status on a ~5-minute cadence", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   vi.setSystemTime(new Date("2026-08-12T16:00:00Z"));

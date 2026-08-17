@@ -51,8 +51,14 @@ export function useSentiment(): Sentiment | null {
       const status = await fetchJson<StatusResponse>("/api/status");
       if (cancelled || currentRequest !== requestId) return;
       const next = sentimentFromStatus(status);
+      const explicitState = status?.sources?.sentiment?.state;
       setSentiment((previous) => {
-        // Retain a previously rendered value only while it is still valid.
+        // An explicit backend classification always wins: a Stale/Error/
+        // Unavailable reading must clear the card even if a previous value is
+        // still within the conservative 72h fallback window (the session gate
+        // is 2.5h). Retention only applies on the fallback path (backend
+        // without sources.sentiment.state).
+        if (explicitState) return next;
         const retained = previous && isWithinWindow(previous.asOf, SENTIMENT_GATE_MS) ? previous : null;
         return next ?? retained;
       });
