@@ -109,8 +109,8 @@ for (const viewport of VIEWPORTS) {
         expect(x1 !== x2, `ticker marquee must be moving at ${viewport.label} (${theme})`).toBeTruthy();
       }
 
-      await expect(page.locator("tv-ticker-tape")).toHaveAttribute("color-theme", theme);
-      await expect(page.locator("tv-market-overview")).toHaveAttribute("color-theme", theme);
+      await expect(page.locator("tv-ticker-tape")).toHaveAttribute("theme", theme);
+      await expect(page.locator("tv-market-overview")).toHaveAttribute("theme", theme);
 
       // No TradingView error states, no dead-feed placeholders, no overflow.
       await expect(page.locator(".tv-widget-error")).toHaveCount(0);
