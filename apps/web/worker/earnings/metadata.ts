@@ -7,7 +7,10 @@ import {
   setEarningsMeta,
   upsertUniverseMembers,
 } from "./storage";
-import { FINNHUB_RATE_PACING_MS } from "./subrequest-budget";
+import {
+  FINNHUB_RATE_PACING_MS,
+  MAX_FINNHUB_PROFILE_REQUESTS_PER_JOB,
+} from "./subrequest-budget";
 import type { Database } from "./storage";
 import type { EarningsProviderBundle } from "./types";
 
@@ -15,27 +18,25 @@ import type { EarningsProviderBundle } from "./types";
  * Finnhub Company Profile 2 universe enrichment (PR — earnings metadata).
  *
  * Company profile data is stable and changes rarely, so it is refreshed
- * infrequently: one bounded batch per daily calendar sync, only for active
- * Core members whose metadata is missing or older than the TTL. The frontend
- * never calls Finnhub; the API key stays server-side and the persisted values
- * are just the external logo URL and small text fields (never image binary).
+ * infrequently: one bounded maintenance batch per daily calendar sync, only
+ * for active Core members whose metadata is missing or older than the TTL.
+ * The frontend never calls Finnhub; the API key stays server-side and the
+ * persisted values are just the external logo URL and small text fields
+ * (never image binary).
  *
  * This is strictly best-effort enrichment. Failures are recorded in their
  * own diagnostics meta keys and NEVER feed the critical earnings health keys
  * (calendarError/monitorError/lastError): a profile outage must not degrade
  * the earnings calendar the way the Finnhub calendar path does.
  *
- * Initial bootstrap: when metadata coverage is below the bootstrap threshold
- * (>=80% of active Core members missing), one controlled bootstrap pass runs
- * in larger batches (METADATA_BOOTSTRAP_BATCH per run) until coverage rises,
- * then the normal METADATA_REFRESH_PER_RUN cap applies. No new cron trigger
- * exists for this — the bootstrap simply uses the daily calendar job.
+ * Production D1 was bootstrapped externally. The Worker stays in maintenance
+ * mode only — no aggressive multi-day Core bootstrap inside the daily job.
+ * Heavy backfills remain out of scope for the Worker.
  */
 
 export const METADATA_PROFILE_TTL_MS = 14 * 24 * 60 * 60 * 1000;
-export const METADATA_REFRESH_PER_RUN = 15;
-export const METADATA_BOOTSTRAP_BATCH = 20;
-export const METADATA_BOOTSTRAP_THRESHOLD = 0.8;
+/** @deprecated Use MAX_FINNHUB_PROFILE_REQUESTS_PER_JOB — kept as an alias for older tests. */
+export const METADATA_REFRESH_PER_RUN = MAX_FINNHUB_PROFILE_REQUESTS_PER_JOB;
 
 export const METADATA_META_KEYS = {
   lastAttempt: "earningsMetadataLastAttemptAt",
@@ -49,6 +50,7 @@ interface MetadataEnrichmentResult {
   successes: number;
   failures: number;
   symbols: string[];
+  /** Always false: the Worker no longer runs an aggressive bootstrap mode. */
   bootstrap: boolean;
 }
 
@@ -94,13 +96,10 @@ export async function enrichUniverseMetadata(
 ): Promise<MetadataEnrichmentResult> {
   const profile = providers.profile;
   if (!profile) return { requests: 0, successes: 0, failures: 0, symbols: [], bootstrap: false };
-  const coverage = await readMetadataCoverage(env.DB);
-  const bootstrap = coverage.active > 0
-    && coverage.missing >= Math.ceil(coverage.active * METADATA_BOOTSTRAP_THRESHOLD);
-  const cap = bootstrap ? METADATA_BOOTSTRAP_BATCH : METADATA_REFRESH_PER_RUN;
+  const cap = MAX_FINNHUB_PROFILE_REQUESTS_PER_JOB;
   const staleBefore = new Date(Date.now() - METADATA_PROFILE_TTL_MS).toISOString();
   const candidates = await readUniverseMetadataCandidates(env.DB, staleBefore, cap);
-  if (candidates.length === 0) return { requests: 0, successes: 0, failures: 0, symbols: [], bootstrap };
+  if (candidates.length === 0) return { requests: 0, successes: 0, failures: 0, symbols: [], bootstrap: false };
 
   const symbols: string[] = [];
   const failures: string[] = [];
@@ -118,6 +117,7 @@ export async function enrichUniverseMetadata(
         logoUrl: profileObservation.logoUrl,
         industry: profileObservation.industry,
         websiteUrl: profileObservation.websiteUrl,
+        // Explicit Finnhub stamp only when this path actually updated metadata.
         metadataProvider: profile.name,
         metadataUpdatedAt: collectedAt,
         updatedAt: collectedAt,
@@ -146,5 +146,5 @@ export async function enrichUniverseMetadata(
   } else {
     await clearEarningsMeta(env.DB, METADATA_META_KEYS.lastError);
   }
-  return { requests: candidates.length, successes: symbols.length, failures: failures.length, symbols, bootstrap };
+  return { requests: candidates.length, successes: symbols.length, failures: failures.length, symbols, bootstrap: false };
 }

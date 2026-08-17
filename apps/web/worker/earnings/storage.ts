@@ -647,7 +647,7 @@ function universeMetadataStatement(db: Database, member: EarningsUniverseMember)
          logo_url = COALESCE(?, logo_url),
          industry = COALESCE(?, industry),
          website_url = COALESCE(?, website_url),
-         metadata_provider = ?,
+         metadata_provider = COALESCE(?, metadata_provider),
          metadata_updated_at = COALESCE(?, metadata_updated_at),
          updated_at = ?
      WHERE symbol = ? AND active = 1 AND source = 'core'`,
@@ -660,7 +660,9 @@ function universeMetadataStatement(db: Database, member: EarningsUniverseMember)
     member.logoUrl ?? null,
     member.industry ?? null,
     member.websiteUrl ?? null,
-    member.metadataProvider ?? "sec-edgar",
+    // Only stamp provenance when the caller explicitly provided one.
+    // Core/SEC reconciliation without a provider must preserve Finnhub.
+    member.metadataProvider ?? null,
     member.metadataUpdatedAt ?? null,
     member.updatedAt,
     member.symbol,

@@ -258,7 +258,10 @@ class MemoryStatement {
         row.logo_url = logoUrl ?? row.logo_url ?? null;
         row.industry = industry ?? row.industry ?? null;
         row.website_url = websiteUrl ?? row.website_url ?? null;
-        row.metadata_provider = metadataProvider;
+        // COALESCE(?, metadata_provider): null/undefined keeps the previous stamp.
+        if (metadataProvider != null && metadataProvider !== "") {
+          row.metadata_provider = metadataProvider;
+        }
         row.metadata_updated_at = metadataUpdatedAt ?? row.metadata_updated_at ?? null;
         row.updated_at = updatedAt;
       }
@@ -1273,33 +1276,57 @@ describe("earnings universe metadata enrichment", () => {
     };
     const providers = { profile: provider } as unknown as EarningsProviderBundle;
     const first = await enrichUniverseMetadata({ DB: db } as never, providers, "2026-08-16T06:00:00.000Z", 0);
-    // Zero metadata coverage triggers the initial bootstrap pass: batches of
-    // METADATA_BOOTSTRAP_BATCH (20) until coverage rises above the threshold.
-    expect(first.bootstrap).toBe(true);
-    expect(first.requests).toBe(20);
-    expect(first.successes).toBe(20);
-    expect(fetched).toHaveLength(20);
+    // Maintenance mode: Worker never tries to fill the full Core set in one run.
+    expect(first.bootstrap).toBe(false);
+    expect(first.requests).toBe(2);
+    expect(first.successes).toBe(2);
+    expect(fetched).toHaveLength(2);
     const row = db.universe.get(fetched[0]!);
     expect(row?.logo_url).toBe(`https://static2.finnhub.io/logo/${fetched[0]}.png`);
     expect(row?.industry).toBe("Semiconductors");
     expect(row?.website_url).toBe(`https://www.${fetched[0]!.toLowerCase()}.com`);
     expect(row?.metadata_provider).toBe("finnhub-company-profile");
     expect(row?.metadata_updated_at).toBe("2026-08-16T06:00:00.000Z");
-    // The 50-member Core fills across bootstrap batches; the final run is a
-    // no-op. 20 + 20 + 10 = 50.
+    // The 50-member Core fills across maintenance batches of 2; the final run is a no-op.
     let runs = 1;
     let total = first.successes;
-    for (let index = 0; index < 10; index += 1) {
+    for (let index = 0; index < 40; index += 1) {
       const next = await enrichUniverseMetadata({ DB: db } as never, providers, "2026-08-16T07:00:00.000Z", 0);
       runs += 1;
       total += next.successes;
-      expect(next.requests).toBeLessThanOrEqual(20);
+      expect(next.requests).toBeLessThanOrEqual(2);
       expect(fetched).toHaveLength(total);
       if (next.requests === 0) break;
     }
-    expect(runs).toBe(4);
+    expect(runs).toBe(26);
     expect(total).toBe(50);
     expect(fetched).toHaveLength(50);
+  });
+
+  it("preserves Finnhub metadata_provider when Core/SEC reconciliation omits a provider", async () => {
+    const db = new MemoryD1();
+    await seedActiveCoreUniverse(db);
+    const first = await enrichUniverseMetadata({ DB: db } as never, { profile: profileProvider } as unknown as EarningsProviderBundle, "2026-08-16T06:00:00.000Z", 0);
+    const symbol = first.symbols[0]!;
+    const before = db.universe.get(symbol)!;
+    expect(before.metadata_provider).toBe("finnhub-company-profile");
+    const logoBefore = before.logo_url;
+    const industryBefore = before.industry;
+    // Simulate Core/SEC reconciliation that updates company/CIK but does not
+    // stamp a metadata provider — Finnhub provenance and logos must survive.
+    await upsertUniverseMember(db as never, {
+      symbol,
+      company: before.company as string,
+      cik: "0000123456",
+      exchange: "NASDAQ",
+      indexes: [],
+      updatedAt: "2026-08-16T07:00:00.000Z",
+    });
+    const after = db.universe.get(symbol)!;
+    expect(after.metadata_provider).toBe("finnhub-company-profile");
+    expect(after.logo_url).toBe(logoBefore);
+    expect(after.industry).toBe(industryBefore);
+    expect(after.cik).toBe("0000123456");
   });
 
   it("re-enriches members whose metadata_updated_at is older than the TTL", async () => {
@@ -1336,7 +1363,7 @@ describe("earnings universe metadata enrichment", () => {
     expect(result.status).toBe("ok");
     expect(db.meta.get("earningsCalendarLastError")).toBeUndefined();
     expect(db.meta.get("earningsMetadataLastError")).toContain("profile provider HTTP 429");
-    expect(db.meta.get("earningsMetadataConsecutiveFailures")).toBe("20");
+    expect(db.meta.get("earningsMetadataConsecutiveFailures")).toBe("2");
     // The calendar event still landed despite every profile call failing.
     expect(db.events.size).toBeGreaterThan(0);
   });
@@ -1349,7 +1376,7 @@ describe("earnings universe metadata enrichment", () => {
       fetchProfile: async () => { throw new Error("boom"); },
     };
     await enrichUniverseMetadata({ DB: db } as never, { profile: failingProfile } as unknown as EarningsProviderBundle, "2026-08-16T06:00:00.000Z", 0);
-    expect(db.meta.get("earningsMetadataConsecutiveFailures")).toBe("20");
+    expect(db.meta.get("earningsMetadataConsecutiveFailures")).toBe("2");
     await enrichUniverseMetadata({ DB: db } as never, { profile: profileProvider } as unknown as EarningsProviderBundle, "2026-08-16T06:30:00.000Z", 0);
     expect(db.meta.get("earningsMetadataLastError")).toBeUndefined();
     expect(db.meta.get("earningsMetadataConsecutiveFailures")).toBe("0");
@@ -1430,23 +1457,24 @@ describe("targeted historical recovery (PR #50)", () => {
   it("recovers bulk-omitted MSFT/AAPL history, persists each event once and exposes them in Past Earnings", async () => {
     const db = new MemoryD1();
     await seedActiveCoreUniverse(db);
-    // Complete metadata coverage so recovery runs at the steady-state cap
-    // (5 symbols/run): MSFT (index 27 of 50) lands on run 6, inside the
-    // 30-day rolling window.
+    // Complete metadata coverage so recovery is not competing with profile work.
     for (const row of db.universe.values()) {
       row.logo_url = `https://static2.finnhub.io/logo/${row.symbol}.png`;
       row.industry = "Semiconductors";
       row.metadata_updated_at = "2026-08-16T00:00:00.000Z";
     }
+    // Pre-stamp every Core symbol except AAPL/MSFT so the maintenance cap of 2
+    // recovers those two on the first run (instead of aging July reports out of
+    // the 30-day window while walking A–Z at 2/day).
+    for (const symbol of CORE_UNIVERSE) {
+      if (symbol === "AAPL" || symbol === "MSFT") continue;
+      db.meta.set(`earningsRecoveryChecked:${symbol}`, "2026-08-16T06:00:00.000Z");
+    }
     const calendar = recoveryCalendar({ MSFT: [msftJuly()], AAPL: [aaplJuly()] });
     const providers = { calendar, consensus: calendar as never, official: silentOfficial } as unknown as EarningsProviderBundle;
     const first = await runEarningsJob({ DB: db } as never, new Date("2026-08-16T06:00:00.000Z"), "calendar", providers, 0);
     expect(first.status).toBe("ok");
-    for (let day = 0; day < 12; day += 1) {
-      const runAt = new Date(Date.parse("2026-08-17T06:00:00.000Z") + day * 24 * 60 * 60 * 1000);
-      await runEarningsJob({ DB: db } as never, runAt, "calendar", providers, 0);
-      if ([...db.events.values()].some((row) => row.symbol === "MSFT")) break;
-    }
+    // AAPL+MSFT recovered on the first maintenance pass.
     const msftRows = [...db.events.values()].filter((row) => row.symbol === "MSFT");
     const aaplRows = [...db.events.values()].filter((row) => row.symbol === "AAPL");
     expect(msftRows).toHaveLength(1);
@@ -1506,6 +1534,11 @@ describe("targeted historical recovery (PR #50)", () => {
       row.industry = "Semiconductors";
       row.metadata_updated_at = "2026-08-16T00:00:00.000Z";
     }
+    // Leave only MSFT unchecked so the maintenance batch recovers it immediately.
+    for (const symbol of CORE_UNIVERSE) {
+      if (symbol === "MSFT") continue;
+      db.meta.set(`earningsRecoveryChecked:${symbol}`, "2026-08-16T06:00:00.000Z");
+    }
     const queried: string[] = [];
     const calendar: EarningsCalendarProvider = {
       name: "finnhub-earnings-calendar",
@@ -1533,11 +1566,7 @@ describe("targeted historical recovery (PR #50)", () => {
       },
     };
     const providers = { calendar, consensus: calendar as never, official: silentOfficial } as unknown as EarningsProviderBundle;
-    for (let day = 0; day < 12; day += 1) {
-      const runAt = new Date(Date.parse("2026-08-16T06:00:00.000Z") + day * 24 * 60 * 60 * 1000);
-      await runEarningsJob({ DB: db } as never, runAt, "calendar", providers, 0);
-      if ([...db.events.values()].some((row) => row.symbol === "MSFT" && row.scheduled_date === "2026-07-29")) break;
-    }
+    await runEarningsJob({ DB: db } as never, new Date("2026-08-16T06:00:00.000Z"), "calendar", providers, 0);
     expect(queried).toContain("MSFT");
     const msftRows = [...db.events.values()].filter((row) => row.symbol === "MSFT");
     expect(msftRows.some((row) => row.scheduled_date === "2026-07-29" && row.status === "reported")).toBe(true);
@@ -1580,7 +1609,7 @@ describe("targeted historical recovery (PR #50)", () => {
     expect([...db.events.values()].filter((row) => row.symbol === "MSFT")).toHaveLength(1);
   });
 
-  it("keeps the steady-state recovery cap at 5 symbols/run once metadata coverage is complete", async () => {
+  it("keeps the maintenance recovery cap at 2 symbols/run", async () => {
     const db = new MemoryD1();
     await seedActiveCoreUniverse(db);
     // Complete metadata coverage: every active Core member has logo/industry.
@@ -1593,7 +1622,7 @@ describe("targeted historical recovery (PR #50)", () => {
     const calendar = recoveryCalendar({}, queried);
     const providers = { calendar, consensus: calendar as never, official: silentOfficial } as unknown as EarningsProviderBundle;
     await runEarningsJob({ DB: db } as never, new Date("2026-08-16T06:00:00.000Z"), "calendar", providers, 0);
-    expect(queried).toHaveLength(5);
+    expect(queried).toHaveLength(2);
   });
 });
 
@@ -1620,7 +1649,7 @@ describe("targeted historical recovery anti-starvation", () => {
       const runAt = new Date(Date.parse("2026-08-16T06:00:00.000Z") + day * 24 * 60 * 60 * 1000);
       await runEarningsJob({ DB: db } as never, runAt, "calendar", providers, 0);
     }
-    // 6 runs at the 2-symbol bootstrap cap with 7-day rest stamps: the first
+    // 6 runs at the 2-symbol maintenance cap with 7-day rest stamps: the first
     // probes must not be re-queried, so unique symbols grow well past 2.
     expect(new Set(queried).size).toBeGreaterThanOrEqual(10);
   });

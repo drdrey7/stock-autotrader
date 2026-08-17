@@ -49,8 +49,8 @@ import {
   readActiveUniverseSymbols,
   readEarningsMonitoringEvents,
 } from "./storage";
-import { MAX_SEC_FILING_LOOKUPS_PER_JOB, FINNHUB_RATE_PACING_MS, MAX_HISTORICAL_RECOVERY_SYMBOLS_PER_JOB, MAX_HISTORICAL_RECOVERY_SYMBOLS_PER_BOOTSTRAP } from "./subrequest-budget";
-import { enrichUniverseMetadata, readMetadataCoverage, METADATA_BOOTSTRAP_THRESHOLD } from "./metadata";
+import { MAX_SEC_FILING_LOOKUPS_PER_JOB, FINNHUB_RATE_PACING_MS, MAX_HISTORICAL_RECOVERY_SYMBOLS_PER_JOB } from "./subrequest-budget";
+import { enrichUniverseMetadata } from "./metadata";
 export { MAX_SEC_FILING_LOOKUPS_PER_JOB } from "./subrequest-budget";
 
 export const EARNINGS_BACKFILL_DAYS = 30;
@@ -547,9 +547,7 @@ async function runCalendarSync(
   // response (bulk caps at ~1500 rows, dominated by near-term dates) get one
   // symbol-scoped query for the past-30-day window. Recovery diagnostics stay
   // out of the critical failure keys; failures are isolated per symbol.
-  const coverage = await readMetadataCoverage(env.DB);
-  const bootstrapMode = coverage.active > 0
-    && coverage.missing >= Math.ceil(coverage.active * METADATA_BOOTSTRAP_THRESHOLD);
+  // Maintenance-only after external bootstrap — no aggressive multi-day mode.
   const recovery = await recoverMissingHistory(
     env,
     providers,
@@ -557,7 +555,7 @@ async function runCalendarSync(
     calendar.observations,
     { from: providerRange.from, to: today },
     collectedAt,
-    bootstrapMode ? MAX_HISTORICAL_RECOVERY_SYMBOLS_PER_BOOTSTRAP : MAX_HISTORICAL_RECOVERY_SYMBOLS_PER_JOB,
+    MAX_HISTORICAL_RECOVERY_SYMBOLS_PER_JOB,
     pacingMs,
   );
   if (recovery.requests > 0) {
