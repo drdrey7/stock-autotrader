@@ -67,16 +67,15 @@ export function TradingViewIframeWidget({
   }, [lazy, inView]);
 
   const containerId = `tradingview-${id}`;
-  // The widget config is a pure function of (id, theme, height, config). The
-  // script is re-injected when the theme changes so colorTheme matches the
-  // active app theme. The string key keeps the dependency honest for callers
-  // that pass a fresh object every render.
+  // Theme-controlled fields are applied last on purpose. This prevents any
+  // caller config from accidentally overriding the shell theme and leaving an
+  // iframe light while the rest of the application is dark (or vice versa).
   const fullConfig = JSON.stringify({
+    ...config,
     container_id: containerId,
     width: "100%",
     height,
     colorTheme: theme,
-    ...config,
   });
 
   useEffect(() => {

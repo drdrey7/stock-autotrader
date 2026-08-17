@@ -18,9 +18,11 @@ interface MarketOverviewProps {
  * Official `<tv-market-overview>` web component.
  *
  * Renders the section tabs plus the active section's rows, updating in place
- * on `color-theme` changes. The `symbol-sectors` attribute carries the JSON
- * sections config, so every row is a pre-verified symbol (see
- * tradingview-config.ts) — no blank rows, no "No data here yet".
+ * on `theme` changes. TradingView's current web-component API uses `theme`
+ * (not the legacy iframe-style `colorTheme` / `color-theme`) to force light or
+ * dark mode. The `symbol-sectors` attribute carries the JSON sections config,
+ * so every row is a pre-verified symbol (see tradingview-config.ts) — no blank
+ * rows, no "No data here yet".
  */
 export function MarketOverview({
   sections,
@@ -41,7 +43,7 @@ export function MarketOverview({
     el.setAttribute("mode", mode);
     el.setAttribute("symbol-sectors", sectionsJson);
     el.setAttribute("time-frame", timeFrame);
-    el.setAttribute("color-theme", colorTheme);
+    el.setAttribute("theme", colorTheme);
     host.appendChild(el);
     return () => {
       el.remove();
@@ -51,7 +53,7 @@ export function MarketOverview({
   }, [sectionsJson, mode, timeFrame, locale]);
 
   useEffect(() => {
-    hostRef.current?.querySelector("tv-market-overview")?.setAttribute("color-theme", colorTheme);
+    hostRef.current?.querySelector("tv-market-overview")?.setAttribute("theme", colorTheme);
   }, [colorTheme]);
 
   return (
