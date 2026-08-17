@@ -97,7 +97,29 @@ describe("MarketOverview (web component)", () => {
     expect(el!.getAttribute("symbol-sectors")).toBe(JSON.stringify(MARKET_OVERVIEW_SECTIONS));
     expect(el!.getAttribute("mode")).toBe("custom");
     expect(el!.getAttribute("time-frame")).toBe("12M");
-    expect(el!.getAttribute("color-theme")).toBe("light");
+    expect(el!.getAttribute("theme")).toBe("light");
+    expect(el!.hasAttribute("color-theme")).toBe(false);
+  });
+
+  it("updates the official theme attribute in place when the theme changes", () => {
+    function Harness() {
+      const [theme, setTheme] = useState<"light" | "dark">("light");
+      return (
+        <>
+          <button onClick={() => setTheme((current) => (current === "light" ? "dark" : "light"))}>Toggle</button>
+          <MarketOverview sections={MARKET_OVERVIEW_SECTIONS} colorTheme={theme} />
+        </>
+      );
+    }
+
+    renderWithTheme(<Harness />);
+    const first = document.querySelector("tv-market-overview")!;
+    expect(first.getAttribute("theme")).toBe("light");
+
+    fireEvent.click(screen.getByRole("button", { name: "Toggle" }));
+    const current = document.querySelector("tv-market-overview")!;
+    expect(current.getAttribute("theme")).toBe("dark");
+    expect(current).toBe(first);
   });
 
   it("only contains symbols verified to render on the public datafeed", () => {
@@ -183,5 +205,20 @@ describe("theme → iframe widget", () => {
     await waitFor(() => expect(JSON.parse(script()!.textContent ?? "{}").colorTheme).toBe("dark"));
     // Exactly one script stays in the DOM after the remount — no duplicates.
     expect(document.querySelectorAll("script[data-tv-iframe-widget='timeline']")).toHaveLength(1);
+  });
+
+  it("keeps the economic calendar synchronized with the shell theme", async () => {
+    renderWithTheme(
+      <>
+        <ThemeToggle />
+        <EconomicCalendar lazy={false} />
+      </>,
+    );
+    const script = () => document.querySelector("script[data-tv-iframe-widget='events']");
+    await waitFor(() => expect(JSON.parse(script()!.textContent ?? "{}").colorTheme).toBe("light"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Switch to dark mode" }));
+    await waitFor(() => expect(JSON.parse(script()!.textContent ?? "{}").colorTheme).toBe("dark"));
+    expect(document.querySelectorAll("script[data-tv-iframe-widget='events']")).toHaveLength(1);
   });
 });
