@@ -2,10 +2,11 @@
  * Host surfaces for the official TradingView widgets (PR #48).
  *
  * Web-component widgets (ticker tape, market overview) render into closed
- * shadow roots and own their entire look via `color-theme`; these rules only
- * size and frame the hosts and surface the restrained module-loading error
- * state. The ticker host lives in the app shell (uses shell tokens); the
- * market-overview host lives inside the briefing pages (uses page tokens).
+ * shadow roots and own their entire look via the official `theme` attribute;
+ * these rules only size and frame the hosts and surface the restrained
+ * module-loading error state. The ticker host lives in the app shell (uses
+ * shell tokens); the market-overview host lives inside the briefing pages
+ * (uses page tokens).
  */
 
 .tv-wc-host {
