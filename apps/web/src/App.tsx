@@ -22,6 +22,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<MorningBriefingApp />} />
         <Route path="/dashboard" element={<MorningBriefingApp />} />
+        <Route path="/heatmap" element={<MorningBriefingApp />} />
         <Route path="/x" element={<MorningBriefingApp />} />
         <Route path="/x-search" element={<Navigate to="/x" replace />} />
         <Route path="/earnings" element={<MorningBriefingApp />} />

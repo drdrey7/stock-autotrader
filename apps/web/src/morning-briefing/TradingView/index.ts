@@ -7,6 +7,7 @@ export { MarketOverview } from "./MarketOverview";
 export { TradingViewIframeWidget } from "./IframeWidget";
 export { EconomicCalendar } from "./EconomicCalendar";
 export { TopStories } from "./TopStories";
+export { StockHeatmap } from "./StockHeatmap";
 export {
   TICKER_SYMBOLS,
   MARKET_OVERVIEW_SECTIONS,
