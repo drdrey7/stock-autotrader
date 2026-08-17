@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import MorningBriefingApp from "./MorningBriefingApp";
 import { ThemeProvider } from "../shell/theme";
+import { clearEarningsMonthCache } from "./useEarnings";
 
 const renderApp = (path = "/") => render(<MemoryRouter initialEntries={[path]}><ThemeProvider><MorningBriefingApp/></ThemeProvider></MemoryRouter>);
 const useFixtureClock = () => {
@@ -17,6 +18,8 @@ const briefing = { preparedAt: "2026-08-12T12:30:00Z" };
 
 beforeEach(() => {
   localStorage.clear();
+  sessionStorage.clear();
+  clearEarningsMonthCache();
   vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-08-12T22:30:00Z"));
   Object.defineProperty(window, "matchMedia", { configurable: true, value: vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })) });
   Object.defineProperty(window, "scrollTo", { configurable: true, value: vi.fn() });
@@ -417,18 +420,23 @@ it("refreshes earnings silently after the internal refresh interval", async () =
   vi.useFakeTimers({ shouldAdvanceTime: true });
   vi.setSystemTime(new Date("2026-08-12T16:00:00Z"));
   renderApp("/earnings");
-  await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input).startsWith("/api/earnings"))).toHaveLength(1));
+  const earningsCalls = () => vi.mocked(fetch).mock.calls.filter(([input]) => String(input).startsWith("/api/earnings"));
+  // Fetch-on-month architecture: month + past + summary on first paint.
+  await waitFor(() => expect(earningsCalls().length).toBeGreaterThanOrEqual(3));
+  const initial = earningsCalls().length;
   await vi.advanceTimersByTimeAsync(60 * 60_000);
-  await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input).startsWith("/api/earnings"))).toHaveLength(2));
+  await waitFor(() => expect(earningsCalls().length).toBeGreaterThan(initial));
   expect(screen.queryByText("Backend connected")).not.toBeInTheDocument();
   expect(screen.queryByText("Last update")).not.toBeInTheDocument();
 });
 
 it("does not force an earnings fetch when the tab becomes visible before the cadence is due", async () => {
   renderApp("/earnings");
-  await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input).startsWith("/api/earnings"))).toHaveLength(1));
+  const earningsCalls = () => vi.mocked(fetch).mock.calls.filter(([input]) => String(input).startsWith("/api/earnings"));
+  await waitFor(() => expect(earningsCalls().length).toBeGreaterThanOrEqual(3));
+  const initial = earningsCalls().length;
   document.dispatchEvent(new Event("visibilitychange"));
-  await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input).startsWith("/api/earnings"))).toHaveLength(1));
+  await waitFor(() => expect(earningsCalls().length).toBe(initial));
 });
 
 it("treats an empty earnings response as a successful daily refresh", async () => {
@@ -439,8 +447,12 @@ it("treats an empty earnings response as a successful daily refresh", async () =
     return originalFetch(input, init);
   });
   renderApp("/earnings");
+  const earningsCalls = () => vi.mocked(fetch).mock.calls.filter(([input]) => String(input).startsWith("/api/earnings"));
+  await waitFor(() => expect(earningsCalls().length).toBeGreaterThanOrEqual(3));
+  const initial = earningsCalls().length;
   await vi.advanceTimersByTimeAsync(60_000);
-  expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input).startsWith("/api/earnings"))).toHaveLength(1);
+  // Cadence not due yet — no extra refresh within 60s.
+  expect(earningsCalls().length).toBe(initial);
 });
 
 it("reclassifies earnings and refreshes once when the New York market date changes", async () => {
@@ -448,20 +460,35 @@ it("reclassifies earnings and refreshes once when the New York market date chang
   vi.setSystemTime(new Date("2026-08-13T03:59:00Z")); // 23:59 ET on 12 Aug
   const originalFetch = vi.mocked(fetch).getMockImplementation()!;
   vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
-    if (String(input).startsWith("/api/earnings")) return new Response(JSON.stringify([
-      { symbol: "ROLL", company: "Rollover Corp", date: "2026-08-12", timing: "AMC", eventSignal: "Confirmed" },
-    ]), { status: 200 });
+    if (String(input).startsWith("/api/earnings")) return new Response(JSON.stringify({
+      events: [
+        { symbol: "ROLL", company: "Rollover Corp", date: "2026-08-12", scheduledDate: "2026-08-12", timing: "AMC", status: "scheduled" },
+      ],
+      summary: { today: 1, thisWeek: 1, next30Days: 1 },
+    }), { status: 200 });
     return originalFetch(input, init);
   });
 
   const view = renderApp("/earnings");
-  await screen.findByRole("button", { name: /Rollover Corp/ });
+  await waitFor(() => expect(view.container.querySelector(".earnings-top-summary > .card strong")?.textContent).toBe("1"));
   const todayCount = () => view.container.querySelector(".earnings-top-summary > .card strong")?.textContent;
+  const earningsCalls = () => vi.mocked(fetch).mock.calls.filter(([input]) => String(input).startsWith("/api/earnings"));
+  const initial = earningsCalls().length;
   // Before midnight ET the report counts as "today".
   expect(todayCount()).toBe("1");
   vi.setSystemTime(new Date("2026-08-13T04:01:00Z")); // 00:01 ET on 13 Aug
+  // After midnight the API summary for the new market day is zero.
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input).startsWith("/api/earnings")) return new Response(JSON.stringify({
+      events: [
+        { symbol: "ROLL", company: "Rollover Corp", date: "2026-08-12", scheduledDate: "2026-08-12", timing: "AMC", status: "scheduled" },
+      ],
+      summary: { today: 0, thisWeek: 1, next30Days: 1 },
+    }), { status: 200 });
+    return originalFetch(input, init);
+  });
   await vi.advanceTimersByTimeAsync(60_000);
-  await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input).startsWith("/api/earnings"))).toHaveLength(2));
+  await waitFor(() => expect(earningsCalls().length).toBeGreaterThan(initial));
   await waitFor(() => expect(todayCount()).toBe("0"));
   vi.useRealTimers();
 });

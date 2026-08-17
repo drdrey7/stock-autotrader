@@ -1,59 +1,220 @@
-import { cleanup, render, waitFor } from "@testing-library/react";
+import { cleanup, render, waitFor, act } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  clearEarningsMonthCache,
   earningsApiPath,
-  earningsApiQueryRange,
   marketTodayKey,
+  monthCacheKey,
+  monthDateRange,
+  pastEarningsRange,
   shiftMarketDateKey,
-  useEarnings,
-  EARNINGS_CLIENT_FUTURE_DAYS,
+  summaryEarningsRange,
+  useEarningsMonth,
+  usePastEarnings,
+  useEarningsSummary,
   EARNINGS_CLIENT_PAST_DAYS,
+  EARNINGS_CLIENT_SUMMARY_FORWARD_DAYS,
 } from "./useEarnings";
 
-function EarningsProbe({ onState }: { onState: (state: ReturnType<typeof useEarnings>) => void }) {
-  const state = useEarnings();
-  onState(state);
-  return (
-    <div>
-      <span data-testid="available">{String(state.earningsAvailable)}</span>
-      <span data-testid="count">{state.earnings.length}</span>
-      <ul>
-        {state.earnings.map((event) => (
-          <li key={`${event.symbol}-${event.scheduledDate}`}>{event.symbol}:{event.scheduledDate}:{event.status}</li>
-        ))}
-      </ul>
-    </div>
-  );
+function event(partial: Record<string, unknown>) {
+  return {
+    company: "Test Co",
+    timing: "AMC",
+    status: "reported",
+    overallResult: "Beat",
+    ...partial,
+  };
 }
 
-describe("earningsApiQueryRange year-boundary", () => {
-  it("covers a full rolling 30-day past window into December when today is mid-January", () => {
-    // 2027-01-15 17:00 UTC = 2027-01-15 12:00 America/New_York
-    const today = marketTodayKey(Date.parse("2027-01-15T17:00:00.000Z"));
-    expect(today).toBe("2027-01-15");
-    const range = earningsApiQueryRange(today);
-    expect(range.from).toBe("2026-12-17");
-    expect(range.to).toBe(shiftMarketDateKey(today, EARNINGS_CLIENT_FUTURE_DAYS));
-    expect(range.to).toBe("2027-03-16");
-    // Inclusive past window = PAST_EARNINGS_DAYS days.
-    expect(EARNINGS_CLIENT_PAST_DAYS).toBe(30);
-    expect(EARNINGS_CLIENT_FUTURE_DAYS).toBe(60);
-    // Max span is well under the Worker EARNINGS_QUERY_MAX_DAYS (450).
-    const spanDays = EARNINGS_CLIENT_PAST_DAYS + EARNINGS_CLIENT_FUTURE_DAYS;
-    expect(spanDays).toBeLessThanOrEqual(450);
+function MonthProbe({ year, month, onState }: {
+  year: number;
+  month: number;
+  onState: (state: ReturnType<typeof useEarningsMonth>) => void;
+}) {
+  const state = useEarningsMonth({ year, month });
+  onState(state);
+  return <div data-testid="month-count">{state.earnings.length}</div>;
+}
+
+function PastProbe({ onState }: { onState: (state: ReturnType<typeof usePastEarnings>) => void }) {
+  const state = usePastEarnings();
+  onState(state);
+  return <div data-testid="past-count">{state.earnings.length}</div>;
+}
+
+describe("earnings pure date ranges", () => {
+  it("builds first/last day for the current month", () => {
+    expect(monthDateRange({ year: 2026, month: 7 })).toEqual({ from: "2026-08-01", to: "2026-08-31" });
+    expect(monthCacheKey({ year: 2026, month: 7 })).toBe("2026-08");
   });
 
-  it("keeps non-January ranges on the same year for a normal mid-year day", () => {
-    const today = marketTodayKey(Date.parse("2026-08-16T16:00:00.000Z"));
-    expect(today).toBe("2026-08-16");
-    const range = earningsApiQueryRange(today);
-    expect(range.from).toBe("2026-07-18");
-    expect(range.to).toBe("2026-10-15");
-    expect(earningsApiPath(today)).toBe("/api/earnings?from=2026-07-18&to=2026-10-15");
+  it("handles February leap years", () => {
+    expect(monthDateRange({ year: 2024, month: 1 })).toEqual({ from: "2024-02-01", to: "2024-02-29" });
+    expect(monthDateRange({ year: 2025, month: 1 })).toEqual({ from: "2025-02-01", to: "2025-02-28" });
+  });
+
+  it("covers Past Earnings Dec→Jan rolling 30 days", () => {
+    const today = marketTodayKey(Date.parse("2027-01-15T17:00:00.000Z"));
+    expect(today).toBe("2027-01-15");
+    expect(pastEarningsRange(today)).toEqual({ from: "2026-12-17", to: "2027-01-15" });
+    expect(EARNINGS_CLIENT_PAST_DAYS).toBe(30);
+    expect(earningsApiPath(pastEarningsRange(today))).toBe("/api/earnings?from=2026-12-17&to=2027-01-15");
+  });
+
+  it("builds summary from Monday week start through +30 days", () => {
+    // 2026-08-12 is Wednesday ET → week starts Monday 2026-08-10
+    const today = marketTodayKey(Date.parse("2026-08-12T16:00:00.000Z"));
+    expect(today).toBe("2026-08-12");
+    const range = summaryEarningsRange(today);
+    expect(range.from).toBe("2026-08-10");
+    expect(range.to).toBe(shiftMarketDateKey(today, EARNINGS_CLIENT_SUMMARY_FORWARD_DAYS));
+    expect(range.to).toBe("2026-09-11");
   });
 });
 
-describe("useEarnings explicit API range", () => {
+describe("useEarningsMonth fetch-on-month", () => {
+  afterEach(() => {
+    cleanup();
+    clearEarningsMonthCache();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  beforeEach(() => {
+    clearEarningsMonthCache();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date("2026-08-16T16:00:00.000Z"));
+  });
+
+  it("fetches only the selected month range", async () => {
+    const fetched: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      fetched.push(String(input));
+      return new Response(JSON.stringify({
+        events: [event({ symbol: "AAPL", date: "2026-08-05", scheduledDate: "2026-08-05" })],
+        summary: { today: 0, thisWeek: 0, next30Days: 0 },
+      }), { status: 200 });
+    }));
+
+    let latest: ReturnType<typeof useEarningsMonth> | null = null;
+    render(<MonthProbe year={2026} month={7} onState={(state) => { latest = state; }} />);
+    await waitFor(() => expect(latest?.available).toBe(true));
+    expect(fetched).toEqual(["/api/earnings?from=2026-08-01&to=2026-08-31"]);
+    expect(latest!.earnings.map((row) => row.symbol)).toEqual(["AAPL"]);
+  });
+
+  it("fetches July then June when navigating previous months", async () => {
+    const fetched: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      fetched.push(String(input));
+      const url = String(input);
+      const symbol = url.includes("2026-07-01") ? "MSFT" : url.includes("2026-06-01") ? "NVDA" : "AAPL";
+      const date = url.includes("2026-07-01") ? "2026-07-15" : url.includes("2026-06-01") ? "2026-06-10" : "2026-08-05";
+      return new Response(JSON.stringify({
+        events: [event({ symbol, date, scheduledDate: date })],
+        summary: { today: 0, thisWeek: 0, next30Days: 0 },
+      }), { status: 200 });
+    }));
+
+    let period = { year: 2026, month: 7 };
+    let latest: ReturnType<typeof useEarningsMonth> | null = null;
+    const { rerender } = render(
+      <MonthProbe year={period.year} month={period.month} onState={(state) => { latest = state; }} />,
+    );
+    await waitFor(() => expect(latest?.available).toBe(true));
+    expect(fetched.at(-1)).toBe("/api/earnings?from=2026-08-01&to=2026-08-31");
+
+    period = { year: 2026, month: 6 };
+    rerender(<MonthProbe year={period.year} month={period.month} onState={(state) => { latest = state; }} />);
+    await waitFor(() => expect(latest?.earnings.some((row) => row.symbol === "MSFT")).toBe(true));
+    expect(fetched).toContain("/api/earnings?from=2026-07-01&to=2026-07-31");
+
+    period = { year: 2026, month: 5 };
+    rerender(<MonthProbe year={period.year} month={period.month} onState={(state) => { latest = state; }} />);
+    await waitFor(() => expect(latest?.earnings.some((row) => row.symbol === "NVDA")).toBe(true));
+    expect(fetched).toContain("/api/earnings?from=2026-06-01&to=2026-06-30");
+  });
+
+  it("serves August from cache when returning Aug → Jul → Aug", async () => {
+    const fetched: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      fetched.push(String(input));
+      return new Response(JSON.stringify({ events: [], summary: { today: 0, thisWeek: 0, next30Days: 0 } }), { status: 200 });
+    }));
+
+    let period = { year: 2026, month: 7 };
+    let latest: ReturnType<typeof useEarningsMonth> | null = null;
+    const { rerender } = render(
+      <MonthProbe year={period.year} month={period.month} onState={(state) => { latest = state; }} />,
+    );
+    await waitFor(() => expect(latest?.loading).toBe(false));
+    expect(fetched.filter((url) => url.includes("2026-08-01"))).toHaveLength(1);
+
+    period = { year: 2026, month: 6 };
+    rerender(<MonthProbe year={period.year} month={period.month} onState={(state) => { latest = state; }} />);
+    await waitFor(() => expect(fetched.some((url) => url.includes("2026-07-01"))).toBe(true));
+
+    period = { year: 2026, month: 7 };
+    rerender(<MonthProbe year={period.year} month={period.month} onState={(state) => { latest = state; }} />);
+    await waitFor(() => expect(latest?.loading).toBe(false));
+    // August was cached — no second August fetch.
+    expect(fetched.filter((url) => url.includes("2026-08-01"))).toHaveLength(1);
+  });
+
+  it("does not let a stale slower month overwrite a newer selection", async () => {
+    let resolveJuly: ((value: Response) => void) | null = null;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("2026-07-01")) {
+        return new Promise<Response>((resolve) => {
+          resolveJuly = resolve;
+        });
+      }
+      return new Response(JSON.stringify({
+        events: [event({ symbol: "JUN", date: "2026-06-05", scheduledDate: "2026-06-05" })],
+        summary: { today: 0, thisWeek: 0, next30Days: 0 },
+      }), { status: 200 });
+    }));
+
+    let period = { year: 2026, month: 6 }; // July
+    let latest: ReturnType<typeof useEarningsMonth> | null = null;
+    const { rerender } = render(
+      <MonthProbe year={period.year} month={period.month} onState={(state) => { latest = state; }} />,
+    );
+
+    // Immediately navigate to June before July resolves.
+    period = { year: 2026, month: 5 };
+    rerender(<MonthProbe year={period.year} month={period.month} onState={(state) => { latest = state; }} />);
+    await waitFor(() => expect(latest?.earnings.some((row) => row.symbol === "JUN")).toBe(true));
+
+    await act(async () => {
+      resolveJuly?.(new Response(JSON.stringify({
+        events: [event({ symbol: "JUL", date: "2026-07-05", scheduledDate: "2026-07-05" })],
+        summary: { today: 0, thisWeek: 0, next30Days: 0 },
+      }), { status: 200 }));
+    });
+
+    // Still June — stale July must not win.
+    await waitFor(() => expect(latest?.earnings.some((row) => row.symbol === "JUN")).toBe(true));
+    expect(latest!.earnings.some((row) => row.symbol === "JUL")).toBe(false);
+  });
+
+  it("treats an empty historical month as available empty state", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      events: [],
+      summary: { today: 0, thisWeek: 0, next30Days: 0 },
+    }), { status: 200 })));
+
+    let latest: ReturnType<typeof useEarningsMonth> | null = null;
+    render(<MonthProbe year={2025} month={0} onState={(state) => { latest = state; }} />);
+    await waitFor(() => expect(latest?.available).toBe(true));
+    expect(latest!.earnings).toEqual([]);
+    expect(latest!.loading).toBe(false);
+  });
+});
+
+describe("usePastEarnings", () => {
   afterEach(() => {
     cleanup();
     vi.useRealTimers();
@@ -63,83 +224,76 @@ describe("useEarnings explicit API range", () => {
 
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
-    // Freeze to 2027-01-15 New York so Past Earnings needs December rows.
     vi.setSystemTime(new Date("2027-01-15T17:00:00.000Z"));
   });
 
-  it("requests from=December when market today is mid-January and keeps Dec reports in Past window", async () => {
+  it("requests Dec→Jan window and keeps only non-scheduled events inside it", async () => {
     const fetched: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      fetched.push(url);
-      expect(url).toBe("/api/earnings?from=2026-12-17&to=2027-03-16");
+      fetched.push(String(input));
       return new Response(JSON.stringify({
         events: [
-          {
-            symbol: "AAPL",
-            company: "Apple Inc",
-            date: "2026-12-20",
-            scheduledDate: "2026-12-20",
-            status: "reported",
-            timing: "AMC",
-            overallResult: "Beat",
-            epsEstimate: 1.5,
-            epsActual: 1.6,
-          },
-          {
-            symbol: "OLD",
-            company: "Too Old Inc",
-            date: "2026-12-10",
-            scheduledDate: "2026-12-10",
-            status: "reported",
-            timing: "BMO",
-            overallResult: "Miss",
-          },
-          {
-            symbol: "MSFT",
-            company: "Microsoft Corporation",
-            date: "2027-01-10",
-            scheduledDate: "2027-01-10",
-            status: "reported",
-            timing: "AMC",
-            overallResult: "Beat",
-          },
-          {
-            symbol: "NVDA",
-            company: "NVIDIA Corporation",
-            date: "2027-02-01",
-            scheduledDate: "2027-02-01",
-            status: "scheduled",
-            timing: "AMC",
-          },
+          event({ symbol: "AAPL", date: "2026-12-20", scheduledDate: "2026-12-20", status: "reported" }),
+          event({ symbol: "OLD", date: "2026-12-10", scheduledDate: "2026-12-10", status: "reported" }),
+          event({ symbol: "MSFT", date: "2027-01-10", scheduledDate: "2027-01-10", status: "reported" }),
+          event({ symbol: "NVDA", date: "2027-02-01", scheduledDate: "2027-02-01", status: "scheduled" }),
         ],
         summary: { today: 0, thisWeek: 0, next30Days: 1 },
-        from: "2026-12-17",
-        to: "2027-03-16",
       }), { status: 200 });
     }));
 
-    let latest: ReturnType<typeof useEarnings> | null = null;
-    render(<EarningsProbe onState={(state) => { latest = state; }} />);
+    let latest: ReturnType<typeof usePastEarnings> | null = null;
+    render(<PastProbe onState={(state) => { latest = state; }} />);
+    await waitFor(() => expect(latest?.available).toBe(true));
+    expect(fetched).toEqual(["/api/earnings?from=2026-12-17&to=2027-01-15"]);
+    expect(latest!.earnings.map((row) => row.symbol).sort()).toEqual(["AAPL", "MSFT"]);
+    expect(latest!.earnings.some((row) => row.symbol === "OLD")).toBe(false);
+    expect(latest!.earnings.some((row) => row.symbol === "NVDA")).toBe(false);
+  });
+});
 
-    await waitFor(() => expect(latest?.earningsAvailable).toBe(true));
-    expect(fetched).toEqual(["/api/earnings?from=2026-12-17&to=2027-03-16"]);
+describe("useEarningsSummary independence", () => {
+  afterEach(() => {
+    cleanup();
+    clearEarningsMonthCache();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
 
-    const symbols = latest!.earnings.map((event) => event.symbol);
-    expect(symbols).toEqual(expect.arrayContaining(["AAPL", "MSFT", "NVDA", "OLD"]));
+  beforeEach(() => {
+    clearEarningsMonthCache();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date("2026-08-16T16:00:00.000Z"));
+  });
 
-    // Mirror Past Earnings client filter: rolling 30 days ending market today.
-    const today = marketTodayKey();
-    const windowStart = shiftMarketDateKey(today, -(EARNINGS_CLIENT_PAST_DAYS - 1));
-    expect(windowStart).toBe("2026-12-17");
-    const past = latest!.earnings.filter((event) => (
-      event.scheduledDate !== null
-      && event.scheduledDate <= today
-      && event.scheduledDate >= windowStart
-      && event.status !== "scheduled"
-    ));
-    expect(past.map((event) => event.symbol).sort()).toEqual(["AAPL", "MSFT"]);
-    expect(past.some((event) => event.symbol === "OLD")).toBe(false);
-    expect(past.some((event) => event.scheduledDate === "2026-12-20")).toBe(true);
+  it("keeps TODAY/THIS WEEK/NEXT 30 from the current window while a historical month is viewed", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("from=2026-06-01")) {
+        return new Response(JSON.stringify({
+          events: [event({ symbol: "OLD", date: "2026-06-05", scheduledDate: "2026-06-05" })],
+          summary: { today: 99, thisWeek: 99, next30Days: 99 },
+        }), { status: 200 });
+      }
+      // Summary / past window.
+      return new Response(JSON.stringify({
+        events: [event({ symbol: "NOW", date: "2026-08-16", scheduledDate: "2026-08-16", status: "scheduled" })],
+        summary: { today: 1, thisWeek: 2, next30Days: 3 },
+      }), { status: 200 });
+    }));
+
+    let summary: ReturnType<typeof useEarningsSummary> | null = null;
+    let month: ReturnType<typeof useEarningsMonth> | null = null;
+    function Both() {
+      summary = useEarningsSummary();
+      month = useEarningsMonth({ year: 2026, month: 5 });
+      return null;
+    }
+    render(<Both />);
+    await waitFor(() => expect(summary?.available).toBe(true));
+    await waitFor(() => expect(month?.available).toBe(true));
+    expect(summary).toMatchObject({ today: 1, thisWeek: 2, next30Days: 3 });
+    expect(month!.earnings.map((row) => row.symbol)).toEqual(["OLD"]);
   });
 });

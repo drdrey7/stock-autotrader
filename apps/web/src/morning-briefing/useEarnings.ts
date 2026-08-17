@@ -1,147 +1,159 @@
 import { useEffect, useState } from "react";
-import type { EarningsApiResponse, EarningsEngineEvent } from "@stock-autotrader/contracts";
-import { dateFromKey, dateKeyFromDate } from "./shared";
-import { eventWithViewMetadata, type EarningsCompany } from "./data/earnings-view";
+import type { EarningsApiResponse } from "@stock-autotrader/contracts";
 import { fetchJson } from "./api-client";
+import {
+  type CalendarPeriod,
+  type EarningsCompany,
+  earningsApiPath,
+  earningsFromApi,
+  marketTodayKey,
+  monthCacheKey,
+  monthDateRange,
+  pastEarningsRange,
+  readApiSummary,
+  shiftMarketDateKey,
+  summaryEarningsRange,
+  mondayWeekBounds,
+  EARNINGS_CLIENT_SUMMARY_FORWARD_DAYS,
+} from "./earnings-api";
 
-type EarningsState = {
-  earnings: EarningsCompany[];
-  earningsAvailable: boolean;
-};
+// Re-export pure helpers so existing imports from ./useEarnings keep working.
+export {
+  marketTodayKey,
+  shiftMarketDateKey,
+  monthDateRange,
+  pastEarningsRange,
+  summaryEarningsRange,
+  earningsApiPath,
+  monthCacheKey,
+  earningsFromApi,
+  EARNINGS_CLIENT_PAST_DAYS,
+  EARNINGS_CLIENT_SUMMARY_FORWARD_DAYS,
+} from "./earnings-api";
+export type { CalendarPeriod, EarningsCompany, EarningsDateRange } from "./earnings-api";
 
 const EARNINGS_REFRESH_INTERVAL_MS = 60 * 60_000;
+const MAX_MONTH_CACHE_ENTRIES = 8;
 
-/** Inclusive past window for "Past Earnings — Last 30 days" (today + 29 prior days). */
-export const EARNINGS_CLIENT_PAST_DAYS = 30;
-/**
- * Forward window requested from /api/earnings. Matches the Worker
- * EARNINGS_WINDOW_DAYS default so the monthly calendar and NEXT 30 DAYS
- * summary keep the same data surface they had with the default API range.
- */
-export const EARNINGS_CLIENT_FUTURE_DAYS = 60;
+type MonthCacheEntry = {
+  earnings: EarningsCompany[];
+  available: boolean;
+};
 
-export function marketTodayKey(now = Date.now()): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/New_York",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date(now));
+const monthCache = new Map<string, MonthCacheEntry>();
+
+/** Test helper — clears the bounded month cache between cases. */
+export function clearEarningsMonthCache(): void {
+  monthCache.clear();
 }
 
-/**
- * Pure calendar-day arithmetic on an America/New_York market date key.
- * dateFromKey builds noon local components for Y-M-D so DST midnight edges
- * cannot shift the day; dateKeyFromDate reads those same components back.
- */
-export function shiftMarketDateKey(key: string, deltaDays: number): string {
-  const date = dateFromKey(key);
-  date.setDate(date.getDate() + deltaDays);
-  return dateKeyFromDate(date);
+function rememberMonth(key: string, entry: MonthCacheEntry): void {
+  monthCache.set(key, entry);
+  while (monthCache.size > MAX_MONTH_CACHE_ENTRIES) {
+    const oldest = monthCache.keys().next().value;
+    if (oldest === undefined) break;
+    monthCache.delete(oldest);
+  }
 }
 
-/**
- * Explicit /api/earnings range covering Past Earnings (rolling 30 days,
- * including Dec→Jan) and the existing forward calendar window.
- */
-export function earningsApiQueryRange(today = marketTodayKey()): { from: string; to: string } {
-  return {
-    from: shiftMarketDateKey(today, -(EARNINGS_CLIENT_PAST_DAYS - 1)),
-    to: shiftMarketDateKey(today, EARNINGS_CLIENT_FUTURE_DAYS),
+async function loadMonth(period: CalendarPeriod, signal?: AbortSignal): Promise<MonthCacheEntry> {
+  const key = monthCacheKey(period);
+  const cached = monthCache.get(key);
+  if (cached) return cached;
+
+  const response = await fetchJson<EarningsApiResponse | unknown>(
+    earningsApiPath(monthDateRange(period)),
+    { signal },
+  );
+  if (signal?.aborted) return { earnings: [], available: false };
+
+  const parsed = response === null ? null : earningsFromApi(response);
+  const entry: MonthCacheEntry = {
+    earnings: parsed ?? [],
+    available: parsed !== null,
   };
+  if (parsed !== null) rememberMonth(key, entry);
+  return entry;
 }
 
-export function earningsApiPath(today = marketTodayKey()): string {
-  const { from, to } = earningsApiQueryRange(today);
-  return `/api/earnings?from=${from}&to=${to}`;
-}
+export type EarningsMonthState = {
+  earnings: EarningsCompany[];
+  available: boolean;
+  loading: boolean;
+};
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+/**
+ * Fetch-on-month calendar data from D1 via /api/earnings.
+ * Cached by YYYY-MM so Aug→Jul→Aug does not immediately refetch August.
+ * Stale responses cannot overwrite a newer selected month (effect cleanup + abort).
+ */
+export function useEarningsMonth(period: CalendarPeriod): EarningsMonthState {
+  const periodKey = monthCacheKey(period);
+  const [state, setState] = useState<EarningsMonthState>(() => {
+    const cached = monthCache.get(periodKey);
+    return {
+      earnings: cached?.earnings ?? [],
+      available: cached?.available ?? false,
+      loading: !cached,
+    };
+  });
 
-function isDateKey(value: unknown): value is string {
-  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-  const [year, month, day] = value.split("-").map(Number);
-  const date = new Date(Date.UTC(year!, month! - 1, day!));
-  return date.getUTCFullYear() === year && date.getUTCMonth() === month! - 1 && date.getUTCDate() === day;
-}
-
-const EARNINGS_STRING_FIELDS = [
-  "id", "symbol", "company", "cik", "date", "scheduledDate", "scheduledTime",
-  "fiscalPeriod", "fiscalPeriodEnd", "reportedAt", "calendarProvider", "consensusProvider",
-  "providerEventId", "providerUpdatedAt", "officialReportUrl", "investorRelationsUrl",
-  "secFilingUrl", "secAccession", "secForm", "secFiledAt", "createdAt", "updatedAt", "lastCheckedAt",
-  "logoUrl", "industry", "websiteUrl",
-] as const;
-
-const EARNINGS_NUMBER_FIELDS = [
-  "fiscalYear", "fiscalQuarter", "epsEstimate", "epsActual", "epsSurprise", "epsSurprisePct",
-  "revenueEstimate", "revenueActual", "revenueSurprise", "revenueSurprisePct",
-] as const;
-
-const EARNINGS_BOOLEAN_FIELDS = ["scheduled", "reported", "cancelled", "unknown"] as const;
-
-function invalidEarningsEventField(event: Record<string, unknown>): string | null {
-  if (typeof event.symbol !== "string" || event.symbol.trim().length === 0) return "symbol";
-  for (const field of EARNINGS_STRING_FIELDS) {
-    if (field in event && event[field] !== null && typeof event[field] !== "string") return field;
-  }
-  for (const field of EARNINGS_NUMBER_FIELDS) {
-    if (field in event && event[field] !== null && (typeof event[field] !== "number" || !Number.isFinite(event[field]))) return field;
-  }
-  for (const field of EARNINGS_BOOLEAN_FIELDS) {
-    if (field in event && event[field] !== null && typeof event[field] !== "boolean") return field;
-  }
-  if (event.date !== undefined && event.date !== null && !isDateKey(event.date)) return "date";
-  if (event.scheduledDate !== undefined && event.scheduledDate !== null && !isDateKey(event.scheduledDate)) return "scheduledDate";
-  if (event.status !== undefined && event.status !== null && !["scheduled", "reported", "cancelled", "unknown"].includes(String(event.status))) return "status";
-  if (event.timing !== undefined && event.timing !== null && !["BMO", "AMC", "TBD"].includes(String(event.timing))) return "timing";
-  if (event.epsResult !== undefined && event.epsResult !== null && !["Beat", "In Line", "Miss", "Not Available"].includes(String(event.epsResult))) return "epsResult";
-  if (event.revenueResult !== undefined && event.revenueResult !== null && !["Beat", "In Line", "Miss", "Not Available"].includes(String(event.revenueResult))) return "revenueResult";
-  if (event.overallResult !== undefined && event.overallResult !== null && !["Beat", "In Line", "Miss", "Mixed", "Not Available"].includes(String(event.overallResult))) return "overallResult";
-  return null;
-}
-
-function earningsFromApi(payload: unknown): EarningsCompany[] | null {
-  const events = Array.isArray(payload)
-    ? payload
-    : isRecord(payload) && Array.isArray(payload.events)
-      ? payload.events
-      : null;
-
-  if (!events) return null;
-  if (events.length === 0) return [];
-
-  const valid: EarningsCompany[] = [];
-  for (const event of events) {
-    if (!isRecord(event)) {
-      console.warn("earnings: rejected non-object event", event);
-      continue;
+  useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
+    const target = { year: period.year, month: period.month };
+    const cached = monthCache.get(periodKey);
+    if (cached) {
+      setState({
+        earnings: cached.earnings,
+        available: cached.available,
+        loading: false,
+      });
+      return () => {
+        cancelled = true;
+        controller.abort();
+      };
     }
-    const invalidField = invalidEarningsEventField(event);
-    if (invalidField !== null) {
-      console.warn("earnings: rejected malformed event", { symbol: event.symbol, field: invalidField, event });
-      continue;
-    }
-    try {
-      valid.push(eventWithViewMetadata(event as Partial<EarningsEngineEvent>));
-    } catch (error) {
-      console.warn("earnings: rejected event that failed to map", { symbol: event.symbol, error });
-    }
-  }
 
-  return valid.length > 0 ? valid : null;
+    // Keep previously rendered events until the new month arrives (no full flash).
+    setState((previous) => ({ ...previous, loading: true }));
+
+    void loadMonth(target, controller.signal).then((entry) => {
+      if (cancelled) return;
+      setState({
+        earnings: entry.earnings,
+        available: entry.available,
+        loading: false,
+      });
+    });
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [period.year, period.month, periodKey]);
+
+  return state;
 }
 
-export function useEarnings(): EarningsState {
-  const [state, setState] = useState<EarningsState>({ earnings: [], earningsAvailable: false });
+export type PastEarningsState = {
+  earnings: EarningsCompany[];
+  available: boolean;
+};
+
+/**
+ * Independent rolling 30-day Past Earnings surface.
+ * Always queries from=marketToday-29 .. to=marketToday (Dec→Jan safe).
+ */
+export function usePastEarnings(): PastEarningsState {
+  const [state, setState] = useState<PastEarningsState>({ earnings: [], available: false });
 
   useEffect(() => {
     let cancelled = false;
     let requestId = 0;
     let lastAttemptAt = 0;
     let lastAttemptDate: string | null = null;
+    let activeController: AbortController | null = null;
 
     const refresh = async (force = false) => {
       const today = marketTodayKey();
@@ -154,15 +166,28 @@ export function useEarnings(): EarningsState {
       lastAttemptAt = now;
       lastAttemptDate = today;
       const currentRequest = ++requestId;
-      // Explicit from/to so Past Earnings always spans a full rolling 30 days
-      // across Dec→Jan (API default otherwise starts at year boundary).
-      const response = await fetchJson<EarningsApiResponse | EarningsEngineEvent[]>(earningsApiPath(today));
+      activeController?.abort();
+      const controller = new AbortController();
+      activeController = controller;
+
+      const range = pastEarningsRange(today);
+      const response = await fetchJson<EarningsApiResponse | unknown>(
+        earningsApiPath(range),
+        { signal: controller.signal },
+      );
       if (cancelled || currentRequest !== requestId) return;
 
-      const apiEarnings = response ? earningsFromApi(response) : null;
+      const parsed = response === null ? null : earningsFromApi(response);
+      const past = (parsed ?? []).filter((event) => (
+        event.scheduledDate !== null
+        && event.scheduledDate >= range.from
+        && event.scheduledDate <= range.to
+        && event.status !== "scheduled"
+      )).sort((a, b) => (b.scheduledDate ?? "").localeCompare(a.scheduledDate ?? ""));
+
       setState({
-        earnings: apiEarnings ?? [],
-        earningsAvailable: apiEarnings !== null,
+        earnings: past,
+        available: parsed !== null,
       });
     };
 
@@ -175,10 +200,120 @@ export function useEarnings(): EarningsState {
 
     return () => {
       cancelled = true;
+      activeController?.abort();
       window.clearInterval(interval);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, []);
 
   return state;
+}
+
+export type EarningsSummaryState = {
+  today: number;
+  thisWeek: number;
+  next30Days: number;
+  available: boolean;
+};
+
+/**
+ * TODAY / THIS WEEK / NEXT 30 DAYS — independent of the viewed calendar month.
+ * Queries Monday-start week through marketToday+30.
+ */
+export function useEarningsSummary(): EarningsSummaryState {
+  const [state, setState] = useState<EarningsSummaryState>({
+    today: 0,
+    thisWeek: 0,
+    next30Days: 0,
+    available: false,
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    let requestId = 0;
+    let lastAttemptAt = 0;
+    let lastAttemptDate: string | null = null;
+    let activeController: AbortController | null = null;
+
+    const refresh = async (force = false) => {
+      const today = marketTodayKey();
+      const now = Date.now();
+      const refreshDue = force
+        || lastAttemptDate !== today
+        || now - lastAttemptAt >= EARNINGS_REFRESH_INTERVAL_MS;
+      if (!refreshDue) return;
+
+      lastAttemptAt = now;
+      lastAttemptDate = today;
+      const currentRequest = ++requestId;
+      activeController?.abort();
+      const controller = new AbortController();
+      activeController = controller;
+
+      const range = summaryEarningsRange(today);
+      const response = await fetchJson<EarningsApiResponse | unknown>(
+        earningsApiPath(range),
+        { signal: controller.signal },
+      );
+      if (cancelled || currentRequest !== requestId) return;
+
+      if (response === null) {
+        setState({ today: 0, thisWeek: 0, next30Days: 0, available: false });
+        return;
+      }
+
+      const apiSummary = readApiSummary(response);
+      if (apiSummary) {
+        setState({ ...apiSummary, available: true });
+        return;
+      }
+
+      const events = earningsFromApi(response);
+      if (events === null) {
+        setState({ today: 0, thisWeek: 0, next30Days: 0, available: false });
+        return;
+      }
+
+      const { weekStart, weekEnd } = mondayWeekBounds(today);
+      const next30Key = shiftMarketDateKey(today, EARNINGS_CLIENT_SUMMARY_FORWARD_DAYS);
+      setState({
+        today: events.filter((event) => event.scheduledDate === today).length,
+        thisWeek: events.filter((event) => (
+          event.scheduledDate !== null
+          && event.scheduledDate >= weekStart
+          && event.scheduledDate <= weekEnd
+        )).length,
+        next30Days: events.filter((event) => (
+          event.scheduledDate !== null
+          && event.scheduledDate >= today
+          && event.scheduledDate <= next30Key
+        )).length,
+        available: true,
+      });
+    };
+
+    void refresh(true);
+    const interval = window.setInterval(() => { void refresh(); }, 60_000);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      cancelled = true;
+      activeController?.abort();
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, []);
+
+  return state;
+}
+
+/**
+ * @deprecated Prefer useEarningsMonth / usePastEarnings / useEarningsSummary.
+ * Thin Past Earnings alias for isolation tests and barrel re-exports.
+ */
+export function useEarnings(): PastEarningsState {
+  return usePastEarnings();
 }

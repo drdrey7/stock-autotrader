@@ -5,6 +5,7 @@ import App from "../App";
 import MorningBriefingApp from "./MorningBriefingApp";
 import { localDateLabel, marketGreeting } from "./local-time";
 import { ThemeProvider } from "../shell/theme";
+import { clearEarningsMonthCache } from "./useEarnings";
 
 // The Morning Briefing pages now live inside the dashboard shell, which owns
 // navigation (sidebar links / mobile drawer) and the theme toggle. Rendering the
@@ -40,6 +41,7 @@ const stubEarningsSchedule = () => {
 beforeEach(() => {
   localStorage.clear();
   sessionStorage.clear();
+  clearEarningsMonthCache();
   vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-08-12T16:00:00Z"));
   vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline test fallback")));
   Object.defineProperty(window, "matchMedia", {
@@ -211,7 +213,7 @@ describe("Morning Briefing frontend demo", () => {
         return new Response(JSON.stringify({
           from: "2026-01-01",
           to: "2026-10-12",
-          summary: { today: 1, thisWeek: 2, next30Days: 1 },
+          summary: { today: 1, thisWeek: 1, next30Days: 2 },
           events: [{
             id: "MSFT-2026-Q1", symbol: "MSFT", company: "Microsoft", cik: "0000789012",
             fiscalYear: 2026, fiscalQuarter: 1, fiscalPeriod: "Q1", fiscalPeriodEnd: "2026-06-30",
