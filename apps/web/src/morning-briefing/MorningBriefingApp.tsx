@@ -57,9 +57,11 @@ function MorningBriefingShell() {
 
       <AnimatePresence>
         {selectedEarnings && (
-          <Suspense fallback={null}>
-            <EarningsDetail item={selectedEarnings} onClose={() => setSelectedEarnings(null)}/>
-          </Suspense>
+          <LazyPageErrorBoundary resetKey={`earnings-detail-${selectedEarnings.id}`}>
+            <Suspense fallback={null}>
+              <EarningsDetail item={selectedEarnings} onClose={() => setSelectedEarnings(null)}/>
+            </Suspense>
+          </LazyPageErrorBoundary>
         )}
       </AnimatePresence>
     </div>
