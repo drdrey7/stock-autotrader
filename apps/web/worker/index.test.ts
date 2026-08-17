@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { D1Database } from "@cloudflare/workers-types";
 import worker, { type Env } from "./index";
-import { buildDashboard, buildMarketContextHealth, downCriticalSources, unavailableSources } from "./dashboard";
+import { buildDashboard, buildMarketContextHealth, buildSourceHealth, downCriticalSources, unavailableSources } from "./dashboard";
 import { readMarketContext, readMarketContextHealthStrict, type MarketContextHealthRecord, type MarketContextReadModel } from "./market-context";
 import type { DashboardData, EarningsEngineState, MarketDataSnapshot, PublicSourceHealth, SourceHealth, StrategySummary } from "@stock-autotrader/contracts";
 
@@ -1152,6 +1152,45 @@ describe("GET /healthz/sources", () => {
       expect(body.ok).toBe(false);
       expect(body.error).toBe("read_model_unavailable");
     });
+  });
+
+  it("never shows an over-age sentiment reading as Cached even while the provider keeps failing", () => {
+    // Friday 16:30 ET close viewed Monday mid-session (~66h old) with an
+    // active lastError and the 2.5h session gate: the age gate must win,
+    // otherwise a persistent CNN outage pins the state to Cached forever and
+    // the homepage renders a days-old number as current.
+    const now = Date.parse("2026-08-17T15:00:00Z");
+    const health = buildSourceHealth("2026-08-14T20:30:00Z", "2026-08-17T14:45:00Z", {
+      provider: "cnn-fear-greed",
+      staleAfterSeconds: 2.5 * 60 * 60,
+      error: "provider HTTP 429",
+      nowMs: now,
+      ageOverridesError: true,
+    });
+    expect(health.state).toBe("Stale");
+    expect(health.error).toBe("provider HTTP 429");
+  });
+
+  it("keeps Cached with error while sentiment data is still within the freshness gate", () => {
+    const health = buildSourceHealth("2026-08-17T13:20:00Z", "2026-08-17T14:45:00Z", {
+      provider: "cnn-fear-greed",
+      staleAfterSeconds: 2.5 * 60 * 60,
+      error: "provider HTTP 429",
+      nowMs: Date.parse("2026-08-17T15:00:00Z"),
+      ageOverridesError: true,
+    });
+    expect(health.state).toBe("Cached");
+    expect(health.error).toBe("provider HTTP 429");
+  });
+
+  it("preserves the Cached-on-error behavior for sources without ageOverridesError", () => {
+    const health = buildSourceHealth("2026-08-14T20:30:00Z", "2026-08-17T14:45:00Z", {
+      provider: "yahoo-finance-chart",
+      staleAfterSeconds: 2.5 * 60 * 60,
+      error: "collection failed",
+      nowMs: Date.parse("2026-08-17T15:00:00Z"),
+    });
+    expect(health.state).toBe("Cached");
   });
 
   it("fails closed with 503 read_model_unavailable when the market health record is semantically invalid", async () => {

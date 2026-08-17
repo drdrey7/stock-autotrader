@@ -138,7 +138,7 @@ const latestTimestamp = (...values: Array<string | null | undefined>): string | 
 export function buildSourceHealth(
   lastSuccessAt: string | null,
   lastAttemptAt: string | null,
-  options: { provider: string; staleAfterSeconds: number; error?: string | null; nowMs?: number },
+  options: { provider: string; staleAfterSeconds: number; error?: string | null; nowMs?: number; ageOverridesError?: boolean },
 ): SourceHealth {
   const nowMs = options.nowMs ?? Date.now();
   const lastSuccessMs = parseSafeTimestamp(lastSuccessAt);
@@ -158,7 +158,9 @@ export function buildSourceHealth(
   const state = !hasValidSuccess
     ? hasError ? "Error" : "Unavailable"
     : hasError
-      ? "Cached"
+      ? options.ageOverridesError && ageSeconds !== null && ageSeconds > options.staleAfterSeconds
+        ? "Stale"
+        : "Cached"
       : ageSeconds !== null && ageSeconds <= options.staleAfterSeconds ? "Live" : "Stale";
   return {
     provider: options.provider,
@@ -427,12 +429,16 @@ export async function buildSources(
           provider: options.marketContext.sentiment.provider,
           staleAfterSeconds: sentimentStaleAfterSeconds(new Date(nowMs)),
           error: sentimentHealth?.lastError ?? null,
+          // A persistent provider failure must never pin an over-age reading
+          // to Cached: the freshness gate wins for sentiment.
+          ageOverridesError: true,
           nowMs,
         })
       : buildSourceHealth(null, sentimentHealth?.lastAttemptAt ?? null, {
           provider: sentimentHealth?.provider ?? "unavailable",
           staleAfterSeconds: sentimentStaleAfterSeconds(new Date(nowMs)),
           error: sentimentHealth?.lastError ?? null,
+          ageOverridesError: true,
           nowMs,
         }),
     quickStats: buildSourceHealth(null, null, {
