@@ -1,11 +1,14 @@
 import type { QuoteObservation } from "@stock-autotrader/contracts";
 import { FinnhubRequestGate, fetchJsonWithRetry } from "../earnings/providers";
 import { FINNHUB_RATE_PACING_MS } from "../earnings/subrequest-budget";
-import { QUOTES_BOUNDED_CONCURRENCY } from "./budget";
+import {
+  QUOTES_BOUNDED_CONCURRENCY,
+  QUOTES_EXECUTION_DEADLINE_MS,
+  QUOTES_PROVIDER_TIMEOUT_MS,
+} from "./budget";
 import type { QuoteProvider, QuoteResult } from "./provider";
 
 const FINNHUB_QUOTE_URL = "https://finnhub.io/api/v1/quote";
-const PROVIDER_TIMEOUT_MS = 8_000;
 
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 type Sleeper = (milliseconds: number) => Promise<void>;
@@ -95,6 +98,11 @@ export async function mapWithConcurrency<T, R>(
  * existing FinnhubRequestGate (1100ms free-tier pacing), kept out of URLs and
  * logs via the X-Finnhub-Token header — the same safe channel the earnings
  * adapters use.
+ *
+ * Quotes-specific latency guards: QUOTES_PROVIDER_TIMEOUT_MS per request (3s,
+ * well under the earnings 8s) and QUOTES_EXECUTION_DEADLINE_MS for the whole
+ * shard, so a slow provider can never pin the invocation past its window —
+ * partial quotes are always persisted and health ends degraded, never "running".
  */
 export class FinnhubQuoteProvider implements QuoteProvider {
   readonly name = "finnhub-quote";
@@ -104,8 +112,9 @@ export class FinnhubQuoteProvider implements QuoteProvider {
     private readonly apiKey: string,
     private readonly fetcher: Fetcher = fetch,
     private readonly sleeper: Sleeper = defaultSleep,
-    private readonly timeoutMs = PROVIDER_TIMEOUT_MS,
+    private readonly timeoutMs = QUOTES_PROVIDER_TIMEOUT_MS,
     gate?: FinnhubRequestGate,
+    private readonly executionDeadlineMs = QUOTES_EXECUTION_DEADLINE_MS,
   ) {
     if (!apiKey.trim()) throw new Error("FINNHUB_API_KEY is not configured");
     this.gate = gate ?? new FinnhubRequestGate(FINNHUB_RATE_PACING_MS, sleeper);
@@ -146,7 +155,19 @@ export class FinnhubQuoteProvider implements QuoteProvider {
    * ignored at runtime (JS).
    */
   async collect(symbols: readonly string[]): Promise<QuoteResult> {
+    const startedAt = Date.now();
     const results = await mapWithConcurrency(symbols, QUOTES_BOUNDED_CONCURRENCY, async (symbol) => {
+      // Serial collection: once the shard deadline elapses, stop issuing
+      // further requests so the invocation stays inside its window and the
+      // caller can persist what was collected + degraded health.
+      if (Date.now() - startedAt >= this.executionDeadlineMs) {
+        return {
+          kind: "warn" as const,
+          symbol,
+          message: "skipped: quote execution deadline exceeded",
+          rateLimited: false,
+        };
+      }
       try {
         return { kind: "ok" as const, observation: await this.fetchOne(symbol) };
       } catch (error) {

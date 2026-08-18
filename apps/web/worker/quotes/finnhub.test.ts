@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FinnhubQuoteProvider, mapWithConcurrency, normalizeFinnhubQuote } from "./finnhub";
-import { FinnhubRequestGate } from "../earnings/providers";
+import { FinnhubRequestGate, fetchJsonWithRetry } from "../earnings/providers";
 
 const ok = (body: unknown) => new Response(JSON.stringify(body), {
   status: 200,
@@ -176,6 +176,57 @@ describe("FinnhubQuoteProvider", () => {
     // never reach the provider (that burst pattern tripped the limiter in
     // production at 10 req/min).
     expect(maxActive).toBe(1);
+  });
+
+  it("is bounded by the execution deadline under a slow provider", async () => {
+    const hung = (_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new Error("Aborted")));
+    });
+    const started = Date.now();
+    const provider = new FinnhubQuoteProvider(
+      "k", hung as unknown as typeof fetch, noSleep, 50, instantGate(), 5,
+    );
+    const result = await provider.collect(["A", "B", "C", "D", "E"]);
+    const elapsed = Date.now() - started;
+    expect(result.observations).toHaveLength(0);
+    // The first symbol's timed-out attempt overruns the tiny deadline, then
+    // the guard stops issuing requests for the rest — no 30s wall risk.
+    const skipped = result.warnings.filter((warning) => warning.includes("execution deadline exceeded"));
+    expect(skipped).toHaveLength(4);
+    expect(elapsed).toBeLessThan(2_000);
+  });
+
+  it("preserves partial observations when a later symbol hits the deadline", async () => {
+    const provider = new FinnhubQuoteProvider("k", fetcherForPayload(async (input, init) => {
+      const symbol = input.split("symbol=")[1] ?? "";
+      if (symbol === "C") {
+        // Abort-aware like real fetch: the per-request timeout rejects fast.
+        await new Promise((_, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new Error("Aborted")));
+        });
+      }
+      return ok(VALID_PAYLOAD);
+    }), noSleep, 30, instantGate(), 40);
+
+    const result = await provider.collect(["A", "B", "C", "D", "E"]);
+    // A and B land fast; C times out on its per-request abort; D/E are skipped
+    // by the deadline. Good observations survive the shard.
+    expect(result.observations.map((observation) => observation.symbol)).toEqual(["A", "B"]);
+    const skipped = result.warnings.filter((warning) => warning.includes("execution deadline exceeded"));
+    expect(skipped).toHaveLength(2);
+    expect(result.warnings).toHaveLength(3);
+  });
+
+  it("default fetchJsonWithRetry still retries a 429 (earnings behaviour preserved)", async () => {
+    let calls = 0;
+    const fetcher = async () => { calls += 1; return new Response("{}", { status: 429 }); };
+    // noRetryOn429 defaults to false — the quotes opt-in must not leak into
+    // the earnings adapters (they keep the 2-attempt retry on 429).
+    await expect(
+      fetchJsonWithRetry(fetcher as unknown as typeof fetch, new URL("https://example.test/q"), {}, noSleep,
+        1_000, () => new FinnhubRequestGate(0, noSleep).beforeAttempt()),
+    ).rejects.toThrow("HTTP 429");
+    expect(calls).toBe(2);
   });
 });
 

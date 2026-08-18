@@ -24,7 +24,9 @@ const errorMessage = (error: unknown): string => error instanceof Error ? error.
  * constant budget, a deliberate margin below the Workers Free 50/invocation
  * cap (see quotes/budget.ts) and half the previous per-minute claim on the
  * shared Finnhub key. Serial collection paces each request 1.1 s apart via the
- * shared gate; one shard completes in roughly 6 s.
+ * shared gate; a quotes-only 3s request timeout + 15s execution deadline keep
+ * even a slow-provider run comfortably inside the invocation window so partial
+ * quotes and degraded health are always persisted.
  */
 export async function runQuotesShardJob(
   env: Env,

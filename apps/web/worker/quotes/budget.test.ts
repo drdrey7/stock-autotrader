@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   QUOTES_BOUNDED_CONCURRENCY,
+  QUOTES_EXECUTION_DEADLINE_MS,
   QUOTES_INVOCATION_HEADROOM,
+  QUOTES_PROVIDER_TIMEOUT_MS,
   QUOTES_SHARD_COUNT,
   QUOTES_SHARD_WORST_CASE_EXTERNAL_SUBREQUESTS,
   QUOTES_SYMBOLS_PER_SHARD,
@@ -31,5 +33,18 @@ describe("Screener quote invocation budget (Workers Free)", () => {
     // at once observed) instead of spacing individual requests. Serial is the
     // fix — one shard of 5 symbols completes in ~6 s.
     expect(QUOTES_BOUNDED_CONCURRENCY).toBe(1);
+  });
+
+  it("uses a quotes-only timeout well under the earnings 8s", () => {
+    expect(QUOTES_PROVIDER_TIMEOUT_MS).toBe(3_000);
+  });
+
+  it("keeps the worst-case wall (deadline + one retried symbol) under 30 s", () => {
+    // One retried symbol: 2 attempts × (gate pacing 1100 + timeout) + 100ms
+    // backoff. Per-symbol worst is 2×3s + 2×1.1s + 0.1s = 8.3s; 15s + 8.3s ≈ 23s.
+    const earningsTimeout = 8_000; // they must stay decoupled
+    expect(QUOTES_PROVIDER_TIMEOUT_MS).toBeLessThan(earningsTimeout);
+    const perSymbolWorstMs = 2 * (QUOTES_PROVIDER_TIMEOUT_MS + 1_100) + 100;
+    expect(QUOTES_EXECUTION_DEADLINE_MS + perSymbolWorstMs).toBeLessThan(30_000);
   });
 });
