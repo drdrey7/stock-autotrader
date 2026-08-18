@@ -276,6 +276,11 @@ class FinnhubWebSocketClient:
             except Exception as exc:  # reconnect on any provider/transport error
                 message = self._scrub(str(exc) or exc.__class__.__name__)
                 self.last_error = message[:300]
+                # Drive the runtime health state (P2 #2A): the socket was lost,
+                # we are about to retry — never leave connection_status stuck
+                # at "connected" across a failure (the error is already
+                # scrubbed of any key material).
+                self._on_status({"event": "reconnecting", "error": message[:300]})
                 logger.error(
                     json.dumps({"event": "ws_connection_lost", "error": message[:300]}, sort_keys=True),
                 )

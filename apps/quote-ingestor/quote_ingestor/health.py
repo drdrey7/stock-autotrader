@@ -41,17 +41,32 @@ class HealthTracker:
         self.d1_write_errors = 0
         self.rows_written_total = 0
         self.last_error: str | None = None
+        self.last_ws_heartbeat_at: float | None = None
+        self.ignored_non_regular_count = 0
 
     # ---------------------------------------------------------------- updates
 
     def on_ws_status(self, event: dict) -> None:
+        """Runtime WebSocket state transitions (2A).
+
+        Every connect / loss / reconnect / shutdown path must drive the status
+        explicitly so `quoteIngestorHealth.connection_status` never gets stuck
+        on the first "connected".
+        """
         with self._lock:
-            if event.get("event") == "connected":
+            event_kind = event.get("event")
+            if event_kind == "connected":
                 self.connection_status = "connected"
                 self.connected_at = time.time()
-            elif event.get("event") == "reconnecting":
+            elif event_kind == "reconnecting":
                 self.connection_status = "reconnecting"
                 self.reconnect_count += 1
+            elif event_kind == "disconnected":
+                # Graceful shutdown / explicit close: never stays "connected".
+                self.connection_status = "disconnected"
+            error = event.get("error")
+            if error:
+                self.last_error = str(error)[:300]
 
     def on_message(self) -> None:
         with self._lock:
@@ -103,6 +118,17 @@ class HealthTracker:
             self.connection_status = "disconnected"
             self.disconnect_count += 1
 
+    def on_ignored_non_regular(self, count: int = 1) -> None:
+        """A trade was rejected because its timestamp falls outside the regular
+        session (after-hours tick that must not contaminate the regular close)."""
+        with self._lock:
+            self.ignored_non_regular_count += count
+
+    def on_heartbeat_written(self) -> None:
+        """The 1/minute D1 health heartbeat landed (process-alive proof)."""
+        with self._lock:
+            self.last_ws_heartbeat_at = time.time()
+
     # ---------------------------------------------------------------- output
 
     def record(self, subscriptions_expected: int, symbols_seen: int) -> dict[str, Any]:
@@ -128,6 +154,8 @@ class HealthTracker:
                 "last_flush_rows": self.last_flush_rows,
                 "rows_written_total": self.rows_written_total,
                 "last_error": self.last_error,
+                "last_ws_heartbeat_at": _iso(self.last_ws_heartbeat_at),
+                "ignored_non_regular_count": self.ignored_non_regular_count,
                 "uptime_seconds": round(time.time() - self.started_at, 1),
                 "updated_at": _iso(time.time()),
             }

@@ -19,7 +19,7 @@ from . import __version__
 from .config import ConfigError, Settings, from_env, secret_present
 from .d1 import D1Client, D1QueryError
 from .health import HealthTracker
-from .market_hours import in_flush_window
+from .market_hours import accept_regular_trade, in_flush_window
 from .parser import TradeFrameParser
 from .state import QuoteStateStore
 from .universe import UniverseError, load_core_universe
@@ -51,14 +51,21 @@ class Ingestor:
         settings: Settings,
         symbols: list[str],
         d1: D1Client,
-        flush_window_fn: Callable[[dt.datetime], bool] = in_flush_window,
+        clock: Callable[[], dt.datetime] | None = None,
+        accept_trade_fn: Callable[[dt.datetime, dt.datetime], bool] | None = None,
     ) -> None:
         self.settings = settings
         self.symbols = symbols
         self.d1 = d1
-        self.flush_window_fn = flush_window_fn
+        self.clock = clock or (lambda: dt.datetime.now(dt.UTC))
+        self.accept_trade_fn = accept_trade_fn or accept_regular_trade
         self.store = QuoteStateStore(symbols)
-        self.parser = TradeFrameParser(symbols)
+        # The parser validates "plausible future" against the same injected
+        # clock as the session gate, so tests (and DST boundaries) are exact.
+        self.parser = TradeFrameParser(
+            symbols,
+            now_fn=lambda: int(self.clock().timestamp() * 1000),
+        )
         self.health = HealthTracker()
         self._stop = threading.Event()
         self._flush_thread: threading.Thread | None = None
@@ -82,21 +89,53 @@ class Ingestor:
             self.health.on_non_trade()
         if result.unknown_symbols:
             self.health.on_unknown_symbol(len(result.unknown_symbols))
+        if not result.ticks:
+            return
+        now = self.clock()
         for tick in result.ticks:
+            if not self._accept_tick(tick, now):
+                continue
             if self.store.apply_tick(tick):
                 self.health.on_tick()
+
+    def _accept_tick(self, tick, now: dt.datetime) -> bool:
+        """Only trades that belong to the CURRENT regular session enter state.
+
+        After-hours ticks (timestamp past the session close) are ignored for
+        the regular latest-price — they must never overwrite the regular close
+        or look "Live" for a session that has ended. A late regular tick
+        (closing auction) still inside the close-grace window IS accepted.
+        """
+        trade_dt = dt.datetime.fromtimestamp(tick.timestamp_ms / 1000, tz=dt.UTC)
+        if self.accept_trade_fn(trade_dt, now):
+            return True
+        self.health.on_ignored_non_regular(1)
+        return False
 
     # --------------------------------------------------------------- flush
 
     def _flush_loop(self) -> None:
         interval = self.settings.flush_interval_seconds
         while not self._stop.wait(interval):
-            self.flush_once()
+            self.tick()
 
-    def flush_once(self) -> None:
-        now = dt.datetime.now(dt.UTC)
-        if not self.flush_window_fn(now):
-            return  # market closed: no D1 writes, no CPU/log spam
+    def tick(self) -> None:
+        """1/minute: heartbeat health write (always) + quote flush (in window).
+
+        The D1 health heartbeat runs even outside market hours so the Worker's
+        TTL can always tell a live ingestor from a dead one — the heartbeat is
+        the process-alive signal, never the quotes' timestamps.
+        """
+        now = self.clock()
+        if in_flush_window(now):
+            self.flush_once(now)
+        else:
+            self._write_health_record()  # heartbeat only, no quote rows
+
+    def flush_once(self, now: dt.datetime | None = None) -> None:
+        now = now or self.clock()
+        if not in_flush_window(now):
+            return  # session + grace closed: no quote writes
         self.health.on_flush_attempt()
         pending = self.store.pending_changed()
         if not pending:
@@ -132,19 +171,26 @@ class Ingestor:
 
     def _write_health_record(self) -> None:
         try:
+            # This record IS the heartbeat: mark it before the snapshot so the
+            # written record carries its own last_ws_heartbeat_at/updated_at
+            # (the Worker's TTL only ever sees records that reached D1).
+            self.health.on_heartbeat_written()
             self.d1.write_health(self.health.record(len(self.symbols), self.store.symbols_seen()))
         except Exception as exc:  # health mirror must never break the loop
             logger.warning("health record write failed", extra={"error": str(exc)[:200]})
 
     def final_flush(self) -> None:
-        """Best-effort flush at shutdown so the last in-session ticks land."""
-        now = dt.datetime.now(dt.UTC)
-        if not self.flush_window_fn(now):
-            return
-        try:
-            self.flush_once()
-        except Exception as exc:
-            log_event("final_flush_error", error=str(exc)[:200])
+        """Best-effort flush at shutdown so the last in-session ticks land.
+
+        Runs during the session AND the post-close grace window (P2 #4), so a
+        shutdown inside the grace still writes the final regular snapshot.
+        """
+        now = self.clock()
+        if in_flush_window(now):
+            try:
+                self.flush_once(now)
+            except Exception as exc:
+                log_event("final_flush_error", error=str(exc)[:200])
 
     # ------------------------------------------------------------- lifecycle
 
@@ -236,6 +282,9 @@ def main(argv: list[str] | None = None) -> int:
         ingestor.stop()
         ingestor.final_flush()
         ingestor.wait()
+        # Graceful shutdown is an explicit state — the D1 health record must
+        # not stay "connected" forever just because the process terminated.
+        ingestor.health.on_ws_status({"event": "disconnected"})
         record = ingestor.health.record(len(symbols), ingestor.store.symbols_seen())
         log_event("shutdown", **record)
     return 0

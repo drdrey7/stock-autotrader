@@ -87,8 +87,6 @@ class Settings:
 
     # --- Behaviour ---
     flush_interval_seconds: float = 60.0
-    market_open_hhmm: str = "09:30"
-    market_close_hhmm: str = "16:00"
     max_timestamp_future_seconds: float = 300.0
     max_timestamp_age_seconds: float = 24 * 60 * 60.0
     log_flush_summaries: bool = True
@@ -125,8 +123,6 @@ def from_env(environ: os._Environ | dict[str, str] | None = None) -> Settings:
             ws_reconnect_base_seconds=_float_env("WS_RECONNECT_BASE_SECONDS", 0.5),
             ws_reconnect_max_seconds=_float_env("WS_RECONNECT_MAX_SECONDS", 60.0),
             d1_max_retries=_positive_int("D1_MAX_RETRIES", 3),
-            market_open_hhmm=os.environ.get("MARKET_OPEN_HHMM", "09:30"),
-            market_close_hhmm=os.environ.get("MARKET_CLOSE_HHMM", "16:00"),
             universe_path=Path(os.environ.get(
                 "QUOTE_INGESTOR_UNIVERSE",
                 str(Path(__file__).resolve().parents[3] / "packages" / "contracts" / "src" / "core-universe.v1.json"),

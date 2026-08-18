@@ -7,7 +7,8 @@ cron as the ONLY automatic quotes collector.
 Finnhub WebSocket (50 Core symbols, 1 connection)
    -> VPS systemd service (stock-autotrader-finnhub-ws)
    -> latest prices in RAM
-   -> flush ~60s, market hours only (America/New_York 09:30–16:00), changed only
+   -> flush ~60s, changed symbols only, during the US regular session +
+      5 min post-close GRACE (America/New_York, DST-safe, early-close aware)
    -> Cloudflare D1 HTTP API -> latest_quotes (50 rows, UPSERT)
    -> Cloudflare Worker /api/screener -> Screener
 ```
@@ -70,19 +71,30 @@ user).
 - Structured **JSON log lines** to journald: `startup`, `universe_loaded`,
   `d1_baseline`, `ws_connected`, `flush` (requested/written/failed),
   `shutdown`, `ws_heartbeat_dead`, `ws_connection_lost`.
-- D1 `app_meta['quoteIngestorHealth']` mirrors a concise health snapshot on each
-  market-hours flush: `connection_status`, `connected_at`, `last_message_at`,
-  `last_flush_at`, `last_successful_flush_at`, `subscriptions_expected=50`,
-  `symbols_seen_recently`, `reconnect_count`, `malformed_message_count`,
-  `d1_write_errors`, `last_error`, `updated_at`.
-- The Worker's `/api/screener` resolves the global quotes provider from
-  `quoteIngestorHealth` (WebSocket) and falls back to the REST `quotesHealth`
-  only when no WebSocket record exists.
+- D1 `app_meta['quoteIngestorHealth']` mirrors a **health heartbeat** on a
+  1/min cadence **all day** (not only in session): `connection_status`
+  (connected/reconnecting/disconnected — driven by explicit WS state
+  transitions, never stuck), `connected_at`, `last_ws_heartbeat_at`,
+  `last_message_at`, `last_flush_at`, `last_successful_flush_at`,
+  `subscriptions_expected=50`, `symbols_seen_recently`, `reconnect_count`,
+  `ignored_non_regular_count`, `malformed_message_count`, `d1_write_errors`,
+  `last_error`, `updated_at`.
+- The Worker applies a **TTL to the heartbeat** — healthy ≤2 min, degraded
+  2–5 min, disconnected >5 min — independent of quote-row age. A symbol with
+  no trades for 15+ min is NOT a collector outage (P2 fix). The collector
+  badge comes from this heartbeat; if the ingestor dies without writing
+  "disconnected", the stale heartbeat alone demotes it.
 
 ## D1 write cadence
 
-- Flush target ~60 s **inside the US regular session only** (DST-safe
-  America/New_York; US market holidays included). No writes overnight/weekend.
+- Flush target ~60 s **inside the US regular session + the 5-min post-close
+  grace window** (DST-safe America/New_York; US market holidays; early-close
+  days close at 13:00 ET). During grace only trades whose timestamp belongs to
+  the regular session are accepted — after-hours ticks never contaminate the
+  regular close. A `final_flush` on shutdown (SIGTERM) runs inside the grace
+  so the closing auction / last regular ticks land.
+- The 1/min **health heartbeat** (`app_meta` write) runs even outside the
+  session — it is the process-alive signal, never the quote timestamps.
 - Only **changed symbols** are written, one multi-VALUES UPSERT per flush
   (single HTTP request). `latest_quotes` stays at ~50 rows — never appended.
 - Race guard (both writers): `WHERE excluded.provider_timestamp >=
@@ -92,8 +104,10 @@ user).
   `finnhub-websocket`, provider_timestamp, updated_at). `previous_close`,
   `day_open/high/low` are preserved last-known-good; `change_abs/change_pct`
   are recomputed only when `previous_close` is valid.
-- Measured: ~40 rows/flush ≈ ~40 writes/min in session ⇒ **~15–16k rows /
-  trading day** (D1 free 100k/day budget ok).
+- Measured: ~40 rows/flush ≈ ~40 writes/min in session + ~1 app_meta/min
+  heartbeat + one final flush after close ⇒ **~17k rows / trading day** (D1
+  free 100k/day budget ok). No heartbeat is ever written into the 50 quote
+  rows.
 
 ## Validating D1 (read-only)
 

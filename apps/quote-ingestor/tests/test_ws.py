@@ -136,6 +136,39 @@ class WebSocketClientTest(unittest.TestCase):
             subs = [json.loads(s) for s in conn.sent if "subscribe" in s]
             self.assertEqual({s["symbol"] for s in subs}, set(SYMBOLS))
 
+    def test_status_events_drive_health_transitions(self) -> None:
+        """P2 #2A — the client emits connected/reconnecting/connected so the
+        health record can never stay stuck on the first 'connected'."""
+        events: list[dict] = []
+        first = FakeConn([ConnectionError("socket closed while receiving")])
+        second = FakeConn([])  # alive idle socket: must NOT reconnect again
+        state = {"index": 0}
+
+        def connect_factory() -> FakeConn:
+            index = state["index"]
+            state["index"] += 1
+            return first if index == 0 else second
+
+        client = FinnhubWebSocketClient(
+            make_settings(),
+            SYMBOLS,
+            on_message=lambda _raw: None,
+            on_status=events.append,
+            connect_factory=connect_factory,
+            random_source=random.Random(3),
+        )
+        thread = threading.Thread(target=client.run, daemon=True)
+        thread.start()
+        time.sleep(0.4)
+        client.stop()
+        thread.join(timeout=2)
+
+        kinds = [e.get("event") for e in events]
+        self.assertEqual(kinds, ["connected", "reconnecting", "connected"])
+        reconnecting = events[1]
+        self.assertIn("error", reconnecting)
+        self.assertNotIn("k-ws-test", json.dumps(reconnecting))  # scrubbed
+
     def test_heartbeat_death_forces_reconnect(self) -> None:
         """A dead peer (heartbeat stops succeeding) must reconnect, while a
         quiet-but-alive connection must stay connected."""

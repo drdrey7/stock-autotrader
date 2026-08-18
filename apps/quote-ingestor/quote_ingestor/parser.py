@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from collections.abc import Callable
 
 from .types import TradeTick
 
@@ -63,9 +64,15 @@ def _is_finite(number: float) -> bool:
 class TradeFrameParser:
     """Stateless parser bound to a Core Universe membership set."""
 
-    def __init__(self, symbols: list[str], now_ms: int | None = None) -> None:
+    def __init__(
+        self,
+        symbols: list[str],
+        now_ms: int | None = None,
+        now_fn: Callable[[], int] | None = None,
+    ) -> None:
         self._symbols = set(symbols)
         self._now_ms = now_ms
+        self._now_fn = now_fn
 
     def parse(self, raw: str, max_future_ms: float, max_age_ms: float) -> ParseResult:
         """Parse one raw WS frame string.
@@ -98,7 +105,11 @@ class TradeFrameParser:
             result.malformed += 1
             return result
 
-        now = self._now_ms if self._now_ms is not None else int(time.time() * 1000)
+        now = (
+            int(self._now_fn())
+            if self._now_fn is not None
+            else self._now_ms if self._now_ms is not None else int(time.time() * 1000)
+        )
         for entry in data:
             if not isinstance(entry, dict):
                 result.malformed += 1
