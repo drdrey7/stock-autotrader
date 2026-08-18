@@ -4,20 +4,22 @@ import { localNewYorkParts, marketCollectionWindow } from "../market-context";
 /**
  * Quote freshness windows (market-aware).
  *
- * During the US equity session each Core symbol is refreshed about every five
- * minutes; three consecutive missed shard refreshes (~15 min) make a symbol
- * Stale. Outside the session (weekend, holiday, pre-market, overnight) the
- * last session's quotes stay usable (Cached) for up to 7 days — they are
- * never Stale merely because hours pass while the market is closed.
+ * During the US equity session each Core symbol is refreshed about every ten
+ * minutes (10 shards × 5 symbols, one shard per minute); a missed refresh
+ * (~10 min) plus margin makes a symbol Stale. Outside the session (weekend,
+ * holiday, pre-market, overnight) the last session's quotes stay usable
+ * (Cached) for up to 7 days — they are never Stale merely because hours pass
+ * while the market is closed.
  */
 export const QUOTES_SESSION_STALE_AFTER_SECONDS = 15 * 60;
 export const QUOTES_OFF_SESSION_STALE_AFTER_SECONDS = 7 * 24 * 60 * 60;
 
 /**
- * Right after the 09:30 ET open the shard sweep needs ~5 minutes to refresh
- * all 5 shards. A previous-session close is still the best available data
- * during that window, so those quotes stay Cached (never Stale) until the
- * grace elapses or the symbol is refreshed by the current session.
+ * Right after the 09:30 ET open the shard sweep needs ~10 minutes to refresh
+ * all 10 shards (10 shards × 5 symbols, one per minute). A previous-session
+ * close is still the best available data during that window, so those quotes
+ * stay Cached (never Stale) until the grace elapses or the symbol is refreshed
+ * by the current session.
  */
 export const MARKET_OPEN_QUOTE_GRACE_MINUTES = 10;
 
@@ -92,7 +94,7 @@ export function quoteState(updatedAt: string | null, now: Date): SourceState {
   // Market is open but this symbol has not been refreshed in the current
   // session. Right after the open the last close is still the best data —
   // keep it Cached during a short grace window so the shard sweep can catch
-  // up (~5 min for all 5 shards); after grace it is genuinely stale. Only a
+  // up (~10 min for all 10 shards); after grace it is genuinely stale. Only a
   // still-valid last-known reading (within the off-session window) qualifies
   // — an ancient row never flashes Cached for ten minutes.
   if (withinMarketOpenGrace(now)

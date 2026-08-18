@@ -64,9 +64,12 @@ export function normalizeFinnhubQuote(
 const isRateLimited = (message: string): boolean => message.includes("HTTP 429");
 
 /**
- * Bounded-concurrency mapper. Cloudflare Free caps simultaneous outgoing
- * connections at 6 per invocation; this keeps a deliberate margin at
- * QUOTES_BOUNDED_CONCURRENCY and never fires an uncontrolled Promise.all.
+ * Bounded-concurrency mapper. QUOTES_BOUNDED_CONCURRENCY is deliberately 1
+ * (serial): the shared FinnhubRequestGate (1100 ms) must pace individual
+ * requests, and concurrency > 1 makes its synchronized wake-up fire requests
+ * in bursts. Serial means every request lands 1.1 s apart and the collector
+ * never presents a 5-at-once burst to the provider (a 429 trigger observed in
+ * production at 10 req/min).
  */
 export async function mapWithConcurrency<T, R>(
   items: readonly T[],
@@ -124,6 +127,11 @@ export class FinnhubQuoteProvider implements QuoteProvider {
       this.sleeper,
       this.timeoutMs,
       () => this.gate.beforeAttempt(),
+      // No retry on HTTP 429: a rate limit is per-minute budget exhaustion —
+      // retrying within the same window only amplifies the pressure. The
+      // symbol degrades for this run and the next cron tick recovers; the
+      // last-known-good quote stays in D1 untouched.
+      true,
     );
     const observation = normalizeFinnhubQuote(symbol, payload);
     if (observation === null) throw new Error("malformed Finnhub quote response");

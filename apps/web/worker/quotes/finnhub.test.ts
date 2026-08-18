@@ -87,7 +87,7 @@ describe("FinnhubQuoteProvider", () => {
     expect(result.rateLimited).toBe(false);
   });
 
-  it("flags rate limiting on 429 after retries without losing other symbols", async () => {
+  it("does NOT retry a 429 — marks rate limited, keeps the other symbols, single attempt", async () => {
     let rateCalls = 0;
     const provider = new FinnhubQuoteProvider("k", fetcherForPayload((input) => {
       const symbol = input.split("symbol=")[1] ?? "";
@@ -96,13 +96,29 @@ describe("FinnhubQuoteProvider", () => {
         return Promise.resolve(new Response("{}", { status: 429 }));
       }
       return Promise.resolve(ok(VALID_PAYLOAD));
-    }), (ms) => new Promise((resolve) => setTimeout(resolve, ms)), 8_000, instantGate());
+    }), noSleep, 8_000, instantGate());
 
     const result = await provider.collect(["AAPL", "RATE"]);
     expect(result.rateLimited).toBe(true);
     expect(result.observations.map((observation) => observation.symbol)).toEqual(["AAPL"]);
     expect(result.warnings[0]).toContain("RATE");
-    expect(rateCalls).toBeGreaterThanOrEqual(2);
+    // 429 is per-minute budget exhaustion: retrying within the same window
+    // only amplifies pressure. Exactly one attempt — the next cron recovers.
+    expect(rateCalls).toBe(1);
+  });
+
+  it("does not sleep out a Retry-After on 429 (degraded now, recovering next cron)", async () => {
+    const slept: number[] = [];
+    const sleeper = async (ms: number) => { slept.push(ms); };
+    const provider = new FinnhubQuoteProvider("k", fetcherForPayload(() => {
+      return Promise.resolve(new Response("{}", { status: 429, headers: { "Retry-After": "30" } }));
+    }), sleeper, 8_000, instantGate());
+
+    const result = await provider.collect(["AAPL"]);
+    expect(result.rateLimited).toBe(true);
+    expect(result.observations).toHaveLength(0);
+    // No 30s (or any) wait was incurred for the Retry-After hint.
+    expect(slept.some((ms) => ms >= 30_000)).toBe(false);
   });
 
   it("preserves canonical US ADR / cross-listed symbols in quote URLs (FASE 4/5)", async () => {
@@ -142,7 +158,7 @@ describe("FinnhubQuoteProvider", () => {
     expect(result.warnings[0]).toContain("AAPL");
   });
 
-  it("never exceeds the bounded concurrency limit", async () => {
+  it("collects serially so the shared gate can pace every request", async () => {
     let active = 0;
     let maxActive = 0;
     const provider = new FinnhubQuoteProvider("k", fetcherForPayload(async () => {
@@ -156,8 +172,10 @@ describe("FinnhubQuoteProvider", () => {
     const symbols = Array.from({ length: 10 }, (_, index) => `S${index}`);
     const result = await provider.collect(symbols);
     expect(result.observations).toHaveLength(10);
-    expect(maxActive).toBeLessThanOrEqual(5);
-    expect(maxActive).toBeGreaterThan(1);
+    // QUOTES_BOUNDED_CONCURRENCY = 1: a synchronized 5-at-once burst must
+    // never reach the provider (that burst pattern tripped the limiter in
+    // production at 10 req/min).
+    expect(maxActive).toBe(1);
   });
 });
 

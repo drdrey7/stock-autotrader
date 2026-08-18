@@ -20,10 +20,11 @@ const errorMessage = (error: unknown): string => error instanceof Error ? error.
  * the close (16:45 ET). The 15-minute and 06:00 jobs are untouched; this runs
  * on its own dedicated 1-minute trigger.
  *
- * External-subrequest worst case: 10 symbols × MAX_PROVIDER_ATTEMPTS = the
+ * External-subrequest worst case: 5 symbols × MAX_PROVIDER_ATTEMPTS = the
  * constant budget, a deliberate margin below the Workers Free 50/invocation
- * cap (see quotes/budget.ts). Bounded concurrency keeps outbound sockets well
- * under the 6-connection limit.
+ * cap (see quotes/budget.ts) and half the previous per-minute claim on the
+ * shared Finnhub key. Serial collection paces each request 1.1 s apart via the
+ * shared gate; one shard completes in roughly 6 s.
  */
 export async function runQuotesShardJob(
   env: Env,

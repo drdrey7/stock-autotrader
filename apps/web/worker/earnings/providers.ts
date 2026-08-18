@@ -153,6 +153,7 @@ async function fetchWithRetry(
   sleeper: Sleeper = defaultSleep,
   timeoutMs = PROVIDER_TIMEOUT_MS,
   beforeAttempt?: () => Promise<void>,
+  noRetryOn429 = false,
 ): Promise<Response> {
   let lastError: unknown = new Error("provider request failed");
   for (let attempt = 0; attempt < MAX_PROVIDER_ATTEMPTS; attempt += 1) {
@@ -167,6 +168,12 @@ async function fetchWithRetry(
         ? Number(retryAfter) * 1000
         : 0;
       lastError = new Error(`provider HTTP ${response.status}`);
+      // opt-in callers (Screener quotes) do not retry 429: a rate limit is a
+      // per-minute budget signal — an immediate retry only re-enters the same
+      // window and amplifies the pressure. Treat the symbol as degraded for
+      // this run and let the next cron tick recover (last-known-good stays in
+      // D1). Earners keep the default retry behaviour via the false default.
+      if (noRetryOn429 && response.status === 429) break;
       if (response.status < 500 && response.status !== 429) break;
       if (attempt + 1 < MAX_PROVIDER_ATTEMPTS) {
         await sleeper(Math.max(100 * (attempt + 1), retryAfterMs));
@@ -189,8 +196,9 @@ export async function fetchJsonWithRetry(
   sleeper: Sleeper = defaultSleep,
   timeoutMs = PROVIDER_TIMEOUT_MS,
   beforeAttempt?: () => Promise<void>,
+  noRetryOn429 = false,
 ): Promise<unknown> {
-  const response = await fetchWithRetry(fetcher, url, init, sleeper, timeoutMs, beforeAttempt);
+  const response = await fetchWithRetry(fetcher, url, init, sleeper, timeoutMs, beforeAttempt, noRetryOn429);
   return response.json();
 }
 

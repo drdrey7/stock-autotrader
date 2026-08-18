@@ -4,7 +4,7 @@ import { QUOTES_SHARD_COUNT, QUOTES_SYMBOLS_PER_SHARD } from "./budget";
 import { shardIndexForMinute, shardUniverse } from "./shard";
 
 describe("deterministic quote sharding", () => {
-  it("partitions the canonical universe into 5 shards × 10 with no loss or duplication", () => {
+  it("partitions the canonical universe into 10 shards × 5 with no loss or duplication", () => {
     const shards = shardUniverse(CORE_UNIVERSE);
     expect(shards).toHaveLength(QUOTES_SHARD_COUNT);
     expect(CORE_UNIVERSE).toHaveLength(50);
@@ -20,16 +20,16 @@ describe("deterministic quote sharding", () => {
     expect(shardUniverse(CORE_UNIVERSE)).toEqual(shardUniverse(CORE_UNIVERSE));
   });
 
-  it("cycles shard indexes 0..4 by UTC epoch minute", () => {
+  it("cycles shard indexes 0..9 by UTC epoch minute", () => {
     expect(shardIndexForMinute(0)).toBe(0);
     expect(shardIndexForMinute(60_000)).toBe(1);
-    expect(shardIndexForMinute(60_000 * 4)).toBe(4);
-    expect(shardIndexForMinute(60_000 * 5)).toBe(0);
+    expect(shardIndexForMinute(60_000 * 9)).toBe(9);
+    expect(shardIndexForMinute(60_000 * 10)).toBe(0);
     // A fixed Thursday 10:00 ET instant (2026-08-13T14:00:00Z).
     const instant = Date.parse("2026-08-13T14:00:00Z");
-    expect(shardIndexForMinute(instant)).toBe(Math.floor(Math.floor(instant / 60_000) % 5));
-    // One minute later advances to the next shard.
-    expect(shardIndexForMinute(instant + 60_000)).toBe((shardIndexForMinute(instant) + 1) % 5);
+    expect(shardIndexForMinute(instant)).toBe(Math.floor(Math.floor(instant / 60_000) % 10));
+    // One minute later advances to the next shard (wrapping at 10).
+    expect(shardIndexForMinute(instant + 60_000)).toBe((shardIndexForMinute(instant) + 1) % 10);
   });
 
   it("shards are always subsets of the canonical universe", () => {
@@ -54,7 +54,7 @@ describe("deterministic quote sharding", () => {
       expect(flattened.filter((candidate) => candidate === symbol)).toHaveLength(1);
       const shardIndex = shards.findIndex((shard) => shard.includes(symbol));
       expect(shardIndex).toBeGreaterThanOrEqual(0);
-      expect(shards[shardIndex]).toHaveLength(10);
+      expect(shards[shardIndex]).toHaveLength(5);
     }
   });
 });
