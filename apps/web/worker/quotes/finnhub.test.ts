@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FinnhubQuoteProvider, mapWithConcurrency, normalizeFinnhubQuote } from "./finnhub";
-import { FinnhubRequestGate } from "../earnings/providers";
+import { FinnhubRequestGate, fetchJsonWithRetry } from "../earnings/providers";
 
 const ok = (body: unknown) => new Response(JSON.stringify(body), {
   status: 200,
@@ -87,7 +87,7 @@ describe("FinnhubQuoteProvider", () => {
     expect(result.rateLimited).toBe(false);
   });
 
-  it("flags rate limiting on 429 after retries without losing other symbols", async () => {
+  it("does NOT retry a 429 — marks rate limited, keeps the other symbols, single attempt", async () => {
     let rateCalls = 0;
     const provider = new FinnhubQuoteProvider("k", fetcherForPayload((input) => {
       const symbol = input.split("symbol=")[1] ?? "";
@@ -96,13 +96,29 @@ describe("FinnhubQuoteProvider", () => {
         return Promise.resolve(new Response("{}", { status: 429 }));
       }
       return Promise.resolve(ok(VALID_PAYLOAD));
-    }), (ms) => new Promise((resolve) => setTimeout(resolve, ms)), 8_000, instantGate());
+    }), noSleep, 8_000, instantGate());
 
     const result = await provider.collect(["AAPL", "RATE"]);
     expect(result.rateLimited).toBe(true);
     expect(result.observations.map((observation) => observation.symbol)).toEqual(["AAPL"]);
     expect(result.warnings[0]).toContain("RATE");
-    expect(rateCalls).toBeGreaterThanOrEqual(2);
+    // 429 is per-minute budget exhaustion: retrying within the same window
+    // only amplifies pressure. Exactly one attempt — the next cron recovers.
+    expect(rateCalls).toBe(1);
+  });
+
+  it("does not sleep out a Retry-After on 429 (degraded now, recovering next cron)", async () => {
+    const slept: number[] = [];
+    const sleeper = async (ms: number) => { slept.push(ms); };
+    const provider = new FinnhubQuoteProvider("k", fetcherForPayload(() => {
+      return Promise.resolve(new Response("{}", { status: 429, headers: { "Retry-After": "30" } }));
+    }), sleeper, 8_000, instantGate());
+
+    const result = await provider.collect(["AAPL"]);
+    expect(result.rateLimited).toBe(true);
+    expect(result.observations).toHaveLength(0);
+    // No 30s (or any) wait was incurred for the Retry-After hint.
+    expect(slept.some((ms) => ms >= 30_000)).toBe(false);
   });
 
   it("preserves canonical US ADR / cross-listed symbols in quote URLs (FASE 4/5)", async () => {
@@ -142,7 +158,7 @@ describe("FinnhubQuoteProvider", () => {
     expect(result.warnings[0]).toContain("AAPL");
   });
 
-  it("never exceeds the bounded concurrency limit", async () => {
+  it("collects serially so the shared gate can pace every request", async () => {
     let active = 0;
     let maxActive = 0;
     const provider = new FinnhubQuoteProvider("k", fetcherForPayload(async () => {
@@ -156,8 +172,61 @@ describe("FinnhubQuoteProvider", () => {
     const symbols = Array.from({ length: 10 }, (_, index) => `S${index}`);
     const result = await provider.collect(symbols);
     expect(result.observations).toHaveLength(10);
-    expect(maxActive).toBeLessThanOrEqual(5);
-    expect(maxActive).toBeGreaterThan(1);
+    // QUOTES_BOUNDED_CONCURRENCY = 1: a synchronized 5-at-once burst must
+    // never reach the provider (that burst pattern tripped the limiter in
+    // production at 10 req/min).
+    expect(maxActive).toBe(1);
+  });
+
+  it("is bounded by the execution deadline under a slow provider", async () => {
+    const hung = (_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new Error("Aborted")));
+    });
+    const started = Date.now();
+    const provider = new FinnhubQuoteProvider(
+      "k", hung as unknown as typeof fetch, noSleep, 50, instantGate(), 5,
+    );
+    const result = await provider.collect(["A", "B", "C", "D", "E"]);
+    const elapsed = Date.now() - started;
+    expect(result.observations).toHaveLength(0);
+    // The first symbol's timed-out attempt overruns the tiny deadline, then
+    // the guard stops issuing requests for the rest — no 30s wall risk.
+    const skipped = result.warnings.filter((warning) => warning.includes("execution deadline exceeded"));
+    expect(skipped).toHaveLength(4);
+    expect(elapsed).toBeLessThan(2_000);
+  });
+
+  it("preserves partial observations when a later symbol hits the deadline", async () => {
+    const provider = new FinnhubQuoteProvider("k", fetcherForPayload(async (input, init) => {
+      const symbol = input.split("symbol=")[1] ?? "";
+      if (symbol === "C") {
+        // Abort-aware like real fetch: the per-request timeout rejects fast.
+        await new Promise((_, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new Error("Aborted")));
+        });
+      }
+      return ok(VALID_PAYLOAD);
+    }), noSleep, 30, instantGate(), 40);
+
+    const result = await provider.collect(["A", "B", "C", "D", "E"]);
+    // A and B land fast; C times out on its per-request abort; D/E are skipped
+    // by the deadline. Good observations survive the shard.
+    expect(result.observations.map((observation) => observation.symbol)).toEqual(["A", "B"]);
+    const skipped = result.warnings.filter((warning) => warning.includes("execution deadline exceeded"));
+    expect(skipped).toHaveLength(2);
+    expect(result.warnings).toHaveLength(3);
+  });
+
+  it("default fetchJsonWithRetry still retries a 429 (earnings behaviour preserved)", async () => {
+    let calls = 0;
+    const fetcher = async () => { calls += 1; return new Response("{}", { status: 429 }); };
+    // noRetryOn429 defaults to false — the quotes opt-in must not leak into
+    // the earnings adapters (they keep the 2-attempt retry on 429).
+    await expect(
+      fetchJsonWithRetry(fetcher as unknown as typeof fetch, new URL("https://example.test/q"), {}, noSleep,
+        1_000, () => new FinnhubRequestGate(0, noSleep).beforeAttempt()),
+    ).rejects.toThrow("HTTP 429");
+    expect(calls).toBe(2);
   });
 });
 

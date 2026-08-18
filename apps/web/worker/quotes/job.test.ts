@@ -113,13 +113,13 @@ describe("runQuotesShardJob", () => {
     const expected = shardUniverse(CORE_UNIVERSE)[shardIndex];
     expect(provider.collect).toHaveBeenCalledTimes(1);
     expect(provider.collect.mock.calls[0]![0]).toEqual(expected);
-    expect(expected).toHaveLength(10);
-    expect(db.latest.size).toBe(10);
+    expect(expected).toHaveLength(5);
+    expect(db.latest.size).toBe(5);
 
     const health = JSON.parse(db.meta.get(QUOTES_HEALTH_META_KEY)!) as { status: string; lastShard: number; lastSuccessAt: string; rowsWritten: number; rateLimited: boolean };
     expect(health.status).toBe("ok");
     expect(health.lastShard).toBe(shardIndex);
-    expect(health.rowsWritten).toBe(10);
+    expect(health.rowsWritten).toBe(5);
     expect(health.rateLimited).toBe(false);
     expect(health.lastSuccessAt).toBe(REGULAR.toISOString());
   });
@@ -130,10 +130,10 @@ describe("runQuotesShardJob", () => {
     const provider = createProvider({ fail: new Set([shard[0]!]) });
     const result = await runQuotesShardJob(envFrom(db, "test-key"), REGULAR, provider);
     expect(result.status).toBe("degraded");
-    expect(db.latest.size).toBe(9);
+    expect(db.latest.size).toBe(4);
     const health = JSON.parse(db.meta.get(QUOTES_HEALTH_META_KEY)!) as { status: string; lastError: string | null; rowsWritten: number };
     expect(health.status).toBe("degraded");
-    expect(health.rowsWritten).toBe(9);
+    expect(health.rowsWritten).toBe(4);
     expect(health.lastError).toContain(shard[0]);
   });
 

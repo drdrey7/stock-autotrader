@@ -49,7 +49,7 @@ export default function ScreenerPage() {
         <span className="eyebrow">LIVE MARKET SCREENER</span>
         <h1>Screener</h1>
         <p>
-          The 50-stock Core Universe with latest quotes refreshed every five minutes
+          The 50-stock Core Universe with latest quotes refreshed about every ten minutes
           during market hours.
         </p>
       </div>
