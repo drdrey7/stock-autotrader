@@ -231,8 +231,10 @@ class MemoryStatement {
         // canonical values are never cleared by a null re-resolution.
         row.eps_actual_gaap = gaap ?? row.eps_actual_gaap;
         row.eps_actual_gaap_source = gaapSource ?? row.eps_actual_gaap_source;
-        row.eps_actual_adjusted = adjusted ?? row.eps_actual_adjusted;
-        row.eps_actual_adjusted_source = adjustedSource ?? row.eps_actual_adjusted_source;
+        // Adjusted mirror is FILL-ONLY (matches the production SQL): the
+        // provider owns it once set — a write never overwrites it.
+        row.eps_actual_adjusted = row.eps_actual_adjusted ?? adjusted;
+        row.eps_actual_adjusted_source = row.eps_actual_adjusted_source ?? adjustedSource;
         row.revenue_actual_official = revenueOfficial ?? row.revenue_actual_official;
         row.revenue_actual_source = revenueSource ?? row.revenue_actual_source;
         if (epsEstimateSource != null) row.eps_estimate_source = epsEstimateSource;
@@ -427,6 +429,26 @@ describe("earnings calendar and result logic", () => {
     expect(calculateOverallResult("Beat", "Not Available")).toBe("Not Available");
   });
 
+  it("computes the EPS result from the adjusted market actual when both exist", () => {
+    // Divergent pair: legacy actual 0.9 vs explicit adjusted 1.1 against the
+    // same consensus 1.0. The drawer shows the adjusted actual, so the
+    // Beat/Miss must come from the adjusted basis — never a silent mismatch.
+    const event = normalizeEvent(eventObservation({
+      epsEstimate: 1,
+      epsActual: 0.9,
+      epsActualAdjusted: 1.1,
+      epsActualAdjustedSource: "finnhub-adjusted",
+      revenueEstimate: null,
+      revenueActual: null,
+    }), "2026-08-13", "2026-08-13T12:00:00.000Z");
+    expect(event.epsResult).toBe("Beat");
+    expect(event.epsSurprisePct).toBeCloseTo(10, 10);
+    expect(event.status).toBe("reported");
+    // The legacy column keeps its provider semantics for backward compatibility.
+    expect(event.epsActual).toBe(0.9);
+    expect(event.epsActualAdjusted).toBe(1.1);
+  });
+
   it("treats an official filing with missing metrics as reported without inventing a result", () => {
     const event = normalizeEvent(eventObservation({
       epsEstimate: null,
@@ -449,6 +471,27 @@ describe("earnings calendar and result logic", () => {
     expect(event.status).toBe("reported");
     expect(event.reportedAt).toBeNull();
     expect(event.providerUpdatedAt).toBe("2026-08-13T10:00:00.000Z");
+  });
+
+  it("keeps an SEC-filing acceptance time in secFiledAt, never in reportedAt", () => {
+    const filing = {
+      url: "https://www.sec.gov/Archives/edgar/data/320193/000032019326000010/0000320193-26-000010-index.html",
+      accession: "0000320193-26-000010",
+      form: "10-Q",
+      filedAt: "2026-07-31T21:00:00.000Z",
+      reportDate: null,
+      items: [],
+    };
+    const event = normalizeEvent(eventObservation({ officialFiling: filing }), "2026-07-31", "2026-07-31T22:00:00.000Z", { cik: "0000320193" });
+    expect(event.status).toBe("reported");
+    // The SEC acceptance time is an official filing fact — it must not be
+    // presented as the earnings-release timestamp.
+    expect(event.reportedAt).toBeNull();
+    expect(event.reportedAtSource).toBeNull();
+    // It does surface under the official SEC fields.
+    expect(event.secFiledAt).toBe("2026-07-31T21:00:00.000Z");
+    expect(event.secForm).toBe("10-Q");
+    expect(event.secFilingUrl).toBe(filing.url);
   });
 
   it("polls BMO, AMC and TBD only during their ET windows", () => {
@@ -2005,8 +2048,11 @@ describe("production Finnhub bulk calendar is a single physical request", () => 
 describe("official-metric storage write precedence (PR: earnings official last quarter)", () => {
   const officialWrite = (eventId: string, overrides: Partial<OfficialMetricsWrite> = {}): OfficialMetricsWrite => ({
     eventId,
-    reportedAt: "2026-07-29T13:00:00.000Z",
-    reportedAtSource: "sec-filing",
+    // The production write (buildAuditRow) never stamps a SEC acceptance time
+    // as reportedAt: sec-filing is stored only in secFiledAt. The fixture pins
+    // that storage-level invariant too.
+    reportedAt: null,
+    reportedAtSource: null,
     secFilingUrl: "https://www.sec.gov/Archives/edgar/data/320193/000032019326000101/0000320193-26-000101-index.html",
     secAccession: "0000320193-26-000101",
     secForm: "10-Q",
@@ -2055,14 +2101,77 @@ describe("official-metric storage write precedence (PR: earnings official last q
     expect(row.epsActualGaapSource).toBe("sec-xbrl");
     expect(row.epsActualAdjusted).toBe(1.91);
     expect(row.revenueActualOfficial).toBe(117_441_000_000);
-    expect(row.reportedAtSource).toBe("sec-filing");
+    // sec-filing is never stored as reportedAt at the storage layer either.
+    expect(row.reportedAt).toBeNull();
+    expect(row.reportedAtSource).toBeNull();
     expect(row.dataQualityStatus).toBe("different-basis");
     expect(row.secFilingUrl).toMatch(/https:\/\/www\.sec\.gov\/Archives\/edgar\/data\/320193\//);
     expect(row.secAccession).toBe("0000320193-26-000101");
     expect(row.secForm).toBe("10-Q");
+    // The SEC acceptance time lands in its official column, not reportedAt.
+    expect(row.secFiledAt).toBe("2026-07-29T00:00:00.000Z");
     // Legacy columns are preserved exactly.
     expect(row.epsActual).toBe(1.91);
     expect(row.revenueActual).toBe(117_441_000_000);
+  });
+
+  it("writing SEC GAAP never re-derives a market Beat/Miss from GAAP actuals", async () => {
+    const db = new MemoryD1();
+    const id = await seedReportedEvent(db); // 1.9271 estimate vs 1.91 actual → market Miss
+    const before = rowToEarningsEvent((await db.prepare("SELECT * FROM earnings_events WHERE id = ?").bind(id).first<Row>())!);
+    expect(before.epsResult).toBe("Miss");
+    expect(before.epsActualGaap).toBeNull();
+
+    // A GAAP actual arrives (e.g. AAPL 2.02) — it must not flip the market
+    // outcome: Beat/Miss is computed strictly from Finnhub estimate vs actual.
+    await applyOfficialMetrics(db as never, officialWrite(id, { epsActualGaap: 2.02 }));
+
+    const after = rowToEarningsEvent((await db.prepare("SELECT * FROM earnings_events WHERE id = ?").bind(id).first<Row>())!);
+    expect(after.epsResult).toBe("Miss");
+    expect(after.overallResult).toBe(before.overallResult);
+    // The GAAP figure is reference data in its own column, never the market actual.
+    expect(after.epsActualGaap).toBe(2.02);
+    expect(after.epsActual).toBe(1.91);
+    expect(after.epsActual).not.toBe(2.02);
+  });
+
+  it("official write never overwrites a provider adjusted actual (Actual/Result stay consistent)", async () => {
+    const db = new MemoryD1();
+    // Divergent pair: legacy 0.9 vs explicit adjusted 1.1 against estimate 1.0.
+    // The market Result (Beat) is computed from the adjusted basis.
+    const seeded = normalizeEvent(eventObservation({
+      symbol: "MSFT",
+      scheduledDate: "2026-07-30",
+      fiscalYear: 2026,
+      fiscalQuarter: 3,
+      fiscalPeriod: "Q3",
+      epsEstimate: 1,
+      epsActual: 0.9,
+      epsActualAdjusted: 1.1,
+      epsActualAdjustedSource: "finnhub-adjusted",
+      revenueEstimate: null,
+      revenueActual: null,
+      providerEventId: "finnhub:MSFT:2026:3:2026-07-30",
+      providerUpdatedAt: "2026-07-30T12:00:00.000Z",
+    }), "2026-07-30", "2026-07-30T12:00:00.000Z", { company: "Microsoft Corporation", cik: "0000789012" });
+    await upsertEarningsEvent(db as never, seeded);
+    const before = rowToEarningsEvent((await db.prepare("SELECT * FROM earnings_events WHERE id = ?").bind(seeded.id).first<Row>())!);
+    expect(before.epsResult).toBe("Beat");
+    expect(before.epsActualAdjusted).toBe(1.1);
+
+    // The official backfill mirrors the LEGACY actual (0.9) as its adjusted
+    // payload — fill-only semantics must keep the provider's 1.1.
+    await applyOfficialMetrics(db as never, officialWrite(seeded.id, {
+      epsActualGaap: 1.2,
+      epsActualAdjusted: 0.9,
+      epsActualAdjustedSource: "finnhub-adjusted",
+    }));
+
+    const after = rowToEarningsEvent((await db.prepare("SELECT * FROM earnings_events WHERE id = ?").bind(seeded.id).first<Row>())!);
+    expect(after.epsActualAdjusted).toBe(1.1);
+    expect(after.epsResult).toBe("Beat");
+    expect(after.epsActual).toBe(0.9);
+    expect(after.epsActualGaap).toBe(1.2);
   });
 
   it("is idempotent: a second identical apply reports no change", async () => {

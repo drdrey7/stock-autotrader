@@ -251,7 +251,10 @@ function mergedEvent(existing: EarningsRow | null, incoming: NormalizedEarningsE
   const epsActual = providerOlder ? old.epsActual : incoming.epsActual ?? old.epsActual;
   const revenueEstimate = providerOlder ? old.revenueEstimate : incoming.revenueEstimate ?? old.revenueEstimate;
   const revenueActual = providerOlder ? old.revenueActual : incoming.revenueActual ?? old.revenueActual;
-  const eps = calculateMetric(epsActual, epsEstimate);
+  // Surprise/Result share the SAME market actual the UI displays: explicit
+  // adjusted (incoming ?? preserved) first, legacy provider actual as fallback.
+  const epsAdjusted = incoming.epsActualAdjusted ?? old.epsActualAdjusted;
+  const eps = calculateMetric(epsAdjusted ?? epsActual, epsEstimate);
   const revenue = calculateMetric(revenueActual, revenueEstimate);
   return {
     ...old,
@@ -561,11 +564,19 @@ export async function applyOfficialMetrics(db: Database, write: OfficialMetricsW
     writtenValue !== null && previousValue !== writtenValue;
   const sourceChanged = (previousValue: string | null, writtenValue: string | null): boolean =>
     writtenValue !== null && previousValue !== writtenValue;
+  // The adjusted mirror is FILL-ONLY: the provider owns it once set. Filling a
+  // null adjusted keeps Surprise/Result (computed from the same market basis)
+  // consistent with what the UI displays; overwriting it could pair a shown
+  // Adjusted actual with a Result computed from a different value.
+  const adjustedFillChanged = (previous: number | null, written: number | null): boolean =>
+    written !== null && previous === null;
+  const adjustedSourceFillChanged = (previous: string | null, written: string | null): boolean =>
+    written !== null && previous === null;
   const changed =
     valueChanged(previous.epsActualGaap, write.epsActualGaap)
     || sourceChanged(previous.epsActualGaapSource, write.epsActualGaapSource)
-    || valueChanged(previous.epsActualAdjusted, write.epsActualAdjusted)
-    || sourceChanged(previous.epsActualAdjustedSource, write.epsActualAdjustedSource)
+    || adjustedFillChanged(previous.epsActualAdjusted, write.epsActualAdjusted)
+    || adjustedSourceFillChanged(previous.epsActualAdjustedSource, write.epsActualAdjustedSource)
     || valueChanged(previous.revenueActualOfficial, write.revenueActualOfficial)
     || sourceChanged(previous.revenueActualSource, write.revenueActualSource)
     || sourceChanged(previous.epsEstimateSource, write.epsEstimateSource)
@@ -583,8 +594,12 @@ export async function applyOfficialMetrics(db: Database, write: OfficialMetricsW
     `UPDATE earnings_events SET
        eps_actual_gaap = COALESCE(?, eps_actual_gaap),
        eps_actual_gaap_source = COALESCE(?, eps_actual_gaap_source),
-       eps_actual_adjusted = COALESCE(?, eps_actual_adjusted),
-       eps_actual_adjusted_source = COALESCE(?, eps_actual_adjusted_source),
+       -- Adjusted mirror is fill-only: the provider owns it once set. Filling a
+       -- null adjusted keeps Surprise/Result consistent with the displayed value;
+       -- overwriting it could pair a shown Adjusted actual with a Result computed
+       -- from a different basis.
+       eps_actual_adjusted = COALESCE(earnings_events.eps_actual_adjusted, ?),
+       eps_actual_adjusted_source = COALESCE(earnings_events.eps_actual_adjusted_source, ?),
        revenue_actual_official = COALESCE(?, revenue_actual_official),
        revenue_actual_source = COALESCE(?, revenue_actual_source),
        eps_estimate_source = COALESCE(?, eps_estimate_source),

@@ -1,7 +1,10 @@
 import type {
+  EarningsDataQualityStatus,
   EarningsEngineEvent,
+  EarningsMetricSource,
   EarningsOverallResult,
 } from "@stock-autotrader/contracts";
+export { formatShareValue, formatCompactMoney, formatPercent } from "../../lib/format";
 
 export type EarningsDisplayResult = "Beat" | "Met" | "Miss" | "Mixed" | "Upcoming" | "N/A";
 export type EarningsCompany = EarningsEngineEvent & {
@@ -149,16 +152,6 @@ export function eventWithViewMetadata(input: EarningsInput): EarningsCompany {
   return { ...event, color: tickerColour(event.symbol), result: displayResult(event) };
 }
 
-export function formatMetric(value: number | null, prefix = ""): string {
-  if (value === null || !Number.isFinite(value)) return "N/A";
-  return `${prefix}${value.toLocaleString("en-US", { maximumFractionDigits: 4 })}`;
-}
-
-export function formatPercent(value: number | null): string {
-  if (value === null || !Number.isFinite(value)) return "N/A";
-  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
-}
-
 export function resultClass(value: string): string {
   if (value === "Beat") return "beat";
   if (value === "Miss") return "miss";
@@ -182,4 +175,180 @@ export function fiscalPeriodLabel(
   const period = fiscalPeriod?.trim() || (fiscalQuarter !== null ? `Q${fiscalQuarter}` : null);
   if (!period && fiscalYear === null) return "N/A";
   return [period, fiscalYear].filter((value) => value !== null && value !== "").join(" ") || "N/A";
+}
+
+/**
+ * MARKET view — every number here is Finnhub/market-consensus only. The actuals
+ * prefer the explicit adjusted (non-GAAP) column and fall back to the legacy
+ * provider actual; the SEC GAAP values are NEVER folded in. Surprise and
+ * Result are recomputed here from the exact pair that is displayed, so the
+ * drawer can never show an Actual that contradicts its own Surprise/Result
+ * (mirrors the worker's calculateMetric rule).
+ */
+export interface MarketEarningsView {
+  epsEstimate: number | null;
+  epsActual: number | null;
+  epsSurprisePct: number | null;
+  epsResult: string;
+  revenueEstimate: number | null;
+  revenueActual: number | null;
+  revenueSurprisePct: number | null;
+  revenueResult: string;
+  overallResult: string;
+  /** A market comparison is possible for EPS or revenue (both estimate + actual present). */
+  comparable: boolean;
+}
+
+export interface MarketMetricView {
+  actual: number | null;
+  estimate: number | null;
+  surprisePct: number | null;
+  result: string;
+}
+
+/**
+ * Canonical market Beat/Miss computation: surprise and result are derived from
+ * the SAME actual/estimate pair that the UI displays. When either value is
+ * missing the result is N/A — a market result is NEVER derived from SEC GAAP
+ * actuals. Formula matches the worker's calculateMetric:
+ *   surprisePct = (actual - estimate) / |estimate| * 100
+ *   result      = actual > estimate ? Beat : actual < estimate ? Miss : Met
+ */
+export function calculateMarketMetric(actual: number | null, estimate: number | null): MarketMetricView {
+  if (
+    actual === null || estimate === null
+    || !Number.isFinite(actual) || !Number.isFinite(estimate)
+  ) {
+    return { actual, estimate, surprisePct: null, result: "Not Available" };
+  }
+  const surprisePct = estimate === 0 ? null : ((actual - estimate) / Math.abs(estimate)) * 100;
+  const result = actual === estimate ? "In Line" : actual > estimate ? "Beat" : "Miss";
+  return {
+    actual,
+    estimate,
+    surprisePct: surprisePct !== null && Number.isFinite(surprisePct) ? surprisePct : null,
+    result,
+  };
+}
+
+type MarketEventFields = Pick<EarningsEngineEvent,
+  | "epsEstimate" | "epsActual" | "epsActualAdjusted"
+  | "revenueEstimate" | "revenueActual">;
+
+export function marketEarningsView(event: MarketEventFields): MarketEarningsView {
+  const epsActual = event.epsActualAdjusted ?? event.epsActual;
+  const revenueActual = event.revenueActual;
+  const eps = calculateMarketMetric(epsActual, event.epsEstimate);
+  const revenue = calculateMarketMetric(revenueActual, event.revenueEstimate);
+  const overallResult = eps.result === "Not Available" || revenue.result === "Not Available"
+    ? "Not Available"
+    : eps.result === revenue.result
+      ? eps.result
+      : "Mixed";
+  return {
+    epsEstimate: eps.estimate,
+    epsActual: eps.actual,
+    epsSurprisePct: eps.surprisePct,
+    epsResult: eps.result,
+    revenueEstimate: revenue.estimate,
+    revenueActual: revenue.actual,
+    revenueSurprisePct: revenue.surprisePct,
+    revenueResult: revenue.result,
+    overallResult,
+    comparable: (event.epsEstimate !== null && epsActual !== null)
+      || (event.revenueEstimate !== null && revenueActual !== null),
+  };
+}
+
+/**
+ * OFFICIAL view — SEC/EDGAR GAAP accounting figures and filing metadata only.
+ * These are informational reference data and must never feed a market
+ * Beat/Miss computation (see marketEarningsView above).
+ */
+export interface OfficialEarningsView {
+  epsGaap: number | null;
+  revenueGaap: number | null;
+  secAccession: string | null;
+  secForm: string | null;
+  secFiledAt: string | null;
+  secFilingUrl: string | null;
+  /** True when any SEC field was resolved (so the UI can render a real section). */
+  hasAny: boolean;
+}
+
+type OfficialEventFields = Pick<EarningsEngineEvent,
+  | "epsActualGaap" | "revenueActualOfficial"
+  | "secAccession" | "secForm" | "secFiledAt" | "secFilingUrl">;
+
+export function officialEarningsView(event: OfficialEventFields): OfficialEarningsView {
+  return {
+    epsGaap: event.epsActualGaap,
+    revenueGaap: event.revenueActualOfficial,
+    secAccession: event.secAccession,
+    secForm: event.secForm,
+    secFiledAt: event.secFiledAt,
+    secFilingUrl: event.secFilingUrl,
+    hasAny: event.epsActualGaap !== null
+      || event.revenueActualOfficial !== null
+      || event.secFilingUrl !== null
+      || event.secForm !== null
+      || event.secFiledAt !== null,
+  };
+}
+
+/**
+ * The actual earnings-release timestamp, but ONLY when independently known.
+ * A reportedAt whose provenance is `sec-filing` is the SEC filing acceptance
+ * time — not the release time — and is deliberately treated as unknown here so
+ * the UI never presents it as "Reported at" (earnings release).
+ */
+export function releaseTimestamp(
+  event: Pick<EarningsEngineEvent, "reportedAt" | "reportedAtSource">,
+): string | null {
+  if (!event.reportedAt || event.reportedAtSource === "sec-filing") return null;
+  return event.reportedAt;
+}
+
+/** Raw `data_quality_status` verdicts mapped to user-friendly copy (never raw internal strings). */
+const DATA_QUALITY_LABELS: Record<string, string> = {
+  "match": "Market and official results are consistent",
+  "different-basis": "GAAP and adjusted results differ",
+  "conflict": "Provider and SEC data could not be aligned",
+  "official-only": "Only official SEC data is available",
+  "finnhub-only": "Only market data is available",
+  "unresolved": "Data quality could not be fully resolved",
+};
+
+export function dataQualityLabel(status: EarningsDataQualityStatus | null): string | null {
+  if (!status) return null;
+  return DATA_QUALITY_LABELS[status] ?? null;
+}
+
+/** Provider provenance strings → friendly source labels (never ugly raw tokens). */
+const SOURCE_LABELS: Record<string, string> = {
+  "sec-xbrl": "SEC / Official",
+  "sec-filing": "SEC / Filing",
+  "finnhub-consensus": "Finnhub / Market",
+  "finnhub-adjusted": "Finnhub / Market",
+};
+
+export function sourceLabel(source: EarningsMetricSource | null): string {
+  if (!source) return "N/A";
+  return SOURCE_LABELS[source] ?? source;
+}
+
+/**
+ * Date-only rendering of a SEC acceptance/filing ISO timestamp. Time is
+ * deliberately dropped: filing datetimes are acceptance-system values whose
+ * timezone component adds noise, and the label is "SEC filed", not a release
+ * instant. Rendering in UTC keeps the calendar date identical everywhere.
+ */
+export function formatFilingDate(iso: string | null): string | null {
+  if (!iso || !Number.isFinite(new Date(iso).getTime())) return null;
+  return new Intl.DateTimeFormat("en", {
+    timeZone: "UTC",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(new Date(iso));
 }

@@ -255,10 +255,14 @@ describe("Morning Briefing frontend demo", () => {
     expect(ticker).toBeDefined();
     fireEvent.click(ticker!.closest("button")!);
     const drawer = await screen.findByRole("dialog", { name: "Earnings Detail" });
-    expect(drawer).toHaveTextContent("3.3");
+    // Compact share-value formatting replaces raw numbers ("3.3" → "$3.3").
+    expect(drawer).toHaveTextContent("$3.3");
     expect(drawer).toHaveTextContent("+10.00%");
     expect(drawer).toHaveTextContent("Mixed");
     expect(drawer).toHaveTextContent(/Reported at\s*N\/A/);
+    // Market and official sections are both present for a reported event.
+    expect(drawer).toHaveTextContent("Market Earnings");
+    expect(drawer).toHaveTextContent("Official SEC Data");
     expect(screen.getByRole("link", { name: /Official Earnings Report/ })).toHaveAttribute("href", "https://example.test/msft-release");
     expect(screen.getByRole("link", { name: /SEC Filing/ })).toHaveAttribute("href", expect.stringContaining("sec.gov"));
     expect(screen.getByRole("link", { name: /Investor Relations/ })).toHaveAttribute("href", "https://example.test/msft-ir");

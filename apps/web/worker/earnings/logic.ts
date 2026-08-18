@@ -81,6 +81,20 @@ export function calculateMetric(
   };
 }
 
+/**
+ * Single source of truth for the MARKET actual: the explicit adjusted
+ * (non-GAAP) provider value when present, else the legacy provider actual.
+ * Surprise/Result computations and the UI must use THIS value so the shown
+ * Actual and the shown Beat/Miss always share the same metric basis. SEC GAAP
+ * actuals never participate.
+ */
+export function marketActual(values: {
+  epsActualAdjusted?: number | null;
+  epsActual?: number | null;
+}): number | null {
+  return values.epsActualAdjusted ?? values.epsActual ?? null;
+}
+
 export function calculateOverallResult(
   epsResult: EarningsMetricResult,
   revenueResult: EarningsMetricResult,
@@ -152,9 +166,12 @@ export function normalizeEvent(
   official: OfficialFiling | null = null,
 ): NormalizedEarningsEvent {
   const symbol = normalizeSymbol(observation.symbol);
-  const eps = calculateMetric(observation.epsActual, observation.epsEstimate, EPS_RESULT_TOLERANCE);
+  // Surprise/Result are computed against the SAME market actual the UI will
+  // show (adjusted when explicitly provided, else the legacy provider actual).
+  const epsActual = marketActual(observation);
+  const eps = calculateMetric(epsActual, observation.epsEstimate, EPS_RESULT_TOLERANCE);
   const revenue = calculateMetric(observation.revenueActual, observation.revenueEstimate, REVENUE_RESULT_TOLERANCE);
-  const hasActual = isFiniteNumber(observation.epsActual) || isFiniteNumber(observation.revenueActual);
+  const hasActual = isFiniteNumber(epsActual) || isFiniteNumber(observation.revenueActual);
   const effectiveOfficial = official ?? observation.officialFiling ?? null;
   const status = classifyStatus(observation.scheduledDate, today, hasActual, effectiveOfficial !== null, observation.cancelled === true);
   const reported = status === "reported";
@@ -188,10 +205,14 @@ export function normalizeEvent(
     revenueSurprisePct: revenue.surprisePct,
     revenueResult: revenue.result,
     overallResult: calculateOverallResult(eps.result, revenue.result),
-    // A provider collection time is not a report timestamp. Only an SEC
-    // acceptance timestamp is authoritative for reportedAt.
-    reportedAt: effectiveOfficial?.filedAt ?? null,
-    reportedAtSource: effectiveOfficial ? "sec-filing" : null,
+    // A provider collection time is not a report timestamp, and neither is the
+    // SEC filing acceptance time: reportedAt must only ever be an actual
+    // earnings-release timestamp when independently known. Nothing in the
+    // provider path knows that, so reportedAt stays null and the SEC
+    // acceptance time lives in secFiledAt (rendered in the official section as
+    // "SEC filed", never as the release time).
+    reportedAt: null,
+    reportedAtSource: null,
     // Official SEC GAAP metrics never originate from provider observations.
     // They are resolved by the one-shot VPS backfill (sec-xbrl) and written
     // through the dedicated official write path, which never runs here.

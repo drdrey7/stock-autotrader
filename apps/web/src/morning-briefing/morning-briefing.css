@@ -56,3 +56,54 @@
 .earnings-search{margin:12px 0 9px}.earnings-search input{width:100%;max-width:320px;padding:9px 12px;border:1px solid var(--border);border-radius:9px;background:var(--surface-2);color:var(--text);font-size:10px;outline:none}.earnings-search input:focus{border-color:var(--green)}
 .visually-hidden{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
 @media(max-width:700px){.table-head{display:none}.earnings-table>button{min-width:0;display:grid;grid-template-columns:1fr auto;grid-template-areas:"company chevron" "date chevron" "eps chevron" "revenue chevron" "result chevron";column-gap:10px;row-gap:3px;padding:12px;border:1px solid var(--border);border-radius:12px;margin-bottom:8px;text-align:left}.earnings-table>button:last-child{margin-bottom:0}.table-company{grid-area:company}.table-date-state{grid-area:date;flex-direction:row;align-items:center;gap:8px;min-width:0}.earnings-table>button>span:nth-child(3){grid-area:eps}.earnings-table>button>span:nth-child(4){grid-area:revenue}.earnings-table>button>span:nth-child(5){grid-area:result;justify-self:start}.earnings-table>button>svg{grid-area:chevron;align-self:center}.earnings-table>button>span:nth-child(3)::before,.earnings-table>button>span:nth-child(4)::before{content:attr(data-label);color:var(--muted);font-size:8px;font-weight:800;min-width:112px}}
+
+/* ============ Earnings detail drawer — Market vs Official separation ============ */
+.drawer-company{grid-template-columns:44px minmax(0,1fr) auto}
+.drawer-company-copy{min-width:0}
+.drawer-company h2{overflow-wrap:anywhere;line-height:1.2}
+.drawer-metadata{grid-template-columns:1fr 1fr 1fr}
+.status-capitalize{text-transform:capitalize}
+.earnings-subsection{margin-top:22px}
+.subsection-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:10px}
+.subsection-head h3{margin:0;font-size:12px;letter-spacing:-.01em}
+.subsection-head small{color:var(--muted);font-size:8px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+.detail-metrics-single{grid-template-columns:1fr;margin-top:10px}
+.data-quality-note{margin:12px 0 0;padding:9px 12px;border:1px solid var(--border);border-radius:9px;background:var(--surface-2);color:var(--muted);font-size:9px;line-height:1.5}
+.official-section{margin-top:22px;padding-top:20px;border-top:1px solid var(--border)}
+.official-section>.official-link{margin-top:12px}
+.official-metrics{grid-template-columns:1fr 1fr}
+.earnings-glossary{margin-top:22px;padding-top:16px;border-top:1px solid var(--border)}
+.earnings-glossary summary{display:flex;align-items:center;gap:7px;cursor:pointer;color:var(--text);font-size:10px;font-weight:800;list-style:none}
+.earnings-glossary summary svg{width:13px;color:var(--green)}
+.earnings-glossary summary::-webkit-details-marker{display:none}
+.earnings-glossary[open] summary{margin-bottom:12px}
+.earnings-glossary dl{display:grid;gap:10px;margin:0 0 10px}
+.earnings-glossary dt{font-size:9px;font-weight:800;color:var(--text);margin-bottom:2px}
+.earnings-glossary dd{margin:0;color:var(--muted);font-size:9px;line-height:1.55}
+.earnings-glossary .glossary-note{margin:0;font-size:9px;color:var(--muted);line-height:1.5}
+.earnings-glossary .glossary-note strong{color:var(--text)}
+@media(max-width:700px){.drawer-metadata{grid-template-columns:1fr}.report-grid{grid-template-columns:1fr}.official-metrics{grid-template-columns:1fr}.drawer-company h2{font-size:19px}.subsection-head small{font-size:9px}.drawer-company p{font-size:10px}.metric-row strong{font-size:14px;text-align:right;min-width:0;overflow-wrap:anywhere}}
+
+/* ============ Earnings drawer — readability, contrast and semantic color ============ */
+.subsection-head h3{font-size:14px;font-weight:800;letter-spacing:-.01em}
+.subsection-head small{font-size:9px;color:var(--muted);font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+.earnings-metric>span{font-size:10px;font-weight:800}
+.metric-row small{font-size:10px;color:var(--muted)}
+.metric-row strong{font-size:14px;font-weight:700}
+.drawer-company h2{font-size:22px;font-weight:800;color:var(--text)}
+.drawer-company p{font-size:10px;color:var(--muted)}
+.drawer-metadata span{font-size:9px;color:var(--muted)}
+.drawer-metadata strong{font-size:12px}
+.official-metrics strong{font-size:13px}
+.data-quality-note{border-left:3px solid var(--amber);background:var(--amber-soft);color:var(--text);font-size:10px}
+.drawer-links .official-link{font-size:11px;font-weight:800}
+.earnings-glossary summary{font-size:11px}
+.earnings-glossary dt{font-size:10px;font-weight:800}
+.earnings-glossary dd{font-size:10px;line-height:1.65;color:var(--muted)}
+.earnings-glossary .glossary-note{font-size:10px}
+/* Semantic result colors — displayed Beat/Miss/Met/Mixed match the badge palette. */
+.metric-row strong.beat,.detail-metrics strong.beat{color:var(--green)}
+.metric-row strong.miss,.detail-metrics strong.miss{color:var(--red)}
+.metric-row strong.mixed,.detail-metrics strong.mixed{color:var(--amber)}
+.metric-row strong.pending,.detail-metrics strong.pending{color:var(--muted)}
+.official-section .subscription-muted{color:var(--muted-2)}
