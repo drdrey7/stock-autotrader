@@ -36,7 +36,7 @@ jobs:
       - name: Validate production Worker dry-run and cron budget
         working-directory: apps/web
         run: |
-          node -e 'const fs=require("node:fs"); const config=JSON.parse(fs.readFileSync("wrangler.jsonc", "utf8")); const expected=["*/15 * * * *", "0 6 * * *"]; const actual=config.triggers?.crons ?? []; if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error(`Expected exactly two production cron triggers, got ${JSON.stringify(actual)}`); console.log(`Production cron triggers (${actual.length}): ${actual.join(", ")}`);'
+          node -e 'const fs=require("node:fs"); const config=JSON.parse(fs.readFileSync("wrangler.jsonc", "utf8")); const expected=["*/15 * * * *", "0 6 * * *", "* * * * *"]; const actual=config.triggers?.crons ?? []; if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error(`Expected exactly three production cron triggers, got ${JSON.stringify(actual)}`); console.log(`Production cron triggers (${actual.length}): ${actual.join(", ")}`);'
           npx --yes wrangler@4.123.0 deploy --dry-run
       - name: Validate preview Worker config and dry-run
         working-directory: apps/web

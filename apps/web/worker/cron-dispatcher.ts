@@ -1,21 +1,25 @@
 /**
- * Production keeps two Cloudflare trigger entries. The 15-minute entry fans
- * out to the jobs that need that cadence, while the job implementations keep
- * their own domain-specific windows and failure handling.
+ * Production keeps three Cloudflare trigger entries. The 15-minute entry fans
+ * out to the jobs that need that cadence, the per-minute entry drives the
+ * Screener quote shard rotation, and the job implementations keep their own
+ * domain-specific windows and failure handling.
  */
 export const EARNINGS_MONITOR_CRON = "*/15 * * * *";
 export const EARNINGS_CALENDAR_CRON = "0 6 * * *";
+export const QUOTES_CRON = "* * * * *";
 
 export const PRODUCTION_CRON_TRIGGERS = [
   EARNINGS_MONITOR_CRON,
   EARNINGS_CALENDAR_CRON,
+  QUOTES_CRON,
 ] as const;
 
 export type ProductionCronJob =
   | "earnings-monitor"
   | "market-context"
   | "sentiment"
-  | "earnings-calendar";
+  | "earnings-calendar"
+  | "quotes-shard";
 
 import { isUsMarketHoliday, localNewYorkParts } from "./market-context";
 
@@ -49,6 +53,7 @@ export function jobsForProductionCron(
   scheduledTime: Date,
 ): ProductionCronJob[] {
   if (cron === EARNINGS_CALENDAR_CRON) return ["earnings-calendar"];
+  if (cron === QUOTES_CRON) return ["quotes-shard"];
   if (cron !== EARNINGS_MONITOR_CRON) return [];
 
   const jobs: ProductionCronJob[] = ["earnings-monitor", "market-context"];

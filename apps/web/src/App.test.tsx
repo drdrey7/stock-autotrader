@@ -115,7 +115,7 @@ describe("Morning Briefing public experience", () => {
   });
 
   it.each([
-    "/scanner", "/signals", "/stocks/NVDA", "/strategies",
+    "/signals", "/stocks/NVDA", "/strategies",
     "/strategies/trend_breakout_v1", "/research", "/research/example",
     "/portfolio", "/market-data", "/activity",
   ])("redirects legacy route %s to Morning Briefing", async (path) => {
@@ -123,6 +123,16 @@ describe("Morning Briefing public experience", () => {
     // Static hero subtitle confirms the briefing landed, independent of the
     // machine timezone the local-time greeting depends on.
     expect(await screen.findByText(/economic calendar and top stories/)).toBeInTheDocument();
+  });
+
+  it("opens the Screener route directly", async () => {
+    render(<MemoryRouter initialEntries={["/screener"]}><App /></MemoryRouter>);
+    expect(await screen.findByRole("heading", { name: "Screener" })).toBeInTheDocument();
+  });
+
+  it("redirects the legacy /scanner route to the Screener", async () => {
+    render(<MemoryRouter initialEntries={["/scanner"]}><App /></MemoryRouter>);
+    expect(await screen.findByRole("heading", { name: "Screener" })).toBeInTheDocument();
   });
 
   it.each([["/status", "System status"]])("keeps public information route %s", (path, heading) => {
