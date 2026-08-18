@@ -44,35 +44,60 @@ export async function runQuotesShardJob(
     }));
     return { status: "skipped", detail: "market_closed" };
   }
-  if (!env.FINNHUB_API_KEY) {
-    console.error(JSON.stringify({
-      job: "quotes-shard",
-      phase: "result",
-      scheduledTime: scheduledTime.toISOString(),
-      status: "degraded",
-      detail: "FINNHUB_API_KEY is not configured",
-    }));
-    return { status: "degraded", detail: "FINNHUB_API_KEY is not configured" };
-  }
-
   const startedAt = Date.now();
   const collectedAt = scheduledTime.toISOString();
   const shardIndex = shardIndexForMinute(scheduledTime.getTime());
   const symbols = shardUniverse(CORE_UNIVERSE)[shardIndex] ?? [];
-  const activeProvider = provider ?? new FinnhubQuoteProvider(env.FINNHUB_API_KEY);
   const previous = await readQuotesHealth(env.DB);
-  await rememberQuotesHealth(env.DB, {
-    provider: activeProvider.name,
-    status: "running",
-    lastAttemptAt: collectedAt,
-    lastSuccessAt: previous?.lastSuccessAt ?? null,
-    lastError: previous?.lastError ?? null,
-    rowsWritten: 0,
-    lastShard: shardIndex,
-    rateLimited: false,
-  });
+  // Deterministic provider label for health/logs; the default (Finnhub)
+  // adapter owns this name, an injected provider supplies its own.
+  const providerName = provider?.name ?? "finnhub-quote";
+
+  // Only the default path needs the Finnhub secret — an explicitly injected
+  // provider is testable without it. Trim so a whitespace-only env value is
+  // treated as unset and never reaches the FinnhubQuoteProvider constructor
+  // (which throws on a blank key). A missing key persists a degraded health
+  // record instead of failing silently.
+  const configuredKey = (env.FINNHUB_API_KEY ?? "").trim();
+  if (!provider && !configuredKey) {
+    const detail = "FINNHUB_API_KEY is not configured";
+    console.error(JSON.stringify({
+      job: "quotes-shard",
+      phase: "result",
+      scheduledTime: scheduledTime.toISOString(),
+      window,
+      shard: shardIndex,
+      status: "degraded",
+      detail,
+    }));
+    await rememberQuotesHealth(env.DB, {
+      provider: "unavailable",
+      status: "degraded",
+      lastAttemptAt: collectedAt,
+      lastSuccessAt: previous?.lastSuccessAt ?? null,
+      lastError: detail,
+      rowsWritten: 0,
+      lastShard: shardIndex,
+      rateLimited: false,
+    });
+    return { status: "degraded", detail };
+  }
 
   try {
+    // Constructed inside the try so a provider construction failure also
+    // degrades health instead of escaping the job as an unhandled rejection.
+    const activeProvider: QuoteProvider = provider ?? new FinnhubQuoteProvider(configuredKey);
+    await rememberQuotesHealth(env.DB, {
+      provider: providerName,
+      status: "running",
+      lastAttemptAt: collectedAt,
+      lastSuccessAt: previous?.lastSuccessAt ?? null,
+      lastError: previous?.lastError ?? null,
+      rowsWritten: 0,
+      lastShard: shardIndex,
+      rateLimited: false,
+    });
+
     const result = await activeProvider.collect(symbols, collectedAt);
     const rowsWritten = await upsertLatestQuotes(env.DB, result.observations, collectedAt);
     const failed = symbols.length - result.observations.length;
@@ -80,7 +105,7 @@ export async function runQuotesShardJob(
     const boundedError = result.warnings.slice(0, 8).join("; ").slice(0, 480) || null;
     const lastSuccessAt = result.observations.length > 0 ? collectedAt : previous?.lastSuccessAt ?? null;
     await rememberQuotesHealth(env.DB, {
-      provider: activeProvider.name,
+      provider: providerName,
       status,
       lastAttemptAt: collectedAt,
       lastSuccessAt,
@@ -95,7 +120,7 @@ export async function runQuotesShardJob(
       scheduledTime: scheduledTime.toISOString(),
       window,
       shard: shardIndex,
-      provider: activeProvider.name,
+      provider: providerName,
       symbolsRequested: symbols.length,
       successful: result.observations.length,
       failed,
@@ -120,7 +145,7 @@ export async function runQuotesShardJob(
       durationMs: Date.now() - startedAt,
     }));
     await rememberQuotesHealth(env.DB, {
-      provider: activeProvider.name,
+      provider: providerName,
       status: "degraded",
       lastAttemptAt: collectedAt,
       lastSuccessAt: previous?.lastSuccessAt ?? null,

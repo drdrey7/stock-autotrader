@@ -126,4 +126,17 @@ describe("ScreenerPage", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Loading quotes");
     expect(await screen.findByRole("alert")).toHaveTextContent(/temporarily unavailable/i);
   });
+
+  it("labels Cached rows neutrally — never 'Market closed' during the open grace", async () => {
+    const cached: ScreenerRow = row("ZZZ", 100, null, "Cached");
+    fetchMock.mockImplementation(async () =>
+      new Response(JSON.stringify(makeResponse([cached])), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }));
+    render(<ScreenerPage />);
+    // "Cached" appears in the row status cell (and possibly the summary chip).
+    expect(await screen.findAllByText("Cached")).toHaveLength(2);
+    expect(screen.queryByText("Market closed")).not.toBeInTheDocument();
+  });
 });

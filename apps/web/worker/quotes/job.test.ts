@@ -36,7 +36,7 @@ function createProvider(options: { fail?: Set<string>; throwAll?: boolean } = {}
   };
 }
 
-function createJobDb() {
+function createJobDb(options: { throwOnBatch?: boolean } = {}) {
   const meta = new Map<string, string>();
   const latest = new Map<string, unknown>();
   return {
@@ -75,6 +75,7 @@ function createJobDb() {
       return statement;
     },
     async batch(statements: Array<{ run(): Promise<{ meta: { changes: number } }> }>): Promise<Array<{ meta: { changes: number } }>> {
+      if (options.throwOnBatch) throw new Error("D1 batch unavailable");
       const results = [];
       for (const statement of statements) results.push(await statement.run());
       return results;
@@ -149,11 +150,46 @@ describe("runQuotesShardJob", () => {
     expect(health.lastSuccessAt).toBeNull();
   });
 
-  it("degrades without calling the provider when the API key is missing", async () => {
+  it("degrades gracefully and persists degraded health when the key is missing and no provider is injected", async () => {
+    const db = createJobDb();
+    const result = await runQuotesShardJob(envFrom(db, undefined), REGULAR);
+    expect(result.status).toBe("degraded");
+    expect(db.latest.size).toBe(0);
+    const health = JSON.parse(db.meta.get(QUOTES_HEALTH_META_KEY)!) as { status: string; lastError: string; lastShard: number };
+    expect(health.status).toBe("degraded");
+    expect(health.lastError).toContain("FINNHUB_API_KEY is not configured");
+    expect(health.lastShard).toBe(shardIndexForMinute(REGULAR.getTime()));
+  });
+
+  it("treats a whitespace-only key like a missing key (no unhandled rejection)", async () => {
+    const db = createJobDb();
+    const result = await runQuotesShardJob(envFrom(db, "   "), REGULAR);
+    expect(result.status).toBe("degraded");
+    expect(db.latest.size).toBe(0);
+    const health = JSON.parse(db.meta.get(QUOTES_HEALTH_META_KEY)!) as { status: string; lastError: string };
+    expect(health.status).toBe("degraded");
+    expect(health.lastError).toContain("FINNHUB_API_KEY is not configured");
+  });
+
+  it("runs an injected provider without requiring the Finnhub secret", async () => {
     const db = createJobDb();
     const provider = createProvider();
     const result = await runQuotesShardJob(envFrom(db, undefined), REGULAR, provider);
+    expect(result.status).toBe("ok");
+    expect(provider.collect).toHaveBeenCalledTimes(1);
+    const health = JSON.parse(db.meta.get(QUOTES_HEALTH_META_KEY)!) as { status: string; provider: string };
+    expect(health.status).toBe("ok");
+    expect(health.provider).toBe("fake-quote");
+  });
+
+  it("degrades and keeps health persisted when the D1 upsert fails", async () => {
+    const db = createJobDb({ throwOnBatch: true });
+    const provider = createProvider();
+    const result = await runQuotesShardJob(envFrom(db, "test-key"), REGULAR, provider);
     expect(result.status).toBe("degraded");
-    expect(provider.collect).not.toHaveBeenCalled();
+    expect(result.detail).toContain("D1 batch unavailable");
+    const health = JSON.parse(db.meta.get(QUOTES_HEALTH_META_KEY)!) as { status: string; lastError: string };
+    expect(health.status).toBe("degraded");
+    expect(health.lastError).toContain("D1 batch unavailable");
   });
 });

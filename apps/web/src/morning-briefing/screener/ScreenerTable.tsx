@@ -20,7 +20,11 @@ function formatSigned(value: number | null, digits = 2): string {
 
 function stateLabel(row: ScreenerRow): string {
   if (row.state === "Live") return "Live";
-  if (row.state === "Cached") return "Market closed";
+  // Neutral label: Cached applies both to a closed market and to the
+  // market-open grace window (the sweep has not refreshed this symbol yet),
+  // so "Market closed" would be wrong during the first 10 minutes of a
+  // session. The actual market state is shown in the summary chips.
+  if (row.state === "Cached") return "Cached";
   if (row.state === "Stale") return "Stale";
   if (row.state === "Error") return "Error";
   return "Unavailable";

@@ -139,6 +139,14 @@ describe("latest_quotes storage", () => {
     expect(written).toBe(0);
   });
 
+  it("propagates a D1 batch failure so the job can degrade health", async () => {
+    const db = createDb();
+    db.batch = async () => { throw new Error("D1 batch unavailable"); };
+    await expect(
+      upsertLatestQuotes(db as unknown as D1Database, [quote("AAPL", 230)], "2026-08-13T14:00:00.000Z"),
+    ).rejects.toThrow("D1 batch unavailable");
+  });
+
   it("reads back the full latest-quote state", async () => {
     const db = createDb();
     const updatedAt = "2026-08-13T14:00:00.000Z";
