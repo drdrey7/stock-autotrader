@@ -1,0 +1,4 @@
+# Runtime dependency for the Finnhub WebSocket ingestor.
+# Everything else uses the Python standard library (urllib for the D1 HTTP API).
+# Tests use only stdlib unittest — no framework deps.
+websocket-client>=1.6,<2

@@ -1,25 +1,28 @@
 /**
- * Production keeps three Cloudflare trigger entries. The 15-minute entry fans
- * out to the jobs that need that cadence, the per-minute entry drives the
- * Screener quote shard rotation, and the job implementations keep their own
- * domain-specific windows and failure handling.
+ * Production keeps two Cloudflare trigger entries: the 15-minute entry fans
+ * out to the jobs that need that cadence, and the 06:00 entry drives the daily
+ * earnings calendar.
+ *
+ * The Screener quote collector no longer runs on a per-minute REST cron: the
+ * Finnhub WebSocket ingestor (apps/quote-ingestor, systemd on the VPS) writes
+ * latest_quotes directly through the D1 HTTP API. `runQuotesShardJob` remains
+ * available as a manual diagnostic/fallback but is intentionally NOT
+ * scheduled, so no Cloudflare trigger entry, subrequest budget or Finnhub
+ * REST rate calls exist for it anymore.
  */
 export const EARNINGS_MONITOR_CRON = "*/15 * * * *";
 export const EARNINGS_CALENDAR_CRON = "0 6 * * *";
-export const QUOTES_CRON = "* * * * *";
 
 export const PRODUCTION_CRON_TRIGGERS = [
   EARNINGS_MONITOR_CRON,
   EARNINGS_CALENDAR_CRON,
-  QUOTES_CRON,
 ] as const;
 
 export type ProductionCronJob =
   | "earnings-monitor"
   | "market-context"
   | "sentiment"
-  | "earnings-calendar"
-  | "quotes-shard";
+  | "earnings-calendar";
 
 import { isUsMarketHoliday, localNewYorkParts } from "./market-context";
 
@@ -53,7 +56,6 @@ export function jobsForProductionCron(
   scheduledTime: Date,
 ): ProductionCronJob[] {
   if (cron === EARNINGS_CALENDAR_CRON) return ["earnings-calendar"];
-  if (cron === QUOTES_CRON) return ["quotes-shard"];
   if (cron !== EARNINGS_MONITOR_CRON) return [];
 
   const jobs: ProductionCronJob[] = ["earnings-monitor", "market-context"];

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Env } from "../index";
 import { readScreenerApi } from "./api";
-import { QUOTES_HEALTH_META_KEY } from "./health";
+import { QUOTES_HEALTH_META_KEY, WS_INGESTOR_HEALTH_META_KEY } from "./health";
 import { CORE_UNIVERSE } from "@stock-autotrader/contracts";
 
 interface LatestRow {
@@ -36,9 +36,11 @@ function createApiDb(options: {
   quotes?: LatestRow[];
   companies?: Array<{ symbol: string; company: string }>;
   health?: unknown;
+  wsHealth?: unknown;
 }) {
   const meta = new Map<string, string>();
   if (options.health !== undefined) meta.set(QUOTES_HEALTH_META_KEY, JSON.stringify(options.health));
+  if (options.wsHealth !== undefined) meta.set(WS_INGESTOR_HEALTH_META_KEY, JSON.stringify(options.wsHealth));
   return {
     prepare(sql: string) {
       let args: unknown[] = [];
@@ -182,6 +184,34 @@ describe("readScreenerApi", () => {
     expect(response.quotes.counts.cached).toBe(50);
     expect(response.quotes.counts.stale).toBe(0);
     expect(response.rows.every((row) => row.price !== null)).toBe(true);
+  });
+
+  it("reports the WebSocket ingestor as the global provider when its health record exists", async () => {
+    // After the REST cron was removed, `quotesHealth` freezes on the last REST
+    // run. The WebSocket ingestor's record is the live automatic collector.
+    const db = createApiDb({
+      quotes: CORE_UNIVERSE.map((symbol, index) => quoteRow(symbol, 100 + index, NOW_ISO)),
+      health: health("2026-08-13T12:00:00.000Z"), // frozen REST record (older)
+      wsHealth: {
+        provider: "finnhub-websocket",
+        connection_status: "connected",
+        last_flush_at: NOW_ISO,
+        last_successful_flush_at: NOW_ISO,
+        last_error: null,
+        last_flush_rows: 50,
+      },
+    });
+    const response = await readScreenerApi(envFrom(db), REGULAR);
+    expect(response.quotes.provider).toBe("finnhub-websocket");
+    expect(response.quotes.lastSuccessAt).toBe(NOW_ISO);
+    expect(response.quotes.state).toBe("Live");
+    expect(response.asOf).toBe(NOW_ISO);
+  });
+
+  it("falls back to the REST quotes health only when no WebSocket health exists yet", async () => {
+    const db = createApiDb({ quotes: [quoteRow("AAPL", 232.5, NOW_ISO)], health: health(NOW_ISO) });
+    const response = await readScreenerApi(envFrom(db), REGULAR);
+    expect(response.quotes.provider).toBe("finnhub-quote");
   });
 
   it("reflects market-closed freshness (Cached, not Stale) over the weekend", async () => {

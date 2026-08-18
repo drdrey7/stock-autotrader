@@ -57,3 +57,61 @@ export async function rememberQuotesHealth(db: D1Database, health: QuotesHealthR
     console.error(JSON.stringify({ job: "quotes-shard", phase: "health-write", status: "failed", error: errorMessage(error).slice(0, 180) }));
   }
 }
+
+/**
+ * Finnhub WebSocket ingestor health (apps/quote-ingestor writes this key via
+ * the D1 HTTP API on every market-hours flush). It is the health of the ONLY
+ * AUTOMATIC quote collector after the REST cron was removed.
+ */
+export const WS_INGESTOR_HEALTH_META_KEY = "quoteIngestorHealth";
+
+/** Raw payload shape written by the ingestor (fields we map below). */
+interface WsIngestorHealthRaw {
+  connection_status?: unknown;
+  last_flush_at?: unknown;
+  last_successful_flush_at?: unknown;
+  last_error?: unknown;
+  last_flush_rows?: unknown;
+}
+
+function isoOrNull(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+export async function readWsIngestorHealth(db: D1Database): Promise<QuotesHealthRecord | null> {
+  try {
+    const row = await db.prepare("SELECT value FROM app_meta WHERE key = ? LIMIT 1")
+      .bind(WS_INGESTOR_HEALTH_META_KEY)
+      .first<{ value: string | null }>();
+    if (!row?.value) return null;
+    const parsed = JSON.parse(row.value) as WsIngestorHealthRaw;
+    if (!parsed || typeof parsed.connection_status !== "string") return null;
+    return {
+      provider: "finnhub-websocket",
+      // The collector is healthy when its WebSocket is connected; anything
+      // else (reconnecting/disconnected) degrades the label.
+      status: parsed.connection_status === "connected" ? "ok" : "degraded",
+      lastAttemptAt: isoOrNull(parsed.last_flush_at),
+      lastSuccessAt: isoOrNull(parsed.last_successful_flush_at),
+      lastError: typeof parsed.last_error === "string" ? parsed.last_error : null,
+      rowsWritten: Number.isFinite(Number(parsed.last_flush_rows)) ? Number(parsed.last_flush_rows) : 0,
+      lastShard: null,
+      rateLimited: false,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve the global quotes health record the API reports. The Finnhub
+ * WebSocket ingestor is now the only automatic collector, so its record (when
+ * it exists) IS the global provider; the REST shard record is only a fallback
+ * (manual/diagnostic runs) used when no WebSocket record has ever been
+ * written.
+ */
+export async function resolveQuotesHealth(db: D1Database): Promise<QuotesHealthRecord | null> {
+  const ws = await readWsIngestorHealth(db);
+  if (ws) return ws;
+  return readQuotesHealth(db);
+}

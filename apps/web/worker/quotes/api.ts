@@ -8,7 +8,7 @@ import type {
 } from "@stock-autotrader/contracts";
 import { CORE_UNIVERSE, CORE_UNIVERSE_VERSION } from "@stock-autotrader/contracts";
 import { collectorStateFromRows, countQuoteStates, quoteState, quotesMarketState } from "./freshness";
-import { readQuotesHealth } from "./health";
+import { resolveQuotesHealth } from "./health";
 import { readLatestQuotes } from "./storage";
 
 interface CompanyRow {
@@ -35,7 +35,7 @@ async function readCoreCompanies(db: D1Database): Promise<CompanyRow[]> {
  */
 export async function readScreenerApi(env: Env, now = new Date()): Promise<ScreenerApiResponse> {
   const [quotes, companies] = await Promise.all([readLatestQuotes(env.DB), readCoreCompanies(env.DB)]);
-  const health = await readQuotesHealth(env.DB);
+  const health = await resolveQuotesHealth(env.DB);
   const quoteBySymbol = new Map(quotes.map((quote) => [quote.symbol, quote]));
   const companyBySymbol = new Map(companies.map((company) => [company.symbol, company.company]));
 

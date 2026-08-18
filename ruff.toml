@@ -1,7 +1,8 @@
-# Lint config for the Python packages (bot/, apps/publisher/). Mirrors the
-# strict-but-focused posture of apps/web's ESLint config: catch real bugs
-# (unused imports/vars, undefined names) without forcing a repo-wide reformat.
-include = ["bot/**/*.py", "apps/publisher/**/*.py"]
+# Lint config for the Python packages (bot/, apps/publisher/,
+# apps/quote-ingestor/). Mirrors the strict-but-focused posture of apps/web's
+# ESLint config: catch real bugs (unused imports/vars, undefined names)
+# without forcing a repo-wide reformat.
+include = ["bot/**/*.py", "apps/publisher/**/*.py", "apps/quote-ingestor/**/*.py"]
 extend-exclude = ["bot/stock_autotrader_bot.egg-info", "**/__pycache__"]
 target-version = "py311"
 line-length = 200

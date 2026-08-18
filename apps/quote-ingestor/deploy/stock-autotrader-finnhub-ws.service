@@ -1,0 +1,34 @@
+[Unit]
+Description=Stock Autotrader — Finnhub WebSocket quote ingestor (D1 latest_quotes)
+Documentation=https://github.com/drdrey7/stock-autotrader
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hermes
+Group=hermes
+WorkingDirectory=/home/hermes/projects/stock-autotrader/apps/quote-ingestor
+Environment=PYTHONUNBUFFERED=1
+# Finnhub API key lives only here (chmod 600, root-owned dir /etc/stock-autotrader).
+EnvironmentFile=/etc/stock-autotrader/finnhub.env
+# Cloudflare D1 credentials (chmod 600, same dir) — batched D1 HTTP API writes.
+EnvironmentFile=/etc/stock-autotrader/cloudflare.env
+ExecStart=/usr/bin/python3 -m quote_ingestor
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+KillSignal=SIGTERM
+SendSIGKILL=no
+
+# Hardening: non-root user, read-only home (the ingestor only reads the Core
+# Universe file), private /tmp, no new privileges, no capabilities.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=full
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

@@ -12,7 +12,6 @@ import {
 import { readXPosts } from "./x-posts";
 import { readMarketContext, readMarketContextHealth, readMarketContextHealthStrict, runMarketContextJob, runSentimentJob } from "./market-context";
 import { EarningsQueryError, readEarningsApi, runEarningsJob } from "./earnings";
-import { runQuotesShardJob } from "./quotes/job";
 import { readScreenerApi } from "./quotes/api";
 import { jobsForProductionCron } from "./cron-dispatcher";
 import {
@@ -196,10 +195,6 @@ export default {
       }
       if (job === "sentiment") {
         await runSentimentJob(env, scheduledTime);
-        return;
-      }
-      if (job === "quotes-shard") {
-        await runQuotesShardJob(env, scheduledTime);
         return;
       }
       await runEarningsJob(env, scheduledTime, "calendar");
