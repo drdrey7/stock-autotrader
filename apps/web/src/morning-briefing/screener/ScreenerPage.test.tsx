@@ -19,13 +19,32 @@ const row = (symbol: string, price: number | null, changePct: number | null, sta
   state,
 });
 
-const makeResponse = (rows: ScreenerRow[]): ScreenerApiResponse => ({
-  universe: { version: 1, total: 50 },
-  marketState: "regular",
-  quotes: { state: "Live", provider: "finnhub-quote", lastSuccessAt: "2026-08-13T14:00:00.000Z", lastAttemptAt: "2026-08-13T14:00:00.000Z", error: null },
-  rows,
-  asOf: "2026-08-13T14:00:00.000Z",
-});
+const makeResponse = (rows: ScreenerRow[]): ScreenerApiResponse => {
+  const counts = rows.reduce(
+    (acc, item) => {
+      if (item.state === "Live") acc.live += 1;
+      else if (item.state === "Cached") acc.cached += 1;
+      else if (item.state === "Unavailable") acc.unavailable += 1;
+      else acc.stale += 1;
+      return acc;
+    },
+    { total: rows.length, live: 0, cached: 0, stale: 0, unavailable: 0 },
+  );
+  return {
+    universe: { version: 1, total: 50 },
+    marketState: "regular",
+    quotes: {
+      state: counts.stale === 0 && counts.live > 0 ? "Live" : counts.stale === 0 ? "Cached" : "Stale",
+      provider: "finnhub-quote",
+      lastSuccessAt: "2026-08-13T14:00:00.000Z",
+      lastAttemptAt: "2026-08-13T14:00:00.000Z",
+      error: null,
+      counts,
+    },
+    rows,
+    asOf: "2026-08-13T14:00:00.000Z",
+  };
+};
 
 const rows50 = (): ScreenerRow[] =>
   Array.from({ length: 50 }, (_, index) =>

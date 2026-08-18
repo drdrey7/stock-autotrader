@@ -22,7 +22,14 @@ const row = (symbol: string): ScreenerRow => ({
 const response = (): ScreenerApiResponse => ({
   universe: { version: 1, total: 1 },
   marketState: "regular",
-  quotes: { state: "Live", provider: "finnhub-quote", lastSuccessAt: "2026-08-13T14:00:00.000Z", lastAttemptAt: "2026-08-13T14:00:00.000Z", error: null },
+  quotes: {
+    state: "Live",
+    provider: "finnhub-quote",
+    lastSuccessAt: "2026-08-13T14:00:00.000Z",
+    lastAttemptAt: "2026-08-13T14:00:00.000Z",
+    error: null,
+    counts: { total: 1, live: 1, cached: 0, stale: 0, unavailable: 0 },
+  },
   rows: [row("S00")],
   asOf: "2026-08-13T14:00:00.000Z",
 });

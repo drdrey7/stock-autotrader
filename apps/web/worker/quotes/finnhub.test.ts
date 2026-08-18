@@ -105,6 +105,26 @@ describe("FinnhubQuoteProvider", () => {
     expect(rateCalls).toBeGreaterThanOrEqual(2);
   });
 
+  it("preserves canonical US ADR / cross-listed symbols in quote URLs (FASE 4/5)", async () => {
+    const urls: string[] = [];
+    const provider = new FinnhubQuoteProvider("k", fetcherForPayload((input) => {
+      urls.push(String(input));
+      return Promise.resolve(ok(VALID_PAYLOAD));
+    }), noSleep, 8_000, instantGate());
+
+    // TSM (NYSE ADR), NVO (NYSE ADR), ASML (NASDAQ US listing), NVDA (NASDAQ).
+    const result = await provider.collect(["TSM", "NVO", "ASML", "NVDA"]);
+    expect(result.observations.map((observation) => observation.symbol)).toEqual(["TSM", "NVO", "ASML", "NVDA"]);
+    // Result/symbol order is preserved; physical request order is bounded and
+    // concurrent, so compare URL sets.
+    expect([...urls].sort()).toEqual([
+      "https://finnhub.io/api/v1/quote?symbol=ASML",
+      "https://finnhub.io/api/v1/quote?symbol=NVDA",
+      "https://finnhub.io/api/v1/quote?symbol=NVO",
+      "https://finnhub.io/api/v1/quote?symbol=TSM",
+    ]);
+  });
+
   it("times out a hung provider and records the symbol as failed", async () => {
     const hung = (_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_, reject) => {
       init?.signal?.addEventListener("abort", () => reject(new Error("Aborted")));

@@ -12,11 +12,8 @@ import "./screener.css";
 
 const MARKET_STATE_LABEL = { regular: "Open", post_close: "Post-close", closed: "Closed" } as const;
 
-const healthyCount = (data: NonNullable<ReturnType<typeof useScreener>["data"]>): number => {
-  const live = data.rows.filter((row) => row.state === "Live").length;
-  const cached = data.rows.filter((row) => row.state === "Cached").length;
-  return live + cached;
-};
+const freshCount = (data: NonNullable<ReturnType<typeof useScreener>["data"]>): number =>
+  data.quotes.counts.live + data.quotes.counts.cached;
 
 /**
  * Lazy-loaded Screener route (Screener PR1). Owns the search/filter/sort
@@ -71,8 +68,14 @@ export default function ScreenerPage() {
           </span>
           <span className="scr-summary-item">
             Fresh
-            <b>{healthyCount(data)}/{data.universe.total}</b>
+            <b>{freshCount(data)}/{data.universe.total}</b>
           </span>
+          {data.quotes.counts.stale > 0 && (
+            <span className="scr-summary-item">
+              Stale
+              <b className="scr-state-text scr-state-stale">{data.quotes.counts.stale}</b>
+            </span>
+          )}
         </div>
       )}
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Env } from "../index";
 import { readScreenerApi } from "./api";
 import { QUOTES_HEALTH_META_KEY } from "./health";
+import { CORE_UNIVERSE } from "@stock-autotrader/contracts";
 
 interface LatestRow {
   symbol: string;
@@ -31,7 +32,11 @@ const quoteRow = (symbol: string, price: number, updatedAt: string): LatestRow =
   updated_at: updatedAt,
 });
 
-function createApiDb(options: { quotes?: LatestRow[]; companies?: Array<{ symbol: string; company: string }>; health?: unknown }) {
+function createApiDb(options: {
+  quotes?: LatestRow[];
+  companies?: Array<{ symbol: string; company: string }>;
+  health?: unknown;
+}) {
   const meta = new Map<string, string>();
   if (options.health !== undefined) meta.set(QUOTES_HEALTH_META_KEY, JSON.stringify(options.health));
   return {
@@ -69,9 +74,22 @@ function createApiDb(options: { quotes?: LatestRow[]; companies?: Array<{ symbol
 
 const envFrom = (db: ReturnType<typeof createApiDb>): Env => ({ DB: db as unknown as Env["DB"] } as unknown as Env);
 
+const health = (lastSuccessAt: string) => ({
+  provider: "finnhub-quote",
+  status: "ok",
+  lastAttemptAt: lastSuccessAt,
+  lastSuccessAt,
+  lastError: null,
+  rowsWritten: 1,
+  lastShard: 0,
+  rateLimited: false,
+});
+
 const REGULAR = new Date("2026-08-13T14:00:00Z"); // Thursday 10:00 ET
+const MONDAY_0935 = new Date("2026-08-17T13:35:00Z"); // Monday 09:35 ET (grace)
 const SATURDAY = new Date("2026-08-15T14:00:00Z"); // weekend
 const NOW_ISO = "2026-08-13T14:00:00.000Z";
+const FRIDAY_CLOSE = "2026-08-14T20:45:00.000Z";
 
 describe("readScreenerApi", () => {
   it("returns the full 50-stock Core Universe with honest Unavailable rows when empty", async () => {
@@ -81,6 +99,7 @@ describe("readScreenerApi", () => {
     expect(response.marketState).toBe("regular");
     expect(response.quotes.state).toBe("Unavailable");
     expect(response.quotes.provider).toBe("unavailable");
+    expect(response.quotes.counts).toEqual({ total: 50, live: 0, cached: 0, stale: 0, unavailable: 50 });
     for (const row of response.rows) {
       expect(row.state).toBe("Unavailable");
       expect(row.price).toBeNull();
@@ -92,7 +111,7 @@ describe("readScreenerApi", () => {
     const db = createApiDb({
       quotes: [quoteRow("AAPL", 232.5, NOW_ISO)],
       companies: [{ symbol: "AAPL", company: "Apple Inc." }],
-      health: { provider: "finnhub-quote", status: "ok", lastAttemptAt: NOW_ISO, lastSuccessAt: NOW_ISO, lastError: null, rowsWritten: 1, lastShard: 0, rateLimited: false },
+      health: health(NOW_ISO),
     });
     const response = await readScreenerApi(envFrom(db), REGULAR);
     const apple = response.rows.find((row) => row.symbol === "AAPL")!;
@@ -103,17 +122,72 @@ describe("readScreenerApi", () => {
     expect(apple.asOf).toBe(NOW_ISO);
     expect(apple.updatedAt).toBe(NOW_ISO);
     expect(response.asOf).toBe(NOW_ISO);
-    expect(response.quotes.state).toBe("Live");
+    // Collector is not "Live" while coverage is incomplete (1 collected, 49
+    // never-seen), matching the global-state honesty rule.
+    expect(response.quotes.state).toBe("Stale");
     expect(response.quotes.provider).toBe("finnhub-quote");
+    expect(response.quotes.counts).toEqual({ total: 50, live: 1, cached: 0, stale: 0, unavailable: 49 });
     // The other 49 rows stay present and honest.
     expect(response.rows.filter((row) => row.symbol !== "AAPL")).toHaveLength(49);
   });
 
+  it("is NOT Live when exactly one of fifty is stale (49 fresh + 1 stale)", async () => {
+    const staleAt = "2026-08-13T13:00:00.000Z"; // 1h old, in session
+    const quotes = CORE_UNIVERSE.map((symbol, index) =>
+      quoteRow(symbol, 100 + index, index === 0 ? staleAt : NOW_ISO));
+    const db = createApiDb({ quotes, health: health(NOW_ISO) });
+    const response = await readScreenerApi(envFrom(db), REGULAR);
+    expect(response.quotes.state).toBe("Stale");
+    expect(response.quotes.counts.live).toBe(49);
+    expect(response.quotes.counts.stale).toBe(1);
+    expect(response.quotes.counts.unavailable).toBe(0);
+  });
+
+  it("is NOT Live when ten of fifty are stale (40 fresh + 10 stale)", async () => {
+    const staleAt = "2026-08-13T13:00:00.000Z";
+    const quotes = CORE_UNIVERSE.map((symbol, index) =>
+      quoteRow(symbol, 100 + index, index < 10 ? staleAt : NOW_ISO));
+    const db = createApiDb({ quotes, health: health(NOW_ISO) });
+    const response = await readScreenerApi(envFrom(db), REGULAR);
+    expect(response.quotes.state).toBe("Stale");
+    expect(response.quotes.counts.live).toBe(40);
+    expect(response.quotes.counts.stale).toBe(10);
+  });
+
+  it("recovery: a refreshed shard returns the collector to Live", async () => {
+    // First run: one stale symbol → Stale. Then the shard refreshes.
+    const staleAt = "2026-08-13T13:00:00.000Z";
+    const before = createApiDb({
+      quotes: CORE_UNIVERSE.map((symbol, index) => quoteRow(symbol, 100 + index, index === 0 ? staleAt : NOW_ISO)),
+      health: health(NOW_ISO),
+    });
+    expect((await readScreenerApi(envFrom(before), REGULAR)).quotes.state).toBe("Stale");
+
+    const after = createApiDb({
+      quotes: CORE_UNIVERSE.map((symbol, index) => quoteRow(symbol, 100 + index, NOW_ISO)),
+      health: health(NOW_ISO),
+    });
+    const recovered = await readScreenerApi(envFrom(after), REGULAR);
+    expect(recovered.quotes.state).toBe("Live");
+    expect(recovered.quotes.counts.live).toBe(50);
+  });
+
+  it("keeps a previous-session quote serviceable (Cached) during the market-open grace", async () => {
+    // Monday 09:35 ET with Friday-close quotes — no false stale, no outage.
+    const quotes = CORE_UNIVERSE.map((symbol, index) => quoteRow(symbol, 100 + index, FRIDAY_CLOSE));
+    const db = createApiDb({ quotes, health: health(FRIDAY_CLOSE) });
+    const response = await readScreenerApi(envFrom(db), MONDAY_0935);
+    expect(response.marketState).toBe("regular");
+    expect(response.quotes.state).toBe("Cached"); // open, all cached (sweep not landed): not Live, not degraded
+    expect(response.quotes.counts.cached).toBe(50);
+    expect(response.quotes.counts.stale).toBe(0);
+    expect(response.rows.every((row) => row.price !== null)).toBe(true);
+  });
+
   it("reflects market-closed freshness (Cached, not Stale) over the weekend", async () => {
-    const fridayClose = "2026-08-14T20:45:00.000Z";
     const db = createApiDb({
-      quotes: [quoteRow("AAPL", 230, fridayClose)],
-      health: { provider: "finnhub-quote", status: "ok", lastAttemptAt: fridayClose, lastSuccessAt: fridayClose, lastError: null, rowsWritten: 1, lastShard: 0, rateLimited: false },
+      quotes: [quoteRow("AAPL", 230, FRIDAY_CLOSE)],
+      health: health(FRIDAY_CLOSE),
     });
     const response = await readScreenerApi(envFrom(db), SATURDAY);
     expect(response.marketState).toBe("closed");

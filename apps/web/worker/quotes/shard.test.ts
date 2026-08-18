@@ -39,4 +39,22 @@ describe("deterministic quote sharding", () => {
       }
     }
   });
+
+  it("covers US-listed ADRs and cross-listed symbols via canonical tickers (FASE 4/5)", () => {
+    // TSM and NVO are NYSE ADRs; ASML is a NASDAQ US listing; NVDA NASDAQ.
+    // All must be canonical Core members, present exactly once across the
+    // shards, in the US-equity session — never treated as exchange-specific.
+    const adrs = ["TSM", "NVO", "ASML", "NVDA"];
+    for (const symbol of adrs) {
+      expect(CORE_UNIVERSE).toContain(symbol);
+    }
+    const shards = shardUniverse(CORE_UNIVERSE);
+    const flattened = shards.flat();
+    for (const symbol of adrs) {
+      expect(flattened.filter((candidate) => candidate === symbol)).toHaveLength(1);
+      const shardIndex = shards.findIndex((shard) => shard.includes(symbol));
+      expect(shardIndex).toBeGreaterThanOrEqual(0);
+      expect(shards[shardIndex]).toHaveLength(10);
+    }
+  });
 });

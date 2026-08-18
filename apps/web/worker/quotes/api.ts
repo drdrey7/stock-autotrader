@@ -7,7 +7,7 @@ import type {
   SourceState,
 } from "@stock-autotrader/contracts";
 import { CORE_UNIVERSE, CORE_UNIVERSE_VERSION } from "@stock-autotrader/contracts";
-import { quotesCollectorState, quoteState, quotesMarketState } from "./freshness";
+import { collectorStateFromRows, countQuoteStates, quoteState, quotesMarketState } from "./freshness";
 import { readQuotesHealth } from "./health";
 import { readLatestQuotes } from "./storage";
 
@@ -60,12 +60,17 @@ export async function readScreenerApi(env: Env, now = new Date()): Promise<Scree
     };
   });
 
+  // Global collector freshness is derived from the real per-stock states, so
+  // a persistently failing shard can never hide behind "recent lastSuccess"
+  // from the healthy shards. Counts make the population explicit.
+  const counts = countQuoteStates(rows);
   const quotesHealth: ScreenerQuotesHealth = {
-    state: quotesCollectorState(health?.lastSuccessAt ?? null, now),
+    state: collectorStateFromRows(counts, marketState),
     provider: health?.provider ?? "unavailable",
     lastSuccessAt: health?.lastSuccessAt ?? null,
     lastAttemptAt: health?.lastAttemptAt ?? null,
     error: health?.lastError ?? null,
+    counts,
   };
 
   return {

@@ -47,10 +47,26 @@ export const screenerRowSchema = z.object({
 export type ScreenerRow = z.infer<typeof screenerRowSchema>;
 
 /**
+ * Per-stock state population counts for one Screener response. `stale` also
+ * absorbs rows in the Error state (a failed symbol keeps its last-known
+ * quote and reads as stale/failed). Used to derive the global collector state
+ * so a persistently failing shard cannot hide behind healthy shards.
+ */
+export const screenerQuoteCountsSchema = z.object({
+  total: z.number().int().nonnegative(),
+  live: z.number().int().nonnegative(),
+  cached: z.number().int().nonnegative(),
+  stale: z.number().int().nonnegative(),
+  unavailable: z.number().int().nonnegative(),
+});
+export type ScreenerQuoteCounts = z.infer<typeof screenerQuoteCountsSchema>;
+
+/**
  * Collector-level freshness for the Screener API. `state` is market-aware:
  * during a live session a missed refresh becomes Stale; while the market is
  * closed the last session's data stays Cached (never Stale just because
- * hours pass overnight/weekend).
+ * hours pass overnight/weekend). The state is derived from the real per-stock
+ * states (see `counts`), never from a single collection timestamp.
  */
 export const screenerQuotesHealthSchema = z.object({
   state: z.enum(sourceStateValues),
@@ -58,6 +74,7 @@ export const screenerQuotesHealthSchema = z.object({
   lastSuccessAt: isoTimestampSchema.nullable(),
   lastAttemptAt: isoTimestampSchema.nullable(),
   error: z.string().trim().max(500).nullable(),
+  counts: screenerQuoteCountsSchema,
 });
 export type ScreenerQuotesHealth = z.infer<typeof screenerQuotesHealthSchema>;
 
