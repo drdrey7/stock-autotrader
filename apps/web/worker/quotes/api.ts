@@ -7,7 +7,13 @@ import type {
   SourceState,
 } from "@stock-autotrader/contracts";
 import { CORE_UNIVERSE, CORE_UNIVERSE_VERSION } from "@stock-autotrader/contracts";
-import { collectorStateFromRows, countQuoteStates, quoteState, quotesMarketState } from "./freshness";
+import {
+  collectorStateFromRows,
+  countQuoteStates,
+  quoteState,
+  quotesMarketState,
+  type QuoteStateCounts,
+} from "./freshness";
 import {
   collectorStateFromWsHealth,
   readQuotesHealth,
@@ -57,6 +63,24 @@ function wsCollectorStateToSourceState(state: WSCollectorState, marketState: Scr
 }
 
 /**
+ * P2 #2 conservative cross-check: Finnhub has no per-symbol subscription ack,
+ * so a Healthy WS with ZERO live rows during the regular session means the
+ * subscriptions may have silently failed (heartbeat fresh, socket connected,
+ * no data arriving). In that pathological case we refuse to claim global
+ * "Live" and degrade to Cached. Deliberately NOT triggered by one quiet
+ * symbol, no recent NET/SNOW trade, or 49/50 live — only live === 0.
+ */
+function safeguardWsCollectorState(
+  base: SourceState,
+  wsState: WSCollectorState,
+  counts: QuoteStateCounts,
+  marketState: ScreenerMarketState,
+): SourceState {
+  if (wsState === "Healthy" && marketState === "regular" && counts.live === 0) return "Cached";
+  return base;
+}
+
+/**
  * Screener read model: canonical Core Universe (50) combined with the latest
  * quote state. Pure D1 reads — opening /screener never touches Finnhub; the
  * collector is fully independent of frontend traffic.
@@ -100,8 +124,14 @@ export async function readScreenerApi(env: Env, now = new Date()): Promise<Scree
   // symbol (zero trades for 15+ min) can never demote the whole collector.
   // Without a WS record (never installed / REST rollback) we fall back to the
   // legacy row-derived collector state.
+  const wsCollector = wsHealth ? collectorStateFromWsHealth(wsHealth, now) : "Unavailable";
   const collectorState = wsHealth
-    ? wsCollectorStateToSourceState(collectorStateFromWsHealth(wsHealth, now), marketState)
+    ? safeguardWsCollectorState(
+        wsCollectorStateToSourceState(wsCollector, marketState),
+        wsCollector,
+        counts,
+        marketState,
+      )
     : collectorStateFromRows(counts, marketState);
   const quotesHealth: ScreenerQuotesHealth = {
     state: collectorState,

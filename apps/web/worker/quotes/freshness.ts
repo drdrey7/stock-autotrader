@@ -34,9 +34,12 @@ export function quotesMarketState(now: Date): ScreenerMarketState {
 }
 
 export function quoteStaleAfterSeconds(now: Date): number {
-  return quotesMarketState(now) === "closed"
-    ? QUOTES_OFF_SESSION_STALE_AFTER_SECONDS
-    : QUOTES_SESSION_STALE_AFTER_SECONDS;
+  // Only DURING the regular session does the 15-minute freshness rule apply.
+  // post_close is an OFF-session state (the session has ended; the close price
+  // is the valid final reading), so it uses the same 7-day window as closed.
+  return quotesMarketState(now) === "regular"
+    ? QUOTES_SESSION_STALE_AFTER_SECONDS
+    : QUOTES_OFF_SESSION_STALE_AFTER_SECONDS;
 }
 
 /**
@@ -87,16 +90,20 @@ export function quoteState(updatedAt: string | null, now: Date): SourceState {
   if (!Number.isFinite(collectedMs)) return "Unavailable";
   const ageSeconds = (now.getTime() - collectedMs) / 1000;
   const market = quotesMarketState(now);
-  if (market === "closed") {
+  // Closed AND post_close are off-session: the last session's final quotes are
+  // the valid reading and stay Cached up to the off-session window (7 days) —
+  // never Stale merely because the collector stopped writing at the close.
+  const offSession = market === "closed" || market === "post_close";
+  if (offSession) {
     return ageSeconds >= 0 && ageSeconds <= QUOTES_OFF_SESSION_STALE_AFTER_SECONDS ? "Cached" : "Stale";
   }
   if (ageSeconds >= 0 && ageSeconds <= QUOTES_SESSION_STALE_AFTER_SECONDS) return "Live";
   // Market is open but this symbol has not been refreshed in the current
   // session. Right after the open the last close is still the best data —
-  // keep it Cached during a short grace window so the shard sweep can catch
-  // up (~10 min for all 10 shards); after grace it is genuinely stale. Only a
-  // still-valid last-known reading (within the off-session window) qualifies
-  // — an ancient row never flashes Cached for ten minutes.
+  // keep it Cached during a short grace window so the collector can catch
+  // up; after grace it is genuinely stale. Only a still-valid last-known
+  // reading (within the off-session window) qualifies — an ancient row never
+  // flashes Cached for ten minutes.
   if (withinMarketOpenGrace(now)
     && isPriorSessionQuote(updatedAt, now)
     && ageSeconds >= 0

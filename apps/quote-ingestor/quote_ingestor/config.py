@@ -79,8 +79,6 @@ class Settings:
     ws_connect_timeout_seconds: float = 20.0
 
     # --- Cloudflare D1 HTTP API ---
-    d1_region: str | None = None
-    d1_batch_max_rows: int = 20
     d1_max_retries: int = 3
     d1_retry_base_seconds: float = 1.0
     d1_request_timeout_seconds: float = 20.0

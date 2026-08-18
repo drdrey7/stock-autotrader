@@ -234,6 +234,33 @@ class IngestorTest(unittest.TestCase):
         ing.final_flush()
         self.assertEqual(self._d1.calls, [])
 
+    # ---------------------------------------- P2 #4 shutdown health persistence
+
+    def test_persist_shutdown_health_writes_disconnected(self) -> None:
+        ing = self._ingestor()
+        ing.health.on_ws_status({"event": "connected"})
+        self.assertEqual(ing.health.connection_status, "connected")
+        ing.persist_shutdown_health()
+        # The final record persisted to D1 carries the disconnected state.
+        record = self._d1.health_writes[-1]
+        self.assertEqual(record["connection_status"], "disconnected")
+        self.assertEqual(ing.health.connection_status, "disconnected")
+
+    def test_persist_shutdown_health_d1_failure_never_blocks(self) -> None:
+        class FailingHealthD1(FakeD1):
+            def write_health(self, record):  # noqa: ARG002
+                raise RuntimeError("D1 write burst limit")  # never raises to caller
+
+        ing = Ingestor(
+            make_settings(),
+            SYMBOLS,
+            d1=FailingHealthD1(),  # type: ignore[arg-type]
+            clock=lambda: OPEN,
+        )
+        # Must terminate cleanly (best effort) — no hang, no retry storm.
+        ing.persist_shutdown_health()
+        self.assertEqual(ing.health.connection_status, "disconnected")
+
 
 class HealthStateTest(unittest.TestCase):
     """P2 #2A — runtime connection state transitions must never stick."""

@@ -77,6 +77,12 @@ class MarketHoursTest(unittest.TestCase):
         self.assertFalse(in_flush_window(utc(2026, 12, 24, 18, 6)))
         self.assertTrue(in_flush_window(utc(2026, 12, 24, 18, 2)))
 
+    def test_early_close_july_3_mirrors_worker(self) -> None:
+        # 2029-07-04 is a Wednesday -> 2029-07-03 (Tue) is an early close.
+        self.assertEqual(session_close_minutes(dt.date(2029, 7, 3)), 13 * 60)
+        # 2026-07-04 is a Saturday -> July 3 is the observed holiday (no session).
+        self.assertEqual(session_close_minutes(dt.date(2026, 7, 3)), 16 * 60)
+
     def test_normal_day_close_16_00(self) -> None:
         self.assertEqual(session_close_minutes(dt.date(2026, 8, 18)), 16 * 60)
 

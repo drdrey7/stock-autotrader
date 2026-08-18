@@ -262,6 +262,73 @@ describe("readScreenerApi", () => {
     expect(response.quotes.state).toBe("Cached");
   });
 
+  it("P2#1: 16:30 post_close — final-close rows are Cached, NOT Stale (global + per-row)", async () => {
+    // Market closes 16:00 ET (20:00Z); WS ingestor stops writing after the
+    // 5-min grace (~16:05 / 20:05Z). Query at 16:30 ET (20:30Z). Both the
+    // global badge and every row must read Cached — no 50-row red wall.
+    const lastWrite = "2026-08-17T20:05:00.000Z"; // 16:05 ET final flush
+    const db = createApiDb({
+      quotes: CORE_UNIVERSE.map((symbol, index) => quoteRow(symbol, 100 + index, lastWrite)),
+      wsHealth: wsHealthRow({
+        last_ws_heartbeat_at: "2026-08-17T20:28:00.000Z",
+        updated_at: "2026-08-17T20:28:00.000Z",
+      }),
+    });
+    const response = await readScreenerApi(envFrom(db), new Date("2026-08-17T20:30:00.000Z"));
+    expect(response.marketState).toBe("post_close");
+    expect(response.quotes.state).toBe("Cached");
+    expect(response.quotes.counts).toEqual({ total: 50, live: 0, cached: 50, stale: 0, unavailable: 0 });
+    expect(response.rows.every((row) => row.state === "Cached")).toBe(true);
+  });
+
+  it("P2#1: same Cached semantics on an early-close day (Black Friday)", async () => {
+    // 2026-11-27 Black Friday: close 13:00 ET; last write 13:05 ET; query 13:30 ET.
+    const bfLastWrite = "2026-11-27T18:05:00.000Z";
+    const db = createApiDb({
+      quotes: CORE_UNIVERSE.map((symbol, index) => quoteRow(symbol, 100 + index, bfLastWrite)),
+      wsHealth: wsHealthRow({
+        last_ws_heartbeat_at: "2026-11-27T18:28:00.000Z",
+        updated_at: "2026-11-27T18:28:00.000Z",
+      }),
+    });
+    const response = await readScreenerApi(envFrom(db), new Date("2026-11-27T18:30:00.000Z"));
+    expect(response.marketState).toBe("post_close");
+    expect(response.quotes.state).toBe("Cached");
+    expect(response.rows.every((row) => row.state === "Cached")).toBe(true);
+  });
+
+  it("P2#2: Healthy WS with ZERO live rows during the regular session -> Cached (not Live)", async () => {
+    // Pathological case: socket connected + fresh heartbeat but no per-row data
+    // at all (subscriptions silently failed — Finnhub has no per-symbol ack).
+    const db = createApiDb({
+      quotes: CORE_UNIVERSE.map((symbol, index) => quoteRow(symbol, 100 + index, isoAgo(21 * 60))),
+      wsHealth: wsHealthRow(),
+    });
+    const response = await readScreenerApi(envFrom(db), REGULAR);
+    expect(response.quotes.state).toBe("Cached");
+  });
+
+  it("P2#2: Healthy WS with 1 live + 49 stale -> still Live (only zero-live degrades)", async () => {
+    const db = createApiDb({
+      quotes: CORE_UNIVERSE.map((symbol, index) =>
+        quoteRow(symbol, 100 + index, index === 0 ? NOW_ISO : isoAgo(21 * 60))),
+      wsHealth: wsHealthRow(),
+    });
+    const response = await readScreenerApi(envFrom(db), REGULAR);
+    expect(response.quotes.counts.live).toBe(1);
+    expect(response.quotes.state).toBe("Live");
+  });
+
+  it("P2#2: Healthy WS with 49 live + 1 stale -> Live (quiet symbols never degrade)", async () => {
+    const db = createApiDb({
+      quotes: CORE_UNIVERSE.map((symbol, index) =>
+        quoteRow(symbol, 100 + index, index === 0 ? isoAgo(21 * 60) : NOW_ISO)),
+      wsHealth: wsHealthRow(),
+    });
+    const response = await readScreenerApi(envFrom(db), REGULAR);
+    expect(response.quotes.state).toBe("Live");
+  });
+
   it("P2#2B: fresh heartbeat + connected -> collector Healthy (Live)", async () => {
     const db = createApiDb({
       quotes: CORE_UNIVERSE.map((symbol, index) => quoteRow(symbol, 100 + index, NOW_ISO)),

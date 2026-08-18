@@ -108,12 +108,22 @@ def _thanksgiving_date(year: int) -> dt.date:
 
 
 def _early_close_minutes_for(day: dt.date) -> int | None:
-    """Sessions that close at 13:00 ET instead of 16:00 (add more as needed)."""
+    """Sessions that close at 13:00 ET instead of 16:00.
+
+    Mirrors ``apps/web/worker/market-context.ts:isEarlyClose`` so both sides
+    agree: Black Friday, Christmas Eve (weekday), and July 3 when Independence
+    Day falls on a weekday.
+    """
     # Black Friday: the day after Thanksgiving.
     if day == _thanksgiving_date(day.year) + dt.timedelta(days=1):
         return EARLY_CLOSE_MINUTES
     # Christmas Eve on a weekday.
     if day.month == 12 and day.day == 24 and day.weekday() < 5:
+        return EARLY_CLOSE_MINUTES
+    # July 3 when Independence Day (July 4) is a weekday (the NYSE early
+    # close before the observed holiday).
+    independence_weekday = dt.date(day.year, 7, 4).weekday()
+    if day.month == 7 and day.day == 3 and independence_weekday < 5:
         return EARLY_CLOSE_MINUTES
     return None
 

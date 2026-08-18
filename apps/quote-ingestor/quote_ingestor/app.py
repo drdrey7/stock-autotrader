@@ -192,6 +192,19 @@ class Ingestor:
             except Exception as exc:
                 log_event("final_flush_error", error=str(exc)[:200])
 
+    def persist_shutdown_health(self) -> None:
+        """Best-effort final health write with connection_status=disconnected.
+
+        Called on graceful shutdown AFTER the final quote flush. Never blocks
+        or retries forever: on D1 failure we log a scrubbed warning and move
+        on — the Worker's heartbeat TTL is the fallback for a hard kill.
+        """
+        self.health.on_ws_status({"event": "disconnected"})
+        try:
+            self.d1.write_health(self.health.record(len(self.symbols), self.store.symbols_seen()))
+        except Exception as exc:
+            logger.warning("shutdown health write failed", extra={"error": str(exc)[:200]})
+
     # ------------------------------------------------------------- lifecycle
 
     def start(self) -> None:
@@ -282,9 +295,10 @@ def main(argv: list[str] | None = None) -> int:
         ingestor.stop()
         ingestor.final_flush()
         ingestor.wait()
-        # Graceful shutdown is an explicit state — the D1 health record must
-        # not stay "connected" forever just because the process terminated.
-        ingestor.health.on_ws_status({"event": "disconnected"})
+        # Graceful shutdown: persist the disconnected health record so D1's
+        # quoteIngestorHealth does not stay "connected" forever (best effort;
+        # the heartbeat TTL remains the fallback for hard kills).
+        ingestor.persist_shutdown_health()
         record = ingestor.health.record(len(symbols), ingestor.store.symbols_seen())
         log_event("shutdown", **record)
     return 0
