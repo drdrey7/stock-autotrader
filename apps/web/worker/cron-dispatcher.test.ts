@@ -5,16 +5,24 @@ import {
   jobsForProductionCron,
   isSentimentDispatchTime,
   PRODUCTION_CRON_TRIGGERS,
+  QUOTES_CRON,
   SENTIMENT_WINDOW_END_MINUTES,
   SENTIMENT_WINDOW_START_MINUTES,
 } from "./cron-dispatcher";
 
 describe("production cron dispatcher", () => {
-  it("declares exactly the two production trigger entries", () => {
+  it("declares exactly the three production trigger entries", () => {
     expect(PRODUCTION_CRON_TRIGGERS).toEqual([
       "*/15 * * * *",
       "0 6 * * *",
+      "* * * * *",
     ]);
+  });
+
+  it("dispatches the Screener quote shard on the per-minute trigger", () => {
+    expect(jobsForProductionCron(QUOTES_CRON, new Date("2026-08-13T14:00:00Z")))
+      .toEqual(["quotes-shard"]);
+    expect(PRODUCTION_CRON_TRIGGERS).toContain("* * * * *");
   });
 
   it("runs monitor and market context on every 15-minute invocation", () => {

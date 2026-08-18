@@ -9,8 +9,9 @@ const HeatmapPage = lazy(() => import("./HeatmapPage"));
 const XPulsePage = lazy(() => import("./XPulsePage"));
 const EarningsPage = lazy(() => import("./EarningsCalendarPage"));
 const EarningsDetail = lazy(() => import("./EarningsDetail"));
+const ScreenerPage = lazy(() => import("./screener/ScreenerPage"));
 
-type Page = "briefing" | "heatmap" | "surge" | "earnings";
+type Page = "briefing" | "heatmap" | "surge" | "earnings" | "screener";
 
 function MorningBriefingShell() {
   const location = useLocation();
@@ -20,7 +21,9 @@ function MorningBriefingShell() {
       ? "surge"
       : location.pathname === "/earnings"
         ? "earnings"
-        : "briefing";
+        : location.pathname === "/screener"
+          ? "screener"
+          : "briefing";
   const [selectedEarnings, setSelectedEarnings] = useState<EarningsCompany | null>(null);
 
   useEffect(() => {
@@ -49,6 +52,7 @@ function MorningBriefingShell() {
               {page === "heatmap" && <HeatmapPage/>}
               {page === "surge" && <XPulsePage/>}
               {page === "earnings" && <EarningsPage onSelect={setSelectedEarnings}/>}
+              {page === "screener" && <ScreenerPage/>}
             </Suspense>
           </LazyPageErrorBoundary>
         </motion.div>

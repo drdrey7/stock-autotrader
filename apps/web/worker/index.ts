@@ -12,6 +12,8 @@ import {
 import { readXPosts } from "./x-posts";
 import { readMarketContext, readMarketContextHealth, readMarketContextHealthStrict, runMarketContextJob, runSentimentJob } from "./market-context";
 import { EarningsQueryError, readEarningsApi, runEarningsJob } from "./earnings";
+import { runQuotesShardJob } from "./quotes/job";
+import { readScreenerApi } from "./quotes/api";
 import { jobsForProductionCron } from "./cron-dispatcher";
 import {
   buildDashboard,
@@ -194,6 +196,10 @@ export default {
       }
       if (job === "sentiment") {
         await runSentimentJob(env, scheduledTime);
+        return;
+      }
+      if (job === "quotes-shard") {
+        await runQuotesShardJob(env, scheduledTime);
         return;
       }
       await runEarningsJob(env, scheduledTime, "calendar");
@@ -395,6 +401,14 @@ export default {
         return error instanceof EarningsQueryError
           ? json({ error: "invalid_earnings_query" }, 400)
           : json({ error: "earnings_store_unavailable" }, 503);
+      }
+    }
+    if (pathname === "/api/screener") {
+      try {
+        return json(await readScreenerApi(env));
+      } catch (error) {
+        console.error("screener api error", error);
+        return json({ error: "screener_store_unavailable" }, 503);
       }
     }
     if (pathname === "/api/portfolio/shadow") {

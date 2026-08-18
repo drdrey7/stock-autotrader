@@ -1613,3 +1613,20 @@ describe("unavailableSources", () => {
     );
   });
 });
+
+describe("screener API route", () => {
+  it("serves the 50-stock Core Universe from D1 with honest Unavailable rows on an empty store", async () => {
+    const env = envWith(healthyTables());
+    const response = await worker.fetch(new Request("https://example.test/api/screener"), env);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      universe: { total: number; version: number };
+      rows: Array<{ symbol: string; state: string; price: number | null }>;
+      quotes: { state: string };
+    };
+    expect(body.universe.total).toBe(50);
+    expect(body.rows).toHaveLength(50);
+    expect(body.rows.every((row) => row.state === "Unavailable" && row.price === null)).toBe(true);
+    expect(body.quotes.state).toBe("Unavailable");
+  });
+});

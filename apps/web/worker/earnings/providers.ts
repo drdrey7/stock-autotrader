@@ -182,7 +182,7 @@ async function fetchWithRetry(
   throw lastError;
 }
 
-async function fetchJsonWithRetry(
+export async function fetchJsonWithRetry(
   fetcher: Fetcher,
   url: URL,
   init: RequestInit,

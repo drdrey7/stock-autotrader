@@ -1,0 +1,56 @@
+/* Screener PR1 — feature-scoped styles. Up/down colors reuse the theme's
+   semantic tokens (green/red) so dark mode is handled for free. */
+
+.screener-page{max-width:1100px}
+.screener-heading h1{letter-spacing:-.04em}
+
+.scr-summary{display:flex;flex-wrap:wrap;gap:8px;margin:4px 0 14px}
+.scr-summary-item{display:inline-flex;align-items:center;gap:8px;padding:8px 13px;border:1px solid var(--border);border-radius:999px;background:var(--surface);font-size:10px;font-weight:700;color:var(--muted);letter-spacing:.04em}
+.scr-summary-item b{font-size:11px;color:var(--text);font-weight:800}
+
+.scr-card{border:1px solid var(--border);border-radius:15px;background:var(--surface);box-shadow:var(--shadow);overflow:hidden}
+.scr-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.scr-chips{display:flex;gap:6px}
+.scr-chip{padding:7px 13px;border:1px solid var(--border);border-radius:999px;background:var(--surface-2);color:var(--muted);font-size:10px;font-weight:800;cursor:pointer;letter-spacing:.03em}
+.scr-chip:hover{border-color:var(--green)}
+.scr-chip-active{background:var(--green);border-color:var(--green);color:#fff}
+.scr-search{min-width:220px;padding:8px 12px;border:1px solid var(--border);border-radius:9px;background:var(--surface-2);color:var(--text);font-size:11px;outline:none}
+.scr-search:focus{border-color:var(--green)}
+
+.scr-table-wrap{overflow-x:auto}
+.scr-table{width:100%;border-collapse:collapse;min-width:720px}
+.scr-table th{text-align:left;padding:10px 16px;color:var(--muted);background:var(--surface-2);font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.09em;white-space:nowrap}
+.scr-table td{padding:11px 16px;border-top:1px solid var(--border);font-size:12px;white-space:nowrap}
+.scr-table tbody tr:hover{background:var(--surface-2)}
+.scr-align-right{text-align:right}
+.scr-align-right th{text-align:right}
+.scr-company{display:flex;flex-direction:column;line-height:1.25}
+.scr-company b{font-size:12px;letter-spacing:-.01em}
+.scr-company small{color:var(--muted);font-size:9px;max-width:220px;overflow:hidden;text-overflow:ellipsis}
+.scr-price{font-variant-numeric:tabular-nums;font-weight:700}
+.scr-up{color:var(--green);font-weight:700;font-variant-numeric:tabular-nums}
+.scr-down{color:var(--red);font-weight:700;font-variant-numeric:tabular-nums}
+.scr-flat{color:var(--muted);font-variant-numeric:tabular-nums}
+.scr-sort{background:none;border:0;padding:0;color:inherit;font:inherit;font-weight:800;cursor:pointer;letter-spacing:inherit;text-transform:inherit;display:inline-flex;align-items:center;gap:4px}
+.scr-sort:hover{color:var(--text)}
+.scr-sort-active{color:var(--text)}
+.scr-sort-arrow{font-size:9px}
+.scr-state{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:999px;font-size:9px;font-weight:800}
+.scr-state::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+.scr-state-live{background:var(--green-soft);color:var(--green)}
+.scr-state-cached{background:var(--amber-soft);color:var(--amber)}
+.scr-state-stale{background:var(--amber-soft);color:var(--amber)}
+.scr-state-error{background:var(--red-soft);color:var(--red)}
+.scr-state-unavailable{background:var(--surface-2);color:var(--muted)}
+.scr-state-text.scr-state-live{color:var(--green)}
+.scr-state-text.scr-state-cached,.scr-state-text.scr-state-stale{color:var(--amber)}
+.scr-state-text.scr-state-unavailable{color:var(--muted)}
+.scr-empty,.scr-message{padding:34px;text-align:center;color:var(--muted);font-size:11px}
+.scr-banner{padding:10px 16px;background:var(--amber-soft);color:var(--amber);font-size:10px;font-weight:700;border-bottom:1px solid var(--border)}
+.scr-error{padding:22px;color:var(--red);background:var(--red-soft);font-size:11px;font-weight:600;border-color:var(--red)}
+
+@media (max-width:900px){
+  .scr-toolbar{align-items:stretch}
+  .scr-search{min-width:0;flex:1}
+  .scr-summary-item{flex:1;justify-content:space-between}
+}
