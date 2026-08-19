@@ -183,6 +183,11 @@ class MaintenanceRunner:
                     if (self._store.state.symbol_status(symbol, "weekly") == STATUS_DONE
                             and self._store.state.symbol_status(symbol, "metrics") == STATUS_DONE):
                         continue
+                    if self._store.state.symbol_status(symbol, "splits") != STATUS_DONE:
+                        report["anomalies"].append(
+                            f"{symbol}: WEEKLY skipped — splits not confirmed done (empty/error store)"
+                        )
+                        continue
                     if limit is not None and self._provider.requests_this_run >= limit:
                         report["anomalies"].append("run stopped by request limit before finishing WEEKLY")
                         break

@@ -321,6 +321,28 @@ class MaintenanceCycleTests(unittest.TestCase):
             self.assertEqual(store.state.phase(), "complete")
 
 
+class WeeklySkipOnUnconfirmedSplitsTests(unittest.TestCase):
+    """WEEKLY phase must skip symbols whose splits are not confirmed done."""
+
+    def test_weekly_skips_symbol_with_split_error(self):
+        # If SPLITS fetch errored for a symbol, the WEEKLY phase must NOT
+        # write unadjusted weekly rows + metrics (Worker guard can't detect).
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            d1.split_write_fail = True  # SPLITS fetch will fail → splits=error
+            provider = FakeProvider(
+                weekly_payloads={"NVDA": weekly_payload("NVDA")},
+                splits_payloads={"NVDA": splits_payload("NVDA")},
+            )
+            runner, store = make_runner(d1, provider, tmp, MON_1)
+            report = runner.run(universe=["NVDA"])
+            # Splits failed → weekly rows NOT written for NVDA.
+            self.assertNotIn("NVDA", d1.weekly)
+            self.assertNotIn("NVDA", d1.metrics)
+            # Anomaly reported explaining the skip.
+            self.assertTrue(any("splits not confirmed done" in a for a in report["anomalies"]))
+
+
 class WeeklyCatchUpTests(unittest.TestCase):
     """Weekly maintenance can catch up after Monday (Tue-Sat)."""
 
