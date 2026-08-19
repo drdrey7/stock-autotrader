@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readLatestQuotes, upsertLatestQuotes } from "./storage";
 import type { QuoteObservation } from "@stock-autotrader/contracts";
 
-const quote = (symbol: string, price: number): QuoteObservation => ({
+const quote = (symbol: string, price: number, asOf = "2026-08-13T14:00:05.000Z"): QuoteObservation => ({
   symbol,
   price,
   changeAbs: 1,
@@ -11,7 +11,7 @@ const quote = (symbol: string, price: number): QuoteObservation => ({
   dayLow: price - 1,
   dayOpen: price - 0.5,
   previousClose: price - 1,
-  asOf: "2026-08-13T14:00:05.000Z",
+  asOf,
   provider: "finnhub-quote",
 });
 
@@ -47,6 +47,12 @@ function createDb() {
           if (!sql.includes("INSERT INTO latest_quotes")) return { meta: { changes: 0 } };
           const [symbol, price, changeAbs, changePct, dayHigh, dayLow, dayOpen, previousClose, provider, providerTimestamp, updatedAt] = args as [string, number, number, number, number | null, number | null, number | null, number | null, string, string, string];
           const existing = rows.get(symbol);
+          // Mirror of the UPSERT race guard
+          // (`WHERE excluded.provider_timestamp >= latest_quotes.provider_timestamp`):
+          // an older write cannot regress a newer stored quote.
+          if (existing && existing.provider_timestamp && providerTimestamp < existing.provider_timestamp) {
+            return { meta: { changes: 0 } };
+          }
           const row: Row = existing ?? {
             symbol,
             price: 0,
@@ -137,6 +143,42 @@ describe("latest_quotes storage", () => {
     const db = createDb();
     const written = await upsertLatestQuotes(db as unknown as D1Database, [], "2026-08-13T14:00:00.000Z");
     expect(written).toBe(0);
+  });
+
+  it("never lets an older quote overwrite a newer one (REST vs WebSocket race)", async () => {
+    const db = createDb();
+    const updatedAt = "2026-08-13T14:00:00.000Z";
+    // WebSocket tick lands first with the NEWER provider timestamp.
+    await upsertLatestQuotes(
+      db as unknown as D1Database,
+      [quote("AAPL", 310.5, "2026-08-13T14:00:10.000Z")],
+      updatedAt,
+    );
+    // A stale REST response with an OLDER provider timestamp arrives late.
+    const rowsWritten = await upsertLatestQuotes(
+      db as unknown as D1Database,
+      [quote("AAPL", 309.9, "2026-08-13T13:59:40.000Z")],
+      updatedAt,
+    );
+    expect(rowsWritten).toBe(0); // suppressed by the WHERE guard
+    expect(db.rows.get("AAPL")?.price).toBe(310.5);
+    expect(db.rows.get("AAPL")?.provider_timestamp).toBe("2026-08-13T14:00:10.000Z");
+  });
+
+  it("a newer quote still wins over a stored older one", async () => {
+    const db = createDb();
+    const updatedAt = "2026-08-13T14:00:00.000Z";
+    await upsertLatestQuotes(
+      db as unknown as D1Database,
+      [quote("AAPL", 309.9, "2026-08-13T13:59:40.000Z")],
+      updatedAt,
+    );
+    await upsertLatestQuotes(
+      db as unknown as D1Database,
+      [quote("AAPL", 310.5, "2026-08-13T14:00:10.000Z")],
+      updatedAt,
+    );
+    expect(db.rows.get("AAPL")?.price).toBe(310.5);
   });
 
   it("propagates a D1 batch failure so the job can degrade health", async () => {

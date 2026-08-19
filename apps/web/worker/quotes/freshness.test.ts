@@ -162,3 +162,44 @@ describe("collector state from per-stock states (P2-2)", () => {
     expect(collectorStateFromRows(counts({ stale: 50 }), "regular")).toBe("Stale");
   });
 });
+
+describe("post_close is OFF-session for per-row freshness (P2)", () => {
+  // 2026-08-17 Monday regular day: close 16:00 ET = 20:00Z; post_close window
+  // is 20:15–20:45Z (16:15–16:45 ET). The WS ingestor stops writing at close +
+  // 5-min grace, so the last real write is ~20:05Z.
+  const lastWrite = "2026-08-17T20:05:00.000Z"; // 16:05 ET close flush
+  const queried1630 = new Date("2026-08-17T20:30:00.000Z"); // 16:30 ET post_close
+
+  it("uses the long off-session staleness window during post_close", () => {
+    expect(quotesMarketState(queried1630)).toBe("post_close");
+    expect(quoteStaleAfterSeconds(queried1630)).toBe(QUOTES_OFF_SESSION_STALE_AFTER_SECONDS);
+  });
+
+  it("keeps the final-close row Cached at 16:30, NOT Stale", () => {
+    expect(quoteState(lastWrite, queried1630)).toBe("Cached");
+  });
+
+  it("never reports Live during post_close even for a very recent write", () => {
+    const recentWrite = "2026-08-17T20:28:00.000Z"; // 2 min before the query
+    expect(quoteState(recentWrite, queried1630)).toBe("Cached");
+  });
+
+  it("decays to Stale only after the 7-day off-session window", () => {
+    const ancient = "2026-08-01T20:05:00.000Z"; // >7 days before the query
+    expect(quoteState(ancient, queried1630)).toBe("Stale");
+  });
+
+  it("applies the same semantics on an early-close day (Black Friday)", () => {
+    // 2026-11-27 Black Friday: close 13:00 ET (18:00Z), post_close 18:15–18:45Z.
+    const bfQueried = new Date("2026-11-27T18:30:00.000Z"); // 13:30 ET
+    expect(quotesMarketState(bfQueried)).toBe("post_close");
+    const bfLastWrite = "2026-11-27T18:05:00.000Z"; // 13:05 ET final flush
+    expect(quoteState(bfLastWrite, bfQueried)).toBe("Cached");
+    expect(quoteStaleAfterSeconds(bfQueried)).toBe(QUOTES_OFF_SESSION_STALE_AFTER_SECONDS);
+  });
+
+  it("still marks a fresh in-session write Live during the regular session", () => {
+    const inSession = new Date("2026-08-17T18:00:00.000Z"); // 14:00 ET
+    expect(quoteState("2026-08-17T17:59:00.000Z", inSession)).toBe("Live");
+  });
+});

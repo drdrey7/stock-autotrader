@@ -30,12 +30,21 @@ ON CONFLICT(symbol) DO UPDATE SET
   provider = excluded.provider,
   provider_timestamp = excluded.provider_timestamp,
   updated_at = excluded.updated_at
+WHERE excluded.provider_timestamp >= latest_quotes.provider_timestamp
 `;
 
 /**
  * Upsert the latest quote state for a batch of symbols in one D1 batch call.
  * One row per symbol — refreshing a symbol updates its row, it never appends.
  * Defensive membership gate: only canonical Core Universe symbols persist.
+ *
+ * Race guard (transition window, REST collector + Finnhub WebSocket ingestor
+ * both writing latest_quotes): the UPSERT only overwrites when the incoming
+ * `provider_timestamp` is at least as new as the stored one
+ * (`WHERE excluded.provider_timestamp >= latest_quotes.provider_timestamp`).
+ * Both writers store ISO 8601 UTC, so the lexicographic compare is
+ * chronological — an older REST response can never regress a newer WebSocket
+ * quote, and the WebSocket ingestor applies the same rule in its own SQL.
  */
 export async function upsertLatestQuotes(
   db: D1Database,
