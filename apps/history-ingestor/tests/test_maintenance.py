@@ -420,7 +420,7 @@ class D1MetricsWriteFailureTests(unittest.TestCase):
                 splits_payloads={"NVDA": splits_payload("NVDA")},
             )
             runner, store = make_runner(d1, provider, tmp, MON_1)
-            report = runner.run(universe=["NVDA"])
+            runner.run(universe=["NVDA"])
             # Metrics should be in error state (write failed)
             self.assertEqual(store.state.symbol_status("NVDA", "metrics"), "error")
             # Weekly should be done (write succeeded)
