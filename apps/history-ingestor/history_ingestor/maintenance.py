@@ -60,6 +60,7 @@ from .weeks import (
     completed_bars_filter,
     date_from_iso,
     is_monday_in_ny,
+    is_weekly_phase_ready,
     ny_date_of,
     target_completed_week,
     week_label_of_date_key,
@@ -176,9 +177,9 @@ class MaintenanceRunner:
                 if not dry_run:
                     self._store.save()
 
-        # ---- WEEKLY phase (NY Monday only for fetches) ----
+        # ---- WEEKLY phase (catch-up allowed after target week closes) ----
         if self._store.state.phase() == "weekly":
-            if is_monday_in_ny(now):
+            if is_weekly_phase_ready(now, target):
                 for symbol in symbols:
                     if (self._store.state.symbol_status(symbol, "weekly") == STATUS_DONE
                             and self._store.state.symbol_status(symbol, "metrics") == STATUS_DONE):

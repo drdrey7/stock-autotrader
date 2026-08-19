@@ -468,6 +468,43 @@ class BootstrapTests(unittest.TestCase):
             self.assertIn("NVDA", report["remaining_symbols"])
             self.assertNotIn("NVDA", d1.weekly)
 
+    def test_metrics_write_failure_keeps_symbol_error_not_done(self):
+        # A failed technical_metrics D1 write must NOT silently mark the symbol done.
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            d1.metrics_write_fail = True
+            settings = settings_with()
+            provider = FakeProvider(
+                weekly_payloads={"NVDA": weekly_payload("NVDA")},
+                splits_payloads={"NVDA": splits_payload("NVDA")},
+            )
+            store = StateStore(settings, d1, state_path=Path(tmp) / "checkpoint.json")
+            runner = BootstrapRunner(settings, d1, provider, store, now_fn=lambda: NOW)
+            report = runner.run(universe=["NVDA"])
+            # Metrics write failed -> weekly marked error (retried next run).
+            self.assertEqual(store.symbol_status("NVDA", "weekly"), "error")
+            self.assertIn("NVDA", report["remaining_symbols"])
+            self.assertIn("technical_metrics write failed", report["errors"][0])
+
+    def test_metrics_write_success_completes_normally(self):
+        # Normal successful metrics write still completes normally.
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            settings = settings_with()
+            provider = FakeProvider(
+                weekly_payloads={"NVDA": weekly_payload("NVDA")},
+                splits_payloads={"NVDA": splits_payload("NVDA")},
+            )
+            store = StateStore(settings, d1, state_path=Path(tmp) / "checkpoint.json")
+            runner = BootstrapRunner(settings, d1, provider, store, now_fn=lambda: NOW)
+            report = runner.run(universe=["NVDA"])
+            self.assertEqual(report["status"], "complete")
+            self.assertEqual(store.symbol_status("NVDA", "weekly"), "done")
+            self.assertIn("NVDA", d1.metrics)
+
+
+
+
 
 if __name__ == "__main__":
     unittest.main()

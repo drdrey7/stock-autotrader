@@ -114,3 +114,19 @@ def is_monday_in_ny(now: dt.datetime) -> bool:
     NY Mondays. Sunday runs stay in the SPLITS phase.
     """
     return ny_date_of(now).weekday() == 0
+
+
+def is_weekly_phase_ready(now: dt.datetime, target_week: str) -> bool:
+    """Whether the WEEKLY fetch phase may run.
+
+    The weekly bucket is safe to store (no longer the in-progress week) once the
+    current NY ISO week is strictly after the cycle's target week. This is true
+    Monday–Saturday (catch-up after a missed Monday) and false on Sunday (the
+    just-closed week's bucket is still the current NY week).
+    """
+    try:
+        target_year, target_num = map(int, target_week.split("-W"))
+    except (ValueError, AttributeError):
+        return is_monday_in_ny(now)
+    current = iso_week_of_instant(now)
+    return current > (target_year, target_num)

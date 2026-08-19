@@ -201,7 +201,9 @@ class BootstrapRunner:
                             raise ProviderError(f"D1 weekly write failed: {result.error}")
                         rows_written += len(rows)
                         metrics = compute_technical_metrics(symbol, [(bar, close) for bar, _f, close in adjusted])
-                        self._d1.upsert_technical_metrics(metrics_row(symbol, metrics))
+                        write = self._d1.upsert_technical_metrics(metrics_row(symbol, metrics))
+                        if write.failed:
+                            raise ProviderError(f"technical_metrics write failed: {write.error}")
                     self._store.mark_symbol(symbol, "weekly", STATUS_DONE)
                     done.append(symbol)
                 except QuotaExhaustedError:
@@ -295,7 +297,9 @@ class BootstrapRunner:
                 )
                 adjusted.append((bar, float(row["split_adjusted_close"])))
             metrics = compute_technical_metrics(symbol, adjusted)
-            self._d1.upsert_technical_metrics(metrics_row(symbol, metrics))
+            write = self._d1.upsert_technical_metrics(metrics_row(symbol, metrics))
+            if write.failed:
+                logger.warning("reconcile_previous_metrics: %s write failed: %s", symbol, write.error)
 
     def _report(
         self,

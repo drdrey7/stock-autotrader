@@ -314,10 +314,77 @@ class MaintenanceCycleTests(unittest.TestCase):
             )
             runner, store = make_runner(d1, provider, tmp, WED_1)
             report = runner.run(universe=["NVDA"])
-            self.assertEqual(report["status"], "partial")  # splits done, weekly waits
+            # Wednesday catch-up: weekly phase runs because current ISO week (W34)
+            # is strictly after target week (W33, closed Friday).
+            self.assertEqual(report["status"], "complete")
+            self.assertTrue(provider.weekly_calls)
+            self.assertEqual(store.state.phase(), "complete")
+
+
+class WeeklyCatchUpTests(unittest.TestCase):
+    """Weekly maintenance can catch up after Monday (Tue-Sat)."""
+
+    def test_monday_weekly_processing_allowed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            provider = FakeProvider(
+                weekly_payloads={"NVDA": weekly_payload("NVDA")},
+                splits_payloads={"NVDA": splits_payload("NVDA")},
+            )
+            runner, store = make_runner(d1, provider, tmp, MON_1)
+            report = runner.run(universe=["NVDA"])
+            self.assertEqual(report["status"], "complete")
+            self.assertTrue(provider.weekly_calls)
+
+    def test_tuesday_catch_up_allowed(self):
+        # Tuesday can catch up if Monday did not finish.
+        TUE = dt.datetime(2026, 8, 18, 12, 0, tzinfo=dt.UTC)
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            provider = FakeProvider(
+                weekly_payloads={"NVDA": weekly_payload("NVDA")},
+                splits_payloads={"NVDA": splits_payload("NVDA")},
+            )
+            runner, store = make_runner(d1, provider, tmp, TUE)
+            report = runner.run(universe=["NVDA"])
+            # Target week W33 (closed Friday 2026-08-14) is strictly before current NY
+            # ISO week (W34 on Tuesday 2026-08-18) -> weekly phase runs.
+            self.assertEqual(report["status"], "complete")
+            self.assertTrue(provider.weekly_calls)
+
+    def test_sunday_in_progress_week_blocked(self):
+        # Sunday: target week is still the current NY week -> weekly phase blocked.
+        SUN = dt.datetime(2026, 8, 16, 12, 0, tzinfo=dt.UTC)
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            provider = FakeProvider(
+                weekly_payloads={"NVDA": weekly_payload("NVDA")},
+                splits_payloads={"NVDA": splits_payload("NVDA")},
+            )
+            runner, store = make_runner(d1, provider, tmp, SUN)
+            report = runner.run(universe=["NVDA"])
+            # Sunday: target week W33 is still current -> weekly phase skipped.
+            self.assertEqual(report["status"], "partial")
             self.assertEqual(provider.weekly_calls, [])
-            self.assertTrue(any("Monday" in a for a in report["anomalies"]))
-            self.assertEqual(store.state.phase(), "weekly")
+
+    def test_already_completed_maintenance_idempotent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            provider = FakeProvider(
+                weekly_payloads={"NVDA": weekly_payload("NVDA")},
+                splits_payloads={"NVDA": splits_payload("NVDA")},
+            )
+            runner, store = make_runner(d1, provider, tmp, MON_1)
+            runner.run(universe=["NVDA"])
+            # Second run (same cycle, same MON_1): already complete -> no-op.
+            provider2 = FakeProvider(
+                weekly_payloads={"NVDA": weekly_payload("NVDA")},
+                splits_payloads={"NVDA": splits_payload("NVDA")},
+            )
+            runner2, store2 = make_runner(d1, provider2, tmp, MON_1)
+            report = runner2.run(universe=["NVDA"])
+            self.assertEqual(report["status"], "noop_complete")
+            self.assertEqual(provider2.weekly_calls, [])
 
 
 class MaintenanceSubsetTests(unittest.TestCase):
