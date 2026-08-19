@@ -356,7 +356,7 @@ class SplitErrorRetryTests(unittest.TestCase):
                 splits_payloads={"NVDA": splits_payload("NVDA")},
             )
             runner, store = make_runner(d1, provider, tmp, MON_1)
-            report = runner.run(universe=["NVDA"])
+            runner.run(universe=["NVDA"])
             self.assertEqual(store.state.symbol_status("NVDA", "splits"), "error")
             self.assertNotIn("NVDA", d1.weekly)
 
@@ -367,7 +367,7 @@ class SplitErrorRetryTests(unittest.TestCase):
                 splits_payloads={"NVDA": splits_payload("NVDA")},
             )
             runner2, store2 = make_runner(d1, provider2, tmp, MON_1)
-            report2 = runner2.run(universe=["NVDA"])
+            runner2.run(universe=["NVDA"])
             self.assertEqual(store2.state.symbol_status("NVDA", "splits"), "done")
             self.assertIn("NVDA", d1.weekly)
 
@@ -388,7 +388,7 @@ class SplitErrorRetryTests(unittest.TestCase):
                 },
             )
             runner, store = make_runner(d1, provider, tmp, MON_1)
-            report = runner.run(universe=["NVDA", "AAPL"])
+            runner.run(universe=["NVDA", "AAPL"])
             # Both fail (split_write_fail is global) → both error, no weekly.
             self.assertEqual(store.state.symbol_status("NVDA", "splits"), "error")
             self.assertEqual(store.state.symbol_status("AAPL", "splits"), "error")
@@ -408,7 +408,7 @@ class SplitErrorRetryTests(unittest.TestCase):
                 },
             )
             runner2, store2 = make_runner(d1, provider2, tmp, MON_1)
-            report2 = runner2.run(universe=["NVDA", "AAPL"])
+            runner2.run(universe=["NVDA", "AAPL"])
             self.assertEqual(store2.state.symbol_status("NVDA", "splits"), "done")
             self.assertEqual(store2.state.symbol_status("AAPL", "splits"), "done")
             self.assertIn("NVDA", d1.weekly)
