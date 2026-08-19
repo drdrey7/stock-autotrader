@@ -304,6 +304,32 @@ class MaintenanceCycleTests(unittest.TestCase):
             self.assertTrue(d1.read_split_events("NVDA"))
             self.assertIn("NVDA", d1.weekly)
 
+    def test_maintenance_persists_shared_key_budget_ledger(self):
+        # Maintenance must persist the shared per-key budget ledger so
+        # bootstrap + maintenance draw from the same daily quota.
+        from unittest.mock import MagicMock, patch
+
+        from history_ingestor.state import StateStore
+
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            provider = FakeProvider(
+                weekly_payloads={"NVDA": weekly_payload("NVDA")},
+                splits_payloads={"NVDA": splits_payload("NVDA")},
+            )
+            key_store = StateStore(settings_with(), d1, state_path=Path(tmp) / "bootstrap.json")
+            runner = MaintenanceRunner(
+                settings_with(), d1, provider,
+                MaintenanceStore(settings_with(), d1, state_path=Path(tmp) / "maintenance.json"),
+                key_store=key_store,
+                now_fn=lambda: MON_1,
+            )
+            # Patch save to verify it gets called during maintenance run.
+            with patch.object(key_store, 'save', wraps=key_store.save) as mock_save:
+                runner.run(universe=["NVDA"])
+                # The shared key budget ledger MUST be persisted after maintenance.
+                self.assertTrue(mock_save.called)
+
     def test_non_monday_weekly_phase_waits(self):
         # Mid-week runs never fabricate a new weekly ingest.
         with tempfile.TemporaryDirectory() as tmp:

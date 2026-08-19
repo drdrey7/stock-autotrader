@@ -627,6 +627,10 @@ class MaintenanceRunner:
             {"index": k.get("index"), "used": k.get("used", 0)}
             for k in (self._key_store.state.keys if self._key_store is not None else [])
         ]
+        # Persist the shared per-key budget ledger so bootstrap + maintenance
+        # draw from the same daily quota (documented contract at cli.py:76-78).
+        if self._key_store is not None:
+            self._key_store.save()
         # Persist the report mirror into app_meta (best effort).
         try:
             self._d1.write_app_meta("historyMaintenanceReport", report)
