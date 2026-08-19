@@ -59,7 +59,6 @@ from .universe import load_core_universe
 from .weeks import (
     completed_bars_filter,
     date_from_iso,
-    is_monday_in_ny,
     is_weekly_phase_ready,
     ny_date_of,
     target_completed_week,
