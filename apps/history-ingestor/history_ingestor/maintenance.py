@@ -39,7 +39,7 @@ from typing import Any
 
 from .config import Settings
 from .d1 import D1QueryError
-from .maintenance_state import STATUS_DONE, STATUS_ERROR
+from .maintenance_state import STATUS_DONE, STATUS_ERROR, STATUS_PENDING
 from .parser import SplitEvent, WeeklyBar
 from .provider import (
     AllKeysFailedError,
@@ -136,6 +136,15 @@ class MaintenanceRunner:
             self._store.reset_cycle(target, full_universe)
             self._store.save()
             logger.info("maintenance: new cycle for %s", target)
+
+        # Retry: symbols whose SPLITS reconciliation errored in a prior run
+        # are re-marked PENDING so the next daily run retries. ERROR does not
+        # block `phase()` (so other symbols proceed), but without this the
+        # failed symbol stays stuck until the next cycle reset.
+        for symbol in symbols:
+            if self._store.state.symbol_status(symbol, "splits") == STATUS_ERROR:
+                self._store.state.mark_symbol(symbol, "splits", STATUS_PENDING)
+        self._store.save()
 
         report: dict = {
             "status": "complete",

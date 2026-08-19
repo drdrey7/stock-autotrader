@@ -343,6 +343,78 @@ class WeeklySkipOnUnconfirmedSplitsTests(unittest.TestCase):
             self.assertTrue(any("splits not confirmed done" in a for a in report["anomalies"]))
 
 
+class SplitErrorRetryTests(unittest.TestCase):
+    """A transient SPLITS error must be retried on the next run."""
+
+    def test_split_error_retried_on_next_run(self):
+        # Run 1: B SPLITS fails → splits=error, WEEKLY not written.
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            d1.split_write_fail = True
+            provider = FakeProvider(
+                weekly_payloads={"NVDA": weekly_payload("NVDA")},
+                splits_payloads={"NVDA": splits_payload("NVDA")},
+            )
+            runner, store = make_runner(d1, provider, tmp, MON_1)
+            report = runner.run(universe=["NVDA"])
+            self.assertEqual(store.state.symbol_status("NVDA", "splits"), "error")
+            self.assertNotIn("NVDA", d1.weekly)
+
+            # Run 2: provider succeeds → error retried → splits=DONE → WEEKLY proceeds.
+            d1.split_write_fail = False
+            provider2 = FakeProvider(
+                weekly_payloads={"NVDA": weekly_payload("NVDA")},
+                splits_payloads={"NVDA": splits_payload("NVDA")},
+            )
+            runner2, store2 = make_runner(d1, provider2, tmp, MON_1)
+            report2 = runner2.run(universe=["NVDA"])
+            self.assertEqual(store2.state.symbol_status("NVDA", "splits"), "done")
+            self.assertIn("NVDA", d1.weekly)
+
+    def test_persistent_split_error_does_not_block_other_symbols(self):
+        # A persistent SPLITS error for B must NOT block other symbols,
+        # and B must never store unconfirmed/unadjusted WEEKLY data.
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            d1.split_write_fail = True  # B always fails
+            provider = FakeProvider(
+                weekly_payloads={
+                    "NVDA": weekly_payload("NVDA"),
+                    "AAPL": weekly_payload("AAPL"),
+                },
+                splits_payloads={
+                    "NVDA": splits_payload("NVDA"),
+                    "AAPL": splits_payload("AAPL"),
+                },
+            )
+            runner, store = make_runner(d1, provider, tmp, MON_1)
+            report = runner.run(universe=["NVDA", "AAPL"])
+            # Both fail (split_write_fail is global) → both error, no weekly.
+            self.assertEqual(store.state.symbol_status("NVDA", "splits"), "error")
+            self.assertEqual(store.state.symbol_status("AAPL", "splits"), "error")
+            self.assertNotIn("NVDA", d1.weekly)
+            self.assertNotIn("AAPL", d1.weekly)
+
+            # Run 2: both succeed → both retried → both done.
+            d1.split_write_fail = False
+            provider2 = FakeProvider(
+                weekly_payloads={
+                    "NVDA": weekly_payload("NVDA"),
+                    "AAPL": weekly_payload("AAPL"),
+                },
+                splits_payloads={
+                    "NVDA": splits_payload("NVDA"),
+                    "AAPL": splits_payload("AAPL"),
+                },
+            )
+            runner2, store2 = make_runner(d1, provider2, tmp, MON_1)
+            report2 = runner2.run(universe=["NVDA", "AAPL"])
+            self.assertEqual(store2.state.symbol_status("NVDA", "splits"), "done")
+            self.assertEqual(store2.state.symbol_status("AAPL", "splits"), "done")
+            self.assertIn("NVDA", d1.weekly)
+            self.assertIn("AAPL", d1.weekly)
+
+
 class WeeklyCatchUpTests(unittest.TestCase):
     """Weekly maintenance can catch up after Monday (Tue-Sat)."""
 
