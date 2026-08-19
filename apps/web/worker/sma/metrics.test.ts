@@ -281,6 +281,36 @@ describe("computeLiveSma200w — honest null handling", () => {
   });
 });
 
+describe("computeLiveSma200w — split scale safety guard (P2-1)", () => {
+  it("Unavailable when quote is on/after split effective date but metrics were calculated before", () => {
+    // Split effective 2026-08-20; metrics calculated 2026-08-19; quote 2026-08-21 (after split)
+    const result = computeLiveSma200w(
+      quote(110, "2026-08-21T15:00:00.000Z"),
+      metrics({ calculated_at: "2026-08-19T06:00:00.000Z" }),
+      "2026-08-20",
+    );
+    expect(result.sma200w).toBeNull();
+    expect(result.sma200wState).toBe("Unavailable");
+  });
+
+  it("computes normally when metrics were calculated after split effective date", () => {
+    // Split effective 2026-08-20; metrics calculated 2026-08-21; quote 2026-08-21
+    const result = computeLiveSma200w(
+      quote(110, W34_QUOTE),
+      metrics({ calculated_at: "2026-08-21T06:00:00.000Z" }),
+      "2026-08-20",
+    );
+    expect(result.sma200w).not.toBeNull();
+    expect(result.sma200wState).not.toBe("Unavailable");
+  });
+
+  it("computes normally when no split effective date is provided", () => {
+    const result = computeLiveSma200w(quote(110, W34_QUOTE), metrics());
+    expect(result.sma200w).not.toBeNull();
+    expect(result.sma200wState).not.toBe("Unavailable");
+  });
+});
+
 describe("computeLiveSma200w — exactly 199 weeks", () => {
   it("works with exactly 199 completed weeks (limited status)", () => {
     const result = computeLiveSma200w(

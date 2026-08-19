@@ -118,5 +118,61 @@ class AdjustSeriesTests(unittest.TestCase):
         self.assertEqual(split_factor_float(Fraction(1, 2)), 0.5)
 
 
+class FutureSplitTests(unittest.TestCase):
+    """P2-1: future-dated splits must NOT be applied before effective date."""
+
+    def test_future_split_not_applied_before_effective(self):
+        # Split effective 2024-06-10; as_of 2024-06-09 -> factor 1 (not applied)
+        splits = [split("NVDA", "2024-06-10", "10/1")]
+        self.assertEqual(
+            cumulative_split_factor("2024-06-03", splits, as_of_date="2024-06-09"),
+            Fraction(1, 1),
+        )
+
+    def test_split_applied_on_effective_date(self):
+        # Split effective 2024-06-10; as_of 2024-06-10 -> factor 10 (applied)
+        splits = [split("NVDA", "2024-06-10", "10/1")]
+        self.assertEqual(
+            cumulative_split_factor("2024-06-03", splits, as_of_date="2024-06-10"),
+            Fraction(10, 1),
+        )
+
+    def test_adjust_series_with_future_split(self):
+        bars = [
+            bar("X", "2024-06-03", 400.0),
+            bar("X", "2024-06-10", 100.0),
+            bar("X", "2024-06-17", 102.0),
+        ]
+        splits = [split("X", "2024-06-10", "4/1")]
+        # Before effective date: no adjustment
+        adjusted = adjust_series(bars, splits, as_of_date="2024-06-09")
+        self.assertAlmostEqual(adjusted[0][2], 400.0, places=6)  # unchanged
+        # On/after effective date: adjustment applies
+        adjusted = adjust_series(bars, splits, as_of_date="2024-06-10")
+        self.assertAlmostEqual(adjusted[0][2], 100.0, places=6)  # 400 / 4
+
+    def test_multiple_future_splits_deterministic(self):
+        # NVDA-style: 10:1 (2024-06-10) and a future 4:1 (2025-01-15)
+        splits = [
+            split("NVDA", "2024-06-10", "10/1"),
+            split("NVDA", "2025-01-15", "4/1"),
+        ]
+        # Before any split
+        self.assertEqual(
+            cumulative_split_factor("2024-06-03", splits, as_of_date="2024-06-09"),
+            Fraction(1, 1),
+        )
+        # After first split, before second
+        self.assertEqual(
+            cumulative_split_factor("2024-06-03", splits, as_of_date="2024-06-10"),
+            Fraction(10, 1),
+        )
+        # After both splits
+        self.assertEqual(
+            cumulative_split_factor("2024-06-03", splits, as_of_date="2025-01-15"),
+            Fraction(40, 1),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

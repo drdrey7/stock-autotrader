@@ -56,6 +56,7 @@ const MIN_BASIS_WEEKS = 199;
 export function computeLiveSma200w(
   quote: QuoteInput | null,
   metrics: TechnicalMetricsRow | null,
+  latestSplitEffectiveDate: string | null = null,
 ): LiveSmaResult {
   const historyWeeks = metrics?.completed_weeks_available ?? null;
   const asOf = metrics?.historical_data_as_of ?? null;
@@ -74,6 +75,26 @@ export function computeLiveSma200w(
   // No current quote -> do not fabricate a live SMA.
   if (!quote || !Number.isFinite(quote.price) || quote.price <= 0) {
     return { sma200w: null, distanceToSma200wPct: null, sma200wState: "Unavailable", sma200wHistoryWeeks: historyWeeks, sma200wAsOf: asOf };
+  }
+
+  // P2-1 Worker safety guard: if the quote is already on/after a split's
+  // effective date but the metrics were last computed BEFORE that date, the
+  // historical basis is on the wrong scale (pre-split) while the quote is
+  // post-split — the SMA would be catastrophically wrong. Report Unavailable
+  // until the daily due-split reconciliation recomputes the basis.
+  if (latestSplitEffectiveDate && metrics.calculated_at) {
+    try {
+      const splitEffective = new Date(latestSplitEffectiveDate + "T00:00:00.000Z");
+      const metricsCalculated = new Date(metrics.calculated_at);
+      const quoteTime = new Date(quote.provider_timestamp);
+      // The quote is on/after the split effective date (in NY terms) AND
+      // the metrics were last computed before the split became effective.
+      if (quoteTime >= splitEffective && metricsCalculated < splitEffective) {
+        return { sma200w: null, distanceToSma200wPct: null, sma200wState: "Unavailable", sma200wHistoryWeeks: historyWeeks, sma200wAsOf: asOf };
+      }
+    } catch {
+      // Invalid date format — disable the guard rather than crash.
+    }
   }
 
   const quoteWeek = isoWeekOfNyInstant(new Date(quote.provider_timestamp));

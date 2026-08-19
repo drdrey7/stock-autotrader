@@ -33,15 +33,26 @@ from .parser import SplitEvent, WeeklyBar
 def cumulative_split_factor(
     week_end_date: str,
     splits: list[SplitEvent],
+    as_of_date: str | None = None,
 ) -> Fraction:
     """F(t) — the product of all split ratios effective strictly AFTER ``week_end_date``.
 
     Identity F == 1 when no later split exists (weeks after the last split).
+
+    When ``as_of_date`` is provided, only splits with ``effective_date <= as_of_date``
+    are included. This prevents a future-dated split (discovered by the Sunday
+    pass but not yet effective) from being applied to historical rows before
+    its effective date — keeping the historical basis on the same scale as the
+    live quote. See P2-1 (split scale correctness).
     """
     week_end = dt.date.fromisoformat(week_end_date)
+    as_of = dt.date.fromisoformat(as_of_date) if as_of_date else None
     factor = Fraction(1, 1)
     for split in splits:
-        if dt.date.fromisoformat(split.effective_date) > week_end:
+        split_effective = dt.date.fromisoformat(split.effective_date)
+        if split_effective > week_end:
+            if as_of is not None and split_effective > as_of:
+                continue  # future split — don't apply yet
             factor *= split.ratio
     return factor
 
@@ -49,6 +60,7 @@ def cumulative_split_factor(
 def adjust_series(
     bars: Iterable[WeeklyBar],
     splits: list[SplitEvent],
+    as_of_date: str | None = None,
 ) -> list[tuple[WeeklyBar, Fraction, float]]:
     """Compute ``(bar, split_adjustment_factor, split_adjusted_close)`` per bar.
 
@@ -56,11 +68,14 @@ def adjust_series(
     conversion (``raw_close / factor``). Deterministic and auditable: the
     persisted row keeps both the raw close and the factor, so any client can
     recompute the adjusted value.
+
+    When ``as_of_date`` is provided, only splits effective on or before that
+    date are applied (see ``cumulative_split_factor``).
     """
     ordered = sorted(splits, key=lambda event: event.effective_date)
     results: list[tuple[WeeklyBar, Fraction, float]] = []
     for bar in bars:
-        factor = cumulative_split_factor(bar.week_end_date, ordered)
+        factor = cumulative_split_factor(bar.week_end_date, ordered, as_of_date=as_of_date)
         adjusted = bar.close / float(factor)
         results.append((bar, factor, adjusted))
     return results

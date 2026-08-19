@@ -320,5 +320,92 @@ class MaintenanceCycleTests(unittest.TestCase):
             self.assertEqual(store.state.phase(), "weekly")
 
 
+class MaintenanceSubsetTests(unittest.TestCase):
+    """P2-2: --symbols must NOT shrink the durable cycle (always 50 canonical)."""
+
+    def test_subset_first_run_durable_cycle_contains_all_canonical(self):
+        # First run with --symbols NVDA only: durable cycle must contain all
+        # canonical symbols (50), not just NVDA.
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            provider = FakeProvider(
+                weekly_payloads={"NVDA": weekly_payload("NVDA")},
+                splits_payloads={"NVDA": splits_payload("NVDA")},
+            )
+            runner, store = make_runner(d1, provider, tmp, MON_1)
+            report = runner.run(symbols_filter=["NVDA"])
+            # Durable cycle contains all canonical symbols
+            self.assertGreater(len(store.state.symbols), 1)
+            # But only NVDA was processed
+            self.assertIn("NVDA", report["symbols"])
+
+    def test_subset_complete_does_not_mark_cycle_complete(self):
+        # Completing only NVDA must NOT mark the cycle as globally complete.
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            provider = FakeProvider(
+                weekly_payloads={"NVDA": weekly_payload("NVDA")},
+                splits_payloads={"NVDA": splits_payload("NVDA")},
+            )
+            runner, store = make_runner(d1, provider, tmp, MON_1)
+            report = runner.run(symbols_filter=["NVDA"])
+            # Cycle is NOT complete (other symbols still pending)
+            self.assertNotEqual(store.state.phase(), "complete")
+            self.assertNotEqual(report["status"], "complete")
+
+    def test_later_full_run_processes_remaining(self):
+        # After a subset run, a full run processes the remaining symbols.
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            provider = FakeProvider(
+                weekly_payloads={
+                    "NVDA": weekly_payload("NVDA"),
+                    "AAPL": weekly_payload("AAPL"),
+                },
+                splits_payloads={
+                    "NVDA": splits_payload("NVDA"),
+                    "AAPL": splits_payload("AAPL"),
+                },
+            )
+            runner, store = make_runner(d1, provider, tmp, MON_1)
+            # First run: only NVDA (from a 2-symbol universe)
+            runner.run(universe=["NVDA", "AAPL"], symbols_filter=["NVDA"])
+            # Second run: full universe (includes AAPL)
+            report = runner.run(universe=["NVDA", "AAPL"])
+            # AAPL should be processed in the second run
+            self.assertIn("AAPL", report["symbols"])
+
+
+class DueSplitReconciliationTests(unittest.TestCase):
+    """P2-1: apply-due-splits applies splits whose effective date is reached."""
+
+    def test_apply_due_splits_before_effective_date(self):
+        # Split effective 2024-06-10; today is 2024-06-09 -> no change
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            # Pre-populate split_events with a future split
+            d1.upsert_split_events([("NVDA", "2024-06-10", 10.0, "2026-08-19T00:00:00Z")])
+            # Pre-populate weekly rows using upsert (tuple format)
+            d1.upsert_weekly_rows([(
+                "NVDA", "2024-06-03", 400, 401, 399, 400, 1000, 1.0, 400.0, "2026-08-19T00:00:00Z",
+            )])
+            provider = FakeProvider()
+            runner, store = make_runner(d1, provider, tmp, MON_1)
+            # Today is 2026-08-19 (after effective date 2024-06-10) -> should apply
+            report = runner.apply_due_splits()
+            self.assertEqual(report["status"], "applied")
+            self.assertEqual(report["splits_applied"], 1)
+
+    def test_apply_due_splits_noop_when_nothing_due(self):
+        # No splits stored -> noop
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            provider = FakeProvider()
+            runner, store = make_runner(d1, provider, tmp, MON_1)
+            report = runner.apply_due_splits()
+            self.assertEqual(report["status"], "noop")
+            self.assertEqual(report["splits_applied"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

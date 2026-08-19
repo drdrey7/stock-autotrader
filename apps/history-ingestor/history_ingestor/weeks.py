@@ -48,6 +48,12 @@ def week_label_of_date_key(date_key: str) -> str:
     return week_label(dt.date.fromisoformat(date_key))
 
 
+def date_from_iso(date_key: str) -> dt.date:
+    """Parse a ``YYYY-MM-DD`` key into a date (split/helper shared with the
+    maintenance cycle)."""
+    return dt.date.fromisoformat(date_key)
+
+
 def is_in_progress_week(date_key: str, now: dt.datetime) -> bool:
     """Whether a weekly bucket belongs to the NY week that is still running
     at ``now`` (UTC). Buckets in the in-progress week are never stored as

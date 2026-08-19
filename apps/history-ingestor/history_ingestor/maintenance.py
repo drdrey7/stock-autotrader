@@ -50,6 +50,7 @@ from .provider import (
 from .sma import compute_technical_metrics
 from .splits import (
     adjust_series,
+    cumulative_split_factor,
     split_events_equal,
     split_events_from_rows,
     split_events_to_rows,
@@ -57,7 +58,9 @@ from .splits import (
 from .universe import load_core_universe
 from .weeks import (
     completed_bars_filter,
+    date_from_iso,
     is_monday_in_ny,
+    ny_date_of,
     target_completed_week,
     week_label_of_date_key,
 )
@@ -104,10 +107,12 @@ class MaintenanceRunner:
         limit: int | None = None,
         symbols_filter: list[str] | None = None,
     ) -> dict:
-        symbols = universe if universe is not None else load_core_universe(self._settings.universe_path)
+        full_universe = universe if universe is not None else load_core_universe(self._settings.universe_path)
         if symbols_filter is not None:
             wanted = set(symbols_filter)
-            symbols = [symbol for symbol in symbols if symbol in wanted]
+            symbols = [symbol for symbol in full_universe if symbol in wanted]
+        else:
+            symbols = list(full_universe)
         now = self._now()
         target = target_completed_week(now)
         self._store.load()
@@ -121,11 +126,14 @@ class MaintenanceRunner:
                 logger.warning("maintenance: shared budget ledger unreadable — keys will report empty")
 
         if dry_run:
-            return self._plan_report(symbols, target)
+            return self._plan_report(full_universe, target)
 
         # START A NEW CYCLE when a new completed week exists (or no state yet).
+        # The durable cycle is ALWAYS seeded with the FULL canonical universe —
+        # --symbols only restricts which symbols are processed in THIS
+        # invocation, never the durable membership (P2-2).
         if self._store.state.cycle_week != target or not self._store.state.symbols:
-            self._store.reset_cycle(target, symbols)
+            self._store.reset_cycle(target, full_universe)
             self._store.save()
             logger.info("maintenance: new cycle for %s", target)
 
@@ -291,7 +299,9 @@ class MaintenanceRunner:
             completed_bars = [bar for bar in bars if bar.week_end_date in completed_set]
             result["completed_weeks"] = len(completed_bars)
 
-            adjusted_full = adjust_series(completed_bars, stored_events)
+            as_of = ny_date_of(self._now())
+            as_of_iso = f"{as_of.year:04d}-{as_of.month:02d}-{as_of.day:02d}"
+            adjusted_full = adjust_series(completed_bars, stored_events, as_of_date=as_of_iso)
             if dry_run:
                 result["rows_updated"] = 1  # planning-mode hint
                 return result
@@ -390,7 +400,13 @@ class MaintenanceRunner:
     ) -> None:
         """Recompute the full historical adjustment for ``symbol`` from the
         stored RAW rows with the new split factors; rewrite only changed rows
-        and recompute metrics. Runs on a split-history change (Sunday)."""
+        and recompute metrics. Runs on a split-history change (Sunday).
+
+        Uses today's date as the split as-of boundary: any split whose
+        effective date is in the future is NOT applied yet (it is stored in
+        split_events for later due-split reconciliation, but must not change
+        the historical basis while the live quote is still on the old scale).
+        """
         try:
             stored_rows = self._d1.read_weekly_rows(symbol)
         except D1QueryError as exc:
@@ -405,7 +421,9 @@ class MaintenanceRunner:
                 low=float(row["raw_low"]), close=float(row["raw_close"]),
                 volume=int(row["volume"]),
             ))
-        adjusted_full = list(adjust_series(bars, events))
+        as_of = ny_date_of(self._now())
+        as_of_iso = f"{as_of.year:04d}-{as_of.month:02d}-{as_of.day:02d}"
+        adjusted_full = list(adjust_series(bars, events, as_of_date=as_of_iso))
         stored = self._stored_rows(symbol)
         changed = []
         for bar, factor, adj_close in adjusted_full:
@@ -424,6 +442,85 @@ class MaintenanceRunner:
         # Recompute metrics from the full set on the new factors.
         metrics = compute_technical_metrics(symbol, [(bar, close) for bar, _f, close in adjusted_full])
         self._upsert_metrics(symbol, metrics)
+        # Mark which splits were NOT yet applied (future-dated) so the
+        # daily due-split reconciliation knows what to pick up.
+        future_splits = [e for e in events if date_from_iso(e.effective_date) > as_of]
+        if future_splits:
+            result["anomalies"].append(
+                f"{symbol}: {len(future_splits)} future split(s) stored but not yet applied"
+            )
+
+    def apply_due_splits(self, symbols_filter: list[str] | None = None) -> dict:
+        """Daily ZERO-PROVIDER reconciliation: apply splits whose effective
+        date has been reached.
+
+        For each symbol, reads stored ``split_events`` from D1, finds any
+        split whose ``effective_date <= today`` (NY) that has not yet been
+        applied to the historical basis, and recomputes the affected weekly
+        rows + technical_metrics — all from stored RAW data, no Alpha Vantage
+        request.
+
+        Idempotent: a second run on the same day finds nothing to do.
+        """
+        symbols = load_core_universe(self._settings.universe_path)
+        if symbols_filter is not None:
+            wanted = set(symbols_filter)
+            symbols = [symbol for symbol in symbols if symbol in wanted]
+        today = ny_date_of(self._now())
+        today_iso = f"{today.year:04d}-{today.month:02d}-{today.day:02d}"
+        report: dict = {
+            "status": "noop",
+            "symbols": {},
+            "rows_updated": 0,
+            "metrics_updated": 0,
+            "splits_applied": 0,
+        }
+        for symbol in symbols:
+            try:
+                stored_events = split_events_from_rows(self._d1.read_split_events(symbol))
+            except D1QueryError:
+                continue
+            if not stored_events:
+                continue
+            try:
+                stored_rows = self._d1.read_weekly_rows(symbol)
+            except D1QueryError:
+                continue
+            if not stored_rows:
+                continue
+            bars: list[WeeklyBar] = []
+            for row in stored_rows:
+                bars.append(WeeklyBar(
+                    symbol=row["symbol"], week_end_date=row["week_end_date"],
+                    open=float(row["raw_open"]), high=float(row["raw_high"]),
+                    low=float(row["raw_low"]), close=float(row["raw_close"]),
+                    volume=int(row["volume"]),
+                ))
+            # Compute with all splits effective up to today
+            adjusted_full = list(adjust_series(bars, stored_events, as_of_date=today_iso))
+            stored = self._stored_rows(symbol)
+            changed = []
+            for bar, factor, adj_close in adjusted_full:
+                old = stored.get(bar.week_end_date)
+                if old is None or self._row_differs(old, bar, factor, adj_close):
+                    changed.append((
+                        bar.symbol, bar.week_end_date, bar.open, bar.high, bar.low,
+                        bar.close, bar.volume, float(factor), adj_close, _now_iso(),
+                    ))
+            if not changed:
+                continue
+            write = self._d1.upsert_weekly_rows(changed)
+            if write.failed:
+                report["symbols"][symbol] = {"status": "error", "error": write.error}
+                continue
+            metrics = compute_technical_metrics(symbol, [(bar, close) for bar, _f, close in adjusted_full])
+            self._upsert_metrics(symbol, metrics)
+            report["symbols"][symbol] = {"status": "applied", "rows_updated": len(changed)}
+            report["rows_updated"] += len(changed)
+            report["metrics_updated"] += 1
+            report["splits_applied"] += 1
+            report["status"] = "applied"
+        return report
 
     def _upsert_metrics(self, symbol: str, metrics) -> None:
         self._d1.upsert_technical_metrics({
@@ -445,6 +542,8 @@ class MaintenanceRunner:
             existing = {row["symbol"] for row in self._d1.read_technical_metrics()}
         except D1QueryError:
             return
+        as_of = ny_date_of(self._now())
+        as_of_iso = f"{as_of.year:04d}-{as_of.month:02d}-{as_of.day:02d}"
         for symbol in symbols:
             if (self._store.state.symbol_status(symbol, "weekly") == STATUS_DONE
                     and self._store.state.symbol_status(symbol, "metrics") != STATUS_DONE
@@ -455,17 +554,20 @@ class MaintenanceRunner:
                     continue
                 if not rows:
                     continue
+                try:
+                    stored_events = split_events_from_rows(self._d1.read_split_events(symbol))
+                except D1QueryError:
+                    continue
                 adjusted = []
                 for row in rows:
-                    adjusted.append((
-                        WeeklyBar(
-                            symbol=row["symbol"], week_end_date=row["week_end_date"],
-                            open=float(row["raw_open"]), high=float(row["raw_high"]),
-                            low=float(row["raw_low"]), close=float(row["raw_close"]),
-                            volume=int(row["volume"]),
-                        ),
-                        float(row["split_adjusted_close"]),
-                    ))
+                    bar = WeeklyBar(
+                        symbol=row["symbol"], week_end_date=row["week_end_date"],
+                        open=float(row["raw_open"]), high=float(row["raw_high"]),
+                        low=float(row["raw_low"]), close=float(row["raw_close"]),
+                        volume=int(row["volume"]),
+                    )
+                    factor = cumulative_split_factor(row["week_end_date"], stored_events, as_of_date=as_of_iso)
+                    adjusted.append((bar, bar.close / float(factor)))
                 try:
                     metrics = compute_technical_metrics(symbol, adjusted)
                     self._upsert_metrics(symbol, metrics)

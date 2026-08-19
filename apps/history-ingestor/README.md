@@ -109,10 +109,14 @@ with the live quote:
 `calculated_at`, `status` (`ok` / `limited` 199.. / `not_enough_history` /
 `no_data`).
 
-The Worker logic: quote week == anchor week → `(sum_199 − anchor_close + price)/200`
-(no double count when the quote's own week is already stored); quote week =
-anchor+1 → `(sum_199 + price)/200`; anything else → honest `Unavailable`,
-never a fabricated SMA.
+The Worker logic: quote week == anchor week → `(closed_sma_200w * 200 - anchor_close + price)/200`
+(true 200-week basis — the naive `sum_199 - anchor_close + price` would only supply 198 prior
+closes + the quote = 199 observations, which is wrong); quote week == anchor+1 → `(sum_199 + price)/200`;
+anything else → honest `Unavailable`, never a fabricated SMA.
+
+The same-week (delta 0) form only applies when a genuine 200 completed-week basis exists
+(`closed_sma_200w` non-null). With exactly 199 completed weeks, there are not 199 closes strictly
+before L, so it honestly reports `NotEnoughHistory`.
 
 ## Bootstrap / resume design
 

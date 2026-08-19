@@ -91,6 +91,16 @@ def cmd_maintenance(settings: Settings, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_apply_due_splits(settings: Settings, args: argparse.Namespace) -> int:
+    d1, provider, store = _build(settings)
+    store.load()
+    mstore = MaintenanceStore(settings, d1)
+    runner = MaintenanceRunner(settings, d1, provider, mstore, key_store=store)
+    report = runner.apply_due_splits(symbols_filter=args.symbols)
+    _emit("apply_due_splits_report", **report)
+    return 0
+
+
 def cmd_status(settings: Settings) -> int:
     d1, provider, store = _build(settings)
     state = store.load()
@@ -190,6 +200,10 @@ def main(argv: list[str] | None = None) -> int:
     p_maintenance.add_argument("--limit", type=int, default=None, help="cap total provider requests")
     p_maintenance.add_argument("--symbols", nargs="*", default=None, help="restrict to these symbols")
     p_maintenance.set_defaults(handler=cmd_maintenance)
+
+    p_due = sub.add_parser("apply-due-splits", help="daily ZERO-PROVIDER split reconciliation (apply splits whose effective date is reached)")
+    p_due.add_argument("--symbols", nargs="*", default=None, help="restrict to these symbols")
+    p_due.set_defaults(handler=cmd_apply_due_splits)
 
     p_status = sub.add_parser("status", help="checkpoint + D1 coverage summary")
     p_status.set_defaults(handler=lambda _s, _a: cmd_status(_s))
