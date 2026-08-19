@@ -315,7 +315,7 @@ class Ingestor:
                 "event": "ws_market_data_stalled",
                 "stall_seconds": round(stall_seconds, 1),
                 "subscriptions": ws.subscriptions_sent,
-                "message_count": ws.last_message_mono,
+                "message_count": self.health.message_count,
                 "tick_count": self.health.tick_count,
                 "ignored_non_regular_count": self.health.ignored_non_regular_count,
             }, sort_keys=True)
