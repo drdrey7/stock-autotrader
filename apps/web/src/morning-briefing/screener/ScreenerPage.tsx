@@ -5,6 +5,7 @@ import {
   applyScreenerQuery,
   DEFAULT_SCREENER_QUERY,
   type ScreenerFilter,
+  type ScreenerPreset,
   type ScreenerSortDirection,
   type ScreenerSortKey,
 } from "./screener-filter";
@@ -41,6 +42,11 @@ export default function ScreenerPage() {
       setSortKey(key);
       setSortDirection("desc");
     }
+  };
+
+  const onPreset = (preset: ScreenerPreset) => {
+    setSortKey(preset.sortKey);
+    setSortDirection(preset.direction);
   };
 
   return (
@@ -105,6 +111,7 @@ export default function ScreenerPage() {
           sortKey={sortKey}
           sortDirection={sortDirection}
           onSort={onSort}
+          onPreset={onPreset}
         />
       )}
     </div>

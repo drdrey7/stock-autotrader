@@ -1,7 +1,12 @@
 import type { ReactNode } from "react";
 import type { ScreenerRow } from "@stock-autotrader/contracts";
-import { SCREENER_FILTERS } from "./screener-filter";
-import type { ScreenerFilter, ScreenerSortDirection, ScreenerSortKey } from "./screener-filter";
+import { SCREENER_FILTERS, SCREENER_PRESETS } from "./screener-filter";
+import type {
+  ScreenerFilter,
+  ScreenerPreset,
+  ScreenerSortDirection,
+  ScreenerSortKey,
+} from "./screener-filter";
 import "./screener.css";
 
 const isUp = (row: ScreenerRow): boolean | null => row.changePct === null ? null : row.changePct > 0;
@@ -30,6 +35,29 @@ function stateLabel(row: ScreenerRow): string {
   return "Unavailable";
 }
 
+/** Distance display + state color (PR2). Full-precision value, 1-decimal display. */
+function distanceCell(row: ScreenerRow): ReactNode {
+  const distance = row.distanceToSma200wPct ?? null;
+  if (distance === null) return <span className="scr-flat">—</span>;
+  const state = row.sma200wState ?? "Unavailable";
+  const cls = state === "Above" ? "scr-up" : state === "Below" ? "scr-down" : "scr-near";
+  return (
+    <span className={cls} title={state}>
+      {formatSigned(distance, 1)}%
+    </span>
+  );
+}
+
+function smaCell(row: ScreenerRow): ReactNode {
+  const sma = row.sma200w ?? null;
+  if (sma === null) {
+    return row.sma200wState === "NotEnoughHistory"
+      ? <span className="scr-flat" title="Fewer than 199 completed weeks">—</span>
+      : <span className="scr-flat">—</span>;
+  }
+  return <span className="scr-price">{sma.toFixed(2)}</span>;
+}
+
 export interface ScreenerColumn {
   key: string;
   label: ReactNode;
@@ -38,8 +66,8 @@ export interface ScreenerColumn {
 }
 
 /**
- * Column-driven table so PR3 (Intrinsic Value, Support, MA200W, Opportunity)
- * only appends a column config — no component rewrite.
+ * Column-driven table so future screens (Intrinsic Value, Support,
+ * Opportunity) only append a column config — no component rewrite.
  */
 const buildColumns = (
   onSort: (key: ScreenerSortKey) => void,
@@ -75,6 +103,18 @@ const buildColumns = (
     render: (row) => <span className={changeClass(row)}>{formatSigned(row.changePct)}%</span>,
   },
   {
+    key: "sma200w",
+    label: sortIndicator("200W SMA", sortKey === "sma200w", sortDirection, () => onSort("sma200w")),
+    alignRight: true,
+    render: smaCell,
+  },
+  {
+    key: "smaDistance",
+    label: sortIndicator("Dist", sortKey === "smaDistance", sortDirection, () => onSort("smaDistance")),
+    alignRight: true,
+    render: distanceCell,
+  },
+  {
     key: "state",
     label: "Status",
     render: (row) => <span className={`scr-state scr-state-${row.state.toLowerCase()}`}>{stateLabel(row)}</span>,
@@ -90,6 +130,12 @@ function sortIndicator(label: string, active: boolean, direction: ScreenerSortDi
   );
 }
 
+/** Which preset the current (sortKey, direction) maps to, if any. */
+function presetFor(sortKey: ScreenerSortKey, direction: ScreenerSortDirection): ScreenerPreset["key"] | null {
+  const preset = SCREENER_PRESETS.find((p) => p.sortKey === sortKey && p.direction === direction);
+  return preset?.key ?? null;
+}
+
 interface ScreenerTableProps {
   rows: ScreenerRow[];
   filter: ScreenerFilter;
@@ -99,11 +145,13 @@ interface ScreenerTableProps {
   sortKey: ScreenerSortKey;
   sortDirection: ScreenerSortDirection;
   onSort: (key: ScreenerSortKey) => void;
+  onPreset: (preset: ScreenerPreset) => void;
 }
 
 /**
  * Premium, responsive Screener table. Rows with no quote yet render honest
- * "—" placeholders — never fabricates a live-looking price.
+ * "—" placeholders — never fabricates a live-looking price. The SMA columns
+ * (200W SMA / Dist) show "—" while the historical basis is unavailable.
  */
 export function ScreenerTable({
   rows,
@@ -114,8 +162,10 @@ export function ScreenerTable({
   sortKey,
   sortDirection,
   onSort,
+  onPreset,
 }: ScreenerTableProps) {
   const columns = buildColumns(onSort, sortKey, sortDirection);
+  const activePreset = presetFor(sortKey, sortDirection);
   return (
     <div className="scr-card">
       <div className="scr-toolbar">
@@ -133,14 +183,34 @@ export function ScreenerTable({
             </button>
           ))}
         </div>
-        <input
-          className="scr-search"
-          type="search"
-          aria-label="Search ticker or company"
-          placeholder="Search ticker or company…"
-          value={search}
-          onChange={(event) => onSearchChange(event.target.value)}
-        />
+        <div className="scr-toolbar-right">
+          <label className="scr-preset-label" htmlFor="scr-preset">
+            Sort
+          </label>
+          <select
+            id="scr-preset"
+            className="scr-preset"
+            value={activePreset ?? "none"}
+            aria-label="SMA sort preset"
+            onChange={(event) => {
+              const preset = SCREENER_PRESETS.find((p) => p.key === event.target.value);
+              if (preset) onPreset(preset);
+            }}
+          >
+            <option value="none">Chg %</option>
+            {SCREENER_PRESETS.map((preset) => (
+              <option key={preset.key} value={preset.key}>{preset.label}</option>
+            ))}
+          </select>
+          <input
+            className="scr-search"
+            type="search"
+            aria-label="Search ticker or company"
+            placeholder="Search ticker or company…"
+            value={search}
+            onChange={(event) => onSearchChange(event.target.value)}
+          />
+        </div>
       </div>
 
       <div className="scr-table-wrap">

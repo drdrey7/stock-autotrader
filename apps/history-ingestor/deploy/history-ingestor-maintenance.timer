@@ -1,0 +1,29 @@
+# Daily maintenance cadence (05:10 UTC = 01:10 ET, before NY market open).
+#
+# SUNDAY 05:10 UTC -> SPLITS reconciliation pass (the week that closed on
+#                    Friday is the cycle target; split history is compared
+#                    and reconciled, changes trigger a historical rewrite).
+# MONDAY 05:10 UTC -> WEEKLY refresh pass (the just-closed week's bucket is
+#                    storable only once Monday begins in New York; 05:10 UTC
+#                    is Sunday night / early-Monday ET inside the new NY
+#                    week — the deterministic fetch window that keeps the
+#                    in-progress week out).
+# TUE–SAT 05:10 UTC -> catch-up: if Monday's WEEKLY phase did not complete
+#                    (quota exhaustion / transient error), is_weekly_phase_ready
+#                    returns true and the cycle resumes from the checkpoint.
+#                    Idempotent: a complete cycle performs ZERO provider calls.
+#
+# A single service unit runs all phases: the durable cycle checkpoint in D1
+# decides which phase to work, and a quota-blocked run simply resumes on the
+# next permitted run. The random delay spreads load and avoids provider fan-out
+# peaks. Persistent=true catches up after a long outage.
+[Unit]
+Description=Stock Autotrader history maintenance (daily; Sun SPLITS / Mon-Sat WEEKLY catch-up)
+
+[Timer]
+OnCalendar=*-*-* 05:10:00
+RandomizedDelaySec=30m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

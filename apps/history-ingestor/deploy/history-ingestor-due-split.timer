@@ -1,0 +1,18 @@
+# Daily zero-provider due-split reconciliation cadence.
+#
+# 13:10 UTC = 09:10 ET (before US market open at 09:30 ET). The daily check
+# reads stored split_events, applies only newly-effective splits, updates
+# affected weekly history and technical_metrics — ZERO Alpha Vantage requests.
+#
+# Weekdays only (Tue-Sat). Monday is handled by the weekly maintenance timer.
+# The random delay spreads load.
+[Unit]
+Description=Daily due-split reconciliation (zero provider)
+
+[Timer]
+OnCalendar=Tue..Sat *-*-* 13:10:00
+RandomizedDelaySec=15m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

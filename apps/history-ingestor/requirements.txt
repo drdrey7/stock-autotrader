@@ -1,0 +1,8 @@
+# Runtime dependency notes for the history ingestor.
+#
+# The history ingestor uses ONLY the Python standard library:
+#   - urllib for the Alpha Vantage REST API and the Cloudflare D1 HTTP API,
+#   - zoneinfo (stdlib, py3.9+) for America/New_York calendar semantics,
+#   - fractions for exact split-ratio arithmetic.
+# No third-party packages are required at runtime or in tests (unittest only),
+# mirroring apps/quote-ingestor's zero-dependency posture.

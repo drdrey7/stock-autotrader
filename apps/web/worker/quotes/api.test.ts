@@ -37,6 +37,8 @@ function createApiDb(options: {
   companies?: Array<{ symbol: string; company: string }>;
   health?: unknown;
   wsHealth?: unknown;
+  metrics?: Array<Record<string, unknown>>;
+  splitEvents?: Array<{ symbol: string; effective_date: string }>;
 }) {
   const meta = new Map<string, string>();
   if (options.health !== undefined) meta.set(QUOTES_HEALTH_META_KEY, JSON.stringify(options.health));
@@ -59,6 +61,17 @@ function createApiDb(options: {
         async all<T>(): Promise<{ results: T[] }> {
           if (sql.includes("FROM latest_quotes")) return { results: (options.quotes ?? []) as T[] };
           if (sql.includes("FROM earnings_universe")) return { results: (options.companies ?? []) as T[] };
+          if (sql.includes("FROM technical_metrics")) return { results: (options.metrics ?? []) as T[] };
+          if (sql.includes("MAX(effective_date)")) {
+            const events = options.splitEvents ?? [];
+            // GROUP BY symbol: return one row per symbol with its latest effective_date
+            const bySymbol = new Map<string, string>();
+            for (const e of events) {
+              const prev = bySymbol.get(e.symbol);
+              if (!prev || e.effective_date > prev) bySymbol.set(e.symbol, e.effective_date);
+            }
+            return { results: [...bySymbol.entries()].map(([symbol, latest]) => ({ symbol, latest })) as T[] };
+          }
           return { results: [] as T[] };
         },
         async run(): Promise<{ meta: { changes: number } }> {
@@ -396,5 +409,119 @@ describe("readScreenerApi", () => {
     expect(apple.state).toBe("Stale");
     expect(apple.price).toBe(230); // last known remains serviceable
     expect(response.quotes.state).toBe("Stale");
+  });
+});
+
+describe("readScreenerApi — SMA200W fields (PR2)", () => {
+  /** Metrics row for AAPL anchored 2026-08-14 (ISO W33), 19900 sum. */
+  const metricsRow = (overrides: Record<string, unknown> = {}) => ({
+    symbol: "AAPL",
+    anchor_week: "2026-08-14",
+    completed_weeks_available: 1200,
+    sum_199: 19900,
+    anchor_close: 100,
+    closed_sma_200w: 100,
+    historical_data_as_of: "2026-08-19T06:00:00.000Z",
+    calculated_at: "2026-08-19T06:00:00.000Z",
+    status: "ok",
+    source: "alpha-vantage",
+    ...overrides,
+  });
+
+  it("exposes SMA fields on every row, honest nulls when no data", async () => {
+    const response = await readScreenerApi(envFrom(createApiDb({})), REGULAR);
+    expect(response.rows).toHaveLength(50);
+    for (const row of response.rows) {
+      expect(row).toHaveProperty("sma200w", null);
+      expect(row).toHaveProperty("distanceToSma200wPct", null);
+      expect(row.sma200wState).toBe("Unavailable");
+      expect(row.sma200wHistoryWeeks).toBeNull();
+      expect(row.sma200wAsOf).toBeNull();
+    }
+  });
+
+  it("computes the live SMA from metrics + latest quote (quote week after anchor)", async () => {
+    const db = createApiDb({
+      quotes: [quoteRow("AAPL", 110, "2026-08-19T15:00:00.000Z")], // W34
+      metrics: [metricsRow()],
+      wsHealth: wsHealthRow(),
+    });
+    const response = await readScreenerApi(envFrom(db), REGULAR);
+    const apple = response.rows.find((row) => row.symbol === "AAPL")!;
+    expect(apple.sma200w).toBeCloseTo((19900 + 110) / 200, 10); // 100.05
+    expect(apple.distanceToSma200wPct).toBeCloseTo((110 / 100.05 - 1) * 100, 10);
+    expect(apple.sma200wState).toBe("Above");
+    expect(apple.sma200wHistoryWeeks).toBe(1200);
+    expect(apple.sma200wAsOf).toBe("2026-08-19T06:00:00.000Z");
+    // Other symbols keep honest nulls.
+    const other = response.rows.find((row) => row.symbol === "MSFT")!;
+    expect(other.sma200w).toBeNull();
+    expect(other.sma200wState).toBe("Unavailable");
+  });
+
+  it("subtracts the anchor close when the quote's own week is stored (no double count)", async () => {
+    const db = createApiDb({
+      quotes: [quoteRow("AAPL", 100, "2026-08-14T19:30:00.000Z")], // W33 == anchor week, close == anchor_close
+      metrics: [metricsRow()],
+      wsHealth: wsHealthRow(),
+    });
+    const response = await readScreenerApi(envFrom(db), REGULAR);
+    const apple = response.rows.find((row) => row.symbol === "AAPL")!;
+    // Correct delta=0 math: prior_199_sum = closed_sma_200w*200 - anchor_close
+    // = 100*200 - 100 = 19900; sma = (19900 + 100) / 200 = 100.0 (the naive
+    // (sum_199 - anchor_close + price) would only supply 198 prior closes).
+    expect(apple.sma200w).toBeCloseTo((100 * 200 - 100 + 100) / 200, 10); // 100.0
+  });
+
+  it("reports NotEnoughHistory when history < 199 weeks, regardless of quote", async () => {
+    const db = createApiDb({
+      quotes: [quoteRow("NBIS", 50, "2026-08-19T15:00:00.000Z")],
+      metrics: [metricsRow({ symbol: "NBIS", completed_weeks_available: 90, sum_199: null, anchor_close: null, status: "not_enough_history" })],
+      wsHealth: wsHealthRow(),
+    });
+    const response = await readScreenerApi(envFrom(db), REGULAR);
+    const nbis = response.rows.find((row) => row.symbol === "NBIS")!;
+    expect(nbis.sma200w).toBeNull();
+    expect(nbis.distanceToSma200wPct).toBeNull();
+    expect(nbis.sma200wState).toBe("NotEnoughHistory");
+    expect(nbis.sma200wHistoryWeeks).toBe(90);
+  });
+
+  it("never fabricates a live SMA without a current quote", async () => {
+    const db = createApiDb({
+      metrics: [metricsRow()],
+      wsHealth: wsHealthRow(),
+    });
+    const response = await readScreenerApi(envFrom(db), REGULAR);
+    const apple = response.rows.find((row) => row.symbol === "AAPL")!;
+    expect(apple.sma200w).toBeNull();
+    expect(apple.sma200wState).toBe("Unavailable");
+    expect(apple.sma200wHistoryWeeks).toBe(1200);
+  });
+
+  it("drops schema-invalid metrics rows defensively (no crash, honest nulls)", async () => {
+    const db = createApiDb({
+      quotes: [quoteRow("AAPL", 110, "2026-08-19T15:00:00.000Z")],
+      metrics: [metricsRow({ sum_199: "not-a-number" })],
+      wsHealth: wsHealthRow(),
+    });
+    const response = await readScreenerApi(envFrom(db), REGULAR);
+    const apple = response.rows.find((row) => row.symbol === "AAPL")!;
+    expect(apple.sma200w).toBeNull();
+    expect(apple.sma200wState).toBe("Unavailable");
+  });
+
+  it("P2-1: Unavailable when quote is on/after split effective date but metrics calculated before", async () => {
+    // Split effective 2026-08-20; metrics calculated 2026-08-19; quote 2026-08-21
+    const db = createApiDb({
+      quotes: [quoteRow("AAPL", 110, "2026-08-21T15:00:00.000Z")],
+      metrics: [metricsRow({ calculated_at: "2026-08-19T06:00:00.000Z" })],
+      wsHealth: wsHealthRow(),
+      splitEvents: [{ symbol: "AAPL", effective_date: "2026-08-20" }],
+    });
+    const response = await readScreenerApi(envFrom(db), new Date("2026-08-21T15:00:00Z"));
+    const apple = response.rows.find((row) => row.symbol === "AAPL")!;
+    expect(apple.sma200w).toBeNull();
+    expect(apple.sma200wState).toBe("Unavailable");
   });
 });
