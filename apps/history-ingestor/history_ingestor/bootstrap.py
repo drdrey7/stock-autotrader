@@ -299,7 +299,7 @@ class BootstrapRunner:
             metrics = compute_technical_metrics(symbol, adjusted)
             write = self._d1.upsert_technical_metrics(metrics_row(symbol, metrics))
             if write.failed:
-                logger.warning("reconcile_previous_metrics: %s write failed: %s", symbol, write.error)
+                raise ProviderError(f"technical_metrics write failed for {symbol}: {write.error}")
 
     def _report(
         self,

@@ -9,6 +9,7 @@ from pathlib import Path
 
 from history_ingestor.bootstrap import BootstrapRunner
 from history_ingestor.config import Settings
+from history_ingestor.provider import ProviderError
 from history_ingestor.state import StateStore
 
 
@@ -501,6 +502,34 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual(report["status"], "complete")
             self.assertEqual(store.symbol_status("NVDA", "weekly"), "done")
             self.assertIn("NVDA", d1.metrics)
+
+    def test_reconcile_previous_metrics_write_failure_surfaces_error(self):
+        # Repair path: failed metrics write must surface, not silently succeed.
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            settings = settings_with()
+            provider = FakeProvider(
+                weekly_payloads={"NVDA": weekly_payload("NVDA")},
+                splits_payloads={"NVDA": splits_payload("NVDA")},
+            )
+            store = StateStore(settings, d1, state_path=Path(tmp) / "checkpoint.json")
+            # First run: succeeds.
+            runner = BootstrapRunner(settings, d1, provider, store, now_fn=lambda: NOW)
+            runner.run(universe=["NVDA"])
+            self.assertEqual(store.symbol_status("NVDA", "weekly"), "done")
+
+            # Simulate metrics row loss + failed repair write.
+            d1.metrics.clear()
+            d1.metrics_write_fail = True
+            provider2 = FakeProvider(
+                weekly_payloads={"NVDA": weekly_payload("NVDA")},
+                splits_payloads={"NVDA": splits_payload("NVDA")},
+            )
+            runner2 = BootstrapRunner(settings, d1, provider2, store, now_fn=lambda: NOW)
+            # Repair path must surface the failure (not silently return success).
+            with self.assertRaises(ProviderError) as ctx:
+                runner2.run(universe=["NVDA"])
+            self.assertIn("technical_metrics write failed", str(ctx.exception))
 
 
 
