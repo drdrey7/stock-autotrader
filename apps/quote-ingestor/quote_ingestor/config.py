@@ -78,6 +78,10 @@ class Settings:
     ws_reconnect_jitter: float = 0.3
     ws_connect_timeout_seconds: float = 20.0
 
+    # --- Market-data stall watchdog ---
+    ws_market_stall_seconds: float = 180.0
+    ws_market_stall_cooldown_seconds: float = 300.0
+
     # --- Cloudflare D1 HTTP API ---
     d1_max_retries: int = 3
     d1_retry_base_seconds: float = 1.0

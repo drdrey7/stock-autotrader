@@ -19,7 +19,7 @@ from . import __version__
 from .config import ConfigError, Settings, from_env, secret_present
 from .d1 import D1Client, D1QueryError
 from .health import HealthTracker
-from .market_hours import accept_regular_trade, in_flush_window
+from .market_hours import accept_regular_trade, in_flush_window, market_phase
 from .parser import TradeFrameParser
 from .state import QuoteStateStore
 from .universe import UniverseError, load_core_universe
@@ -69,6 +69,18 @@ class Ingestor:
         self.health = HealthTracker()
         self._stop = threading.Event()
         self._flush_thread: threading.Thread | None = None
+        self._watchdog_thread: threading.Thread | None = None
+        # Watchdog bookkeeping — guarded by _watchdog_lock
+        self._watchdog_lock = threading.Lock()
+        self._last_market_phase: str | None = None
+        self._last_connected: bool = False
+        self._grace_mono: float | None = None
+        self._last_stall_reconnect_mono: float | None = None
+        self._ws_client: FinnhubWebSocketClient | None = None
+
+    def set_ws_client(self, ws_client: FinnhubWebSocketClient) -> None:
+        """Wire the WebSocket client for the stall watchdog."""
+        self._ws_client = ws_client
 
     # ------------------------------------------------------------ WS message
 
@@ -92,11 +104,15 @@ class Ingestor:
         if not result.ticks:
             return
         now = self.clock()
+        accepted_regular = False
         for tick in result.ticks:
             if not self._accept_tick(tick, now):
                 continue
             if self.store.apply_tick(tick):
                 self.health.on_tick()
+                accepted_regular = True
+        if accepted_regular:
+            self.health.on_accepted_regular_tick()
 
     def _accept_tick(self, tick, now: dt.datetime) -> bool:
         """Only trades that belong to the CURRENT regular session enter state.
@@ -210,6 +226,8 @@ class Ingestor:
     def start(self) -> None:
         self._flush_thread = threading.Thread(target=self._flush_loop, daemon=True, name="flush")
         self._flush_thread.start()
+        self._watchdog_thread = threading.Thread(target=self._watchdog_loop, daemon=True, name="stall-watchdog")
+        self._watchdog_thread.start()
 
     def stop(self) -> None:
         self._stop.set()
@@ -217,6 +235,94 @@ class Ingestor:
     def wait(self, timeout: float = 10.0) -> None:
         if self._flush_thread is not None and self._flush_thread.is_alive():
             self._flush_thread.join(timeout=timeout)
+        if self._watchdog_thread is not None and self._watchdog_thread.is_alive():
+            self._watchdog_thread.join(timeout=timeout)
+
+    # ------------------------------------------------------------- watchdog
+
+    def _watchdog_loop(self) -> None:
+        """Market-data stall watchdog (see module docstring + incident 2026-08-19).
+
+        Runs every 10s. During market_phase == 'open' only: if the WS is
+        connected AND all subscriptions were sent AND NO accepted regular-session
+        tick from any Core Universe symbol has been observed for
+        >= ws_market_stall_seconds AND we are outside reconnect cooldown, then
+        force-close the current socket and let the existing reconnect path run.
+
+        Grace logic: on market-phase transition to 'open' (or on first WS
+        connect), reset the grace timer so a quiet-overnight socket is not
+        declared stalled at the opening bell. After every successful WS
+        reconnect, reset the grace timer too."""
+        check_interval = 10.0
+        while not self._stop.wait(check_interval):
+            try:
+                self._watchdog_tick()
+            except Exception:
+                logger.exception("watchdog tick failed")
+
+    def _watchdog_tick(self) -> None:
+        now = self.clock()
+        phase = market_phase(now)
+        ws = self._ws_client
+        with self._watchdog_lock:
+            last_phase = self._last_market_phase
+            self._last_market_phase = phase
+            is_connected = ws.is_connected if ws else False
+            subs_ok = ws.subscriptions_sent == len(self.symbols) if ws else False
+            just_connected = is_connected and not self._last_connected
+            self._last_connected = is_connected
+            mono = self.health.monotonic_now()
+            # Phase transition into 'open' -> fresh grace window.
+            if phase == "open" and last_phase != "open":
+                self._grace_mono = mono
+            # WS (re)connect -> fresh grace window.
+            if just_connected:
+                self._grace_mono = mono
+            # Outside market open: do nothing.
+            if phase != "open":
+                return
+            # Not yet fully subscribed, or no ws client: do nothing.
+            if ws is None or not is_connected or not subs_ok:
+                return
+            # Still inside the grace window: do nothing.
+            if self._grace_mono is not None and mono - self._grace_mono < self.settings.ws_market_stall_seconds:
+                return
+            # Cooldown after a watchdog reconnect: do nothing.
+            if (
+                self._last_stall_reconnect_mono is not None
+                and mono - self._last_stall_reconnect_mono < self.settings.ws_market_stall_cooldown_seconds
+            ):
+                return
+            # Check accepted-tick liveness.
+            last_tick_mono = self.health.last_accepted_regular_tick_monotonic()
+            if last_tick_mono is None:
+                # No tick ever accepted: treat connection time as baseline.
+                # If we're past grace with no ticks, that's a stall.
+                if self._grace_mono is not None and mono - self._grace_mono >= self.settings.ws_market_stall_seconds:
+                    self._trigger_stall_reconnect(ws, mono)
+                return
+            stall_seconds = mono - last_tick_mono
+            if stall_seconds >= self.settings.ws_market_stall_seconds:
+                self._trigger_stall_reconnect(ws, mono)
+
+    def _trigger_stall_reconnect(self, ws: FinnhubWebSocketClient, mono: float) -> None:
+        stall_seconds = self.settings.ws_market_stall_seconds
+        last_tick_mono = self.health.last_accepted_regular_tick_monotonic()
+        if last_tick_mono is not None:
+            stall_seconds = mono - last_tick_mono
+        logger.warning(
+            json.dumps({
+                "event": "ws_market_data_stalled",
+                "stall_seconds": round(stall_seconds, 1),
+                "subscriptions": ws.subscriptions_sent,
+                "message_count": ws.last_message_mono,
+                "tick_count": self.health.tick_count,
+                "ignored_non_regular_count": self.health.ignored_non_regular_count,
+            }, sort_keys=True)
+        )
+        self._last_stall_reconnect_mono = mono
+        self.health.on_market_stall_reconnect()
+        ws.request_reconnect("market_data_stalled")
 
     # ------------------------------------------------------------- validation
 
@@ -286,6 +392,7 @@ def main(argv: list[str] | None = None) -> int:
         on_message=ingestor.on_message,
         on_status=ingestor.health.on_ws_status,
     )
+    ingestor.set_ws_client(ws)
 
     _install_signal_handlers(ingestor, ws)
     ingestor.start()
