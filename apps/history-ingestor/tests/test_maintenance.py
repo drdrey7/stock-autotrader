@@ -12,9 +12,9 @@ from history_ingestor.maintenance import MaintenanceRunner
 from history_ingestor.maintenance_state import MaintenanceStore
 
 try:
-    from test_bootstrap import FakeD1, FakeProvider, splits_payload, weekly_payload
+    from test_bootstrap import FakeD1, FakeProvider, future_splits_payload, splits_payload, weekly_payload
 except ModuleNotFoundError:  # imported as tests.test_maintenance (module path mode)
-    from tests.test_bootstrap import FakeD1, FakeProvider, splits_payload, weekly_payload  # type: ignore[no-redef]
+    from tests.test_bootstrap import FakeD1, FakeProvider, future_splits_payload, splits_payload, weekly_payload  # type: ignore[no-redef]
 
 
 def settings_with(keys=("K1", "K2")):
@@ -472,6 +472,37 @@ class DueSplitReconciliationTests(unittest.TestCase):
             report = runner.apply_due_splits()
             self.assertEqual(report["status"], "noop")
             self.assertEqual(report["splits_applied"], 0)
+
+    def test_apply_due_splits_metrics_write_failure_reports_error(self):
+        # If the metrics UPSERT fails in apply_due_splits, the error must be
+        # reported per-symbol (not abort the whole run).
+        from history_ingestor.bootstrap import BootstrapRunner
+        from history_ingestor.state import StateStore
+
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            d1.metrics_write_fail = True
+            settings = settings_with()
+            provider = FakeProvider(
+                weekly_payloads={"NVDA": weekly_payload("NVDA")},
+                splits_payloads={"NVDA": future_splits_payload("NVDA", future_date="2026-08-17")},
+            )
+            # Bootstrap first to populate weekly rows + split_events.
+            bootstrap_store = StateStore(settings, d1, state_path=Path(tmp) / "bootstrap.json")
+            bootstrap_runner = BootstrapRunner(settings, d1, provider, bootstrap_store, now_fn=lambda: MON_1)
+            bootstrap_runner.run(universe=["NVDA"])
+            self.assertIn("NVDA", d1.weekly)
+            self.assertTrue(d1.read_split_events("NVDA"))
+
+            # apply_due_splits: split effective 2026-08-17 (Monday), run on Tuesday.
+            TUE = dt.datetime(2026, 8, 18, 12, 0, tzinfo=dt.UTC)
+            maintenance_store = MaintenanceStore(settings, d1, state_path=Path(tmp) / "maintenance.json")
+            maintenance_runner = MaintenanceRunner(settings, d1, provider, maintenance_store, now_fn=lambda: TUE)
+            report = maintenance_runner.apply_due_splits(symbols_filter=["NVDA"])
+            # The metrics write failure must surface in the report.
+            self.assertIn("NVDA", report["symbols"])
+            self.assertEqual(report["symbols"]["NVDA"]["status"], "error")
+            self.assertIn("technical_metrics write failed", report["symbols"]["NVDA"]["error"])
 
 
 class D1MetricsWriteFailureTests(unittest.TestCase):

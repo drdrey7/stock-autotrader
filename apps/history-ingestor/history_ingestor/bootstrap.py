@@ -34,7 +34,7 @@ from .sma import TechnicalMetrics, compute_technical_metrics
 from .splits import adjust_series, split_events_from_rows, split_events_to_rows
 from .state import STATUS_DONE, STATUS_ERROR, StateStore
 from .universe import load_core_universe
-from .weeks import completed_bars_filter
+from .weeks import completed_bars_filter, ny_date_of
 
 logger = logging.getLogger("history_ingestor.bootstrap")
 
@@ -186,7 +186,12 @@ class BootstrapRunner:
                     completed_bars = [bar for bar in bars if bar.week_end_date in completed_set]
                     if not completed_bars:
                         raise ProviderError("no completed weekly buckets (provider only has the in-progress week)")
-                    adjusted = adjust_series(completed_bars, self._splits_cache[symbol])
+                    as_of = ny_date_of(self._now())
+                    adjusted = adjust_series(
+                        completed_bars,
+                        self._splits_cache[symbol],
+                        as_of_date=f"{as_of.year:04d}-{as_of.month:02d}-{as_of.day:02d}",
+                    )
                     weekly_fetched += 1
                     if not dry_run:
                         rows = [

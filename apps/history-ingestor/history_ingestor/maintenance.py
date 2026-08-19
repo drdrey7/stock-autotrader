@@ -507,14 +507,19 @@ class MaintenanceRunner:
                         bar.symbol, bar.week_end_date, bar.open, bar.high, bar.low,
                         bar.close, bar.volume, float(factor), adj_close, _now_iso(),
                     ))
+            if changed:
+                write = self._d1.upsert_weekly_rows(changed)
+                if write.failed:
+                    report["symbols"][symbol] = {"status": "error", "error": write.error}
+                    continue
+            metrics = compute_technical_metrics(symbol, [(bar, close) for bar, _f, close in adjusted_full])
+            try:
+                self._upsert_metrics(symbol, metrics)
+            except (ProviderError, D1QueryError) as exc:
+                report["symbols"][symbol] = {"status": "error", "error": str(exc)[:200]}
+                continue
             if not changed:
                 continue
-            write = self._d1.upsert_weekly_rows(changed)
-            if write.failed:
-                report["symbols"][symbol] = {"status": "error", "error": write.error}
-                continue
-            metrics = compute_technical_metrics(symbol, [(bar, close) for bar, _f, close in adjusted_full])
-            self._upsert_metrics(symbol, metrics)
             report["symbols"][symbol] = {"status": "applied", "rows_updated": len(changed)}
             report["rows_updated"] += len(changed)
             report["metrics_updated"] += 1

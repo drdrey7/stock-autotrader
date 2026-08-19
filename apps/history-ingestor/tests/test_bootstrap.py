@@ -54,6 +54,14 @@ def splits_payload(symbol):
     ]}
 
 
+def future_splits_payload(symbol, future_date="2026-09-15"):
+    """Splits payload with one past and one future-dated split."""
+    return {"symbol": symbol, "data": [
+        {"effective_date": "2024-06-10", "split_factor": "10.0000"},
+        {"effective_date": future_date, "split_factor": "4.0000"},
+    ]}
+
+
 class FakeD1:
     def __init__(self):
         self.weekly: dict[str, list] = {}
@@ -502,6 +510,29 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual(report["status"], "complete")
             self.assertEqual(store.symbol_status("NVDA", "weekly"), "done")
             self.assertIn("NVDA", d1.metrics)
+
+    def test_bootstrap_does_not_apply_future_dated_splits(self):
+        # A future-dated split must NOT be applied to the historical basis at bootstrap.
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            settings = settings_with()
+            provider = FakeProvider(
+                weekly_payloads={"NVDA": weekly_payload("NVDA")},
+                splits_payloads={"NVDA": future_splits_payload("NVDA", future_date="2026-09-15")},
+            )
+            store = StateStore(settings, d1, state_path=Path(tmp) / "checkpoint.json")
+            runner = BootstrapRunner(settings, d1, provider, store, now_fn=lambda: NOW)
+            report = runner.run(universe=["NVDA"])
+            self.assertEqual(report["status"], "complete")
+            # Future split (2026-09-15) must NOT be applied: rows before 2024-06-10
+            # should have factor 10 (past split), rows after 2024-06-10 should have
+            # factor 1 (future split not yet effective).
+            rows = d1.weekly["NVDA"]
+            for r in rows:
+                if r[1] < "2024-06-10":
+                    self.assertEqual(r[7], 10.0, f"{r[1]} factor should be 10 (past split only)")
+                else:
+                    self.assertEqual(r[7], 1.0, f"{r[1]} factor should be 1 (future split not applied)")
 
     def test_reconcile_previous_metrics_write_failure_surfaces_error(self):
         # Repair path: failed metrics write must surface, not silently succeed.
