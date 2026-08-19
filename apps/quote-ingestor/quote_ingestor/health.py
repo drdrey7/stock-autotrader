@@ -43,6 +43,9 @@ class HealthTracker:
         self.last_error: str | None = None
         self.last_ws_heartbeat_at: float | None = None
         self.ignored_non_regular_count = 0
+        self.last_accepted_regular_tick_at: float | None = None
+        self._last_accepted_regular_tick_monotonic: float | None = None
+        self.market_stall_reconnect_count = 0
 
     # ---------------------------------------------------------------- updates
 
@@ -124,6 +127,34 @@ class HealthTracker:
         with self._lock:
             self.ignored_non_regular_count += count
 
+    def on_accepted_regular_tick(self) -> None:
+        """An accepted regular-session tick arrived — the watchdog's liveness
+        signal. Maintains two timestamps:
+
+        - ``_last_accepted_regular_tick_monotonic``: monotonic, used ONLY
+          internally for stall elapsed-duration decisions (immune to wall-clock
+          jumps).
+        - ``last_accepted_regular_tick_at``: wall-clock (time.time), used for
+          the serialised health/D1 output so operators see a real UTC instant.
+        """
+        with self._lock:
+            self._last_accepted_regular_tick_monotonic = time.monotonic()
+            self.last_accepted_regular_tick_at = time.time()
+
+    def on_market_stall_reconnect(self) -> None:
+        """The stall watchdog forced a reconnect."""
+        with self._lock:
+            self.market_stall_reconnect_count += 1
+
+    def monotonic_now(self) -> float:
+        """Read monotonic clock directly (watchdog thread)."""
+        return time.monotonic()
+
+    def last_accepted_regular_tick_monotonic(self) -> float | None:
+        """Raw monotonic timestamp of last accepted regular tick (watchdog)."""
+        with self._lock:
+            return self._last_accepted_regular_tick_monotonic
+
     def on_heartbeat_written(self) -> None:
         """The 1/minute D1 health heartbeat landed (process-alive proof)."""
         with self._lock:
@@ -156,6 +187,8 @@ class HealthTracker:
                 "last_error": self.last_error,
                 "last_ws_heartbeat_at": _iso(self.last_ws_heartbeat_at),
                 "ignored_non_regular_count": self.ignored_non_regular_count,
+                "last_accepted_regular_tick_at": _iso(self.last_accepted_regular_tick_at),
+                "market_stall_reconnect_count": self.market_stall_reconnect_count,
                 "uptime_seconds": round(time.time() - self.started_at, 1),
                 "updated_at": _iso(time.time()),
             }

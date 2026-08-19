@@ -35,6 +35,19 @@ def _positive_int(name: str, default: int) -> int:
     return value
 
 
+def _positive_float(name: str, default: float) -> float:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise ConfigError(f"{name} must be a number, got {raw!r}") from exc
+    if value <= 0:
+        raise ConfigError(f"{name} must be positive, got {value}")
+    return value
+
+
 def _float_env(name: str, default: float, minimum: float = 0.0) -> float:
     raw = os.environ.get(name, "").strip()
     if not raw:
@@ -78,6 +91,10 @@ class Settings:
     ws_reconnect_jitter: float = 0.3
     ws_connect_timeout_seconds: float = 20.0
 
+    # --- Market-data stall watchdog ---
+    ws_market_stall_seconds: float = 180.0
+    ws_market_stall_cooldown_seconds: float = 300.0
+
     # --- Cloudflare D1 HTTP API ---
     d1_max_retries: int = 3
     d1_retry_base_seconds: float = 1.0
@@ -120,6 +137,8 @@ def from_env(environ: os._Environ | dict[str, str] | None = None) -> Settings:
             ws_recv_timeout_seconds=_float_env("WS_RECV_TIMEOUT_SECONDS", 10.0),
             ws_reconnect_base_seconds=_float_env("WS_RECONNECT_BASE_SECONDS", 0.5),
             ws_reconnect_max_seconds=_float_env("WS_RECONNECT_MAX_SECONDS", 60.0),
+            ws_market_stall_seconds=_positive_float("WS_MARKET_STALL_SECONDS", 180.0),
+            ws_market_stall_cooldown_seconds=_positive_float("WS_MARKET_STALL_COOLDOWN_SECONDS", 300.0),
             d1_max_retries=_positive_int("D1_MAX_RETRIES", 3),
             universe_path=Path(os.environ.get(
                 "QUOTE_INGESTOR_UNIVERSE",

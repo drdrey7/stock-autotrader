@@ -186,6 +186,9 @@ class FinnhubWebSocketClient:
         self.last_error: str | None = None
         self.subscriptions_sent = 0
         self.heartbeat_dead = False
+        self._conn_lock = threading.Lock()
+        self._conn: WebSocketConnection | None = None
+        self._watchdog_reconnect = threading.Event()
 
     # --- control -----------------------------------------------------------
 
@@ -195,6 +198,27 @@ class FinnhubWebSocketClient:
     @property
     def is_connected(self) -> bool:
         return self._connected
+
+    def request_reconnect(self, reason: str) -> None:
+        """Watchdog API: request a reconnect of the current connection.
+
+        Safely closes the CURRENT socket from another thread and lets the
+        existing run() reconnect path take over. Never creates a second
+        socket. Idempotent: concurrent watchdog calls collapse into one
+        reconnect request."""
+        self._watchdog_reconnect.set()
+        with self._conn_lock:
+            if self._conn is not None:
+                try:
+                    self._conn.close()
+                except Exception:
+                    pass
+
+    def _clear_reconnect_request(self) -> None:
+        self._watchdog_reconnect.clear()
+
+    def _should_reconnect(self) -> bool:
+        return self._watchdog_reconnect.is_set()
 
     # --- heartbeat ---------------------------------------------------------
 
@@ -286,7 +310,11 @@ class FinnhubWebSocketClient:
                 )
 
     def _run_once(self) -> None:
-        conn = self._connect_factory()
+        with self._conn_lock:
+            if self._should_reconnect():
+                self._clear_reconnect_request()
+            conn = self._connect_factory()
+            self._conn = conn
         self.connect_count += 1
         self._connected = True
         self._connected_at = self._monotonic()
@@ -304,6 +332,8 @@ class FinnhubWebSocketClient:
         try:
             self._consume(conn)
         finally:
+            with self._conn_lock:
+                self._conn = None
             self._connected = False
             stopped = self._stop.is_set()
             try:
