@@ -1,0 +1,14 @@
+# Weekly maintenance cadence. Monday 05:10 UTC lands inside the new NY week
+# after the prior week's Friday close — the deterministic fetch window that
+# stores the just-closed week and keeps the in-progress week out. The random
+# delay spreads load and avoids provider fan-out peaks.
+[Unit]
+Description=Weekly Stock Autotrader history maintenance
+
+[Timer]
+OnCalendar=Mon *-*-* 05:10:00
+RandomizedDelaySec=30m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

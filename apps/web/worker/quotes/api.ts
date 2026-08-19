@@ -21,6 +21,8 @@ import {
   type WSCollectorState,
 } from "./health";
 import { readLatestQuotes } from "./storage";
+import { computeLiveSma200w, type QuoteInput } from "../sma/metrics";
+import { readTechnicalMetrics } from "../sma/storage";
 
 interface CompanyRow {
   symbol: string;
@@ -86,10 +88,11 @@ function safeguardWsCollectorState(
  * collector is fully independent of frontend traffic.
  */
 export async function readScreenerApi(env: Env, now = new Date()): Promise<ScreenerApiResponse> {
-  const [quotes, companies, wsHealth] = await Promise.all([
+  const [quotes, companies, wsHealth, metrics] = await Promise.all([
     readLatestQuotes(env.DB),
     readCoreCompanies(env.DB),
     readWsIngestorHealth(env.DB),
+    readTechnicalMetrics(env.DB),
   ]);
   // REST shard health is only used as a fallback (manual/diagnostic runs)
   // when the WebSocket collector has never written a record.
@@ -101,6 +104,10 @@ export async function readScreenerApi(env: Env, now = new Date()): Promise<Scree
   const rows: ScreenerRow[] = CORE_UNIVERSE.map((symbol) => {
     const quote = quoteBySymbol.get(symbol);
     const state: SourceState = quoteState(quote?.updated_at ?? null, now);
+    const quoteInput: QuoteInput | null = quote && quote.price > 0
+      ? { price: quote.price, provider_timestamp: quote.provider_timestamp }
+      : null;
+    const sma = computeLiveSma200w(quoteInput, metrics.get(symbol) ?? null);
     return {
       symbol,
       company: companyBySymbol.get(symbol) ?? null,
@@ -115,6 +122,11 @@ export async function readScreenerApi(env: Env, now = new Date()): Promise<Scree
       asOf: quote?.provider_timestamp ?? null,
       updatedAt: quote?.updated_at ?? null,
       state,
+      sma200w: sma.sma200w,
+      distanceToSma200wPct: sma.distanceToSma200wPct,
+      sma200wState: sma.sma200wState,
+      sma200wHistoryWeeks: sma.sma200wHistoryWeeks,
+      sma200wAsOf: sma.sma200wAsOf,
     };
   });
 

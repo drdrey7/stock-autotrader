@@ -16,6 +16,11 @@ const row = (overrides: Partial<ScreenerRow>): ScreenerRow => ({
   asOf: "2026-08-13T14:00:00.000Z",
   updatedAt: "2026-08-13T14:00:00.000Z",
   state: "Live",
+  sma200w: null,
+  distanceToSma200wPct: null,
+  sma200wState: "Unavailable",
+  sma200wHistoryWeeks: null,
+  sma200wAsOf: null,
   ...overrides,
 });
 
@@ -74,5 +79,70 @@ describe("Screener filter/sort logic", () => {
     ];
     expect(applyScreenerQuery(rows, query({ filter: "gainers", search: "up2" })).map((r) => r.symbol))
       .toEqual(["UP2"]);
+  });
+});
+
+describe("Screener SMA200W filters (PR2)", () => {
+  it("filters Above / Near / Below by sma200wState", () => {
+    const rows = [
+      row({ symbol: "ABOVE", sma200wState: "Above", distanceToSma200wPct: 8.2 }),
+      row({ symbol: "NEAR", sma200wState: "Near", distanceToSma200wPct: 1.4 }),
+      row({ symbol: "BELOW", sma200wState: "Below", distanceToSma200wPct: -4.0 }),
+      row({ symbol: "NOHIST", sma200wState: "NotEnoughHistory", distanceToSma200wPct: null }),
+      row({ symbol: "NODATA", sma200wState: "Unavailable", distanceToSma200wPct: null }),
+    ];
+    expect(applyScreenerQuery(rows, query({ filter: "above" })).map((r) => r.symbol)).toEqual(["ABOVE"]);
+    expect(applyScreenerQuery(rows, query({ filter: "near" })).map((r) => r.symbol)).toEqual(["NEAR"]);
+    expect(applyScreenerQuery(rows, query({ filter: "below" })).map((r) => r.symbol)).toEqual(["BELOW"]);
+  });
+
+  it("combines SMA filter with search and existing gainers/losers", () => {
+    const rows = [
+      row({ symbol: "UP1", changePct: 3, sma200wState: "Above", distanceToSma200wPct: 5 }),
+      row({ symbol: "UP2", changePct: 3, sma200wState: "Below", distanceToSma200wPct: -5 }),
+      row({ symbol: "DN1", changePct: -2, sma200wState: "Above", distanceToSma200wPct: 6 }),
+    ];
+    expect(applyScreenerQuery(rows, query({ filter: "gainers" })).map((r) => r.symbol)).toEqual(["UP1", "UP2"]);
+    expect(applyScreenerQuery(rows, query({ filter: "above", search: "up" })).map((r) => r.symbol)).toEqual(["UP1"]);
+  });
+});
+
+describe("Screener SMA200W sorting (PR2)", () => {
+  const smaRows = [
+    row({ symbol: "PLUS3", distanceToSma200wPct: 3.0, sma200wState: "Near" }),
+    row({ symbol: "PLUS12", distanceToSma200wPct: 12.4, sma200wState: "Above" }),
+    row({ symbol: "MINUS4", distanceToSma200wPct: -3.9, sma200wState: "Below" }),
+    row({ symbol: "PLUS1_7", distanceToSma200wPct: 1.7, sma200wState: "Near" }),
+    row({ symbol: "NOVAL", distanceToSma200wPct: null, sma200wState: "Unavailable" }),
+  ];
+
+  it("closest to 200W sorts by ABS(distance) ascending, nulls last", () => {
+    expect(applyScreenerQuery(smaRows, query({ sortKey: "smaDistance", direction: "asc" })).map((r) => r.symbol))
+      .toEqual(["PLUS1_7", "PLUS3", "MINUS4", "PLUS12", "NOVAL"]);
+  });
+
+  it("smaDistance desc sorts by ABS(distance) descending, nulls last", () => {
+    expect(applyScreenerQuery(smaRows, query({ sortKey: "smaDistance", direction: "desc" })).map((r) => r.symbol))
+      .toEqual(["PLUS12", "MINUS4", "PLUS3", "PLUS1_7", "NOVAL"]);
+  });
+
+  it("furthest above sorts raw distance descending (fixed direction)", () => {
+    expect(applyScreenerQuery(smaRows, query({ sortKey: "smaAbove", direction: "desc" })).map((r) => r.symbol))
+      .toEqual(["PLUS12", "PLUS3", "PLUS1_7", "MINUS4", "NOVAL"]);
+  });
+
+  it("furthest below sorts raw distance ascending (fixed direction)", () => {
+    expect(applyScreenerQuery(smaRows, query({ sortKey: "smaBelow", direction: "asc" })).map((r) => r.symbol))
+      .toEqual(["MINUS4", "PLUS1_7", "PLUS3", "PLUS12", "NOVAL"]);
+  });
+
+  it("sorts by sma200w value with nulls last", () => {
+    const rows = [
+      row({ symbol: "A", sma200w: 100 }),
+      row({ symbol: "B", sma200w: 220 }),
+      row({ symbol: "C", sma200w: null }),
+    ];
+    expect(applyScreenerQuery(rows, query({ sortKey: "sma200w", direction: "desc" })).map((r) => r.symbol))
+      .toEqual(["B", "A", "C"]);
   });
 });

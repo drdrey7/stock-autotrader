@@ -17,6 +17,11 @@ const row = (symbol: string, price: number | null, changePct: number | null, sta
   asOf: "2026-08-13T14:00:00.000Z",
   updatedAt: "2026-08-13T14:00:00.000Z",
   state,
+  sma200w: null,
+  distanceToSma200wPct: null,
+  sma200wState: "Unavailable",
+  sma200wHistoryWeeks: null,
+  sma200wAsOf: null,
 });
 
 const makeResponse = (rows: ScreenerRow[]): ScreenerApiResponse => {

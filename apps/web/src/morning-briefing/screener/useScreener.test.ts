@@ -17,6 +17,11 @@ const row = (symbol: string): ScreenerRow => ({
   asOf: "2026-08-13T14:00:00.000Z",
   updatedAt: "2026-08-13T14:00:00.000Z",
   state: "Live",
+  sma200w: null,
+  distanceToSma200wPct: null,
+  sma200wState: "Unavailable",
+  sma200wHistoryWeeks: null,
+  sma200wAsOf: null,
 });
 
 const response = (): ScreenerApiResponse => ({

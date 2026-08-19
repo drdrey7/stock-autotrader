@@ -14,6 +14,10 @@
 .scr-chip{padding:7px 13px;border:1px solid var(--border);border-radius:999px;background:var(--surface-2);color:var(--muted);font-size:10px;font-weight:800;cursor:pointer;letter-spacing:.03em}
 .scr-chip:hover{border-color:var(--green)}
 .scr-chip-active{background:var(--green);border-color:var(--green);color:#fff}
+.scr-toolbar-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.scr-preset-label{font-size:9px;font-weight:800;letter-spacing:.08em;color:var(--muted);text-transform:uppercase}
+.scr-preset{padding:7px 10px;border:1px solid var(--border);border-radius:9px;background:var(--surface-2);color:var(--text);font-size:11px;font-weight:700;outline:none;cursor:pointer}
+.scr-preset:focus{border-color:var(--green)}
 .scr-search{min-width:220px;padding:8px 12px;border:1px solid var(--border);border-radius:9px;background:var(--surface-2);color:var(--text);font-size:11px;outline:none}
 .scr-search:focus{border-color:var(--green)}
 
@@ -30,6 +34,7 @@
 .scr-price{font-variant-numeric:tabular-nums;font-weight:700}
 .scr-up{color:var(--green);font-weight:700;font-variant-numeric:tabular-nums}
 .scr-down{color:var(--red);font-weight:700;font-variant-numeric:tabular-nums}
+.scr-near{color:var(--amber);font-weight:700;font-variant-numeric:tabular-nums}
 .scr-flat{color:var(--muted);font-variant-numeric:tabular-nums}
 .scr-sort{background:none;border:0;padding:0;color:inherit;font:inherit;font-weight:800;cursor:pointer;letter-spacing:inherit;text-transform:inherit;display:inline-flex;align-items:center;gap:4px}
 .scr-sort:hover{color:var(--text)}

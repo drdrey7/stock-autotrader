@@ -1,0 +1,29 @@
+# History ingestor weekly maintenance — recurring service (documented install).
+
+[Unit]
+Description=Stock Autotrader weekly history maintenance (Alpha Vantage)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=hermes
+Group=hermes
+WorkingDirectory=/home/hermes/projects/stock-autotrader/apps/history-ingestor
+EnvironmentFile=/etc/stock-autotrader/alpha-vantage.env
+ExecStart=/usr/bin/python3 -m history_ingestor maintenance
+# Protect like the quote-ingestor service: no new privileges, read-only home,
+# no capabilities. The D1 writes go over HTTPS to the Cloudflare API.
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=true
+NoNewPrivileges=true
+CapabilityBoundingSet=
+# One-shot; the timer drives cadence. Restart only on transient glitches.
+Restart=on-failure
+RestartSec=120
+# Hard cap so a pathological provider loop can never run the clock out.
+TimeoutStartSec=3600
+
+[Install]
+WantedBy=multi-user.target

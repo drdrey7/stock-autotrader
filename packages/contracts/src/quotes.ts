@@ -25,6 +25,39 @@ export const quoteObservationSchema = z.object({
 export type QuoteObservation = z.infer<typeof quoteObservationSchema>;
 
 /**
+ * Live 200-week SMA position states (Screener PR2).
+ *
+ * Computed on the RAW distance value (display rounding never feeds the
+ * classifier): distance < 0 -> Below; 0 <= distance <= 3 -> Near;
+ * distance > 3 -> Above. "NotEnoughHistory" when fewer than 199 completed
+ * weeks precede the quote's trading week; "Unavailable" when the quote or
+ * the metrics basis is missing/inconsistent — a live SMA is never fabricated.
+ */
+export const sma200wStateValues = ["Above", "Near", "Below", "NotEnoughHistory", "Unavailable"] as const;
+export type Sma200wState = (typeof sma200wStateValues)[number];
+
+/**
+ * The precomputed historical basis row (technical_metrics in D1, maintained
+ * by apps/history-ingestor). sum_199 = the 199 most recent completed
+ * split-adjusted closes ending at anchor_week; anchor_close = the
+ * split-adjusted close of anchor_week (one-row correction term the Worker
+ * uses when the quote's own week is already stored as completed history).
+ */
+export const technicalMetricsRowSchema = z.object({
+  symbol: z.string().regex(/^[A-Z][A-Z0-9-]{0,11}$/),
+  anchor_week: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
+  completed_weeks_available: z.number().int().nonnegative(),
+  sum_199: z.number().finite().nullable(),
+  anchor_close: z.number().positive().finite().nullable(),
+  closed_sma_200w: z.number().positive().finite().nullable(),
+  historical_data_as_of: isoTimestampSchema.nullable(),
+  calculated_at: isoTimestampSchema,
+  status: z.enum(["ok", "limited", "not_enough_history", "no_data"]),
+  source: z.string().trim().min(1).max(128),
+});
+export type TechnicalMetricsRow = z.infer<typeof technicalMetricsRowSchema>;
+
+/**
  * One Core Universe symbol combined with its latest quote state.
  * `state` reuses the project's shared freshness vocabulary
  * (Live / Cached / Stale / Unavailable / Error).
@@ -43,6 +76,15 @@ export const screenerRowSchema = z.object({
   asOf: isoTimestampSchema.nullable(),
   updatedAt: isoTimestampSchema.nullable(),
   state: z.enum(sourceStateValues),
+  // Live 200-week SMA (Screener PR2). sma200w/distance are null whenever the
+  // value cannot be computed honestly (no quote, no metrics basis, data gap);
+  // sma200wState then reports NotEnoughHistory or Unavailable. Numeric
+  // values are raw (full precision) — display rounding is a client concern.
+  sma200w: z.number().positive().finite().nullable(),
+  distanceToSma200wPct: z.number().finite().nullable(),
+  sma200wState: z.enum(sma200wStateValues).nullable(),
+  sma200wHistoryWeeks: z.number().int().nonnegative().nullable(),
+  sma200wAsOf: isoTimestampSchema.nullable(),
 });
 export type ScreenerRow = z.infer<typeof screenerRowSchema>;
 
