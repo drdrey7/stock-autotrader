@@ -88,7 +88,7 @@ function safeguardWsCollectorState(
  * collector is fully independent of frontend traffic.
  */
 export async function readScreenerApi(env: Env, now = new Date()): Promise<ScreenerApiResponse> {
-  const [quotes, companies, wsHealth, metrics, latestSplitEffectiveDate] = await Promise.all([
+  const [quotes, companies, wsHealth, metrics, latestSplitEffectiveDates] = await Promise.all([
     readLatestQuotes(env.DB),
     readCoreCompanies(env.DB),
     readWsIngestorHealth(env.DB),
@@ -108,7 +108,7 @@ export async function readScreenerApi(env: Env, now = new Date()): Promise<Scree
     const quoteInput: QuoteInput | null = quote && quote.price > 0
       ? { price: quote.price, provider_timestamp: quote.provider_timestamp }
       : null;
-    const sma = computeLiveSma200w(quoteInput, metrics.get(symbol) ?? null, latestSplitEffectiveDate);
+    const sma = computeLiveSma200w(quoteInput, metrics.get(symbol) ?? null, latestSplitEffectiveDates);
     return {
       symbol,
       company: companyBySymbol.get(symbol) ?? null,

@@ -407,5 +407,49 @@ class DueSplitReconciliationTests(unittest.TestCase):
             self.assertEqual(report["splits_applied"], 0)
 
 
+class D1MetricsWriteFailureTests(unittest.TestCase):
+    """P2: _upsert_metrics must check D1WriteResult.failure."""
+
+    def test_metrics_write_fail_not_done_retried_next_run(self):
+        # D1 metrics write fails -> metrics STATUS_ERROR, not DONE
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            d1.metrics_write_fail = True
+            provider = FakeProvider(
+                weekly_payloads={"NVDA": weekly_payload("NVDA")},
+                splits_payloads={"NVDA": splits_payload("NVDA")},
+            )
+            runner, store = make_runner(d1, provider, tmp, MON_1)
+            report = runner.run(universe=["NVDA"])
+            # Metrics should be in error state (write failed)
+            self.assertEqual(store.state.symbol_status("NVDA", "metrics"), "error")
+            # Weekly should be done (write succeeded)
+            self.assertEqual(store.state.symbol_status("NVDA", "weekly"), "done")
+
+    def test_metrics_write_fail_retried_on_next_run(self):
+        # First run: write fails -> metrics=error. Next cycle: retry -> metrics=done.
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            d1.metrics_write_fail = True
+            provider = FakeProvider(
+                weekly_payloads={"NVDA": weekly_payload("NVDA")},
+                splits_payloads={"NVDA": splits_payload("NVDA")},
+            )
+            runner, store = make_runner(d1, provider, tmp, MON_1)
+            # First run: write fails
+            runner.run(universe=["NVDA"])
+            self.assertEqual(store.state.symbol_status("NVDA", "metrics"), "error")
+
+            # Second run (new cycle, write succeeds)
+            d1.metrics_write_fail = False
+            provider2 = FakeProvider(
+                weekly_payloads={"NVDA": weekly_payload("NVDA")},
+                splits_payloads={"NVDA": splits_payload("NVDA")},
+            )
+            runner2, store2 = make_runner(d1, provider2, tmp, MON_2)
+            runner2.run(universe=["NVDA"])
+            self.assertEqual(store2.state.symbol_status("NVDA", "metrics"), "done")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -38,7 +38,7 @@ function createApiDb(options: {
   health?: unknown;
   wsHealth?: unknown;
   metrics?: Array<Record<string, unknown>>;
-  splitEvents?: Array<{ effective_date: string }>;
+  splitEvents?: Array<{ symbol: string; effective_date: string }>;
 }) {
   const meta = new Map<string, string>();
   if (options.health !== undefined) meta.set(QUOTES_HEALTH_META_KEY, JSON.stringify(options.health));
@@ -64,8 +64,13 @@ function createApiDb(options: {
           if (sql.includes("FROM technical_metrics")) return { results: (options.metrics ?? []) as T[] };
           if (sql.includes("MAX(effective_date)")) {
             const events = options.splitEvents ?? [];
-            const latest = events.length > 0 ? events.reduce((a, b) => a.effective_date > b.effective_date ? a : b).effective_date : null;
-            return { results: [{ latest }] as T[] };
+            // GROUP BY symbol: return one row per symbol with its latest effective_date
+            const bySymbol = new Map<string, string>();
+            for (const e of events) {
+              const prev = bySymbol.get(e.symbol);
+              if (!prev || e.effective_date > prev) bySymbol.set(e.symbol, e.effective_date);
+            }
+            return { results: [...bySymbol.entries()].map(([symbol, latest]) => ({ symbol, latest })) as T[] };
           }
           return { results: [] as T[] };
         },
@@ -512,7 +517,7 @@ describe("readScreenerApi — SMA200W fields (PR2)", () => {
       quotes: [quoteRow("AAPL", 110, "2026-08-21T15:00:00.000Z")],
       metrics: [metricsRow({ calculated_at: "2026-08-19T06:00:00.000Z" })],
       wsHealth: wsHealthRow(),
-      splitEvents: [{ effective_date: "2026-08-20" }],
+      splitEvents: [{ symbol: "AAPL", effective_date: "2026-08-20" }],
     });
     const response = await readScreenerApi(envFrom(db), new Date("2026-08-21T15:00:00Z"));
     const apple = response.rows.find((row) => row.symbol === "AAPL")!;

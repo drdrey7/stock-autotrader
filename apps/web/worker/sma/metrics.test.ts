@@ -281,30 +281,92 @@ describe("computeLiveSma200w — honest null handling", () => {
   });
 });
 
-describe("computeLiveSma200w — split scale safety guard (P2-1)", () => {
-  it("Unavailable when quote is on/after split effective date but metrics were calculated before", () => {
-    // Split effective 2026-08-20; metrics calculated 2026-08-19; quote 2026-08-21 (after split)
+describe("computeLiveSma200w — symmetric split scale guard (P1)", () => {
+  // Helper to build a per-symbol Map (NVDA only)
+  const splitMap = (date: string) => new Map([["NVDA", date]]);
+
+  it("A) Unavailable: quote post-split + metrics pre-split", () => {
     const result = computeLiveSma200w(
-      quote(110, "2026-08-21T15:00:00.000Z"),
-      metrics({ calculated_at: "2026-08-19T06:00:00.000Z" }),
-      "2026-08-20",
+      quote(110, "2026-08-21T15:00:00.000Z"),  // after split
+      metrics({ calculated_at: "2026-08-19T06:00:00.000Z" }),  // before split
+      splitMap("2026-08-20"),
     );
     expect(result.sma200w).toBeNull();
     expect(result.sma200wState).toBe("Unavailable");
   });
 
-  it("computes normally when metrics were calculated after split effective date", () => {
-    // Split effective 2026-08-20; metrics calculated 2026-08-21; quote 2026-08-21
+  it("B) Unavailable: quote pre-split + metrics post-split (Monday-effective split)", () => {
+    // Monday early maintenance recalculated basis post-split at 05:10 UTC,
+    // but latest Finnhub quote is still Friday's pre-split close.
     const result = computeLiveSma200w(
-      quote(110, W34_QUOTE),
-      metrics({ calculated_at: "2026-08-21T06:00:00.000Z" }),
-      "2026-08-20",
+      quote(110, "2026-08-14T20:00:00.000Z"),  // Friday pre-split
+      metrics({ calculated_at: "2026-08-17T05:10:00.000Z" }),  // Monday post-split
+      splitMap("2026-08-17"),
+    );
+    expect(result.sma200w).toBeNull();
+    expect(result.sma200wState).toBe("Unavailable");
+  });
+
+  it("C) Normal SMA: both pre-split", () => {
+    const result = computeLiveSma200w(
+      quote(110, "2026-08-14T20:00:00.000Z"),  // pre-split
+      metrics({ calculated_at: "2026-08-14T06:00:00.000Z" }),  // pre-split
+      splitMap("2026-08-20"),
     );
     expect(result.sma200w).not.toBeNull();
     expect(result.sma200wState).not.toBe("Unavailable");
   });
 
-  it("computes normally when no split effective date is provided", () => {
+  it("D) Normal SMA: both post-split", () => {
+    const result = computeLiveSma200w(
+      quote(110, "2026-08-21T15:00:00.000Z"),  // post-split
+      metrics({ calculated_at: "2026-08-21T06:00:00.000Z" }),  // post-split
+      splitMap("2026-08-20"),
+    );
+    expect(result.sma200w).not.toBeNull();
+    expect(result.sma200wState).not.toBe("Unavailable");
+  });
+
+  it("E) Monday effective-date: metrics recalculated 05:10 UTC, Friday quote still old -> Unavailable", () => {
+    const result = computeLiveSma200w(
+      quote(110, "2026-08-14T20:00:00.000Z"),  // Friday pre-split
+      metrics({ calculated_at: "2026-08-17T05:10:00.000Z" }),  // Monday post-split
+      splitMap("2026-08-17"),
+    );
+    expect(result.sma200w).toBeNull();
+    expect(result.sma200wState).toBe("Unavailable");
+  });
+
+  it("F) First valid Monday post-split Finnhub print arrives -> SMA available", () => {
+    const result = computeLiveSma200w(
+      quote(110, "2026-08-17T14:00:00.000Z"),  // Monday post-split quote
+      metrics({ calculated_at: "2026-08-17T05:10:00.000Z" }),  // Monday post-split
+      splitMap("2026-08-17"),
+    );
+    expect(result.sma200w).not.toBeNull();
+    expect(result.sma200wState).not.toBe("Unavailable");
+  });
+
+  it("per-symbol: NVDA has split, AAPL has none -> AAPL unaffected", () => {
+    // NVDA metrics should be unavailable (post-split quote, pre-split metrics)
+    const nvdaResult = computeLiveSma200w(
+      quote(110, "2026-08-21T15:00:00.000Z"),
+      metrics({ symbol: "NVDA", calculated_at: "2026-08-19T06:00:00.000Z" }),
+      splitMap("2026-08-20"),
+    );
+    expect(nvdaResult.sma200wState).toBe("Unavailable");
+
+    // AAPL metrics: no split in map -> normal SMA
+    const aaplResult = computeLiveSma200w(
+      quote(110, W34_QUOTE),
+      metrics({ symbol: "AAPL", calculated_at: "2026-08-19T06:00:00.000Z" }),
+      splitMap("2026-08-20"),
+    );
+    expect(aaplResult.sma200w).not.toBeNull();
+    expect(aaplResult.sma200wState).not.toBe("Unavailable");
+  });
+
+  it("computes normally when no split map is provided", () => {
     const result = computeLiveSma200w(quote(110, W34_QUOTE), metrics());
     expect(result.sma200w).not.toBeNull();
     expect(result.sma200wState).not.toBe("Unavailable");

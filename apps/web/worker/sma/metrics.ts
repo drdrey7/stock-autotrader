@@ -56,7 +56,7 @@ const MIN_BASIS_WEEKS = 199;
 export function computeLiveSma200w(
   quote: QuoteInput | null,
   metrics: TechnicalMetricsRow | null,
-  latestSplitEffectiveDate: string | null = null,
+  latestSplitEffectiveDates: Map<string, string> | null = null,
 ): LiveSmaResult {
   const historyWeeks = metrics?.completed_weeks_available ?? null;
   const asOf = metrics?.historical_data_as_of ?? null;
@@ -77,23 +77,34 @@ export function computeLiveSma200w(
     return { sma200w: null, distanceToSma200wPct: null, sma200wState: "Unavailable", sma200wHistoryWeeks: historyWeeks, sma200wAsOf: asOf };
   }
 
-  // P2-1 Worker safety guard: if the quote is already on/after a split's
-  // effective date but the metrics were last computed BEFORE that date, the
-  // historical basis is on the wrong scale (pre-split) while the quote is
-  // post-split — the SMA would be catastrophically wrong. Report Unavailable
-  // until the daily due-split reconciliation recomputes the basis.
-  if (latestSplitEffectiveDate && metrics.calculated_at) {
-    try {
-      const splitEffective = new Date(latestSplitEffectiveDate + "T00:00:00.000Z");
-      const metricsCalculated = new Date(metrics.calculated_at);
-      const quoteTime = new Date(quote.provider_timestamp);
-      // The quote is on/after the split effective date (in NY terms) AND
-      // the metrics were last computed before the split became effective.
-      if (quoteTime >= splitEffective && metricsCalculated < splitEffective) {
-        return { sma200w: null, distanceToSma200wPct: null, sma200wState: "Unavailable", sma200wHistoryWeeks: historyWeeks, sma200wAsOf: asOf };
+  // P1 Symmetric split scale guard: the quote and the metrics basis MUST be
+  // on the same side of any split. If one is pre-split and the other post-
+  // split, the SMA would be catastrophically wrong — report Unavailable until
+  // the daily due-split reconciliation synchronizes them.
+  //
+  // Two failure modes:
+  //   A) quote post-split + metrics pre-split (basis on wrong scale)
+  //   B) quote pre-split + metrics post-split (Monday-effective split:
+  //      maintenance recalculated basis post-split at 05:10 UTC, but the
+  //      latest Finnhub quote is still Friday's pre-split close)
+  //
+  // Per-symbol: NVDA's split state does NOT affect AAPL's SMA.
+  if (latestSplitEffectiveDates && metrics.calculated_at && metrics.symbol) {
+    const latestSplitEffectiveDate = latestSplitEffectiveDates.get(metrics.symbol);
+    if (latestSplitEffectiveDate) {
+      try {
+        const splitEffective = new Date(latestSplitEffectiveDate + "T00:00:00.000Z");
+        const metricsCalculated = new Date(metrics.calculated_at);
+        const quoteTime = new Date(quote.provider_timestamp);
+        const quoteAfterSplit = quoteTime >= splitEffective;
+        const metricsAfterSplit = metricsCalculated >= splitEffective;
+        // Mismatch: one is post-split, the other is pre-split.
+        if (quoteAfterSplit !== metricsAfterSplit) {
+          return { sma200w: null, distanceToSma200wPct: null, sma200wState: "Unavailable", sma200wHistoryWeeks: historyWeeks, sma200wAsOf: asOf };
+        }
+      } catch {
+        // Invalid date format — disable the guard rather than crash.
       }
-    } catch {
-      // Invalid date format — disable the guard rather than crash.
     }
   }
 

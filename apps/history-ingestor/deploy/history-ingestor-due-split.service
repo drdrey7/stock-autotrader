@@ -1,0 +1,35 @@
+# Daily ZERO-PROVIDER due-split reconciliation — recurring service.
+#
+# Runs once per trading-day morning before the US market opens (13:10 UTC =
+# 09:10 ET, before the 09:30 ET open). Reconciles splits whose effective
+# date has been reached by reading stored split_events from D1 and applying
+# them to affected weekly history + technical_metrics — all from stored RAW
+# data, ZERO Alpha Vantage requests.
+#
+# Normally a no-op (no writes). Idempotent. Does not affect Finnhub service.
+[Unit]
+Description=Stock Autotrader daily due-split reconciliation (zero provider)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=hermes
+Group=hermes
+WorkingDirectory=/home/hermes/projects/stock-autotrader/apps/history-ingestor
+EnvironmentFile=/etc/stock-autotrader/cloudflare.env
+EnvironmentFile=/etc/stock-autotrader/alpha-vantage.env
+ExecStart=/usr/bin/python3 -m history_ingestor apply-due-splits
+# Same protection as the weekly maintenance service.
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=true
+NoNewPrivileges=true
+CapabilityBoundingSet=
+# Exit 0 on success or quota (no retry loop). Non-zero only on real failure.
+Restart=on-failure
+RestartSec=120
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target

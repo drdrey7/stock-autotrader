@@ -61,6 +61,7 @@ class FakeD1:
         self.split_events: dict[str, list] = {}
         self.written_rows = 0
         self.split_write_fail = False
+        self.metrics_write_fail = False
 
     def upsert_weekly_rows(self, rows):
         self.written_rows += len(rows)
@@ -72,6 +73,8 @@ class FakeD1:
         return type("R", (), {"written": [r[0] for r in rows], "failed": [], "error": None})()
 
     def upsert_technical_metrics(self, metrics):
+        if self.metrics_write_fail:
+            return type("R", (), {"written": [], "failed": [metrics["symbol"]], "error": "D1 metrics write failed"})()
         self.metrics[metrics["symbol"]] = metrics
         return type("R", (), {"written": [metrics["symbol"]], "failed": [], "error": None})()
 

@@ -523,7 +523,7 @@ class MaintenanceRunner:
         return report
 
     def _upsert_metrics(self, symbol: str, metrics) -> None:
-        self._d1.upsert_technical_metrics({
+        write = self._d1.upsert_technical_metrics({
             "symbol": symbol,
             "anchor_week": metrics.anchor_week,
             "completed_weeks_available": metrics.completed_weeks_available,
@@ -534,6 +534,8 @@ class MaintenanceRunner:
             "calculated_at": _now_iso(),
             "status": metrics.status,
         })
+        if write.failed:
+            raise ProviderError(f"technical_metrics write failed for {symbol}: {write.error}")
 
     def _reconcile_metrics_gaps(self, symbols: list[str], report: dict) -> None:
         """Recompute metrics for symbols whose weekly data is stored but whose

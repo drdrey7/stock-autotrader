@@ -5,6 +5,7 @@
 # Idempotent: safe to run repeatedly. Writes:
 #   /etc/stock-autotrader/alpha-vantage.env   (0600 hermes:hermes) — secrets
 #   /etc/systemd/system/history-ingestor-maintenance.{service,timer}
+#   /etc/systemd/system/history-ingestor-due-split.{service,timer}
 #
 # Usage:
 #   sudo ALPHA_VANTAGE_API_KEYS=$KEY1,$KEY2 ./deploy/install-history-ingestor-root.sh
@@ -19,7 +20,10 @@ ENV_FILE="$DIR/alpha-vantage.env"
 command -v systemctl >/dev/null 2>&1 || { echo "systemctl not found" >&2; exit 1; }
 service_file="$APP/deploy/history-ingestor-maintenance.service"
 timer_file="$APP/deploy/history-ingestor-maintenance.timer"
+due_split_service="$APP/deploy/history-ingestor-due-split.service"
+due_split_timer="$APP/deploy/history-ingestor-due-split.timer"
 [ -f "$service_file" ] && [ -f "$timer_file" ] || { echo "deploy files missing: $APP" >&2; exit 1; }
+[ -f "$due_split_service" ] && [ -f "$due_split_timer" ] || { echo "due-split deploy files missing: $APP" >&2; exit 1; }
 
 if [ -n "${ALPHA_VANTAGE_API_KEYS:-}" ]; then
   mkdir -p "$DIR"
@@ -40,10 +44,15 @@ fi
 
 install -o root -g root -m 0644 "$service_file" /etc/systemd/system/
 install -o root -g root -m 0644 "$timer_file" /etc/systemd/system/
+install -o root -g root -m 0644 "$due_split_service" /etc/systemd/system/
+install -o root -g root -m 0644 "$due_split_timer" /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable history-ingestor-maintenance.timer
+systemctl enable history-ingestor-due-split.timer
 
 echo "Installed. Status:"
 systemctl list-timers history-ingestor-maintenance.timer --no-pager | head -3
+systemctl list-timers history-ingestor-due-split.timer --no-pager | head -3
 echo
 echo "Run a manual pass now:  sudo systemctl start history-ingestor-maintenance"
+echo "Run due-split now:       sudo systemctl start history-ingestor-due-split"

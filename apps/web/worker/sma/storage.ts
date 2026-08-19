@@ -32,25 +32,28 @@ export async function readTechnicalMetrics(db: D1Database): Promise<Map<string, 
 }
 
 /**
- * Read the latest split effective date across all symbols from split_events.
- * Used by the Worker to detect a split-scale mismatch: if the quote is already
- * on/after a split's effective date but technical_metrics were last computed
- * before that date, the SMA basis is on the wrong scale and must read
+ * Read the latest split effective date per symbol from split_events.
+ * Used by the Worker to detect a split-scale mismatch per symbol: if the quote
+ * is already on/after a split's effective date but technical_metrics were last
+ * computed before that date, the SMA basis is on the wrong scale and must read
  * "Unavailable" until the daily due-split reconciliation recomputes it.
  *
- * Returns null when there are no stored splits (no guard needed).
+ * Returns a Map of symbol -> latest effective date. Empty when no splits.
  */
-export async function readLatestSplitEffectiveDate(db: D1Database): Promise<string | null> {
+export async function readLatestSplitEffectiveDate(db: D1Database): Promise<Map<string, string>> {
+  const result = new Map<string, string>();
   try {
-    const result = await db.prepare(
-      "SELECT MAX(effective_date) AS latest FROM split_events",
-    ).all<{ latest: string | null }>();
-    const rows = result.results ?? [];
-    if (!rows.length) return null;
-    return rows[0]?.latest ?? null;
+    const query = await db.prepare(
+      "SELECT symbol, MAX(effective_date) AS latest FROM split_events GROUP BY symbol",
+    ).all<{ symbol: string; latest: string }>();
+    for (const row of (query.results ?? [])) {
+      if (row.symbol && row.latest) {
+        result.set(row.symbol, row.latest);
+      }
+    }
   } catch {
     // Best-effort: a missing/failing split_events table disables the guard
     // (the historical basis is then assumed current). Never fatal.
-    return null;
   }
+  return result;
 }
