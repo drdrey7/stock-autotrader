@@ -162,6 +162,19 @@ class MaintenanceRunner:
 
         # A fully-complete cycle performs ZERO provider calls.
         if self._store.state.phase() == "complete":
+            # Metrics-only repair: symbols whose weekly history is stored but
+            # whose metrics row is missing/errored. Zero provider calls.
+            if not dry_run:
+                for symbol in symbols:
+                    if (self._store.state.symbol_status(symbol, "weekly") == STATUS_DONE
+                            and self._store.state.symbol_status(symbol, "metrics") != STATUS_DONE):
+                        break
+                else:
+                    report["status"] = "noop_complete"
+                    report["symbols"] = {symbol: self._status_only(symbol) for symbol in symbols}
+                    self._finalize_report(report)
+                    return report
+                self._reconcile_metrics_gaps(symbols, report)
             report["status"] = "noop_complete"
             report["symbols"] = {symbol: self._status_only(symbol) for symbol in symbols}
             self._finalize_report(report)
@@ -191,6 +204,10 @@ class MaintenanceRunner:
                 for symbol in symbols:
                     if (self._store.state.symbol_status(symbol, "weekly") == STATUS_DONE
                             and self._store.state.symbol_status(symbol, "metrics") == STATUS_DONE):
+                        continue
+                    if self._store.state.symbol_status(symbol, "weekly") == STATUS_DONE:
+                        # Weekly history already stored — defer metrics repair to
+                        # the zero-provider _reconcile_metrics_gaps path.
                         continue
                     if self._store.state.symbol_status(symbol, "splits") != STATUS_DONE:
                         report["anomalies"].append(
@@ -558,17 +575,14 @@ class MaintenanceRunner:
 
     def _reconcile_metrics_gaps(self, symbols: list[str], report: dict) -> None:
         """Recompute metrics for symbols whose weekly data is stored but whose
-        metrics row is missing — D1-only, ZERO provider calls."""
-        try:
-            existing = {row["symbol"] for row in self._d1.read_technical_metrics()}
-        except D1QueryError:
-            return
+        metrics row is missing or in error — D1-only, ZERO provider calls."""
         as_of = ny_date_of(self._now())
         as_of_iso = f"{as_of.year:04d}-{as_of.month:02d}-{as_of.day:02d}"
         for symbol in symbols:
             if (self._store.state.symbol_status(symbol, "weekly") == STATUS_DONE
-                    and self._store.state.symbol_status(symbol, "metrics") != STATUS_DONE
-                    and symbol not in existing):
+                    and self._store.state.symbol_status(symbol, "metrics") != STATUS_DONE):
+                # Metrics missing or in error — repair from stored D1 weekly
+                # history (zero provider calls).
                 try:
                     rows = self._d1.read_weekly_rows(symbol)
                 except D1QueryError:

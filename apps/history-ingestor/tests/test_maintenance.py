@@ -507,6 +507,120 @@ class WeeklyCatchUpTests(unittest.TestCase):
             self.assertEqual(provider2.weekly_calls, [])
 
 
+class MetricsRepairTests(unittest.TestCase):
+    """Metrics-only retry must use ZERO provider WEEKLY calls."""
+
+    def test_metrics_retry_zero_provider_calls(self):
+        # weekly DONE + metrics ERROR → repair from D1, zero WEEKLY calls.
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            provider = FakeProvider(
+                weekly_payloads={"NVDA": weekly_payload("NVDA")},
+                splits_payloads={"NVDA": splits_payload("NVDA")},
+            )
+            runner, store = make_runner(d1, provider, tmp, MON_1)
+            # Run 1: normal — weekly + metrics done.
+            runner.run(universe=["NVDA"])
+            self.assertIn("NVDA", d1.weekly)
+            self.assertIn("NVDA", d1.metrics)
+            self.assertEqual(store.state.symbol_status("NVDA", "weekly"), "done")
+            self.assertEqual(store.state.symbol_status("NVDA", "metrics"), "done")
+
+            # Simulate metrics row loss (e.g. D1 metrics write failed before).
+            d1.metrics.clear()
+            # Re-mark maintenance store: weekly=DONE, metrics=ERROR.
+            store.state.mark_symbol("NVDA", "weekly", "done")
+            store.state.mark_symbol("NVDA", "metrics", "error")
+            store.save()
+
+            # Run 2: retry — zero WEEKLY calls, metrics repaired from D1.
+            provider2 = FakeProvider(
+                weekly_payloads={"NVDA": weekly_payload("NVDA")},
+                splits_payloads={"NVDA": splits_payload("NVDA")},
+            )
+            runner2, store2 = make_runner(d1, provider2, tmp, MON_1)
+            runner2.run(universe=["NVDA"])
+            self.assertEqual(provider2.weekly_calls, [])
+            self.assertEqual(store2.state.symbol_status("NVDA", "metrics"), "done")
+            self.assertIn("NVDA", d1.metrics)
+
+    def test_metrics_retry_write_failures_remain_error(self):
+        # weekly DONE + metrics ERROR + D1 metrics write fails → ERROR persists.
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            provider = FakeProvider(
+                weekly_payloads={"NVDA": weekly_payload("NVDA")},
+                splits_payloads={"NVDA": splits_payload("NVDA")},
+            )
+            runner, store = make_runner(d1, provider, tmp, MON_1)
+            runner.run(universe=["NVDA"])
+            self.assertIn("NVDA", d1.metrics)
+
+            # Simulate metrics row loss + D1 metrics write failure.
+            d1.metrics.clear()
+            d1.metrics_write_fail = True
+            store.state.mark_symbol("NVDA", "weekly", "done")
+            store.state.mark_symbol("NVDA", "metrics", "error")
+            store.save()
+
+            provider2 = FakeProvider(
+                weekly_payloads={"NVDA": weekly_payload("NVDA")},
+                splits_payloads={"NVDA": splits_payload("NVDA")},
+            )
+            runner2, store2 = make_runner(d1, provider2, tmp, MON_1)
+            runner2.run(universe=["NVDA"])
+            self.assertEqual(provider2.weekly_calls, [])
+            self.assertEqual(store2.state.symbol_status("NVDA", "metrics"), "error")
+            self.assertNotIn("NVDA", d1.metrics)
+
+            # Run 3: D1 write succeeds → metrics repaired.
+            d1.metrics_write_fail = False
+            provider3 = FakeProvider(
+                weekly_payloads={"NVDA": weekly_payload("NVDA")},
+                splits_payloads={"NVDA": splits_payload("NVDA")},
+            )
+            runner3, store3 = make_runner(d1, provider3, tmp, MON_1)
+            runner3.run(universe=["NVDA"])
+            self.assertEqual(provider3.weekly_calls, [])
+            self.assertEqual(store3.state.symbol_status("NVDA", "metrics"), "done")
+            self.assertIn("NVDA", d1.metrics)
+
+    def test_weekly_pending_still_fetches_provider(self):
+        # weekly pending → normal provider WEEKLY behavior.
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            provider = FakeProvider(
+                weekly_payloads={"NVDA": weekly_payload("NVDA")},
+                splits_payloads={"NVDA": splits_payload("NVDA")},
+            )
+            runner, store = make_runner(d1, provider, tmp, MON_1)
+            runner.run(universe=["NVDA"])
+            self.assertTrue(provider.weekly_calls)
+            self.assertIn("NVDA", d1.weekly)
+            self.assertEqual(store.state.symbol_status("NVDA", "weekly"), "done")
+
+    def test_weekly_done_metrics_done_no_recomputation(self):
+        # weekly DONE + metrics DONE → no provider call, no recomputation.
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            provider = FakeProvider(
+                weekly_payloads={"NVDA": weekly_payload("NVDA")},
+                splits_payloads={"NVDA": splits_payload("NVDA")},
+            )
+            runner, store = make_runner(d1, provider, tmp, MON_1)
+            runner.run(universe=["NVDA"])
+
+            provider2 = FakeProvider(
+                weekly_payloads={"NVDA": weekly_payload("NVDA")},
+                splits_payloads={"NVDA": splits_payload("NVDA")},
+            )
+            runner2, store2 = make_runner(d1, provider2, tmp, MON_1)
+            report = runner2.run(universe=["NVDA"])
+            # Second run: no new WEEKLY calls (cycle already complete).
+            self.assertEqual(provider2.weekly_calls, [])
+            self.assertEqual(report["status"], "noop_complete")
+
+
 class MaintenanceSubsetTests(unittest.TestCase):
     """P2-2: --symbols must NOT shrink the durable cycle (always 50 canonical)."""
 

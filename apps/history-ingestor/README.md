@@ -160,14 +160,21 @@ sudo systemctl enable --now history-ingestor-maintenance.timer
 
 `deploy/install-history-ingestor-root.sh` wires the unit + timer + env file in
 one idempotent step. Automatic timer installation is intentionally NOT done
-from this repository (root privileges); the timer is `OnCalendar=Mon *-*-*
-05:10` (well after a Boston/New York week closes, inside the new week's
-deterministic fetch window) with `RandomizedDelaySec=30m`.
+from this repository (root privileges). The shipped timer is
+`OnCalendar=*-*-* 05:10:00` (daily, before NY market open) with
+`RandomizedDelaySec=30m`:
+
+- **Sunday**: SPLITS reconciliation pass starts the new cycle.
+- **Monday**: WEEKLY refresh pass stores the just-closed week.
+- **Tue–Sat**: safe catch-up — if Monday's WEEKLY phase didn't complete
+  (quota exhaustion / transient error), `is_weekly_phase_ready` returns true
+  and the cycle resumes from the checkpoint. Completed/idempotent work
+  performs ZERO provider calls.
 
 ## Tests
 
 ```bash
-cd apps/history-ingestor && python3 -m unittest discover -s tests -v    # 102 tests
+cd apps/history-ingestor && python3 -m unittest discover -s tests -v    # 149 tests
 cd <repo root> && ruff check .                                            # lint
 ```
 
