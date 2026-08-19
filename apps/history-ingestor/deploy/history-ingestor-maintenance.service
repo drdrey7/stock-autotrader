@@ -20,6 +20,10 @@ PrivateTmp=true
 NoNewPrivileges=true
 CapabilityBoundingSet=
 # One-shot; the timer drives cadence. Restart only on transient glitches.
+# IMPORTANT: a provider QUOTA-exhausted run exits 0 (expected partial
+# completion) — it never triggers Restart=on-failure, so there is no 120s
+# retry loop against an exhausted daily quota. Non-zero exits are reserved
+# for real failures (config error / corrupted state).
 Restart=on-failure
 RestartSec=120
 # Hard cap so a pathological provider loop can never run the clock out.

@@ -1,21 +1,32 @@
-"""Weekly maintenance: refresh, split reconciliation, metrics, coverage.
+"""Weekly maintenance: durable cycle — Sunday SPLITS, Monday WEEKLY.
 
-Recurring (systemd timer, documented in deploy/) process that keeps the
-historical layer honest:
+Recurring (systemd timer, deploy/) process that keeps the historical layer
+honest. Unlike bootstrap (one-shot historical loading), maintenance is a
+CYCLE: it targets one completed trading week (the ISO week of the most
+recent Friday) and is durably checkpointed in ``app_meta``
+(``historyMaintenanceState``), so it can spread across days under the
+provider's free-tier quota and resume without repeating completed work.
 
-1. refetch WEEKLY + SPLITS per symbol (one full-series request each —
-   idempotent UPSERT is fine at this scale; never a partial refetch);
-2. reconcile split history: recompute the cumulative factors from the FRESH
-   split list and rewrite every weekly row whose factor/adjusted close
-   changed — a new/changed split rewrites the whole affected history so no
-   mixed adjustment regime can survive;
-3. recompute technical_metrics per symbol;
-4. verify coverage (rows, oldest/newest week, week-sequence gaps, factor
-   sanity) and report anomalies.
+Cycle shape (state machine, self-healing from per-symbol status):
 
-Provider quotas are respected exactly like bootstrap: paced per key, per-key
-accounting, hard stop when every key is exhausted, checkpointed resume —
-the run can spread across days and finish later.
+  SPLITS phase (typically Sunday, but resumes any day after quota):
+    for each symbol: fetch SPLITS, compare with the durable split_events;
+    unchanged  -> mark done, NO historical rewrite;
+    changed    -> reconcile split_events (upsert + delete extras), recompute
+                  the whole affected history from stored raw rows + new
+                  factors, recompute technical_metrics — never a mixed regime.
+
+  WEEKLY phase (fetches only on NY Mondays — a weekly bucket is storable
+    only once its NY ISO week has ended):
+    for each symbol: fetch TIME_SERIES_WEEKLY, DROP the in-progress bucket,
+    adjust with the durable split_events, compare with stored rows (raw
+    OHLCV + factor + adjusted close) and UPSERT ONLY changed/new rows — a
+    normal Monday writes exactly one new week; provider corrections update
+    only the affected rows. Then recompute technical_metrics.
+
+Quota semantics: exhaustion is NORMAL partial completion — the run checkpoints
+exactly where it stopped and reports; it is NOT a failure (exit 0). Real
+failures (config/corrupted state/unrecoverable D1) surface as non-zero.
 """
 
 from __future__ import annotations
@@ -27,6 +38,9 @@ from collections.abc import Callable
 from typing import Any
 
 from .config import Settings
+from .d1 import D1QueryError
+from .maintenance_state import STATUS_DONE, STATUS_ERROR
+from .parser import SplitEvent, WeeklyBar
 from .provider import (
     AllKeysFailedError,
     AlphaVantageClient,
@@ -34,10 +48,19 @@ from .provider import (
     QuotaExhaustedError,
 )
 from .sma import compute_technical_metrics
-from .splits import adjust_series
-from .state import StateStore
+from .splits import (
+    adjust_series,
+    split_events_equal,
+    split_events_from_rows,
+    split_events_to_rows,
+)
 from .universe import load_core_universe
-from .weeks import completed_bars_filter, week_label_of_date_key
+from .weeks import (
+    completed_bars_filter,
+    is_monday_in_ny,
+    target_completed_week,
+    week_label_of_date_key,
+)
 
 logger = logging.getLogger("history_ingestor.maintenance")
 
@@ -47,21 +70,32 @@ def _now_iso() -> str:
 
 
 class MaintenanceRunner:
-    """Recurring maintenance; unit-testable with fakes."""
+    """Cycle-based weekly maintenance; unit-testable with fakes.
+
+    ``store`` is the durable cycle checkpoint (MaintenanceStore).
+    ``key_store`` (optional) is the bootstrap StateStore used purely as the
+    shared per-key daily budget ledger — bootstrap and maintenance draw from
+    the SAME provider day quota, so they must share the accounting while
+    keeping their own state (meta keys) separate.
+    """
 
     def __init__(
         self,
         settings: Settings,
         d1: Any,
         provider: AlphaVantageClient,
-        store: StateStore,
+        store: Any,
+        key_store: Any = None,
         now_fn: Callable[[], dt.datetime] | None = None,
     ) -> None:
         self._settings = settings
         self._d1 = d1
         self._provider = provider
         self._store = store
+        self._key_store = key_store
         self._now = now_fn or (lambda: dt.datetime.now(dt.UTC))
+
+    # ------------------------------------------------------------------ core
 
     def run(
         self,
@@ -74,24 +108,31 @@ class MaintenanceRunner:
         if symbols_filter is not None:
             wanted = set(symbols_filter)
             symbols = [symbol for symbol in symbols if symbol in wanted]
+        now = self._now()
+        target = target_completed_week(now)
         self._store.load()
+        # The shared per-key daily budget ledger (bootstrap StateStore) must be
+        # loaded too — its per-key entries drive the provider's budget checks
+        # and day rollover; maintenance never touches its symbol statuses.
+        if self._key_store is not None:
+            try:
+                self._key_store.load()
+            except Exception:
+                logger.warning("maintenance: shared budget ledger unreadable — keys will report empty")
+
         if dry_run:
-            # Planning mode: never touches the provider or D1 writes.
-            return {
-                "status": "plan",
-                "symbols": {symbol: {"weekly": "pending", "splits": "pending",
-                                     "rows_updated": 0, "metrics_updated": False,
-                                     "quota": False, "anomalies": [], "completed_weeks": 0}
-                            for symbol in symbols},
-                "requests_used_total": 0,
-                "keys_used": [],
-                "quota_exhausted": False,
-                "anomalies": [],
-                "rows_updated": 0,
-                "metrics_updated": 0,
-            }
+            return self._plan_report(symbols, target)
+
+        # START A NEW CYCLE when a new completed week exists (or no state yet).
+        if self._store.state.cycle_week != target or not self._store.state.symbols:
+            self._store.reset_cycle(target, symbols)
+            self._store.save()
+            logger.info("maintenance: new cycle for %s", target)
 
         report: dict = {
+            "status": "complete",
+            "cycle_week": target,
+            "phase": self._store.state.phase(),
             "symbols": {},
             "requests_used_total": 0,
             "keys_used": [],
@@ -99,47 +140,144 @@ class MaintenanceRunner:
             "anomalies": [],
             "rows_updated": 0,
             "metrics_updated": 0,
+            "split_changes": 0,
         }
-        updated_rows = 0
-        metrics_updated = 0
 
+        # A fully-complete cycle performs ZERO provider calls.
+        if self._store.state.phase() == "complete":
+            report["status"] = "noop_complete"
+            report["symbols"] = {symbol: self._status_only(symbol) for symbol in symbols}
+            self._finalize_report(report)
+            return report
+
+        # ---- SPLITS phase (any day; resumes the first unfinished symbol) ----
+        if self._store.state.phase() == "splits":
+            for symbol in symbols:
+                if self._store.state.symbol_status(symbol, "splits") == STATUS_DONE:
+                    continue
+                if limit is not None and self._provider.requests_this_run >= limit:
+                    report["anomalies"].append("run stopped by request limit before finishing SPLITS")
+                    break
+                symbol_report = self._reconcile_splits(symbol, dry_run=dry_run)
+                report["symbols"][symbol] = symbol_report
+                report["anomalies"].extend(symbol_report["anomalies"])
+                report["split_changes"] += 1 if symbol_report.get("split_changed") else 0
+                if symbol_report["quota"]:
+                    report["quota_exhausted"] = True
+                    break
+                if not dry_run:
+                    self._store.save()
+
+        # ---- WEEKLY phase (NY Monday only for fetches) ----
+        if self._store.state.phase() == "weekly":
+            if is_monday_in_ny(now):
+                for symbol in symbols:
+                    if (self._store.state.symbol_status(symbol, "weekly") == STATUS_DONE
+                            and self._store.state.symbol_status(symbol, "metrics") == STATUS_DONE):
+                        continue
+                    if limit is not None and self._provider.requests_this_run >= limit:
+                        report["anomalies"].append("run stopped by request limit before finishing WEEKLY")
+                        break
+                    symbol_report = self._refresh_weekly(symbol, dry_run=dry_run)
+                    report["symbols"][symbol] = symbol_report
+                    report["anomalies"].extend(symbol_report["anomalies"])
+                    if symbol_report["quota"]:
+                        report["quota_exhausted"] = True
+                        break
+                    if not dry_run:
+                        self._store.save()
+                if not dry_run and not report["quota_exhausted"]:
+                    # Repair metrics-only gaps from D1 (zero provider calls).
+                    self._reconcile_metrics_gaps(symbols, report)
+            else:
+                report["anomalies"].append(
+                    "weekly phase pending: next fetch happens Monday (NY) — the new week is storable only then"
+                )
+
+        # Fill status-only entries for symbols this run did not touch (done or
+        # not yet reached) — never overwrite the detailed per-symbol dicts.
         for symbol in symbols:
-            if limit is not None and self._provider.requests_this_run >= limit:
-                report["quota_exhausted"] = False
-                report["anomalies"].append("run stopped by request limit before finishing all symbols")
-                break
-            symbol_report = self._maintain_symbol(symbol, dry_run)
-            report["symbols"][symbol] = symbol_report
-            updated_rows += symbol_report["rows_updated"]
-            metrics_updated += 1 if symbol_report["metrics_updated"] else 0
-            report["anomalies"].extend(symbol_report["anomalies"])
-            if symbol_report["quota"]:
-                report["quota_exhausted"] = True
-                break
-            if not dry_run:
-                self._store.save()
-
-        report["requests_used_total"] = self._provider.requests_this_run
-        report["keys_used"] = [{"index": k.get("index"), "used": k.get("used", 0)} for k in self._store.state.keys]
-        report["rows_updated"] = updated_rows
-        report["metrics_updated"] = metrics_updated
-        if not dry_run:
-            self._d1.write_app_meta("historyMaintenanceReport", report)
+            if symbol not in report["symbols"]:
+                report["symbols"][symbol] = self._status_only(symbol)
+        phase = self._store.state.phase()
+        report["phase"] = phase
+        if report["quota_exhausted"]:
+            report["status"] = "quota"
+        elif phase == "complete":
+            report["status"] = "complete"
+        else:
+            report["status"] = "partial"
+        self._finalize_report(report)
         return report
 
-    # ------------------------------------------------------------------ per symbol
+    # ----------------------------------------------------------------- phases
 
-    def _maintain_symbol(self, symbol: str, dry_run: bool) -> dict:
+    def _reconcile_splits(self, symbol: str, dry_run: bool) -> dict:
+        """Sunday SPLITS pass for one symbol (provider compare, exact)."""
         result: dict = {
-            "weekly": "pending", "splits": "pending", "rows_updated": 0,
-            "metrics_updated": False, "quota": False, "anomalies": [],
-            "completed_weeks": 0,
+            "splits": STATUS_DONE, "weekly": self._store.state.symbol_status(symbol, "weekly"),
+            "metrics": self._store.state.symbol_status(symbol, "metrics"),
+            "split_changed": False, "rows_updated": 0, "metrics_updated": False,
+            "completed_weeks": 0, "quota": False, "anomalies": [],
         }
         try:
-            _, events, _ = self._provider.fetch_splits(symbol)
-            result["splits"] = "ok"
+            _, fresh_events, _ = self._provider.fetch_splits(symbol)
+            try:
+                stored_events = split_events_from_rows(self._d1.read_split_events(symbol))
+            except D1QueryError as exc:
+                raise ProviderError(f"split_events read failed: {exc}") from exc
+
+            if split_events_equal(fresh_events, stored_events):
+                # Unchanged history: no weekly rewrite, no provider refetch.
+                self._store.state.mark_symbol(symbol, "splits", STATUS_DONE)
+                return result
+
+            result["split_changed"] = True
+            if dry_run:
+                self._store.state.mark_symbol(symbol, "splits", STATUS_DONE)
+                return result
+
+            # Reconcile the durable store: upsert the new set, then delete
+            # events the provider no longer reports (a corrected/removed split).
+            write = self._d1.upsert_split_events(split_events_to_rows(symbol, fresh_events, _now_iso()))
+            if write.failed:
+                raise ProviderError(f"split_events write failed: {write.error}")
+            self._d1.delete_extra_split_events(symbol, [event.effective_date for event in fresh_events])
+
+            # Rewrite the affected historical rows from stored RAW data with
+            # the new factors — never a mixed adjustment regime. No provider
+            # WEEKLY request needed: the raw history is already in D1.
+            self._rewrite_history_from_stored(symbol, fresh_events, result)
+            self._store.state.mark_symbol(symbol, "splits", STATUS_DONE)
+            return result
+        except QuotaExhaustedError:
+            result["quota"] = True
+            result["anomalies"].append("provider daily quota exhausted — SPLITS resumes from checkpoint")
+            result["splits"] = "pending"
+            return result
+        except (ProviderError, AllKeysFailedError) as exc:
+            self._store.state.mark_symbol(symbol, "splits", STATUS_ERROR)
+            result["splits"] = STATUS_ERROR
+            result["anomalies"].append(f"{symbol} splits: {str(exc)[:200]}")
+            return result
+
+    def _refresh_weekly(self, symbol: str, dry_run: bool) -> dict:
+        """Monday WEEKLY pass for one symbol (full series, changed rows only)."""
+        result: dict = {
+            "splits": self._store.state.symbol_status(symbol, "splits"),
+            "weekly": STATUS_DONE, "metrics": self._store.state.symbol_status(symbol, "metrics"),
+            "split_changed": False, "rows_updated": 0, "metrics_updated": False,
+            "completed_weeks": 0, "quota": False, "anomalies": [],
+        }
+        try:
+            # Split factors come from the DURABLE store (reconciled on Sunday)
+            # — the weekly pass does NOT re-request SPLITS.
+            try:
+                stored_events = split_events_from_rows(self._d1.read_split_events(symbol))
+            except D1QueryError as exc:
+                raise ProviderError(f"split_events read failed: {exc}") from exc
+
             _, bars, _ = self._provider.fetch_weekly(symbol)
-            result["weekly"] = "ok"
             completed, in_progress = completed_bars_filter(
                 [bar.week_end_date for bar in bars], self._now()
             )
@@ -147,22 +285,23 @@ class MaintenanceRunner:
                 result["anomalies"].append(f"{symbol}: excluded in-progress week {in_progress[0]}")
             if not completed:
                 result["anomalies"].append(f"{symbol}: no completed weekly buckets")
+                result["weekly"] = "error"
                 return result
             completed_set = set(completed)
             completed_bars = [bar for bar in bars if bar.week_end_date in completed_set]
             result["completed_weeks"] = len(completed_bars)
 
-            adjusted = adjust_series(completed_bars, events)
+            adjusted_full = adjust_series(completed_bars, stored_events)
             if dry_run:
-                result["rows_updated"] = len(adjusted)
+                result["rows_updated"] = 1  # planning-mode hint
                 return result
 
-            # Reconcile: rewrite only rows whose factor/adjusted close changed.
+            # Only changed/new rows are written — never a blanket rewrite.
             stored = self._stored_rows(symbol)
             changed = []
-            for bar, factor, adj_close in adjusted:
+            for bar, factor, adj_close in adjusted_full:
                 old = stored.get(bar.week_end_date)
-                if old is None or abs(old[0] - float(factor)) > 1e-12 or abs(old[1] - adj_close) > 1e-9:
+                if old is None or self._row_differs(old, bar, factor, adj_close):
                     changed.append((
                         bar.symbol, bar.week_end_date, bar.open, bar.high, bar.low,
                         bar.close, bar.volume, float(factor), adj_close, _now_iso(),
@@ -170,30 +309,28 @@ class MaintenanceRunner:
             if changed:
                 write = self._d1.upsert_weekly_rows(changed)
                 if write.failed:
-                    result["anomalies"].append(f"{symbol}: D1 write failed: {write.error}")
-                    return result
+                    raise ProviderError(f"D1 weekly write failed: {write.error}")
                 result["rows_updated"] = len(changed)
                 if len(changed) > 1:
-                    result["anomalies"].append(f"{symbol}: split history change rewrote {len(changed)} rows")
+                    result["anomalies"].append(f"{symbol}: provider correction rewrote {len(changed)} rows")
 
-            metrics = compute_technical_metrics(symbol, [(bar, close) for bar, _f, close in adjusted])
-            self._d1.upsert_technical_metrics({
-                "symbol": symbol,
-                "anchor_week": metrics.anchor_week,
-                "completed_weeks_available": metrics.completed_weeks_available,
-                "sum_199": metrics.sum_199,
-                "anchor_close": metrics.anchor_close,
-                "closed_sma_200w": metrics.closed_sma_200w,
-                "historical_data_as_of": _now_iso(),
-                "calculated_at": _now_iso(),
-                "status": metrics.status,
-            })
-            result["metrics_updated"] = True
+            self._store.state.mark_symbol(symbol, "weekly", STATUS_DONE)
+            metrics = compute_technical_metrics(symbol, [(bar, close) for bar, _f, close in adjusted_full])
+            try:
+                self._upsert_metrics(symbol, metrics)
+                self._store.state.mark_symbol(symbol, "metrics", STATUS_DONE)
+                result["metrics_updated"] = True
+            except (ProviderError, D1QueryError) as exc:
+                # weekly data is safely stored; metrics recompute alone is
+                # retried from D1 (no provider call) on the next run.
+                self._store.state.mark_symbol(symbol, "metrics", STATUS_ERROR)
+                result["metrics"] = STATUS_ERROR
+                result["anomalies"].append(f"{symbol} metrics: {str(exc)[:200]}")
 
             # Coverage verification.
-            if metrics.completed_weeks_available < 199:
+            if result["completed_weeks"] < 199:
                 result["anomalies"].append(
-                    f"{symbol}: only {metrics.completed_weeks_available} completed weeks (< 199 -> NotEnoughHistory)"
+                    f"{symbol}: only {result['completed_weeks']} completed weeks (< 199 -> NotEnoughHistory)"
                 )
             gaps = self._week_gaps(completed)
             if gaps:
@@ -201,32 +338,180 @@ class MaintenanceRunner:
             return result
         except QuotaExhaustedError:
             result["quota"] = True
-            result["anomalies"].append("provider daily quota exhausted — run will resume from checkpoint")
+            result["anomalies"].append("provider daily quota exhausted — WEEKLY resumes from checkpoint")
+            result["weekly"] = "pending"
             return result
         except (ProviderError, AllKeysFailedError) as exc:
-            result["anomalies"].append(f"{symbol}: {str(exc)[:200]}")
-            result["weekly"] = "error"
+            self._store.state.mark_symbol(symbol, "weekly", STATUS_ERROR)
+            result["weekly"] = STATUS_ERROR
+            result["anomalies"].append(f"{symbol} weekly: {str(exc)[:200]}")
             return result
 
     # -------------------------------------------------------------- helpers
 
-    def _stored_rows(self, symbol: str) -> dict[str, tuple[float, float]]:
-        """Map week_end_date -> (split_adjustment_factor, split_adjusted_close)."""
+    @staticmethod
+    def _row_differs(old: tuple, bar: WeeklyBar, factor, adj_close: float) -> bool:
+        """Whether a freshly fetched bar differs from the stored row.
+
+        Compares raw OHLCV (provider corrections), the split factor and the
+        split-adjusted close — so a corrected raw bar is propagated even when
+        the adjusted close happens to match.
+        """
+        return (
+            abs(old[0] - bar.open) > 1e-9
+            or abs(old[1] - bar.high) > 1e-9
+            or abs(old[2] - bar.low) > 1e-9
+            or abs(old[3] - bar.close) > 1e-9
+            or int(old[4]) != int(bar.volume)
+            or abs(old[5] - float(factor)) > 1e-12
+            or abs(old[6] - adj_close) > 1e-9
+        )
+
+    def _stored_rows(self, symbol: str) -> dict[str, tuple]:
+        """Map week_end_date -> (open, high, low, close, volume, factor, adj)."""
         try:
             rows = self._d1.read_weekly_rows(symbol)
-        except Exception:
+        except D1QueryError:
             return {}
         return {
-            row["week_end_date"]: (float(row["split_adjustment_factor"]), float(row["split_adjusted_close"]))
+            row["week_end_date"]: (
+                float(row["raw_open"]), float(row["raw_high"]), float(row["raw_low"]),
+                float(row["raw_close"]), int(row["volume"]),
+                float(row["split_adjustment_factor"]), float(row["split_adjusted_close"]),
+            )
             for row in rows
         }
 
-    def _week_gaps(self, completed: list[str]) -> list[str]:
-        """ISO-week sequence gaps in ascending bucket dates (<= 52 reported).
+    def _rewrite_history_from_stored(
+        self,
+        symbol: str,
+        events: list[SplitEvent],
+        result: dict,
+    ) -> None:
+        """Recompute the full historical adjustment for ``symbol`` from the
+        stored RAW rows with the new split factors; rewrite only changed rows
+        and recompute metrics. Runs on a split-history change (Sunday)."""
+        try:
+            stored_rows = self._d1.read_weekly_rows(symbol)
+        except D1QueryError as exc:
+            raise ProviderError(f"weekly read failed: {exc}") from exc
+        if not stored_rows:
+            return  # no history yet — the durable split_events store is enough
+        bars: list[WeeklyBar] = []
+        for row in stored_rows:
+            bars.append(WeeklyBar(
+                symbol=row["symbol"], week_end_date=row["week_end_date"],
+                open=float(row["raw_open"]), high=float(row["raw_high"]),
+                low=float(row["raw_low"]), close=float(row["raw_close"]),
+                volume=int(row["volume"]),
+            ))
+        adjusted_full = list(adjust_series(bars, events))
+        stored = self._stored_rows(symbol)
+        changed = []
+        for bar, factor, adj_close in adjusted_full:
+            old = stored.get(bar.week_end_date)
+            if old is None or self._row_differs(old, bar, factor, adj_close):
+                changed.append((
+                    bar.symbol, bar.week_end_date, bar.open, bar.high, bar.low,
+                    bar.close, bar.volume, float(factor), adj_close, _now_iso(),
+                ))
+        if changed:
+            write = self._d1.upsert_weekly_rows(changed)
+            if write.failed:
+                raise ProviderError(f"D1 weekly write failed: {write.error}")
+            result["rows_updated"] = len(changed)
+            result["anomalies"].append(f"{symbol}: split history change rewrote {len(changed)} rows (no mixed regime)")
+        # Recompute metrics from the full set on the new factors.
+        metrics = compute_technical_metrics(symbol, [(bar, close) for bar, _f, close in adjusted_full])
+        self._upsert_metrics(symbol, metrics)
 
-        Week distance is computed on ISO-week Monday dates, so year-boundary
-        transitions (2021-W52 -> 2022-W01) are consecutive, never gaps.
-        """
+    def _upsert_metrics(self, symbol: str, metrics) -> None:
+        self._d1.upsert_technical_metrics({
+            "symbol": symbol,
+            "anchor_week": metrics.anchor_week,
+            "completed_weeks_available": metrics.completed_weeks_available,
+            "sum_199": metrics.sum_199,
+            "anchor_close": metrics.anchor_close,
+            "closed_sma_200w": metrics.closed_sma_200w,
+            "historical_data_as_of": _now_iso(),
+            "calculated_at": _now_iso(),
+            "status": metrics.status,
+        })
+
+    def _reconcile_metrics_gaps(self, symbols: list[str], report: dict) -> None:
+        """Recompute metrics for symbols whose weekly data is stored but whose
+        metrics row is missing — D1-only, ZERO provider calls."""
+        try:
+            existing = {row["symbol"] for row in self._d1.read_technical_metrics()}
+        except D1QueryError:
+            return
+        for symbol in symbols:
+            if (self._store.state.symbol_status(symbol, "weekly") == STATUS_DONE
+                    and self._store.state.symbol_status(symbol, "metrics") != STATUS_DONE
+                    and symbol not in existing):
+                try:
+                    rows = self._d1.read_weekly_rows(symbol)
+                except D1QueryError:
+                    continue
+                if not rows:
+                    continue
+                adjusted = []
+                for row in rows:
+                    adjusted.append((
+                        WeeklyBar(
+                            symbol=row["symbol"], week_end_date=row["week_end_date"],
+                            open=float(row["raw_open"]), high=float(row["raw_high"]),
+                            low=float(row["raw_low"]), close=float(row["raw_close"]),
+                            volume=int(row["volume"]),
+                        ),
+                        float(row["split_adjusted_close"]),
+                    ))
+                try:
+                    metrics = compute_technical_metrics(symbol, adjusted)
+                    self._upsert_metrics(symbol, metrics)
+                    self._store.state.mark_symbol(symbol, "metrics", STATUS_DONE)
+                    report["metrics_updated"] += 1
+                except (ProviderError, D1QueryError):
+                    self._store.state.mark_symbol(symbol, "metrics", STATUS_ERROR)
+
+    def _status_only(self, symbol: str) -> dict:
+        """Status-only per-symbol projection (never overwrites detail dicts)."""
+        return {
+            "splits": self._store.state.symbol_status(symbol, "splits"),
+            "weekly": self._store.state.symbol_status(symbol, "weekly"),
+            "metrics": self._store.state.symbol_status(symbol, "metrics"),
+        }
+
+    def _plan_report(self, symbols: list[str], target: str) -> dict:
+        return {
+            "status": "plan",
+            "cycle_week": target,
+            "phase": self._store.state.phase() if self._store.state.symbols else "splits",
+            "symbols": {symbol: {"splits": "pending", "weekly": "pending", "metrics": "pending"}
+                        for symbol in symbols},
+            "requests_used_total": 0,
+            "keys_used": [],
+            "quota_exhausted": False,
+            "anomalies": [],
+            "rows_updated": 0,
+            "metrics_updated": 0,
+            "split_changes": 0,
+        }
+
+    def _finalize_report(self, report: dict) -> None:
+        report["requests_used_total"] = self._provider.requests_this_run
+        report["keys_used"] = [
+            {"index": k.get("index"), "used": k.get("used", 0)}
+            for k in (self._key_store.state.keys if self._key_store is not None else [])
+        ]
+        # Persist the report mirror into app_meta (best effort).
+        try:
+            self._d1.write_app_meta("historyMaintenanceReport", report)
+        except Exception:
+            pass
+
+    def _week_gaps(self, completed: list[str]) -> list[str]:
+        """ISO-week sequence gaps in ascending bucket dates (<= 52 reported)."""
         if len(completed) < 2:
             return []
         ordered = sorted(completed)

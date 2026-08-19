@@ -120,6 +120,12 @@ class Settings:
             str(Path.home() / ".local" / "state" / "history-ingestor" / "checkpoint.json"),
         )
     ))
+    maintenance_state_path: Path = field(default_factory=lambda: Path(
+        os.environ.get(
+            "HISTORY_INGESTOR_MAINTENANCE_STATE",
+            str(Path.home() / ".local" / "state" / "history-ingestor" / "maintenance.json"),
+        )
+    ))
     log_flush_summaries: bool = True
 
     @property

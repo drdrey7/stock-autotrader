@@ -133,10 +133,28 @@ class SplitsParseTests(unittest.TestCase):
         self.assertEqual(events[0].ratio, Fraction(3, 2))
 
     def test_no_splits_is_valid_empty(self):
+        # An EXPLICIT data: [] is the provider's verified "no splits" history.
         self.assertEqual(parse_splits_payload("NBIS", splits_payload("NBIS", [])), [])
 
-    def test_missing_data_is_valid_empty(self):
-        self.assertEqual(parse_splits_payload("NBIS", {"symbol": "NBIS"}), [])
+    def test_legacy_splits_key_empty_is_valid_empty(self):
+        self.assertEqual(parse_splits_payload("NBIS", {"symbol": "NBIS", "splits": []}), [])
+
+    def test_missing_data_array_is_rejected_not_zero_splits(self):
+        # A payload with NO data/splits array at all is malformed — it must
+        # NEVER be interpreted as "zero splits" (P0: NVDA regression).
+        for payload in ({"symbol": "NBIS"}, {"symbol": "NBIS", "data": None},
+                        {"symbol": "NBIS", "data": "garbage"}):
+            with self.assertRaises(PayloadError):
+                parse_splits_payload("NBIS", payload)
+
+    def test_non_object_payload_rejected(self):
+        for payload in ([], "not a dict", 42, None):
+            with self.assertRaises(PayloadError):
+                parse_splits_payload("NBIS", payload)
+
+    def test_data_present_but_not_a_list_rejected(self):
+        with self.assertRaises(PayloadError):
+            parse_splits_payload("NBIS", {"symbol": "NBIS", "data": {"2024-06-10": "10.0000"}})
 
     def test_rejects_negative_or_zero_factor(self):
         for factor in ("0.0000", "-1.0000"):

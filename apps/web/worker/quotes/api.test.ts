@@ -456,7 +456,10 @@ describe("readScreenerApi — SMA200W fields (PR2)", () => {
     });
     const response = await readScreenerApi(envFrom(db), REGULAR);
     const apple = response.rows.find((row) => row.symbol === "AAPL")!;
-    expect(apple.sma200w).toBeCloseTo((19900 - 100 + 100) / 200, 10); // 99.5
+    // Correct delta=0 math: prior_199_sum = closed_sma_200w*200 - anchor_close
+    // = 100*200 - 100 = 19900; sma = (19900 + 100) / 200 = 100.0 (the naive
+    // (sum_199 - anchor_close + price) would only supply 198 prior closes).
+    expect(apple.sma200w).toBeCloseTo((100 * 200 - 100 + 100) / 200, 10); // 100.0
   });
 
   it("reports NotEnoughHistory when history < 199 weeks, regardless of quote", async () => {

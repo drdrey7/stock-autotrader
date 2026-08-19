@@ -37,23 +37,25 @@ function stateLabel(row: ScreenerRow): string {
 
 /** Distance display + state color (PR2). Full-precision value, 1-decimal display. */
 function distanceCell(row: ScreenerRow): ReactNode {
-  if (row.distanceToSma200wPct === null) return <span className="scr-flat">—</span>;
+  const distance = row.distanceToSma200wPct ?? null;
+  if (distance === null) return <span className="scr-flat">—</span>;
   const state = row.sma200wState ?? "Unavailable";
   const cls = state === "Above" ? "scr-up" : state === "Below" ? "scr-down" : "scr-near";
   return (
     <span className={cls} title={state}>
-      {formatSigned(row.distanceToSma200wPct, 1)}%
+      {formatSigned(distance, 1)}%
     </span>
   );
 }
 
 function smaCell(row: ScreenerRow): ReactNode {
-  if (row.sma200w === null) {
+  const sma = row.sma200w ?? null;
+  if (sma === null) {
     return row.sma200wState === "NotEnoughHistory"
       ? <span className="scr-flat" title="Fewer than 199 completed weeks">—</span>
       : <span className="scr-flat">—</span>;
   }
-  return <span className="scr-price">{row.sma200w.toFixed(2)}</span>;
+  return <span className="scr-price">{sma.toFixed(2)}</span>;
 }
 
 export interface ScreenerColumn {

@@ -22,7 +22,8 @@ from collections.abc import Callable
 from typing import Any
 
 from .config import Settings
-from .parser import WeeklyBar
+from .d1 import D1QueryError
+from .parser import SplitEvent, WeeklyBar
 from .provider import (
     AllKeysFailedError,
     AlphaVantageClient,
@@ -30,7 +31,7 @@ from .provider import (
     QuotaExhaustedError,
 )
 from .sma import TechnicalMetrics, compute_technical_metrics
-from .splits import adjust_series
+from .splits import adjust_series, split_events_from_rows, split_events_to_rows
 from .state import STATUS_DONE, STATUS_ERROR, StateStore
 from .universe import load_core_universe
 from .weeks import completed_bars_filter
@@ -40,6 +41,10 @@ logger = logging.getLogger("history_ingestor.bootstrap")
 
 def _now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()) + "Z"
+
+
+class SplitsStoreError(RuntimeError):
+    """The durable split_events store is missing or inconsistent for a symbol."""
 
 
 def metrics_row(symbol: str, metrics: TechnicalMetrics) -> dict:
@@ -123,6 +128,11 @@ class BootstrapRunner:
             if self._store.symbol_status(symbol, "splits") != STATUS_DONE:
                 try:
                     _, events, _ = self._provider.fetch_splits(symbol)
+                    # Durable FIRST: only mark complete once the provider
+                    # history is persisted — a crash before the write leaves
+                    # the status pending so the next run re-does it (idempotent
+                    # UPSERT, never duplicate history).
+                    self._persist_splits(symbol, events)
                     self._splits_cache[symbol] = events
                     self._store.mark_symbol(symbol, "splits", STATUS_DONE)
                     splits_fetched += 1
@@ -138,19 +148,29 @@ class BootstrapRunner:
                     self._store.save()
                     continue
 
-            # Splits known (fresh or from a previous run) — ensure the cache.
+            # Splits already completed in a previous run: load them from the
+            # DURABLE split_events store — completed endpoint work is never
+            # requested from the provider again.
             if symbol not in self._splits_cache:
                 try:
-                    _, events, _ = self._provider.fetch_splits(symbol)
+                    events, backfill = self._splits_from_store(symbol)
+                    if backfill:
+                        # Legacy symbol (completed before split_events existed):
+                        # its history proves adjustment but the durable store is
+                        # empty — one bounded refetch backfills the record.
+                        _, events, _ = self._provider.fetch_splits(symbol)
+                        self._persist_splits(symbol, events)
+                        splits_fetched += 1
                     self._splits_cache[symbol] = events
-                    splits_fetched += 1
                 except QuotaExhaustedError:
                     self._store.save()
                     remaining = [s for s in symbols if s not in done]
                     return self._report(symbols, "quota", weekly_fetched, splits_fetched,
                                         rows_written, remaining, errors, done)
-                except (ProviderError, AllKeysFailedError) as exc:
-                    errors.append(f"{symbol} splits re-fetch: {str(exc)[:160]}")
+                except (ProviderError, AllKeysFailedError, SplitsStoreError) as exc:
+                    if isinstance(exc, SplitsStoreError):
+                        self._store.mark_symbol(symbol, "splits", STATUS_ERROR)
+                    errors.append(f"{symbol} splits store: {str(exc)[:160]}")
                     remaining.append(symbol)
                     self._store.save()
                     continue
@@ -210,6 +230,45 @@ class BootstrapRunner:
                             rows_written, remaining, errors, done)
 
     # -------------------------------------------------------------- helpers
+
+    def _persist_splits(self, symbol: str, events: list[SplitEvent]) -> None:
+        """Persist split history durably (idempotent UPSERT) before completion.
+
+        Raises ProviderError so the caller treats a failed durable write as an
+        endpoint failure (the symbol stays pending and is retried next run).
+        """
+        write = self._d1.upsert_split_events(split_events_to_rows(symbol, events, _now_iso()))
+        if write.failed:
+            raise ProviderError(f"D1 split_events write failed: {write.error}")
+
+    def _splits_from_store(self, symbol: str) -> tuple[list[SplitEvent], bool]:
+        """Load split history from the durable split_events store.
+
+        Returns (events, backfill_needed). ``backfill_needed`` is True ONLY
+        for legacy symbols completed before split_events existed whose stored
+        history proves adjustment (stored weekly factors != 1) while the
+        durable store is empty — they need one bounded provider refetch to
+        backfill the durable record before any new computation.
+
+        An empty store is otherwise the provider's verified ``data: []``
+        (zero splits) — the DURABLE record of "no splits for this symbol" is
+        the empty table for that symbol, so this is NOT treated as missing.
+        """
+        try:
+            stored = self._d1.read_split_events(symbol)
+        except D1QueryError as exc:
+            raise SplitsStoreError(f"read_split_events failed: {exc}") from exc
+        if stored:
+            return split_events_from_rows(stored), False
+        # Empty durable store. Distinguish verified-zero from legacy-missing.
+        try:
+            weekly = self._d1.read_weekly_rows(symbol)
+        except D1QueryError as exc:
+            raise SplitsStoreError(f"read_weekly_rows failed: {exc}") from exc
+        if any(abs(float(row.get("split_adjustment_factor") or 1.0) - 1.0) > 1e-12 for row in weekly):
+            # History was adjusted with splits that were never persisted.
+            return [], True
+        return [], False
 
     def _reconcile_previous_metrics(self, symbols: list[str], done: list[str]) -> None:
         """Recompute metrics for earlier-completed symbols missing a row."""

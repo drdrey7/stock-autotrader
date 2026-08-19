@@ -149,7 +149,11 @@ class AlphaVantageClient:
         try:
             with self._urlopen(request, self._settings.av_timeout_seconds) as response:
                 body = response.read().decode("utf-8")
-                return response.status, json.loads(body) if body else {}
+                try:
+                    parsed = json.loads(body) if body else {}
+                except json.JSONDecodeError as exc:
+                    raise ProviderError(f"invalid JSON response: {exc}") from exc
+                return response.status, parsed
         except urllib.error.HTTPError as exc:
             exc.read()  # drain the body; HTTP status is what matters here
             if exc.code in (401, 403):
@@ -192,6 +196,10 @@ class AlphaVantageClient:
                 continue
 
             # AV returns HTTP 200 for informational payloads — classify here.
+            # A provider payload must be a JSON object; anything else (a
+            # string, a bare array, garbage) is never market data.
+            if not isinstance(payload, dict):
+                raise ProviderError("unexpected payload shape: not a JSON object")
             if "Note" in payload:
                 self.quota_hits_this_run.append(index)
                 self._ledger.mark_exhausted(index)

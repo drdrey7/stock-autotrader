@@ -9,6 +9,7 @@ from history_ingestor.d1 import (
     D1Client,
     D1QueryError,
     D1TransportError,
+    build_split_upsert_sql,
     build_weekly_upsert_sql,
 )
 
@@ -80,6 +81,24 @@ class SqlTests(unittest.TestCase):
         self.assertLessEqual(settings.d1_batch_max_rows, 10)
         bounds_per_row = build_weekly_upsert_sql(settings.d1_batch_max_rows).count("?")
         self.assertLessEqual(bounds_per_row, 100)
+
+    def test_build_split_upsert_sql_shape(self):
+        sql = build_split_upsert_sql(2)
+        self.assertIn("INSERT INTO split_events", sql)
+        self.assertIn("ON CONFLICT(symbol, effective_date) DO UPDATE SET", sql)
+        self.assertEqual(sql.count("'alpha-vantage'"), 2)
+        self.assertEqual(sql.count("(?, ?, ?, 'alpha-vantage', ?)"), 2)
+
+    def test_split_upsert_batch_stays_under_100_binds(self):
+        from history_ingestor.config import from_env
+        settings = from_env({"ALPHA_VANTAGE_API_KEYS": "K", "CLOUDFLARE_API_TOKEN": "t",
+                             "CLOUDFLARE_ACCOUNT_ID": "a", "CLOUDFLARE_D1_DATABASE_ID": "d"})
+        bounds = build_split_upsert_sql(settings.d1_batch_max_rows).count("?")
+        self.assertLessEqual(bounds, 100)
+
+    def test_build_split_upsert_requires_positive_count(self):
+        with self.assertRaises(ValueError):
+            build_split_upsert_sql(0)
 
 
 class D1ClientTests(unittest.TestCase):

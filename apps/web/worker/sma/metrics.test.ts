@@ -46,29 +46,34 @@ describe("computeLiveSma200w — live formula (199 completed + current quote)", 
   });
 
   it("excludes the current week from the basis (quote week == anchor week)", () => {
-    // Quote from week 33 (the anchor's own week): basis must drop anchor_close
-    // (100) so the quote is counted exactly once as the 200th term.
-    // sma = (19900 - 100 + 110) / 200 = 99.55
+    // Quote from week 33 (the anchor's own week). The 199 closes STRICTLY
+    // BEFORE L come from the true 200-week basis: closed_sma_200w*200 - anchor
+    // = 100*200 - 100 = 19900. sma = (19900 + 110) / 200 = 100.05.
     const result = computeLiveSma200w(quote(110, W33_FRIDAY_QUOTE), metrics());
-    expect(result.sma200w).toBeCloseTo(99.55, 10);
+    expect(result.sma200w).toBeCloseTo(100.05, 10);
+    expect(result.distanceToSma200wPct).toBeCloseTo((110 / 100.05 - 1) * 100, 10);
+    expect(result.sma200wState).toBe("Above");
   });
 
   it("no current-week double count: Friday close equals anchor close", () => {
-    // Quote == anchor_close (100): sma = (19900 - 100 + 100) / 200 = 99.5
+    // Quote == anchor_close (100): prior_199_sum = 19900; sma = (19900 + 100) / 200 = 100.
     const result = computeLiveSma200w(quote(100, W33_FRIDAY_QUOTE), metrics());
-    expect(result.sma200w).toBeCloseTo(99.5, 10);
+    expect(result.sma200w).toBeCloseTo(100, 10);
+    expect(result.distanceToSma200wPct).toBeCloseTo(0, 10);
+    expect(result.sma200wState).toBe("Near");
   });
 
   it("weekend anchor: Saturday quote still belongs to the anchor week", () => {
     // Saturday 16:00Z = Saturday 12:00 ET -> ISO week 33 == anchor week.
     const result = computeLiveSma200w(quote(110, SATURDAY_QUOTE), metrics());
-    expect(result.sma200w).toBeCloseTo(99.55, 10);
+    expect(result.sma200w).toBeCloseTo(100.05, 10);
   });
 
   it("Monday pre-open: Friday-close quote anchors to the previous week", () => {
-    // Sunday night NY quote (Friday close) -> week 33 -> subtract anchor close.
+    // Sunday night NY quote (Friday close) -> week 33 -> subtract using the
+    // 200-week basis.
     const result = computeLiveSma200w(quote(110, SUNDAY_NIGHT_QUOTE), metrics());
-    expect(result.sma200w).toBeCloseTo(99.55, 10);
+    expect(result.sma200w).toBeCloseTo(100.05, 10);
     // Monday 09:00 ET quote -> week 34 -> normal case.
     const monday = computeLiveSma200w(quote(110, "2026-08-17T13:05:00.000Z"), metrics());
     expect(monday.sma200w).toBeCloseTo(100.05, 10);
@@ -80,9 +85,112 @@ describe("computeLiveSma200w — live formula (199 completed + current quote)", 
     // Quote on the following Monday 2025-04-21 (ISO 2025-W17) -> delta 1.
     const result = computeLiveSma200w(quote(110, "2025-04-21T15:00:00.000Z"), holiday);
     expect(result.sma200w).toBeCloseTo(100.05, 10);
-    // Quote on Thursday 2025-04-17 itself (same week) -> delta 0 -> subtract.
+    // Quote on Thursday 2025-04-17 itself (same week) -> delta 0.
     const sameWeek = computeLiveSma200w(quote(110, "2025-04-17T19:00:00.000Z"), holiday);
-    expect(sameWeek.sma200w).toBeCloseTo(99.55, 10);
+    expect(sameWeek.sma200w).toBeCloseTo(100.05, 10);
+  });
+});
+
+/**
+ * Non-uniform basis regression suite for DELTA=0.
+ *
+ * Fixture: 1200 completed weeks; the last 200 closes are 1..200 so that
+ *   closed_sma_200w          = 20100 / 200 = 100.5
+ *   anchor_close (week L)    = 200
+ *   sum_199 (closes 2..200)  = 20099
+ * With a quote price P in week L (delta 0):
+ *   prior_199_sum = 100.5 * 200 - 200 = 19900   (closes 1..199)
+ *   live SMA      = (19900 + P) / 200
+ * The naive formula `sum_199 - anchor_close` would use 20099 - 200 = 19899
+ * (only 198 prior closes) — every assertion below discriminates the two.
+ */
+function nonUniformMetrics(overrides: Partial<TechnicalMetricsRow> = {}): TechnicalMetricsRow {
+  return {
+    symbol: "NVDA",
+    anchor_week: "2026-08-14",
+    completed_weeks_available: 1200,
+    sum_199: 20099,
+    anchor_close: 200,
+    closed_sma_200w: 100.5,
+    historical_data_as_of: "2026-08-19T06:00:00.000Z",
+    calculated_at: "2026-08-19T06:00:00.000Z",
+    status: "ok",
+    source: "alpha-vantage",
+    ...overrides,
+  };
+}
+
+describe("computeLiveSma200w — delta=0 with NON-UNIFORM values (P0 regression)", () => {
+  it.each([
+    // [quotePrice, expectedSma] — all non-uniform, all "no two closes alike"
+    // near the anchor, so the wrong (sum_199 - anchor) formula would FAIL.
+    [210, (19900 + 210) / 200],
+    [150, (19900 + 150) / 200],
+    [99.5, (19900 + 99.5) / 200],
+    [200, (19900 + 200) / 200],
+  ])("quote in the anchor week with price %p uses the true 200-week basis", (price, expected) => {
+    const result = computeLiveSma200w(quote(price, W33_FRIDAY_QUOTE), nonUniformMetrics());
+    expect(result.sma200w).toBeCloseTo(expected, 10);
+    // The naive (sum_199 - anchor_close) formula yields a different value —
+    // prove the regression on a concrete pair:
+    expect(result.sma200w).not.toBeCloseTo((20099 - 200 + price) / 200, 10);
+  });
+
+  it(">=200 completed weeks + delta=0 computes from the 200-week basis", () => {
+    const result = computeLiveSma200w(quote(150, W33_FRIDAY_QUOTE), nonUniformMetrics());
+    expect(result.sma200w).toBeCloseTo(100.25, 10);
+    expect(result.sma200wState).toBe("Above");
+    expect(result.sma200wHistoryWeeks).toBe(1200);
+  });
+
+  it("delta=1 with the non-uniform basis uses sum_199 directly", () => {
+    // Quote in week 34 (one past anchor): sma = (sum_199 + price) / 200.
+    const result = computeLiveSma200w(quote(210, W34_QUOTE), nonUniformMetrics());
+    expect(result.sma200w).toBeCloseTo((20099 + 210) / 200, 10);
+    expect(result.sma200w).toBeCloseTo(101.545, 10);
+  });
+
+  it("exactly 199 completed weeks + delta=0 -> honest NotEnoughHistory (no 200-week basis)", () => {
+    const result = computeLiveSma200w(
+      quote(150, W33_FRIDAY_QUOTE),
+      nonUniformMetrics({ completed_weeks_available: 199, closed_sma_200w: null, status: "limited" }),
+    );
+    expect(result.sma200w).toBeNull();
+    expect(result.distanceToSma200wPct).toBeNull();
+    expect(result.sma200wState).toBe("NotEnoughHistory");
+    expect(result.sma200wHistoryWeeks).toBe(199);
+  });
+
+  it.each([
+    // [anchorBucket, quoteTs] — true delta=1 pairs across a year boundary
+    // (2026 has 53 ISO weeks; 2025-12-26 is in 2025-W52).
+    ["2025-12-26", "2026-01-01T15:00:00.000Z"],
+    ["2026-12-31", "2027-01-04T15:00:00.000Z"],
+  ])(
+    "year boundary delta=1: anchor %s with quote one ISO week later (%s)",
+    (anchorBucket, quoteTs) => {
+      // Anchor week 2025-W52 / 2026-W53; quote lands in the NEXT ISO week
+      // (2026-W01 / 2027-W01) -> delta 1 -> normal live formula.
+      const ym = nonUniformMetrics({ anchor_week: anchorBucket });
+      const result = computeLiveSma200w(quote(210, quoteTs), ym);
+      expect(result.sma200w).toBeCloseTo((20099 + 210) / 200, 10);
+      expect(result.sma200wState).toBe("Above");
+    },
+  );
+
+  it("weekend after a year boundary: Friday 2026-12-25 quote (2026-W52) is delta 0 vs anchor", () => {
+    // Anchor week 2026-W52; the quote's own Friday closes that same ISO week
+    // -> delta 0 -> 200-week basis (19900).
+    const ym = nonUniformMetrics({ anchor_week: "2026-12-25" });
+    const result = computeLiveSma200w(quote(150, "2026-12-25T19:30:00.000Z"), ym);
+    expect(result.sma200w).toBeCloseTo((19900 + 150) / 200, 10);
+    expect(result.sma200wState).toBe("Above");
+  });
+
+  it("holiday week delta=0 uses the 200-week basis (Good Friday Thursday bucket)", () => {
+    const holiday = nonUniformMetrics({ anchor_week: "2025-04-17" });
+    const result = computeLiveSma200w(quote(210, "2025-04-17T19:00:00.000Z"), holiday);
+    expect(result.sma200w).toBeCloseTo((19900 + 210) / 200, 10);
   });
 });
 

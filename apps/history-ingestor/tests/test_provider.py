@@ -296,6 +296,52 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(store.keys[0]["used"], 2)
         self.assertEqual(store.keys[1]["used"], 2)
 
+    def test_malformed_json_raises_provider_error_not_crash(self):
+        # Spec #5: malformed provider responses must NEVER be interpreted as
+        # data ("zero splits"). A non-JSON body surfaces as a provider failure
+        # (AllKeysFailedError/ProviderError) — never an empty history.
+        class RawURL:
+            def __call__(self, request, timeout):
+                class Resp:
+                    status = 200
+
+                    def __enter__(self_):
+                        return self_
+
+                    def __exit__(self_, *exc):
+                        return False
+
+                    def read(self_):
+                        return b"<html>gateway error</html>"
+                return Resp()
+
+        store = FakeStore(1)
+        client = self._client(store, RawURL())
+        with self.assertRaises(ProviderError):
+            client.fetch_splits("NVDA")
+
+    def test_non_object_json_payload_raises_provider_error(self):
+        # A bare JSON array body is never market data either.
+        class RawURL:
+            def __call__(self, request, timeout):
+                class Resp:
+                    status = 200
+
+                    def __enter__(self_):
+                        return self_
+
+                    def __exit__(self_, *exc):
+                        return False
+
+                    def read(self_):
+                        return b"[1, 2, 3]"
+                return Resp()
+
+        store = FakeStore(1)
+        client = self._client(store, RawURL())
+        with self.assertRaises(ProviderError):
+            client.fetch_splits("NVDA")
+
 
 if __name__ == "__main__":
     unittest.main()

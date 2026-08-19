@@ -84,8 +84,15 @@ def _message_kind(payload: dict) -> ProviderMessageError | None:
     return None
 
 
-def _require_messages(payload: dict) -> None:
-    """Reject provider message payloads before any data interpretation."""
+def _require_messages(payload: Any) -> None:
+    """Reject non-object and provider message payloads before any data interpretation.
+
+    A provider response is ONLY market data when it is a JSON object with the
+    expected series/array keys. Anything else (list, string, garbage, or one
+    of Alpha Vantage's informational messages) is an error — never data.
+    """
+    if not isinstance(payload, dict):
+        raise PayloadError(f"provider payload is not a JSON object: {type(payload).__name__}")
     error = _message_kind(payload)
     if error is not None:
         raise error
@@ -101,7 +108,7 @@ def _finite_positive(value: Any, field: str, index: int) -> float:
     return number
 
 
-def parse_weekly_payload(symbol: str, payload: dict) -> list[WeeklyBar]:
+def parse_weekly_payload(symbol: str, payload: Any) -> list[WeeklyBar]:
     """Parse a TIME_SERIES_WEEKLY payload into ascending WeeklyBar rows.
 
     Strict: any malformed row rejects the whole payload (garbage is never
@@ -147,18 +154,21 @@ def parse_weekly_payload(symbol: str, payload: dict) -> list[WeeklyBar]:
     return bars
 
 
-def parse_splits_payload(symbol: str, payload: dict) -> list[SplitEvent]:
+def parse_splits_payload(symbol: str, payload: Any) -> list[SplitEvent]:
     """Parse a SPLITS payload into ascending SplitEvent rows.
 
-    ``data`` may be absent/empty (no splits for the symbol) — that is a valid
-    empty history, not an error.
+    A payload with NO split array at all (missing ``data`` and ``splits``
+    keys) is an unexpected/malformed provider payload and raises — it must
+    NOT be silently read as "zero splits". ONLY an explicit ``data: []`` (or
+    the legacy ``splits: []``) is the provider's verified empty history.
+    ``data``/``splits`` that are present but not a list are also errors.
     """
     _require_messages(payload)
+    if "data" not in payload and "splits" not in payload:
+        raise PayloadError(f"splits payload for {symbol} has no data array (missing 'data'/'splits')")
     data = payload.get("data")
     if data is None and "splits" in payload:
         data = payload["splits"]  # tolerate the legacy key shape
-    if data is None:
-        data = []  # a payload with no split array at all = no splits
     if not isinstance(data, list):
         raise PayloadError(f"splits payload for {symbol} has no data array")
 

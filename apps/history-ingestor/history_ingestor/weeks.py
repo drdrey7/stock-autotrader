@@ -79,3 +79,32 @@ def completed_bars_filter(
         else:
             completed.append(key)
     return completed, in_progress
+
+
+def target_completed_week(now: dt.datetime) -> str:
+    """ISO week label of the last COMPLETED trading week as of ``now`` (UTC).
+
+    The completed trading week is the one containing the most recent Friday
+    (the market's weekly close) at or before today's NY date:
+      Sunday  xxW34 (Fri xx-21)         -> "2026-W34"
+      Monday  xxW35 (Fri xx-21 was W34) -> "2026-W34"
+      next Sunday (Fri xx-28, W35)      -> "2026-W35"
+
+    This is the maintenance cycle identity: Sunday STARTS a cycle for the week
+    that closed on Friday (and reconciles its splits), and Monday's refresh
+    stores exactly that same week's completed data.
+    """
+    ny = ny_date_of(now)
+    days_since_friday = (ny.weekday() - 4) % 7  # Monday=0 .. Friday=4, Sat=5, Sun=6
+    last_friday = ny - dt.timedelta(days=days_since_friday)
+    return week_label(last_friday)
+
+
+def is_monday_in_ny(now: dt.datetime) -> bool:
+    """Whether ``now`` falls on a Monday in America/New_York.
+
+    A weekly bucket only becomes storable (no longer the in-progress NY week)
+    once Monday begins in NY, so the maintenance WEEKLY phase fetches only on
+    NY Mondays. Sunday runs stay in the SPLITS phase.
+    """
+    return ny_date_of(now).weekday() == 0

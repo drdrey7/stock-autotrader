@@ -21,13 +21,21 @@ def settings_with(keys=("K1", "K2")):
 
 
 def weekly_payload(symbol, n_weeks=260, end="2026-08-14"):
-    """n_weeks completed weekly buckets ending at ``end`` (newest-first like AV)."""
+    """n_weeks completed weekly buckets ending at ``end`` (newest-first like AV).
+
+    Prices are DATE-DETERMINISTIC (a given week_end_date always yields the same
+    non-uniform close, independent of ``n_weeks``), so a second run that adds
+    one week changes exactly one row — the new week. The provider-correction
+    and new-split tests rely on this identity.
+    """
     import datetime as _dt
     series = {}
     end_date = _dt.date.fromisoformat(end)
     for i in range(n_weeks):
         week = end_date - _dt.timedelta(weeks=i)
-        price = 100.0 + i * 0.5
+        # Date-keyed deterministic series: same date -> same price; consecutive
+        # weeks differ (0.05 per ordinal day ~ 0.35/week, non-uniform).
+        price = 10.0 + ((week.toordinal()) % 400) * 0.05
         series[week.isoformat()] = {
             "1. open": str(price), "2. high": str(price + 1), "3. low": str(price - 1),
             "4. close": str(price), "5. volume": "100000",
@@ -50,7 +58,9 @@ class FakeD1:
         self.weekly: dict[str, list] = {}
         self.metrics: dict[str, dict] = {}
         self.meta: dict[str, dict] = {}
+        self.split_events: dict[str, list] = {}
         self.written_rows = 0
+        self.split_write_fail = False
 
     def upsert_weekly_rows(self, rows):
         self.written_rows += len(rows)
@@ -64,6 +74,32 @@ class FakeD1:
     def upsert_technical_metrics(self, metrics):
         self.metrics[metrics["symbol"]] = metrics
         return type("R", (), {"written": [metrics["symbol"]], "failed": [], "error": None})()
+
+    def upsert_split_events(self, rows):
+        if self.split_write_fail:
+            return type("R", (), {"written": [], "failed": [r[0] for r in rows], "error": "D1 split write failed"})()
+        for row in rows:
+            # (symbol, effective_date, split_factor, source_fetched_at)
+            bucket = self.split_events.setdefault(row[0], [])
+            bucket[:] = [e for e in bucket if e["effective_date"] != row[1]]
+            bucket.append({
+                "symbol": row[0], "effective_date": row[1], "split_factor": row[2],
+                "source": "alpha-vantage", "source_fetched_at": row[3],
+            })
+            bucket.sort(key=lambda e: e["effective_date"])
+        return type("R", (), {"written": [r[0] for r in rows], "failed": [], "error": None})()
+
+    def delete_extra_split_events(self, symbol, keep_dates):
+        bucket = self.split_events.setdefault(symbol, [])
+        keep = set(keep_dates)
+        self.split_events[symbol] = [e for e in bucket if e["effective_date"] in keep]
+        return type("R", (), {"written": [symbol], "failed": [], "error": None})()
+
+    def read_split_events(self, symbol):
+        return list(self.split_events.get(symbol, []))
+
+    def read_all_split_events(self):
+        return {s: list(v) for s, v in self.split_events.items()}
 
     def read_technical_metrics(self):
         return [{"symbol": s} for s in self.metrics]
@@ -115,7 +151,12 @@ class FakeProvider:
         if self.quota_after is not None and self.requests_this_run > self.quota_after:
             from history_ingestor.provider import QuotaExhaustedError
             raise QuotaExhaustedError("quota")
-        return 0, self._parse_weekly(symbol, self._weekly[symbol]), ""
+        from history_ingestor.parser import PayloadError
+        from history_ingestor.provider import ProviderError as PE
+        try:
+            return 0, self._parse_weekly(symbol, self._weekly[symbol]), ""
+        except PayloadError as exc:
+            raise PE(f"WEEKLY {symbol}: {exc}") from exc
 
     def fetch_splits(self, symbol):
         self.requests_this_run += 1
@@ -124,7 +165,12 @@ class FakeProvider:
         if self.quota_after is not None and self.requests_this_run > self.quota_after:
             from history_ingestor.provider import QuotaExhaustedError
             raise QuotaExhaustedError("quota")
-        return 0, self._parse_splits(symbol, self._splits[symbol]), ""
+        from history_ingestor.parser import PayloadError
+        from history_ingestor.provider import ProviderError as PE
+        try:
+            return 0, self._parse_splits(symbol, self._splits[symbol]), ""
+        except PayloadError as exc:
+            raise PE(f"SPLITS {symbol}: {exc}") from exc
 
 
 class FakeLedger:
@@ -300,6 +346,124 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual(report["status"], "complete")
             self.assertIn("NVDA", d1.metrics)  # recomputed from D1 rows
             self.assertEqual(provider2.requests_this_run, 0)  # no provider calls
+
+    def test_split_events_persisted_durably_on_fetch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner, d1, provider, store = make_runner(tmp=tmp, now=lambda: NOW)
+            runner.run(universe=["NVDA"], symbols_filter=["NVDA"])
+            rows = d1.read_split_events("NVDA")
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["effective_date"], "2024-06-10")
+            self.assertEqual(rows[0]["split_factor"], 10.0)
+            self.assertEqual(rows[0]["source"], "alpha-vantage")
+
+    def test_resume_after_splits_does_not_refetch_splits(self):
+        # Spec #4: Day 1 SPLITS completes, quota dies before WEEKLY; Day 2
+        # resumes: SPLITS must be loaded from D1 (split_events), NEVER requested
+        # again; WEEKLY continues; result identical.
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            settings = settings_with()
+            provider1 = FakeProvider(
+                weekly_payloads={"A": weekly_payload("A")},
+                splits_payloads={"A": splits_payload("A")},
+                quota_after=1,  # splits ok (req 1), weekly hits quota (req 2)
+            )
+            store1 = StateStore(settings, d1, state_path=Path(tmp) / "checkpoint.json")
+            runner1 = BootstrapRunner(settings, d1, provider1, store1, now_fn=lambda: NOW)
+            report1 = runner1.run(universe=["A"])
+            self.assertEqual(report1["status"], "quota")
+            self.assertEqual(store1.symbol_status("A", "splits"), "done")
+            self.assertEqual(store1.symbol_status("A", "weekly"), "pending")
+            # Split history is durable — NOT RAM-only.
+            self.assertEqual(len(d1.read_split_events("A")), 1)
+
+            # Day 2: fresh process, fresh provider — resumes from the checkpoint.
+            provider2 = FakeProvider(
+                weekly_payloads={"A": weekly_payload("A")},
+                splits_payloads={"A": splits_payload("A")},
+            )
+            store2 = StateStore(settings, d1, state_path=Path(tmp) / "checkpoint.json")
+            runner2 = BootstrapRunner(settings, d1, provider2, store2, now_fn=lambda: NOW)
+            report2 = runner2.run(universe=["A"])
+            self.assertEqual(report2["status"], "complete")
+            # THE regression: A's SPLITS are NOT requested again.
+            self.assertEqual(provider2.splits_calls, [])
+            self.assertEqual(provider2.weekly_calls, ["A"])
+            # WEEKLY continued and the result is identical to a same-day run.
+            rows = d1.weekly["A"]
+            self.assertEqual(len(rows), 260)
+            self.assertEqual(rows[-1][1], "2026-08-14")
+            self.assertIn("A", d1.metrics)
+
+    def test_verified_zero_splits_resume_without_refetch(self):
+        # A symbol with data: [] persists ZERO split_events rows, yet resume
+        # must still NOT refetch SPLITS (the empty durable store IS the record
+        # of "no splits" for a post-fix symbol).
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            settings = settings_with()
+            provider1 = FakeProvider(
+                weekly_payloads={"NBIS": weekly_payload("NBIS")},
+                splits_payloads={"NBIS": {"symbol": "NBIS", "data": []}},
+                quota_after=1,
+            )
+            store1 = StateStore(settings, d1, state_path=Path(tmp) / "checkpoint.json")
+            runner1 = BootstrapRunner(settings, d1, provider1, store1, now_fn=lambda: NOW)
+            report1 = runner1.run(universe=["NBIS"])
+            self.assertEqual(report1["status"], "quota")
+            self.assertEqual(store1.symbol_status("NBIS", "weekly"), "pending")
+
+            provider2 = FakeProvider(
+                weekly_payloads={"NBIS": weekly_payload("NBIS")},
+                splits_payloads={"NBIS": {"symbol": "NBIS", "data": []}},
+            )
+            store2 = StateStore(settings, d1, state_path=Path(tmp) / "checkpoint.json")
+            runner2 = BootstrapRunner(settings, d1, provider2, store2, now_fn=lambda: NOW)
+            report2 = runner2.run(universe=["NBIS"])
+            self.assertEqual(report2["status"], "complete")
+            self.assertEqual(provider2.splits_calls, [])
+            self.assertEqual(provider2.weekly_calls, ["NBIS"])
+            # All factors are 1 for a no-split symbol.
+            for r in d1.weekly["NBIS"]:
+                self.assertEqual(r[7], 1.0)
+
+    def test_malformed_splits_payload_does_not_ingest_weekly(self):
+        # A malformed SPLITS payload (missing data array) is a parser error:
+        # the symbol is marked error and WEEKLY is NOT ingested with factor 1.
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            settings = settings_with()
+            provider = FakeProvider(
+                weekly_payloads={"NVDA": weekly_payload("NVDA")},
+                splits_payloads={"NVDA": {"symbol": "NVDA", "data": "oops"}},
+            )
+            store = StateStore(settings, d1, state_path=Path(tmp) / "checkpoint.json")
+            runner = BootstrapRunner(settings, d1, provider, store, now_fn=lambda: NOW)
+            report = runner.run(universe=["NVDA"])
+            self.assertEqual(report["status"], "partial")
+            self.assertEqual(store.symbol_status("NVDA", "splits"), "error")
+            self.assertEqual(store.symbol_status("NVDA", "weekly"), "pending")
+            self.assertNotIn("NVDA", d1.weekly)  # nothing written with factor 1
+            self.assertEqual(d1.read_split_events("NVDA"), [])
+
+    def test_split_durable_write_failure_keeps_symbol_pending(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            d1.split_write_fail = True
+            settings = settings_with()
+            provider = FakeProvider(
+                weekly_payloads={"NVDA": weekly_payload("NVDA")},
+                splits_payloads={"NVDA": splits_payload("NVDA")},
+            )
+            store = StateStore(settings, d1, state_path=Path(tmp) / "checkpoint.json")
+            runner = BootstrapRunner(settings, d1, provider, store, now_fn=lambda: NOW)
+            report = runner.run(universe=["NVDA"])
+            # Durable write failed -> splits NOT marked done; weekly not run.
+            self.assertEqual(store.symbol_status("NVDA", "splits"), "error")
+            self.assertEqual(store.symbol_status("NVDA", "weekly"), "pending")
+            self.assertIn("NVDA", report["remaining_symbols"])
+            self.assertNotIn("NVDA", d1.weekly)
 
 
 if __name__ == "__main__":

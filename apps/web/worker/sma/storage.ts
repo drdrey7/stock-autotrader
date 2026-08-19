@@ -11,16 +11,22 @@ import { technicalMetricsRowSchema } from "@stock-autotrader/contracts";
  * skipped defensively; a symbol without a valid row simply has no SMA.
  */
 export async function readTechnicalMetrics(db: D1Database): Promise<Map<string, TechnicalMetricsRow>> {
-  const result = await db.prepare(
-    `SELECT symbol, anchor_week, completed_weeks_available, sum_199, anchor_close,
-            closed_sma_200w, historical_data_as_of, calculated_at, status, source
-       FROM technical_metrics`,
-  ).all();
   const metrics = new Map<string, TechnicalMetricsRow>();
-  for (const row of (result.results ?? []) as unknown[]) {
-    const parsed = technicalMetricsRowSchema.safeParse(row);
-    if (!parsed.success) continue;
-    metrics.set(parsed.data.symbol, parsed.data);
+  try {
+    const result = await db.prepare(
+      `SELECT symbol, anchor_week, completed_weeks_available, sum_199, anchor_close,
+              closed_sma_200w, historical_data_as_of, calculated_at, status, source
+         FROM technical_metrics`,
+    ).all();
+    for (const row of (result.results ?? []) as unknown[]) {
+      const parsed = technicalMetricsRowSchema.safeParse(row);
+      if (!parsed.success) continue;
+      metrics.set(parsed.data.symbol, parsed.data);
+    }
+  } catch {
+    // Best-effort like readCoreCompanies: a missing/failing metrics table
+    // degrades to "no SMA columns" for every symbol — it must NEVER take the
+    // whole Screener (prices/quotes) down with it.
   }
   return metrics;
 }

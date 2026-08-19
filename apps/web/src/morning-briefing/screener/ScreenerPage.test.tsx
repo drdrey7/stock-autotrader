@@ -144,4 +144,32 @@ describe("ScreenerPage", () => {
     expect(await screen.findAllByText("Cached")).toHaveLength(2);
     expect(screen.queryByText("Market closed")).not.toBeInTheDocument();
   });
+
+  it("renders a pre-PR2 production payload (SMA fields OMITTED) — '—' placeholders, no crash", async () => {
+    // Cloudflare PR preview proxies /api/* to the PRODUCTION worker, which
+    // returns the OLD shape: rows have NO sma200w/distanceToSma200wPct/
+    // sma200wState/sma200wHistoryWeeks/sma200wAsOf. Never .toFixed(undefined).
+    const omit = (keys: string[], raw: Record<string, unknown>) => {
+      const copy = { ...raw };
+      for (const key of keys) delete copy[key];
+      return copy;
+    };
+    const oldPayload = rows50().map((r) =>
+      omit(
+        ["sma200w", "distanceToSma200wPct", "sma200wState", "sma200wHistoryWeeks", "sma200wAsOf"],
+        r as unknown as Record<string, unknown>,
+      ));
+    fetchMock.mockImplementation(async () =>
+      new Response(JSON.stringify({ ...makeResponse([]), rows: oldPayload }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }));
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(51)); // header + 50
+    // SMA cells degrade to the em-dash placeholder; no "Page unavailable".
+    expect(screen.queryByText(/Page unavailable/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/temporarily unavailable/i)).not.toBeInTheDocument();
+    expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(100); // 2 SMA cols x 50 rows
+  });
 });

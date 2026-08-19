@@ -69,3 +69,67 @@ def adjust_series(
 def split_factor_float(factor: Fraction) -> float:
     """Float projection of an exact factor for persistence (>= 0 check done by SQL)."""
     return float(factor)
+
+
+def split_events_to_rows(
+    symbol: str,
+    events: Iterable[SplitEvent],
+    fetched_at: str,
+) -> list[tuple[str, str, float, str]]:
+    """Project SplitEvents into durable ``split_events`` rows.
+
+    Row shape: ``(symbol, effective_date, split_factor, source_fetched_at)``.
+    The factor is stored as its float projection (matching
+    ``weekly_prices.split_adjustment_factor``); exactness is recovered on read
+    via :func:`split_events_from_rows`.
+    """
+    return [
+        (symbol, event.effective_date, split_factor_float(event.ratio), fetched_at)
+        for event in events
+    ]
+
+
+def split_events_from_rows(rows: Iterable[dict]) -> list[SplitEvent]:
+    """Rebuild exact SplitEvents from stored ``split_events`` rows.
+
+    Stored factors are REAL (float projection of the original decimal
+    string); recovering the exact :class:`fractions.Fraction` is
+    deterministic via ``limit_denominator`` (mirrors the parser's own
+    recovery of ``\"10.0000\"`` etc.).
+    """
+    events: list[SplitEvent] = []
+    for row in rows:
+        try:
+            ratio = Fraction(row["split_factor"]).limit_denominator(1_000_000)
+        except (TypeError, ValueError, ZeroDivisionError, KeyError):
+            continue
+        if ratio <= 0:
+            continue
+        events.append(SplitEvent(symbol=str(row["symbol"]), effective_date=str(row["effective_date"]), ratio=ratio))
+    events.sort(key=lambda event: event.effective_date)
+    return events
+
+
+def split_events_equal(
+    events_a: Iterable[SplitEvent],
+    events_b: Iterable[SplitEvent],
+    epsilon: float = 1e-9,
+) -> bool:
+    """Whether two split histories match by (effective_date, ratio).
+
+    Used by the weekly SPLITS pass to decide whether a reconciliation (and
+    the associated historical rewrite) is needed. Ratios are compared on the
+    float projection with a tiny epsilon — provider factors are binary-exact
+    decimals in practice (``10.0``, ``1.5``, ``0.5``), so this never
+    false-positives a change.
+    """
+    ordered_a = sorted(events_a, key=lambda event: event.effective_date)
+    ordered_b = sorted(events_b, key=lambda event: event.effective_date)
+    if len(ordered_a) != len(ordered_b):
+        return False
+    for left, right in zip(ordered_a, ordered_b):
+        if left.effective_date != right.effective_date:
+            return False
+        if abs(split_factor_float(left.ratio) - split_factor_float(right.ratio)) > epsilon:
+            return False
+    return True

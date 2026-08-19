@@ -22,6 +22,7 @@ from .bootstrap import BootstrapRunner
 from .config import ConfigError, Settings, from_env
 from .d1 import D1Client
 from .maintenance import MaintenanceRunner
+from .maintenance_state import MaintenanceStore
 from .provider import AlphaVantageClient
 from .state import KeyBudgetLedger, StateStore
 from .universe import load_core_universe
@@ -64,19 +65,30 @@ def cmd_bootstrap(settings: Settings, args: argparse.Namespace) -> int:
         symbols_filter=args.symbols,
     )
     _emit("bootstrap_report", **report)
-    return 0 if report["status"] in ("complete", "partial") else 2
+    # Quota exhaustion is NORMAL partial completion (free-tier), NOT a crash:
+    # exit 0 so the systemd unit does not Restart=on-failure into a 120s loop.
+    return 0 if report["status"] in ("complete", "partial", "quota") else 2
 
 
 def cmd_maintenance(settings: Settings, args: argparse.Namespace) -> int:
     d1, provider, store = _build(settings)
-    runner = MaintenanceRunner(settings, d1, provider, store)
+    # The bootstrap StateStore doubles as the SHARED per-key daily budget
+    # ledger (bootstrap + maintenance draw from the same provider day quota).
+    # It MUST be loaded so the ledger has per-key entries (and day rollover
+    # resets usage); its symbol statuses are never touched by maintenance.
+    store.load()
+    mstore = MaintenanceStore(settings, d1)
+    runner = MaintenanceRunner(settings, d1, provider, mstore, key_store=store)
     report = runner.run(
         dry_run=args.dry_run,
         limit=args.limit,
         symbols_filter=args.symbols,
     )
     _emit("maintenance_report", **report)
-    return 0 if not report.get("quota_exhausted") else 2
+    # Quota / waiting / partial are expected outcomes (free-tier pacing) and
+    # exit 0 — no retry loop. Only genuine failures (config/corrupted state)
+    # surface as non-zero, from _settings()/store.load() above.
+    return 0
 
 
 def cmd_status(settings: Settings) -> int:
@@ -90,6 +102,21 @@ def cmd_status(settings: Settings) -> int:
     ]
     coverage = d1.read_weekly_summary()
     metrics = d1.read_technical_metrics()
+    try:
+        mstore = MaintenanceStore(settings, d1)
+        mstate = mstore.load()
+        split_counts = {sym: len(rows) for sym, rows in d1.read_all_split_events().items()}
+        maintenance = {
+            "cycle_week": mstate.cycle_week,
+            "phase": mstate.phase(),
+            "symbols_tracked": len(mstate.symbols),
+            "splits_done": sum(1 for s in mstate.symbols if mstate.symbol_status(s, "splits") == "done"),
+            "weekly_done": sum(1 for s in mstate.symbols if mstate.symbol_status(s, "weekly") == "done"),
+            "metrics_done": sum(1 for s in mstate.symbols if mstate.symbol_status(s, "metrics") == "done"),
+        }
+    except Exception:
+        maintenance = {}
+        split_counts = {}
     _emit("status", **{
         "day": state.day,
         "keys_used": [{"index": k.get("index"), "used": k.get("used", 0), "status": k.get("status")} for k in state.keys],
@@ -100,6 +127,8 @@ def cmd_status(settings: Settings) -> int:
         "weekly_rows": sum(int(row.get("rows", 0)) for row in coverage["rows"]),
         "metrics_symbols": len(metrics),
         "metrics_status": {row.get("symbol"): row.get("status") for row in metrics},
+        "split_events_symbols": len(split_counts),
+        "maintenance": maintenance,
     })
     return 0
 
