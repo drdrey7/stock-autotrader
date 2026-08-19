@@ -74,6 +74,7 @@ class Ingestor:
         self._watchdog_lock = threading.Lock()
         self._last_market_phase: str | None = None
         self._last_connected: bool = False
+        self._last_observed_connect_count: int = -1
         self._grace_mono: float | None = None
         self._last_stall_reconnect_mono: float | None = None
         self._ws_client: FinnhubWebSocketClient | None = None
@@ -108,9 +109,12 @@ class Ingestor:
         for tick in result.ticks:
             if not self._accept_tick(tick, now):
                 continue
+            # Provider liveness: any accepted regular-session tick proves the
+            # Finnhub feed is alive — even if QuoteStateStore deduplicates it
+            # (duplicate, same timestamp/price). The watchdog must see it.
+            accepted_regular = True
             if self.store.apply_tick(tick):
                 self.health.on_tick()
-                accepted_regular = True
         if accepted_regular:
             self.health.on_accepted_regular_tick()
 
@@ -269,14 +273,18 @@ class Ingestor:
             self._last_market_phase = phase
             is_connected = ws.is_connected if ws else False
             subs_ok = ws.subscriptions_sent == len(self.symbols) if ws else False
-            just_connected = is_connected and not self._last_connected
+            connect_count = ws.connect_count if ws else 0
+            connect_generation_changed = connect_count != self._last_observed_connect_count
+            self._last_observed_connect_count = connect_count
             self._last_connected = is_connected
             mono = self.health.monotonic_now()
             # Phase transition into 'open' -> fresh grace window.
             if phase == "open" and last_phase != "open":
                 self._grace_mono = mono
             # WS (re)connect -> fresh grace window.
-            if just_connected:
+            # Uses connect_count generation so a disconnect/reconnect that
+            # happens entirely between watchdog polls is still detected.
+            if connect_generation_changed:
                 self._grace_mono = mono
             # Outside market open: do nothing.
             if phase != "open":

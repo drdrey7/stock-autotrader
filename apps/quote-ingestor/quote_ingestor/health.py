@@ -44,6 +44,7 @@ class HealthTracker:
         self.last_ws_heartbeat_at: float | None = None
         self.ignored_non_regular_count = 0
         self.last_accepted_regular_tick_at: float | None = None
+        self._last_accepted_regular_tick_monotonic: float | None = None
         self.market_stall_reconnect_count = 0
 
     # ---------------------------------------------------------------- updates
@@ -128,10 +129,17 @@ class HealthTracker:
 
     def on_accepted_regular_tick(self) -> None:
         """An accepted regular-session tick arrived — the watchdog's liveness
-        signal. Uses monotonic time so elapsed-duration decisions are immune
-        to wall-clock jumps (NTP, DST is irrelevant to monotonic)."""
+        signal. Maintains two timestamps:
+
+        - ``_last_accepted_regular_tick_monotonic``: monotonic, used ONLY
+          internally for stall elapsed-duration decisions (immune to wall-clock
+          jumps).
+        - ``last_accepted_regular_tick_at``: wall-clock (time.time), used for
+          the serialised health/D1 output so operators see a real UTC instant.
+        """
         with self._lock:
-            self.last_accepted_regular_tick_at = time.monotonic()
+            self._last_accepted_regular_tick_monotonic = time.monotonic()
+            self.last_accepted_regular_tick_at = time.time()
 
     def on_market_stall_reconnect(self) -> None:
         """The stall watchdog forced a reconnect."""
@@ -145,7 +153,7 @@ class HealthTracker:
     def last_accepted_regular_tick_monotonic(self) -> float | None:
         """Raw monotonic timestamp of last accepted regular tick (watchdog)."""
         with self._lock:
-            return self.last_accepted_regular_tick_at
+            return self._last_accepted_regular_tick_monotonic
 
     def on_heartbeat_written(self) -> None:
         """The 1/minute D1 health heartbeat landed (process-alive proof)."""
