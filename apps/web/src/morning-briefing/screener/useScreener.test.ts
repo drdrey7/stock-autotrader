@@ -22,6 +22,7 @@ const row = (symbol: string): ScreenerRow => ({
   sma200wState: "Unavailable",
   sma200wHistoryWeeks: null,
   sma200wAsOf: null,
+  supportLevels: [],
 });
 
 const response = (): ScreenerApiResponse => ({

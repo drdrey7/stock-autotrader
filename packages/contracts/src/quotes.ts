@@ -62,6 +62,29 @@ export type TechnicalMetricsRow = z.infer<typeof technicalMetricsRowSchema>;
  * `state` reuses the project's shared freshness vocabulary
  * (Live / Cached / Stale / Unavailable / Error).
  */
+export const screenerSupportLevelSchema = z.object({
+  level: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
+  price: z.number().positive().finite(),
+  method: z.string().trim().min(1).max(128),
+  asOf: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  triggered: z.boolean().nullable(),
+});
+export type ScreenerSupportLevel = z.infer<typeof screenerSupportLevelSchema>;
+
+/**
+ * Raw D1 row shape for `stock_support_levels`. Validated at the storage
+ * boundary so downstream code (API/Worker) only ever sees well-formed rows.
+ * Mirrors the validation `sma/storage.ts` applies via `technicalMetricsRowSchema`.
+ */
+export const supportLevelRowSchema = z.object({
+  symbol: z.string().regex(/^[A-Z][A-Z0-9-]{0,11}$/),
+  method: z.string().trim().min(1).max(128),
+  level: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
+  price: z.number().positive().finite(),
+  as_of_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+});
+export type SupportLevelRow = z.infer<typeof supportLevelRowSchema>;
+
 export const screenerRowSchema = z.object({
   symbol: z.string().regex(/^[A-Z][A-Z0-9-]{0,11}$/),
   company: z.string().nullable(),
@@ -85,6 +108,11 @@ export const screenerRowSchema = z.object({
   sma200wState: z.enum(sma200wStateValues).nullable(),
   sma200wHistoryWeeks: z.number().int().nonnegative().nullable(),
   sma200wAsOf: isoTimestampSchema.nullable(),
+  // Manual support levels S1-S4 (Screener PR). Ordered S1 -> S4, max 4
+  // unique levels, price > 0. triggered is derived by the Worker (never
+  // persisted): currentPrice <= supportPrice, or null when price is null.
+  // Empty array when the support table is unavailable — never fatal.
+  supportLevels: z.array(screenerSupportLevelSchema).max(4),
 });
 export type ScreenerRow = z.infer<typeof screenerRowSchema>;
 
