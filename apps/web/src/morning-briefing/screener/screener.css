@@ -10,7 +10,8 @@
 .scr-market-open .scr-market-dot{background:var(--positive);box-shadow:0 0 0 2px var(--positive-soft)}
 .scr-market-closed .scr-market-dot{background:var(--red);box-shadow:0 0 0 2px var(--red-soft)}
 
-.scr-card{border:1px solid var(--border);border-radius:15px;background:var(--surface);box-shadow:var(--shadow);overflow:hidden}
+.scr-card{border:1px solid var(--border);border-radius:15px;background:var(--surface);box-shadow:var(--shadow)}
+.scr-table-clip{border-top:1px solid var(--border);overflow:hidden;border-bottom-left-radius:15px;border-bottom-right-radius:15px}
 
 /* Toolbar */
 .scr-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;border-bottom:1px solid var(--border)}
@@ -27,7 +28,7 @@
 .scr-clear-filter-btn:hover{color:var(--text);background:var(--border)}
 
 /* Popover */
-.scr-filters-popover{position:absolute;top:calc(100% + 4px);left:0;z-index:100;min-width:160px;padding:4px;border:1px solid var(--border);border-radius:10px;background:var(--surface);box-shadow:0 8px 24px rgba(0,0,0,.12);display:flex;flex-direction:column;gap:1px}
+.scr-filters-popover{position:absolute;top:calc(100% + 4px);left:0;z-index:100;min-width:160px;padding:4px;border:1px solid var(--border);border-radius:10px;background:var(--surface);box-shadow:0 8px 24px rgba(0,0,0,.12);display:flex;flex-direction:column;gap:1px;max-height:min(420px,calc(100vh - 120px));overflow-y:auto}
 .scr-filter-option{padding:8px 12px;border:0;background:none;text-align:left;font-size:11px;font-weight:600;color:var(--text);cursor:pointer;border-radius:7px;white-space:nowrap}
 .scr-filter-option:hover{background:var(--surface-2)}
 .scr-filter-option-active{background:var(--brand-blue);color:#fff}

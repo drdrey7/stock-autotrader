@@ -578,4 +578,28 @@ describe("ScreenerPage", () => {
     // Ticker should still be visible
     expect(screen.getByText("S00")).toBeInTheDocument();
   });
+
+  // --- Filter popover clipping fix ---
+  it("zero-results: Filters popover shows all 10 options", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "ZZZZZZ" } });
+    expect(screen.getByText("No matching stocks.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Filters/i }));
+    const options = screen.getAllByRole("menuitem");
+    expect(options).toHaveLength(10);
+    expect(screen.getByRole("menuitem", { name: "Above Support" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "All" })).toBeInTheDocument();
+  });
+
+  it("card uses scr-table-clip wrapper for table clipping", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    const card = document.querySelector(".scr-card");
+    const clip = document.querySelector(".scr-table-clip");
+    expect(card).not.toBeNull();
+    expect(clip).not.toBeNull();
+    expect(card!.contains(clip!)).toBe(true);
+    expect(clip!.querySelector(".scr-table-wrap")).not.toBeNull();
+  });
 });

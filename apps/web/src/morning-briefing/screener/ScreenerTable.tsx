@@ -237,74 +237,75 @@ export function ScreenerTable({
           />
         </div>
       </div>
-
-      <div className={`scr-table-wrap${scrolled ? " scr-table-scrolled" : ""}`} onScroll={handleScroll}>
-        <table className="scr-table">
-          <thead>
-            <tr>
-              <th className="scr-col-company" aria-sort={getAriaSort("symbol")}>
-                {sortIndicator("Company", sortKey === "symbol", sortDirection, () => onSort("symbol"))}
-              </th>
-              <th className="scr-col-price scr-align-right" aria-sort={getAriaSort("price")}>
-                {sortIndicator("Price", sortKey === "price", sortDirection, () => onSort("price"))}
-              </th>
-              <th className="scr-col-1d scr-align-right" aria-sort={getAriaSort("changePct")}>
-                {sortIndicator("1D", sortKey === "changePct", sortDirection, () => onSort("changePct"))}
-              </th>
-              <th className="scr-col-iv scr-align-right" aria-sort={getAriaSort("iv")}>
-                {sortIndicator("IV", sortKey === "iv", sortDirection, () => onSort("iv"))}
-              </th>
-              <th className="scr-col-iv-dist scr-align-right" aria-sort={getAriaSort("ivDistance")}>
-                {sortIndicator("IV Dist", sortKey === "ivDistance", sortDirection, () => onSort("ivDistance"))}
-              </th>
-              <th className="scr-col-sma scr-align-right" aria-sort={getAriaSort("sma200w")}>
-                {sortIndicator("200W SMA", sortKey === "sma200w", sortDirection, () => onSort("sma200w"))}
-              </th>
-              <th className="scr-col-sma-dist scr-align-right" aria-sort={getAriaSort("smaDistance")}>
-                {sortIndicator("SMA Dist", sortKey === "smaDistance", sortDirection, () => onSort("smaDistance"))}
-              </th>
-              <th className="scr-col-s1 scr-align-right">S1</th>
-              <th className="scr-col-s2 scr-align-right">S2</th>
-              <th className="scr-col-s3 scr-align-right">S3</th>
-              <th className="scr-col-s4 scr-align-right">S4</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 ? (
+      <div className="scr-table-clip">
+        <div className={`scr-table-wrap${scrolled ? " scr-table-scrolled" : ""}`} onScroll={handleScroll}>
+          <table className="scr-table">
+            <thead>
               <tr>
-                <td colSpan={11} className="scr-empty">
-                  No matching stocks.
-                </td>
+                <th className="scr-col-company" aria-sort={getAriaSort("symbol")}>
+                  {sortIndicator("Company", sortKey === "symbol", sortDirection, () => onSort("symbol"))}
+                </th>
+                <th className="scr-col-price scr-align-right" aria-sort={getAriaSort("price")}>
+                  {sortIndicator("Price", sortKey === "price", sortDirection, () => onSort("price"))}
+                </th>
+                <th className="scr-col-1d scr-align-right" aria-sort={getAriaSort("changePct")}>
+                  {sortIndicator("1D", sortKey === "changePct", sortDirection, () => onSort("changePct"))}
+                </th>
+                <th className="scr-col-iv scr-align-right" aria-sort={getAriaSort("iv")}>
+                  {sortIndicator("IV", sortKey === "iv", sortDirection, () => onSort("iv"))}
+                </th>
+                <th className="scr-col-iv-dist scr-align-right" aria-sort={getAriaSort("ivDistance")}>
+                  {sortIndicator("IV Dist", sortKey === "ivDistance", sortDirection, () => onSort("ivDistance"))}
+                </th>
+                <th className="scr-col-sma scr-align-right" aria-sort={getAriaSort("sma200w")}>
+                  {sortIndicator("200W SMA", sortKey === "sma200w", sortDirection, () => onSort("sma200w"))}
+                </th>
+                <th className="scr-col-sma-dist scr-align-right" aria-sort={getAriaSort("smaDistance")}>
+                  {sortIndicator("SMA Dist", sortKey === "smaDistance", sortDirection, () => onSort("smaDistance"))}
+                </th>
+                <th className="scr-col-s1 scr-align-right">S1</th>
+                <th className="scr-col-s2 scr-align-right">S2</th>
+                <th className="scr-col-s3 scr-align-right">S3</th>
+                <th className="scr-col-s4 scr-align-right">S4</th>
               </tr>
-            ) : rows.map((row) => (
-              <tr key={row.symbol}>
-                <td className="scr-col-company scr-sticky-left">
-                  <span className="scr-company">
-                    <CompanyLogo symbol={row.symbol} logoUrl={row.logoUrl} className="scr-company-logo" size={24} />
-                    <span className="scr-company-text">
-                      <b>{row.symbol}</b>
-                      <small>{row.company ?? "—"}</small>
+            </thead>
+            <tbody>
+              {rows.length === 0 ? (
+                <tr>
+                  <td colSpan={11} className="scr-empty">
+                    No matching stocks.
+                  </td>
+                </tr>
+              ) : rows.map((row) => (
+                <tr key={row.symbol}>
+                  <td className="scr-col-company scr-sticky-left">
+                    <span className="scr-company">
+                      <CompanyLogo symbol={row.symbol} logoUrl={row.logoUrl} className="scr-company-logo" size={24} />
+                      <span className="scr-company-text">
+                        <b>{row.symbol}</b>
+                        <small>{row.company ?? "—"}</small>
+                      </span>
                     </span>
-                  </span>
-                </td>
-                <td className="scr-col-price scr-align-right scr-sticky-price">
-                  <span className="scr-price">{row.price === null ? "—" : row.price.toFixed(2)}</span>
-                </td>
-                <td className="scr-col-1d scr-align-right">
-                  <span className={changeClass(row)}>{formatSigned(row.changePct)}%</span>
-                </td>
-                <td className="scr-col-iv scr-align-right">{ivCell(row)}</td>
-                <td className="scr-col-iv-dist scr-align-right">{ivDistanceCell(row)}</td>
-                <td className="scr-col-sma scr-align-right">{smaCell(row)}</td>
-                <td className="scr-col-sma-dist scr-align-right">{distanceCell(row)}</td>
-                <td className="scr-col-s1 scr-align-right">{supportCell(row, 1)}</td>
-                <td className="scr-col-s2 scr-align-right">{supportCell(row, 2)}</td>
-                <td className="scr-col-s3 scr-align-right">{supportCell(row, 3)}</td>
-                <td className="scr-col-s4 scr-align-right">{supportCell(row, 4)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                  </td>
+                  <td className="scr-col-price scr-align-right scr-sticky-price">
+                    <span className="scr-price">{row.price === null ? "—" : row.price.toFixed(2)}</span>
+                  </td>
+                  <td className="scr-col-1d scr-align-right">
+                    <span className={changeClass(row)}>{formatSigned(row.changePct)}%</span>
+                  </td>
+                  <td className="scr-col-iv scr-align-right">{ivCell(row)}</td>
+                  <td className="scr-col-iv-dist scr-align-right">{ivDistanceCell(row)}</td>
+                  <td className="scr-col-sma scr-align-right">{smaCell(row)}</td>
+                  <td className="scr-col-sma-dist scr-align-right">{distanceCell(row)}</td>
+                  <td className="scr-col-s1 scr-align-right">{supportCell(row, 1)}</td>
+                  <td className="scr-col-s2 scr-align-right">{supportCell(row, 2)}</td>
+                  <td className="scr-col-s3 scr-align-right">{supportCell(row, 3)}</td>
+                  <td className="scr-col-s4 scr-align-right">{supportCell(row, 4)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
