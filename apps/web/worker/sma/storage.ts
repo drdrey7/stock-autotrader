@@ -57,3 +57,31 @@ export async function readLatestSplitEffectiveDate(db: D1Database): Promise<Map<
   }
   return result;
 }
+
+/**
+ * Read the latest SPLIT EFFECTIVE AS OF a given date per symbol.
+ *
+ * Unlike `readLatestSplitEffectiveDate()` (which returns MAX(effective_date)
+ * across all time, including future announced splits), this caps the result
+ * at `asOfDate` — only splits already effective by that date are considered.
+ *
+ * Needed for support-level split-safety: a future announced split does NOT
+ * invalidate manual supports (quote and supports are still on the same scale).
+ * Only splits that are already effective (effectiveDate <= asOfDate) matter.
+ */
+export async function readLatestSplitEffectiveDateAsOf(db: D1Database, asOfDate: string): Promise<Map<string, string>> {
+  const result = new Map<string, string>();
+  try {
+    const query = await db.prepare(
+      "SELECT symbol, MAX(effective_date) AS latest FROM split_events WHERE effective_date <= ? GROUP BY symbol",
+    ).bind(asOfDate).all<{ symbol: string; latest: string }>();
+    for (const row of (query.results ?? [])) {
+      if (row.symbol && row.latest) {
+        result.set(row.symbol, row.latest);
+      }
+    }
+  } catch {
+    // Best-effort: same contract as readLatestSplitEffectiveDate.
+  }
+  return result;
+}

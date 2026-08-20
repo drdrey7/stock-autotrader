@@ -22,7 +22,7 @@ import {
 } from "./health";
 import { readLatestQuotes } from "./storage";
 import { computeLiveSma200w, type QuoteInput } from "../sma/metrics";
-import { readTechnicalMetrics, readLatestSplitEffectiveDate } from "../sma/storage";
+import { readTechnicalMetrics, readLatestSplitEffectiveDate, readLatestSplitEffectiveDateAsOf } from "../sma/storage";
 import { readManualSupportLevels, type SupportLevelsForSymbol } from "../supports/storage";
 import type { ScreenerSupportLevel } from "@stock-autotrader/contracts";
 import { nyDateKeyOf } from "./freshness";
@@ -129,12 +129,14 @@ function safeguardWsCollectorState(
  * collector is fully independent of frontend traffic.
  */
 export async function readScreenerApi(env: Env, now = new Date()): Promise<ScreenerApiResponse> {
-  const [quotes, companies, wsHealth, metrics, latestSplitEffectiveDates, supportLevels] = await Promise.all([
+  const currentMarketDate = nyDateKeyOf(now) ?? undefined;
+  const [quotes, companies, wsHealth, metrics, latestSplitEffectiveDates, splitEffectiveDatesAsOf, supportLevels] = await Promise.all([
     readLatestQuotes(env.DB),
     readCoreCompanies(env.DB),
     readWsIngestorHealth(env.DB),
     readTechnicalMetrics(env.DB),
     readLatestSplitEffectiveDate(env.DB),
+    currentMarketDate ? readLatestSplitEffectiveDateAsOf(env.DB, currentMarketDate) : Promise.resolve(new Map()),
     readManualSupportLevels(env.DB),
   ]);
   // REST shard health is only used as a fallback (manual/diagnostic runs)
@@ -144,7 +146,6 @@ export async function readScreenerApi(env: Env, now = new Date()): Promise<Scree
   const companyBySymbol = new Map(companies.map((company) => [company.symbol, company.company]));
 
   const marketState: ScreenerMarketState = quotesMarketState(now);
-  const currentMarketDate = nyDateKeyOf(now) ?? undefined;
   const rows: ScreenerRow[] = CORE_UNIVERSE.map((symbol) => {
     const quote = quoteBySymbol.get(symbol);
     const state: SourceState = quoteState(quote?.updated_at ?? null, now);
@@ -172,7 +173,7 @@ export async function readScreenerApi(env: Env, now = new Date()): Promise<Scree
       sma200wState: sma.sma200wState,
       sma200wHistoryWeeks: sma.sma200wHistoryWeeks,
       sma200wAsOf: sma.sma200wAsOf,
-      supportLevels: buildSupportLevels(currentPrice, supportLevels.get(symbol), latestSplitEffectiveDates.get(symbol), currentMarketDate),
+      supportLevels: buildSupportLevels(currentPrice, supportLevels.get(symbol), splitEffectiveDatesAsOf.get(symbol), currentMarketDate),
     };
   });
 

@@ -69,9 +69,19 @@ function createApiDb(options: {
               .sort((a, b) => a.level - b.level);
             return { results: rows as T[] };
           }
+          if (sql.includes("effective_date <=")) {
+            const events = options.splitEvents ?? [];
+            const maxAsOf = args[0] as string;
+            const bySymbol = new Map<string, string>();
+            for (const e of events) {
+              if (e.effective_date > maxAsOf) continue;
+              const prev = bySymbol.get(e.symbol);
+              if (!prev || e.effective_date > prev) bySymbol.set(e.symbol, e.effective_date);
+            }
+            return { results: [...bySymbol.entries()].map(([symbol, latest]) => ({ symbol, latest })) as T[] };
+          }
           if (sql.includes("MAX(effective_date)")) {
             const events = options.splitEvents ?? [];
-            // GROUP BY symbol: return one row per symbol with its latest effective_date
             const bySymbol = new Map<string, string>();
             for (const e of events) {
               const prev = bySymbol.get(e.symbol);
@@ -732,6 +742,21 @@ describe("readScreenerApi — manual support levels", () => {
       supportLevels: MIXED_SUPPORT,
       wsHealth: wsHealthRow(),
       splitEvents: [{ symbol: "META", effective_date: "2026-09-15" }], // effective
+    });
+    const response = await readScreenerApi(envFrom(db), SEP_16);
+    const meta = response.rows.find((row) => row.symbol === "META")!;
+    expect(meta.supportLevels).toEqual([]);
+  });
+
+  it("effective past split + future announced split -> supportLevels = [] (future does not mask past)", async () => {
+    const db = createApiDb({
+      quotes: [quoteRow("META", 500, "2026-09-16T14:00:00.000Z")],
+      supportLevels: META_SUPPORT,
+      wsHealth: wsHealthRow(),
+      splitEvents: [
+        { symbol: "META", effective_date: "2026-08-10" }, // past effective
+        { symbol: "META", effective_date: "2026-12-01" }, // future announced
+      ],
     });
     const response = await readScreenerApi(envFrom(db), SEP_16);
     const meta = response.rows.find((row) => row.symbol === "META")!;
