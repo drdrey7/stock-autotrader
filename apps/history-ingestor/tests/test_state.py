@@ -6,11 +6,14 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from history_ingestor.config import Settings
 from history_ingestor.state import Checkpoint, StateStore
 
 META_KEY = "historyBootstrapState"
+TEST_TODAY = "2030-01-02"
+TEST_PREVIOUS_DAY = "2030-01-01"
 
 
 def settings_with(key_count=2):
@@ -35,6 +38,14 @@ class FakeD1:
 
 
 class StateTests(unittest.TestCase):
+    def setUp(self):
+        # StateStore intentionally uses the real UTC date in production. Freeze
+        # only that date boundary in this test class so same-day and rollover
+        # fixtures are deterministic regardless of when CI runs.
+        utc_date_patcher = patch("history_ingestor.state._utc_date", return_value=TEST_TODAY)
+        utc_date_patcher.start()
+        self.addCleanup(utc_date_patcher.stop)
+
     def _store(self, d1, tmp):
         return StateStore(settings_with(), d1, state_path=Path(tmp) / "checkpoint.json")
 
@@ -44,7 +55,7 @@ class StateTests(unittest.TestCase):
             state = store.load()
             self.assertEqual(len(state.keys), 2)
             self.assertTrue(all(k["used"] == 0 for k in state.keys))
-            self.assertTrue(state.day)
+            self.assertEqual(state.day, TEST_TODAY)
 
     def test_save_and_load_roundtrip(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -70,7 +81,7 @@ class StateTests(unittest.TestCase):
             d1 = FakeD1()
             path = Path(tmp) / "checkpoint.json"
             payload = {
-                "version": 1, "day": "2026-08-19",
+                "version": 1, "day": TEST_TODAY,
                 "keys": [{"index": 0, "used": 7, "status": "ok"}, {"index": 1, "used": 0, "status": "ok"}],
                 "symbols": {"NVDA": {"weekly": "done", "splits": "done"}},
                 "started_at": "", "updated_at": "",
@@ -86,15 +97,14 @@ class StateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             d1 = FakeD1()
             d1.meta[META_KEY] = {
-                "version": 1, "day": "2026-08-18",
+                "version": 1, "day": TEST_PREVIOUS_DAY,
                 "keys": [{"index": 0, "used": 25, "status": "exhausted"}, {"index": 1, "used": 10, "status": "ok"}],
                 "symbols": {"NVDA": {"weekly": "done", "splits": "done"}},
                 "started_at": "", "updated_at": "",
             }
             store = self._store(d1, tmp)
             state = store.load()
-            today = state.day
-            self.assertNotEqual(today, "2026-08-18")
+            self.assertEqual(state.day, TEST_TODAY)
             self.assertEqual(store.key_used(0), 0)
             self.assertEqual(store.key_used(1), 0)
             self.assertEqual(store.symbol_status("NVDA", "weekly"), "done")
@@ -103,7 +113,7 @@ class StateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             d1 = FakeD1()
             d1.meta[META_KEY] = {
-                "version": 1, "day": "2026-08-19",
+                "version": 1, "day": TEST_TODAY,
                 "keys": [{"index": 0, "used": 5, "status": "ok"}],
                 "symbols": {},
                 "started_at": "", "updated_at": "",
