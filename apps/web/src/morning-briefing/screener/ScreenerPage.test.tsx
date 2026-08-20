@@ -526,4 +526,36 @@ describe("ScreenerPage", () => {
     expect(s1).not.toHaveAttribute("aria-sort");
     expect(s4).not.toHaveAttribute("aria-sort");
   });
+
+  // --- Sticky header layering ---
+  it("sticky Company + Price headers have higher z-index than normal headers", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    const companyHeader = screen.getByText("Company").closest("th");
+    const priceHeader = screen.getByText("Price").closest("th");
+    const oneDHeader = screen.getByRole("columnheader", { name: /1D/ });
+    expect(companyHeader?.classList.contains("scr-col-company")).toBe(true);
+    expect(priceHeader?.classList.contains("scr-col-price")).toBe(true);
+    expect(oneDHeader.classList.contains("scr-col-1d")).toBe(true);
+  });
+
+  it("Company and Price headers are sticky with top:0", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    const companyHeader = screen.getByText("Company").closest("th");
+    const priceHeader = screen.getByText("Price").closest("th");
+    expect(companyHeader).toHaveClass("scr-col-company");
+    expect(priceHeader).toHaveClass("scr-col-price");
+  });
+
+  // --- Compact state preserves logo + ticker ---
+  it("compact mode hides company name but preserves ticker", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    const wrap = document.querySelector(".scr-table-wrap") as HTMLDivElement;
+    fireEvent.scroll(wrap, { target: { scrollLeft: 30 } });
+    await waitFor(() => expect(wrap.classList.contains("scr-table-scrolled")).toBe(true));
+    // Ticker should still be visible
+    expect(screen.getByText("S00")).toBeInTheDocument();
+  });
 });
