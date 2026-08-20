@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { AnimatePresence, MotionConfig, motion } from "motion/react";
 import { useLocation } from "react-router-dom";
+import { BRAND_NAME } from "../branding/BrandLogo";
 import type { EarningsCompany } from "./data/earnings-view";
 import MorningBriefingPage from "./MorningBriefingPage";
 import { LazyPageErrorBoundary, PageLoadingFallback, spring } from "./shared";
@@ -59,7 +60,7 @@ function MorningBriefingShell() {
       </AnimatePresence>
 
       <footer>
-        <span>Morning Briefing</span>
+        <span>{BRAND_NAME}</span>
         <p>Public, read-only market intelligence.</p>
       </footer>
 

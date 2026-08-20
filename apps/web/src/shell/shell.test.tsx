@@ -1,4 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { Flame } from "lucide-react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppShell } from "./AppShell";
@@ -54,6 +55,20 @@ afterEach(() => {
 });
 
 describe("desktop sidebar navigation", () => {
+  it("uses the How Are The Markets wordmark as a home link", () => {
+    renderShell();
+    const brands = screen.getAllByRole("link", { name: "How Are The Markets home" });
+    expect(brands.length).toBeGreaterThan(0);
+    expect(brands[0]).toHaveAttribute("href", "/");
+    expect(document.querySelector(".shell-brand")).toHaveTextContent("HOW ARE");
+    expect(document.querySelector(".shell-brand")).toHaveTextContent("THE MARKETS");
+    expect(document.querySelector(".brand-logo-fallback-mark")).not.toHaveTextContent("HM");
+  });
+
+  it("uses a flame icon for Heatmap", () => {
+    expect(shellNavGroups[0]?.items.find((item) => item.label === "Heatmap")?.icon).toBe(Flame);
+  });
+
   it("renders every primary and secondary destination as a link", () => {
     renderShell();
     for (const group of shellNavGroups) {
@@ -89,6 +104,14 @@ describe("desktop sidebar navigation", () => {
 });
 
 describe("mobile navigation drawer", () => {
+  it("keeps Status in the drawer and does not render a bottom navigation", () => {
+    renderShell();
+    expect(document.querySelector(".shell-bottom-nav")).toBeNull();
+    fireEvent.click(hamburger());
+    expect(within(drawer()).getByRole("link", { name: "Status" })).toBeInTheDocument();
+    expect(document.querySelector(".shell-topbar")).not.toHaveTextContent("Status");
+  });
+
   it("opens and closes with the hamburger and keeps aria-expanded in sync", () => {
     renderShell();
     expect(hamburger()).toHaveAttribute("aria-expanded", "false");
@@ -203,11 +226,18 @@ describe("theme toggle", () => {
     const toggle = screen.getAllByRole("button", { name: "Switch to dark mode" })[0]!;
     fireEvent.click(toggle);
     expect(document.documentElement.dataset.theme).toBe("dark");
-    expect(localStorage.getItem("morning-briefing-theme")).toBe("dark");
+    expect(localStorage.getItem("how-are-the-markets-theme")).toBe("dark");
     expect(screen.getAllByRole("button", { name: "Switch to light mode" }).length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getAllByRole("button", { name: "Switch to light mode" })[0]!);
     expect(document.documentElement.dataset.theme).toBe("light");
+  });
+
+  it("migrates the legacy Morning Briefing preference to the new key", () => {
+    localStorage.setItem("morning-briefing-theme", "dark");
+    renderShell();
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(localStorage.getItem("how-are-the-markets-theme")).toBe("dark");
   });
 
   it("defaults to light and still renders when localStorage is unavailable", () => {

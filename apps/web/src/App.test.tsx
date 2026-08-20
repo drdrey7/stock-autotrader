@@ -64,9 +64,11 @@ it("allows only the official TradingView hosts plus Finnhub logo CDNs in the CSP
   expect(cloudflareHeaders).not.toMatch(/img-src[^;]*\*/);
 });
 
-it("ships Morning Briefing metadata in the static HTML fallback", () => {
-  expect(indexHtml).toContain("<title>Morning Briefing — Markets, Sentiment &amp; Economic Calendar</title>");
-  expect(indexHtml).toContain('name="application-name" content="Morning Briefing"');
+it("ships How Are The Markets metadata in the static HTML fallback", () => {
+  expect(indexHtml).toContain("<title>How Are The Markets — Market Intelligence &amp; Stock Analysis</title>");
+  expect(indexHtml).toContain('name="application-name" content="How Are The Markets"');
+  expect(indexHtml).toContain("Market overview, stock screener, technical levels, earnings and market intelligence in one place.");
+  expect(indexHtml).toContain('href="/brand/favicon.svg"');
   expect(indexHtml).not.toContain("Stock Autotrader");
   expect(indexHtml).not.toContain("Stock Daily Briefing");
 });

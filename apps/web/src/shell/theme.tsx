@@ -5,14 +5,14 @@ import { Moon, Sun } from "lucide-react";
 /**
  * Theme state for the application shell.
  *
- * The Morning Briefing content styles its light/dark palettes off the
- * `data-theme` attribute on <html> (`[data-theme="dark"] .mb-demo { … }`), so
- * the provider keeps that attribute, localStorage persistence and the
- * `theme-color` meta tag in one place — independent of any single page.
+ * The application styles its light/dark palettes off the `data-theme` attribute
+ * on <html>, so the provider keeps that attribute, localStorage persistence
+ * and the `theme-color` meta tag in one place — independent of any single page.
  */
 export type ShellTheme = "light" | "dark";
 
-const THEME_STORAGE_KEY = "morning-briefing-theme";
+export const THEME_STORAGE_KEY = "how-are-the-markets-theme";
+export const LEGACY_THEME_STORAGE_KEY = "morning-briefing-theme";
 
 interface ThemeContextValue {
   theme: ShellTheme;
@@ -25,6 +25,9 @@ function readInitialTheme(): ShellTheme {
   let stored: string | null = null;
   try {
     stored = localStorage.getItem(THEME_STORAGE_KEY);
+    if (stored !== "light" && stored !== "dark") {
+      stored = localStorage.getItem(LEGACY_THEME_STORAGE_KEY);
+    }
   } catch {
     // Storage can be unavailable (private mode, stricter policies). The write
     // path is already guarded; the read must not be able to crash the app.
@@ -48,7 +51,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     }
     document
       .querySelector('meta[name="theme-color"]')
-      ?.setAttribute("content", theme === "dark" ? "#0b0d10" : "#f7f8f7");
+      ?.setAttribute("content", theme === "dark" ? "#080d1a" : "#f7f9fc");
   }, [theme]);
 
   const value = useMemo<ThemeContextValue>(

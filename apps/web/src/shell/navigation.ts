@@ -1,4 +1,4 @@
-import { Activity, CalendarClock, Globe2, LayoutDashboard, LayoutGrid, ListFilter, type LucideIcon } from "lucide-react";
+import { Activity, CalendarClock, Flame, Globe2, LayoutDashboard, ListFilter, type LucideIcon } from "lucide-react";
 
 /**
  * Single source of truth for the application shell navigation.
@@ -32,7 +32,7 @@ export const shellNavGroups: ShellNavGroup[] = [
     label: "Product",
     items: [
       { label: "Dashboard", to: "/dashboard", icon: LayoutDashboard, paths: ["/", "/dashboard"] },
-      { label: "Heatmap", to: "/heatmap", icon: LayoutGrid, paths: ["/heatmap"] },
+      { label: "Heatmap", to: "/heatmap", icon: Flame, paths: ["/heatmap"] },
       { label: "Screener", to: "/screener", icon: ListFilter, paths: ["/screener"] },
       { label: "X Pulse", to: "/x", icon: Globe2, paths: ["/x"] },
       { label: "Earnings", to: "/earnings", icon: CalendarClock, paths: ["/earnings"] },
