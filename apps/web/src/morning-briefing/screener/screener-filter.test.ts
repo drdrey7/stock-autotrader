@@ -22,6 +22,7 @@ const row = (overrides: Partial<ScreenerRow>): ScreenerRow => ({
   sma200wHistoryWeeks: null,
   sma200wAsOf: null,
   supportLevels: [],
+  intrinsicValue: null,
   ...overrides,
 });
 

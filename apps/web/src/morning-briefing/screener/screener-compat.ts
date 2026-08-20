@@ -1,4 +1,4 @@
-import type { ScreenerApiResponse, ScreenerRow, Sma200wState, ScreenerSupportLevel } from "@stock-autotrader/contracts";
+import type { ScreenerApiResponse, ScreenerRow, Sma200wState, ScreenerSupportLevel, ScreenerIntrinsicValue } from "@stock-autotrader/contracts";
 
 /**
  * Compatibility boundary for the Screener frontend against OLD production API
@@ -75,7 +75,27 @@ export function normalizeScreenerRow(raw: Record<string, unknown>): ScreenerRow 
     supportLevels: supportLevels
       .sort((a, b) => a.level - b.level)
       .slice(0, 4),
+    intrinsicValue: normalizeIntrinsicValue(raw.intrinsicValue),
   };
+}
+
+/** Validate one raw intrinsic value; returns null when malformed or missing. */
+function normalizeIntrinsicValue(raw: unknown): ScreenerIntrinsicValue | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const c = raw as Record<string, unknown>;
+  const base = c.base;
+  if (typeof base !== "number" || !Number.isFinite(base) || base <= 0) return null;
+  const low = c.low;
+  if (low !== null && (typeof low !== "number" || !Number.isFinite(low) || low <= 0 || low > base)) return null;
+  const high = c.high;
+  if (high !== null && (typeof high !== "number" || !Number.isFinite(high) || high < base)) return null;
+  const method = c.method;
+  if (typeof method !== "string" || method.trim().length === 0) return null;
+  const asOf = c.asOf;
+  if (typeof asOf !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(asOf)) return null;
+  const distancePct = c.distancePct;
+  if (distancePct !== null && (typeof distancePct !== "number" || !Number.isFinite(distancePct))) return null;
+  return { low: low as number | null, base, high: high as number | null, method, asOf, distancePct: distancePct as number | null };
 }
 
 /**

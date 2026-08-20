@@ -23,6 +23,7 @@ const row = (symbol: string, price: number | null, changePct: number | null, sta
   sma200wHistoryWeeks: null,
   sma200wAsOf: null,
   supportLevels,
+  intrinsicValue: null,
 });
 
 const makeResponse = (rows: ScreenerRow[]): ScreenerApiResponse => {
@@ -216,5 +217,124 @@ describe("ScreenerPage", () => {
     expect(screen.getByText("XYZ")).toBeInTheDocument();
     // 4 dash cells for the S1-S4 columns
     expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("renders IV and IV Dist columns with correct values", async () => {
+    const ivRow = row("AAPL", 200, -1.5, "Live", []);
+    ivRow.intrinsicValue = {
+      low: null,
+      base: 251.12,
+      high: null,
+      method: "manual",
+      asOf: "2026-08-03",
+      distancePct: (200 / 251.12 - 1) * 100, // ~-20.36%
+    };
+    fetchMock.mockImplementation(async () =>
+      new Response(JSON.stringify(makeResponse([ivRow])), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    // Headers
+    expect(screen.getByText("IV")).toBeInTheDocument();
+    expect(screen.getByText("IV Dist")).toBeInTheDocument();
+    // IV Base value
+    expect(screen.getByText("251.12")).toBeInTheDocument();
+    // IV Dist negative value (green) — should have scr-up class
+    const ivDistCell = document.querySelector(".scr-up");
+    expect(ivDistCell).not.toBeNull();
+    expect(ivDistCell!.textContent).toContain("-20");
+  });
+
+  it("renders IV Dist positive value (red)", async () => {
+    const ivRow = row("AAPL", 300, 2.0, "Live", []);
+    ivRow.intrinsicValue = {
+      low: null,
+      base: 251.12,
+      high: null,
+      method: "manual",
+      asOf: "2026-08-03",
+      distancePct: (300 / 251.12 - 1) * 100, // ~+19.46%
+    };
+    fetchMock.mockImplementation(async () =>
+      new Response(JSON.stringify(makeResponse([ivRow])), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    const ivDistCell = document.querySelector(".scr-down");
+    expect(ivDistCell).not.toBeNull();
+    expect(ivDistCell!.textContent).toContain("+19");
+  });
+
+  it("renders IV Dist zero (neutral)", async () => {
+    const ivRow = row("AAPL", 251.12, 0.0, "Live", []);
+    ivRow.intrinsicValue = {
+      low: null,
+      base: 251.12,
+      high: null,
+      method: "manual",
+      asOf: "2026-08-03",
+      distancePct: 0,
+    };
+    fetchMock.mockImplementation(async () =>
+      new Response(JSON.stringify(makeResponse([ivRow])), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    // 0% should be scr-flat (neutral) and render "0.00%"
+    // Find the cell containing "0.00%" (the IV Dist value)
+    const cells = document.querySelectorAll("td");
+    const zeroCell = Array.from(cells).find(
+      (c) => c.textContent === "0.00%" && c.className === "scr-align-right",
+    );
+    expect(zeroCell).not.toBeNull();
+    expect(zeroCell!.className).toBe("scr-align-right");
+    expect(zeroCell!.textContent).toBe("0.00%");
+  });
+
+  it("renders IV Dist = '—' when no price", async () => {
+    const ivRow = row("AAPL", null, null, "Unavailable", []);
+    ivRow.intrinsicValue = {
+      low: null,
+      base: 251.12,
+      high: null,
+      method: "manual",
+      asOf: "2026-08-03",
+      distancePct: null,
+    };
+    fetchMock.mockImplementation(async () =>
+      new Response(JSON.stringify(makeResponse([ivRow])), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    // IV shows base value, IV Dist shows "—"
+    expect(screen.getByText("251.12")).toBeInTheDocument();
+    expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("renders IV = '—' when no intrinsic value", async () => {
+    const noIV = row("MSFT", 400, 1.0, "Live", []);
+    fetchMock.mockImplementation(async () =>
+      new Response(JSON.stringify(makeResponse([noIV])), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    expect(screen.getByText("MSFT")).toBeInTheDocument();
+    // Both IV and IV Dist show "—"
+    expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(2);
   });
 });

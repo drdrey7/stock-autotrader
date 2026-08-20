@@ -175,4 +175,28 @@ describe("normalizeScreenerResponse — old production payload compatibility", (
     expect(row.supportLevels[0]!.triggered).toBe(true);
     expect(row.supportLevels[1]!.triggered).toBe(false);
   });
+
+  it("OLD payload without intrinsicValue -> null (no crash)", () => {
+    const normalized = normalizeScreenerResponse(OLD_PRODUCTION_PAYLOAD);
+    expect(normalized).not.toBeNull();
+    for (const row of normalized!.rows) {
+      expect(row.intrinsicValue).toBeNull();
+    }
+  });
+
+  it("malformed intrinsicValue is treated defensively", () => {
+    const row = normalizeScreenerRow({
+      intrinsicValue: { low: null, base: -10, high: null, method: "manual", asOf: "2026-08-03", distancePct: null },
+    } as never);
+    expect(row.intrinsicValue).toBeNull();
+  });
+
+  it("valid intrinsicValue passes through unchanged", () => {
+    const row = normalizeScreenerRow({
+      intrinsicValue: { low: null, base: 251.12, high: null, method: "manual", asOf: "2026-08-03", distancePct: -20 },
+    } as never);
+    expect(row.intrinsicValue).not.toBeNull();
+    expect(row.intrinsicValue!.base).toBe(251.12);
+    expect(row.intrinsicValue!.distancePct).toBe(-20);
+  });
 });
