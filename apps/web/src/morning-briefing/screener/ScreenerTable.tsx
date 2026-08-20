@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { ScreenerRow, ScreenerSupportLevel } from "@stock-autotrader/contracts";
 import { CompanyLogo } from "../EarningsLogo";
 import { SCREENER_FILTERS } from "./screener-filter";
@@ -107,7 +107,6 @@ function sortIndicator(label: string, active: boolean, direction: ScreenerSortDi
       className={`scr-sort ${active ? "scr-sort-active" : ""}`}
       type="button"
       onClick={onClick}
-      aria-sort={active ? (direction === "asc" ? "ascending" : "descending") : undefined}
     >
       {label}
       <span className="scr-sort-arrow">{active ? (direction === "asc" ? "↑" : "↓") : ""}</span>
@@ -126,52 +125,11 @@ interface ScreenerTableProps {
   onSort: (key: ScreenerSortKey) => void;
 }
 
-/** Popover menu for filters. */
-function FiltersMenu({
-  filter,
-  onFilterChange,
-  onClose,
-}: {
-  filter: ScreenerFilter;
-  onFilterChange: (filter: ScreenerFilter) => void;
-  onClose: () => void;
-}) {
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (ref.current && !ref.current.contains(event.target as Node)) {
-        onClose();
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [onClose]);
-
-  return (
-    <div ref={ref} className="scr-filters-popover" role="menu" aria-label="Screener filters">
-      {SCREENER_FILTERS.map(({ value, label }) => (
-        <button
-          key={value}
-          type="button"
-          role="menuitem"
-          className={`scr-filter-option ${filter === value ? "scr-filter-option-active" : ""}`}
-          onClick={() => {
-            onFilterChange(value);
-            onClose();
-          }}
-        >
-          {label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
 /**
  * Premium, responsive Screener table.
  * All 11 columns visible on both desktop and mobile. Horizontal scroll on mobile.
  * Company + Price are sticky. Sortable via headers (except S1-S4).
+ * Company column contracts on mobile during horizontal scroll to free width.
  */
 export function ScreenerTable({
   rows,
@@ -184,14 +142,44 @@ export function ScreenerTable({
   onSort,
 }: ScreenerTableProps) {
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
+  const filtersContainerRef = useRef<HTMLDivElement>(null);
+
+  // Close popover on outside click — ref covers button + chip + popover
+  const handleClickOutside = useCallback((event: MouseEvent) => {
+    if (filtersContainerRef.current && !filtersContainerRef.current.contains(event.target as Node)) {
+      setFiltersOpen(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!filtersOpen) return;
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [filtersOpen, handleClickOutside]);
+
+  // Mobile: detect horizontal scroll to compact company column (boolean only, hysteresis)
+  const handleScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
+    const scrollLeft = event.currentTarget.scrollLeft;
+    setScrolled(prev => {
+      if (prev && scrollLeft < 8) return false;
+      if (!prev && scrollLeft > 20) return true;
+      return prev;
+    });
+  }, []);
 
   const activeFilterLabel = SCREENER_FILTERS.find((f) => f.value === filter)?.label ?? "All";
+
+  const getAriaSort = (key: ScreenerSortKey) => {
+    if (sortKey !== key) return undefined;
+    return sortDirection === "asc" ? "ascending" : "descending";
+  };
 
   return (
     <div className="scr-card">
       <div className="scr-toolbar">
         <div className="scr-toolbar-left">
-          <div className="scr-filters-wrapper">
+          <div className="scr-filters-container" ref={filtersContainerRef}>
             <button
               type="button"
               className="scr-filters-btn"
@@ -201,19 +189,37 @@ export function ScreenerTable({
             >
               Filters
               <span className="scr-filters-caret" aria-hidden="true">▾</span>
-              {filter !== "all" && (
-                <span className="scr-filters-active-dot" aria-label={`Active: ${activeFilterLabel}`} />
-              )}
             </button>
             {filter !== "all" && (
-              <span className="scr-active-filter-label">{activeFilterLabel}</span>
+              <span className="scr-active-filter-chip">
+                {activeFilterLabel}
+                <button
+                  type="button"
+                  className="scr-clear-filter-btn"
+                  aria-label={`Clear ${activeFilterLabel} filter`}
+                  onClick={() => onFilterChange("all")}
+                >
+                  ×
+                </button>
+              </span>
             )}
             {filtersOpen && (
-              <FiltersMenu
-                filter={filter}
-                onFilterChange={onFilterChange}
-                onClose={() => setFiltersOpen(false)}
-              />
+              <div className="scr-filters-popover" role="menu" aria-label="Screener filters">
+                {SCREENER_FILTERS.map(({ value, label }) => (
+                  <button
+                    key={value}
+                    type="button"
+                    role="menuitem"
+                    className={`scr-filter-option ${filter === value ? "scr-filter-option-active" : ""}`}
+                    onClick={() => {
+                      onFilterChange(value);
+                      setFiltersOpen(false);
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
             )}
           </div>
         </div>
@@ -229,29 +235,29 @@ export function ScreenerTable({
         </div>
       </div>
 
-      <div className="scr-table-wrap">
+      <div className={`scr-table-wrap${scrolled ? " scr-table-scrolled" : ""}`} onScroll={handleScroll}>
         <table className="scr-table">
           <thead>
             <tr>
-              <th className="scr-col-company">
+              <th className="scr-col-company" aria-sort={getAriaSort("symbol")}>
                 {sortIndicator("Company", sortKey === "symbol", sortDirection, () => onSort("symbol"))}
               </th>
-              <th className="scr-col-price scr-align-right">
+              <th className="scr-col-price scr-align-right" aria-sort={getAriaSort("price")}>
                 {sortIndicator("Price", sortKey === "price", sortDirection, () => onSort("price"))}
               </th>
-              <th className="scr-col-1d scr-align-right">
+              <th className="scr-col-1d scr-align-right" aria-sort={getAriaSort("changePct")}>
                 {sortIndicator("1D", sortKey === "changePct", sortDirection, () => onSort("changePct"))}
               </th>
-              <th className="scr-col-iv scr-align-right">
+              <th className="scr-col-iv scr-align-right" aria-sort={getAriaSort("iv")}>
                 {sortIndicator("IV", sortKey === "iv", sortDirection, () => onSort("iv"))}
               </th>
-              <th className="scr-col-iv-dist scr-align-right">
+              <th className="scr-col-iv-dist scr-align-right" aria-sort={getAriaSort("ivDistance")}>
                 {sortIndicator("IV Dist", sortKey === "ivDistance", sortDirection, () => onSort("ivDistance"))}
               </th>
-              <th className="scr-col-sma scr-align-right">
+              <th className="scr-col-sma scr-align-right" aria-sort={getAriaSort("sma200w")}>
                 {sortIndicator("200W SMA", sortKey === "sma200w", sortDirection, () => onSort("sma200w"))}
               </th>
-              <th className="scr-col-sma-dist scr-align-right">
+              <th className="scr-col-sma-dist scr-align-right" aria-sort={getAriaSort("smaDistance")}>
                 {sortIndicator("SMA Dist", sortKey === "smaDistance", sortDirection, () => onSort("smaDistance"))}
               </th>
               <th className="scr-col-s1 scr-align-right">S1</th>

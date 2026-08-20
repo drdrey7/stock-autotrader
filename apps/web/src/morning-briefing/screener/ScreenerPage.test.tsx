@@ -386,4 +386,144 @@ describe("ScreenerPage", () => {
     const companyHeader = screen.getByText("Company").closest("th");
     expect(companyHeader?.querySelector("button")).not.toBeNull();
   });
+
+  // --- P2 filter toggle tests ---
+  it("P2: click Filters opens; click same Filters closes; outside click closes", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    const filtersBtn = screen.getByRole("button", { name: /Filters/i });
+
+    // A) Closed → click → opens
+    fireEvent.click(filtersBtn);
+    expect(screen.getByRole("menuitem", { name: "Gainers" })).toBeInTheDocument();
+    expect(filtersBtn).toHaveAttribute("aria-expanded", "true");
+
+    // B) Open → click same button → closes (NOT reopen due to outside click race)
+    fireEvent.click(filtersBtn);
+    await waitFor(() => expect(screen.queryByRole("menuitem", { name: "Gainers" })).not.toBeInTheDocument());
+    expect(filtersBtn).toHaveAttribute("aria-expanded", "false");
+
+    // C) Open → outside click → closes
+    fireEvent.click(filtersBtn);
+    expect(screen.getByRole("menuitem", { name: "Gainers" })).toBeInTheDocument();
+    // Simulate mousedown outside the filters container
+    const outside = document.createElement("div");
+    document.body.appendChild(outside);
+    fireEvent.mouseDown(outside);
+    await waitFor(() => expect(screen.queryByRole("menuitem", { name: "Gainers" })).not.toBeInTheDocument());
+    expect(filtersBtn).toHaveAttribute("aria-expanded", "false");
+    document.body.removeChild(outside);
+
+    // D) Open → click inside popover → does NOT close before selection
+    fireEvent.click(filtersBtn);
+    expect(screen.getByRole("menuitem", { name: "Gainers" })).toBeInTheDocument();
+  });
+
+  // --- Active filter chip tests ---
+  it("A) filter=all → no chip", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    expect(screen.queryByRole("button", { name: /Clear .* filter/ })).not.toBeInTheDocument();
+  });
+
+  it("B) select Below IV → chip appears with X button", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    fireEvent.click(screen.getByRole("button", { name: /Filters/i }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Below IV" }));
+    expect(screen.getByText("Below IV")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Clear Below IV filter" })).toBeInTheDocument();
+  });
+
+  it("C) click X → filter returns to All", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    fireEvent.click(screen.getByRole("button", { name: /Filters/i }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Gainers" }));
+    await waitFor(() => expect(screen.getByText("Gainers")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Clear Gainers filter" }));
+    await waitFor(() => expect(screen.queryByText("Gainers")).not.toBeInTheDocument());
+    // All 50 rows should be visible again (not just gainers)
+    await waitFor(() => expect(screen.getByText("S01")).toBeInTheDocument()); // loser row
+    await waitFor(() => expect(screen.getByText("S00")).toBeInTheDocument()); // gainer row
+  });
+
+  it("D) clear filter preserves search", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "S42" } });
+    fireEvent.click(screen.getByRole("button", { name: /Filters/i }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Gainers" }));
+    fireEvent.click(screen.getByRole("button", { name: "Clear Gainers filter" }));
+    await waitFor(() => expect(screen.getByText("S42")).toBeInTheDocument());
+    expect(screen.getByRole("searchbox")).toHaveValue("S42");
+  });
+
+  it("E) clear filter preserves sorting", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    const priceBtn = screen.getByRole("columnheader", { name: /Price/ }).querySelector("button")!;
+    // Sort by Price ascending
+    fireEvent.click(priceBtn); // desc
+    fireEvent.click(priceBtn); // asc
+    fireEvent.click(screen.getByRole("button", { name: /Filters/i }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Below IV" }));
+    fireEvent.click(screen.getByRole("button", { name: "Clear Below IV filter" }));
+    // Price header should still have aria-sort=ascending
+    const priceHeader = screen.getByRole("columnheader", { name: /Price/ });
+    expect(priceHeader).toHaveAttribute("aria-sort", "ascending");
+  });
+
+  // --- Mobile scroll state test ---
+  it("mobile: horizontal scroll adds scr-table-scrolled class", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    const wrap = document.querySelector(".scr-table-wrap") as HTMLDivElement;
+    expect(wrap).not.toBeNull();
+    // Initially no scrolled class
+    expect(wrap.classList.contains("scr-table-scrolled")).toBe(false);
+    // Simulate scroll beyond threshold
+    fireEvent.scroll(wrap, { target: { scrollLeft: 30 } });
+    await waitFor(() => expect(wrap.classList.contains("scr-table-scrolled")).toBe(true));
+    // Simulate scroll back near 0
+    fireEvent.scroll(wrap, { target: { scrollLeft: 0 } });
+    await waitFor(() => expect(wrap.classList.contains("scr-table-scrolled")).toBe(false));
+  });
+
+  // --- aria-sort tests ---
+  it("aria-sort: active columnheader gets ascending/descending", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    const priceHeader = screen.getByRole("columnheader", { name: "Price" });
+    const priceBtn = priceHeader.querySelector("button")!;
+    // Default is changePct, so Price should have no aria-sort
+    expect(priceHeader).not.toHaveAttribute("aria-sort");
+    // Click Price → descending
+    fireEvent.click(priceBtn);
+    expect(priceHeader).toHaveAttribute("aria-sort", "descending");
+    // Click again → ascending
+    fireEvent.click(priceBtn);
+    expect(priceHeader).toHaveAttribute("aria-sort", "ascending");
+  });
+
+  it("aria-sort: only active columnheader has aria-sort", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    // 1D is already active by default (descending); click its button to make it ascending
+    const oneDHeader = screen.getByRole("columnheader", { name: /1D/ });
+    fireEvent.click(oneDHeader.querySelector("button")!);
+    const headers = screen.getAllByRole("columnheader");
+    const withAriaSort = headers.filter((h) => h.hasAttribute("aria-sort"));
+    expect(withAriaSort).toHaveLength(1);
+    expect(withAriaSort[0]).toHaveAttribute("aria-sort", "ascending");
+  });
+
+  it("aria-sort: S1-S4 never have aria-sort", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    const s1 = screen.getByText("S1").closest("th");
+    const s4 = screen.getByText("S4").closest("th");
+    expect(s1).not.toHaveAttribute("aria-sort");
+    expect(s4).not.toHaveAttribute("aria-sort");
+  });
 });
