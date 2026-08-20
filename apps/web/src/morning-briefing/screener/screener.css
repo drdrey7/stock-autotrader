@@ -41,16 +41,16 @@
 .scr-table-region{
   /* Desktop shell has fixed sidebar, not top chrome. Mobile shell-topbar is added below. */
   --scr-sticky-top:0px;
-  --scr-grid-min-width:980px;
   --scr-company-width:180px;
   --scr-price-width:80px;
+  --scr-grid-content-width:calc(var(--scr-company-width) + var(--scr-price-width) + 675px);
   --scr-grid-template:var(--scr-company-width) var(--scr-price-width) 75px 70px 80px 90px 80px 70px 70px 70px 70px;
   box-sizing:border-box;
 }
 .scr-table-region *{box-sizing:border-box}
 
 /* Grid row shared by header and every body row. */
-.scr-grid-row{display:grid;grid-template-columns:var(--scr-grid-template);width:max(100%,var(--scr-grid-min-width));min-width:var(--scr-grid-min-width);}
+.scr-grid-row{display:grid;grid-template-columns:var(--scr-grid-template);width:max(100%,var(--scr-grid-content-width));min-width:var(--scr-grid-content-width);}
 .scr-grid-row>*{min-width:0}
 
 /* Sticky header sibling of body horizontal scroller. */
@@ -66,7 +66,7 @@
 
 /* Body owns horizontal scroll. No height/max-height: page keeps normal vertical scroll. */
 .scr-table-body-scroll{width:100%;overflow-x:auto;border-bottom-left-radius:15px;border-bottom-right-radius:15px}
-.scr-table-body{width:max(100%,var(--scr-grid-min-width));min-width:var(--scr-grid-min-width)}
+.scr-table-body{width:max(100%,var(--scr-grid-content-width));min-width:var(--scr-grid-content-width)}
 .scr-body-row{position:relative}
 .scr-cell{position:relative;z-index:0;padding:9px 12px;border-top:1px solid var(--border);font-size:12px;white-space:nowrap;vertical-align:middle;background:var(--surface)}
 .scr-body-row:hover>.scr-cell{background:var(--surface-2)}

@@ -211,14 +211,27 @@ export function ScreenerTable({
     const body = bodyScrollRef.current;
     if (!cell || !body || cell.classList.contains("scr-col-company") || cell.classList.contains("scr-col-price")) return;
 
+    const firstRow = body.querySelector<HTMLElement>(".scr-body-row");
+    const companyCell = firstRow?.querySelector<HTMLElement>(".scr-col-company");
+    const priceCell = firstRow?.querySelector<HTMLElement>(".scr-col-price");
+    const region = body.closest<HTMLElement>(".scr-table-region") ?? body;
+    const cssWidth = (name: string) => Number.parseFloat(getComputedStyle(region).getPropertyValue(name)) || 0;
+    const stickyCompanyPriceWidth = companyCell && priceCell
+      ? priceCell.getBoundingClientRect().right - companyCell.getBoundingClientRect().left
+      : cssWidth("--scr-company-width") + cssWidth("--scr-price-width");
+
     const left = cell.offsetLeft;
     const right = left + cell.offsetWidth;
     const viewportLeft = body.scrollLeft;
-    const viewportRight = viewportLeft + body.clientWidth;
+    const visibleLeft = viewportLeft + stickyCompanyPriceWidth;
+    const visibleRight = viewportLeft + body.clientWidth;
     let nextScrollLeft = viewportLeft;
-    if (left < viewportLeft) nextScrollLeft = left;
-    else if (right > viewportRight) nextScrollLeft = right - body.clientWidth;
-    if (nextScrollLeft !== viewportLeft) body.scrollLeft = Math.max(0, nextScrollLeft);
+    if (left < visibleLeft) nextScrollLeft = left - stickyCompanyPriceWidth;
+    else if (right > visibleRight) nextScrollLeft = right - body.clientWidth;
+
+    const maxScrollLeft = Math.max(0, body.scrollWidth - body.clientWidth);
+    const clampedScrollLeft = Math.min(maxScrollLeft, Math.max(0, nextScrollLeft));
+    if (clampedScrollLeft !== viewportLeft) body.scrollLeft = clampedScrollLeft;
   }, []);
 
   const activeFilterLabel = SCREENER_FILTERS.find((entry) => entry.value === filter)?.label ?? "All";

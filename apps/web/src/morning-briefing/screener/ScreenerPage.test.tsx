@@ -1,7 +1,11 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import type { ScreenerApiResponse, ScreenerRow } from "@stock-autotrader/contracts";
 import ScreenerPage from "./ScreenerPage";
+
+const screenerCss = readFileSync(resolve(process.cwd(), "src/morning-briefing/screener/screener.css"), "utf8");
 
 const row = (symbol: string, price: number | null, changePct: number | null, state: ScreenerRow["state"], supportLevels: ScreenerRow["supportLevels"] = []): ScreenerRow => ({
   symbol,
@@ -562,6 +566,18 @@ describe("ScreenerPage", () => {
     await waitFor(() => expect(region.classList.contains("scr-table-scrolled")).toBe(false));
   });
 
+  it("grid width derives from tracks and ends at S4 without a minimum canvas", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    const region = screen.getByRole("table");
+    const templateMatch = screenerCss.match(/--scr-grid-template:([^;]+);/);
+    const template = templateMatch?.[1]?.trim() ?? "";
+    expect(screenerCss).toContain("--scr-grid-content-width:calc(var(--scr-company-width) + var(--scr-price-width) + 675px);");
+    expect(screenerCss).not.toContain("--scr-grid-min-width");
+    expect(template.split(/\s+/).slice(-4)).toEqual(["70px", "70px", "70px", "70px"]);
+    expect(region).toBeInTheDocument();
+  });
+
   it("body owns horizontal scroll and header mirrors its visual offset", async () => {
     render(<ScreenerPage />);
     await screen.findByRole("table");
@@ -578,23 +594,47 @@ describe("ScreenerPage", () => {
     expect(bodyScroll.scrollLeft).toBe(100);
   });
 
-  it("focus on an off-screen sortable header moves the body scroller", async () => {
+  it("header focus reveals both sides around sticky Company and Price", async () => {
     render(<ScreenerPage />);
     await screen.findByRole("table");
     const bodyScroll = document.querySelector(".scr-table-body-scroll") as HTMLDivElement;
     const headScroll = document.querySelector(".scr-table-head-scroll") as HTMLDivElement;
+    const companyCell = document.querySelector(".scr-body-row > .scr-col-company") as HTMLElement;
+    const priceCell = document.querySelector(".scr-body-row > .scr-col-price") as HTMLElement;
     const ivCell = screen.getByRole("columnheader", { name: "IV" });
     const ivButton = ivCell.querySelector("button")!;
 
+    Object.defineProperty(companyCell, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ left: 0, right: 180, width: 180 }),
+    });
+    Object.defineProperty(priceCell, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ left: 180, right: 260, width: 80 }),
+    });
     Object.defineProperty(bodyScroll, "clientWidth", { configurable: true, value: 390 });
+    Object.defineProperty(bodyScroll, "scrollWidth", { configurable: true, value: 1004 });
     Object.defineProperty(bodyScroll, "scrollLeft", { configurable: true, writable: true, value: 0 });
-    Object.defineProperty(ivCell, "offsetLeft", { configurable: true, value: 500 });
     Object.defineProperty(ivCell, "offsetWidth", { configurable: true, value: 80 });
-    fireEvent.focus(ivButton);
 
+    // Right reveal: IV starts at 500, beyond body viewport right 390.
+    Object.defineProperty(ivCell, "offsetLeft", { configurable: true, value: 500 });
+    fireEvent.focus(ivButton);
     expect(bodyScroll.scrollLeft).toBe(190);
     fireEvent.scroll(bodyScroll);
     expect(headScroll.style.getPropertyValue("--scr-head-scroll-left")).toBe("190px");
+
+    // Left reveal: IV starts before visible content area 500 + sticky width 260.
+    Object.defineProperty(bodyScroll, "scrollLeft", { configurable: true, writable: true, value: 500 });
+    Object.defineProperty(ivCell, "offsetLeft", { configurable: true, value: 335 });
+    fireEvent.focus(ivButton);
+    expect(bodyScroll.scrollLeft).toBe(75);
+
+    // Clamp: target before scroll origin cannot produce negative scrollLeft.
+    Object.defineProperty(bodyScroll, "scrollLeft", { configurable: true, writable: true, value: 500 });
+    Object.defineProperty(ivCell, "offsetLeft", { configurable: true, value: 100 });
+    fireEvent.focus(ivButton);
+    expect(bodyScroll.scrollLeft).toBe(0);
   });
 
   it("numeric headers use flex-end alignment and S1-S4 share the support tracks", async () => {
