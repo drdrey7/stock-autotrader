@@ -19,6 +19,7 @@ export type ScreenerFilter =
 
 export type ScreenerSortKey =
   | "symbol"
+  | "company"
   | "price"
   | "changePct"
   | "iv"
@@ -113,6 +114,18 @@ export function applyScreenerQuery(
         const leftValue = left.symbol.toLowerCase();
         const rightValue = right.symbol.toLowerCase();
         if (leftValue === rightValue) return 0;
+        return (leftValue < rightValue ? -1 : 1) * direction;
+      }
+      case "company": {
+        const leftValue = (left.company ?? left.symbol).toLowerCase();
+        const rightValue = (right.company ?? right.symbol).toLowerCase();
+        if (leftValue === rightValue) {
+          // Tie-break: symbol
+          const leftSym = left.symbol.toLowerCase();
+          const rightSym = right.symbol.toLowerCase();
+          if (leftSym === rightSym) return 0;
+          return (leftSym < rightSym ? -1 : 1) * direction;
+        }
         return (leftValue < rightValue ? -1 : 1) * direction;
       }
       case "price":

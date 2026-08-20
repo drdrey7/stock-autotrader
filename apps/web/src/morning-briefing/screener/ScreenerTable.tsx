@@ -230,8 +230,8 @@ export function ScreenerTable({
         <table className="scr-table">
           <thead>
             <tr>
-              <th className="scr-col-company" aria-sort={getAriaSort("symbol")}>
-                {sortIndicator("Company", sortKey === "symbol", sortDirection, () => onSort("symbol"))}
+              <th className="scr-col-company" aria-sort={getAriaSort("company")}>
+                {sortIndicator("Company", sortKey === "company", sortDirection, () => onSort("company"))}
               </th>
               <th className="scr-col-price scr-align-right" aria-sort={getAriaSort("price")}>
                 {sortIndicator("Price", sortKey === "price", sortDirection, () => onSort("price"))}

@@ -36,25 +36,31 @@
 .scr-search{min-width:180px;padding:8px 12px;border:1px solid var(--border);border-radius:9px;background:var(--surface-2);color:var(--text);font-size:11px;outline:none}
 .scr-search:focus{border-color:var(--brand-blue)}
 
-/* Table clip: handles horizontal scroll AND border-radius clipping */
-.scr-table-clip{overflow-x:auto;border-top:1px solid var(--border);border-bottom-left-radius:15px;border-bottom-right-radius:15px}
+/* Sticky table header — CSS Grid layout, sticks to viewport */
+.scr-table-head{position:sticky;top:0;z-index:20;background:var(--surface);border-bottom:1px solid var(--border);overflow:hidden}
+.scr-table-head-inner{will-change:transform}
+.scr-table-head-grid{display:grid;grid-template-columns:var(--scr-company-width) var(--scr-price-width) 75px 70px 80px 90px 80px 70px 70px 70px 70px;min-width:980px;align-items:stretch}
+.scr-table-head-row{display:contents}
+.scr-head-cell{text-align:left;padding:9px 12px;color:var(--muted);background:var(--surface-2);font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;white-space:nowrap;border-bottom:1px solid var(--border);display:flex;align-items:center}
+
+/* Scrollable body */
+.scr-table-clip{overflow-x:auto;border-bottom-left-radius:15px;border-bottom-right-radius:15px;--scr-company-width:180px;--scr-price-width:80px}
 
 /* Shared table layout */
-.scr-table{width:100%;border-collapse:collapse;min-width:980px;table-layout:fixed}
-.scr-table th{text-align:left;padding:9px 12px;color:var(--muted);background:var(--surface-2);font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;white-space:nowrap;position:sticky;top:0;z-index:10;border-bottom:1px solid var(--border)}
-.scr-table th.scr-col-company,.scr-table th.scr-col-price{background:var(--surface-2)}
-.scr-table td{padding:9px 12px;border-top:1px solid var(--border);font-size:12px;white-space:nowrap;vertical-align:middle;background:var(--surface)}
-.scr-table tbody tr:hover td{background:var(--surface-2)}
+.scr-table-body-grid{width:100%;border-collapse:collapse;min-width:980px}
+
+/* Body cells */
+.scr-table-body-grid td{padding:9px 12px;border-top:1px solid var(--border);font-size:12px;white-space:nowrap;vertical-align:middle;background:var(--surface)}
+.scr-table-body-grid tbody tr:hover td{background:var(--surface-2)}
 .scr-align-right{text-align:right}
 
 /* Sticky columns — CSS custom properties for dynamic widths */
-.scr-table{--scr-company-width:180px;--scr-price-width:80px}
 .scr-col-company{min-width:160px;width:var(--scr-company-width);position:sticky;left:0;z-index:15;background:var(--surface-2)}
-.scr-table tbody td.scr-col-company{background:var(--surface);z-index:10}
-.scr-table tbody tr:hover td.scr-col-company{background:var(--surface-2)}
+.scr-table-body-grid td.scr-col-company{background:var(--surface);z-index:10}
+.scr-table-body-grid tbody tr:hover td.scr-col-company{background:var(--surface-2)}
 .scr-col-price{min-width:75px;width:var(--scr-price-width);position:sticky;left:var(--scr-company-width);z-index:15;background:var(--surface-2)}
-.scr-table tbody td.scr-col-price{background:var(--surface);z-index:10}
-.scr-table tbody tr:hover td.scr-col-price{background:var(--surface-2)}
+.scr-table-body-grid td.scr-col-price{background:var(--surface);z-index:10}
+.scr-table-body-grid tbody tr:hover td.scr-col-price{background:var(--surface-2)}
 .scr-col-price::after{content:"";position:absolute;top:0;right:-8px;bottom:0;width:8px;background:linear-gradient(to right,rgba(0,0,0,.04),transparent);pointer-events:none}
 
 /* Column group widths */
@@ -102,8 +108,9 @@
   .scr-toolbar-left{flex-wrap:wrap}
   .scr-toolbar-right{flex:1;justify-content:flex-end}
   .scr-search{min-width:0;flex:1;max-width:220px}
-  .scr-table{min-width:980px}
-  .scr-table{--scr-company-width:135px;--scr-price-width:60px}
+  .scr-table-body-grid{min-width:980px}
+  .scr-table-head-grid{min-width:980px;grid-template-columns:var(--scr-company-width) var(--scr-price-width) 75px 70px 80px 90px 80px 70px 70px 70px 70px}
+  .scr-table-clip{--scr-company-width:135px;--scr-price-width:60px}
   .scr-col-company{min-width:130px;padding-left:10px;padding-right:6px}
   .scr-col-price{min-width:55px;padding-left:6px;padding-right:8px}
 }
@@ -118,9 +125,10 @@
 
 /* Mobile: compact mode when horizontally scrolled */
 @media (max-width:700px){
-  .scr-table-scrolled .scr-table{--scr-company-width:88px;--scr-price-width:58px}
-  .scr-table-scrolled .scr-col-company{min-width:84px;padding-left:6px;padding-right:4px}
-  .scr-table-scrolled .scr-col-price{min-width:52px;padding-left:4px;padding-right:6px}
+  .scr-table-scrolled{--scr-company-width:86px;--scr-price-width:56px}
+  .scr-table-scrolled .scr-table-head-grid{grid-template-columns:var(--scr-company-width) var(--scr-price-width) 75px 70px 80px 90px 80px 70px 70px 70px 70px}
+  .scr-table-scrolled .scr-col-company{min-width:82px;padding-left:6px;padding-right:4px}
+  .scr-table-scrolled .scr-col-price{min-width:50px;padding-left:4px;padding-right:6px}
   .scr-table-scrolled .scr-company-text small{opacity:0;max-width:0;margin:0;padding:0}
   .scr-table-scrolled .scr-company{gap:5px}
 }
