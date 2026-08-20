@@ -55,10 +55,10 @@
 
 /* Sticky header sibling of body horizontal scroller. */
 .scr-table-head-shell{position:sticky;top:var(--scr-sticky-top);z-index:30;background:var(--surface);border-bottom:1px solid var(--border)}
-.scr-table-head-scroll{width:100%;overflow:hidden;--scr-head-scroll-left:0px}
+.scr-table-head-scroll{width:100%;overflow:hidden}
 .scr-table-head-grid{position:relative}
 .scr-head-cell{position:relative;z-index:1;display:flex;align-items:center;padding:9px 12px;color:var(--muted);background:var(--surface-2);font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;white-space:nowrap}
-.scr-table-head-grid>*:nth-child(n+3){transform:translateX(calc(-1 * var(--scr-head-scroll-left)));will-change:transform}
+.scr-head-cell.scr-align-right{justify-content:flex-end}
 .scr-table-head-grid>.scr-col-company,.scr-table-head-grid>.scr-col-price{position:sticky;background:var(--surface-2);z-index:3}
 .scr-table-head-grid>.scr-col-company{left:0}
 .scr-table-head-grid>.scr-col-price{left:var(--scr-company-width)}

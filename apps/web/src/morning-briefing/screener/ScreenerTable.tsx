@@ -186,16 +186,27 @@ export function ScreenerTable({
     closeFilters(true);
   }, [closeFilters, onFilterChange]);
 
-  const handleBodyScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
-    const scrollLeft = event.currentTarget.scrollLeft;
-    // Header is not inside body scroller. Move only its non-sticky cells.
-    headScrollRef.current?.style.setProperty("--scr-head-scroll-left", `${scrollLeft}px`);
+  const updateCompactState = useCallback((scrollLeft: number) => {
     setScrolled((previous) => {
       if (previous && scrollLeft < 8) return false;
       if (!previous && scrollLeft > 20) return true;
       return previous;
     });
   }, []);
+
+  const syncHorizontalScroll = useCallback((scrollLeft: number, source: "body" | "head") => {
+    const target = source === "body" ? headScrollRef.current : bodyScrollRef.current;
+    if (target && target.scrollLeft !== scrollLeft) target.scrollLeft = scrollLeft;
+    updateCompactState(scrollLeft);
+  }, [updateCompactState]);
+
+  const handleBodyScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
+    syncHorizontalScroll(event.currentTarget.scrollLeft, "body");
+  }, [syncHorizontalScroll]);
+
+  const handleHeadScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
+    syncHorizontalScroll(event.currentTarget.scrollLeft, "head");
+  }, [syncHorizontalScroll]);
 
   const activeFilterLabel = SCREENER_FILTERS.find((entry) => entry.value === filter)?.label ?? "All";
   const getAriaSort = (key: ScreenerSortKey) => {
@@ -248,6 +259,9 @@ export function ScreenerTable({
                 role="menu"
                 aria-label="Screener filters"
                 onKeyDown={handleFilterMenuKeyDown}
+                onBlur={(event) => {
+                  if (!event.currentTarget.contains(event.relatedTarget as Node | null)) closeFilters();
+                }}
               >
                 {SCREENER_FILTERS.map(({ value, label }, index) => (
                   <button
@@ -256,7 +270,8 @@ export function ScreenerTable({
                       filterOptionRefs.current[index] = element;
                     }}
                     type="button"
-                    role="menuitem"
+                    role="menuitemradio"
+                    aria-checked={filter === value}
                     className={`scr-filter-option ${filter === value ? "scr-filter-option-active" : ""}`}
                     onClick={() => handleFilterSelection(value)}
                   >
@@ -280,7 +295,7 @@ export function ScreenerTable({
       </div>
 
       <div className="scr-table-head-shell" role="rowgroup">
-        <div className="scr-table-head-scroll" ref={headScrollRef}>
+        <div className="scr-table-head-scroll" ref={headScrollRef} onScroll={handleHeadScroll}>
           <div className="scr-grid-row scr-table-head-grid" role="row">
             <div className="scr-head-cell scr-col-company" role="columnheader" aria-sort={getAriaSort("company")}>
               {sortIndicator("Company", sortKey === "company", sortDirection, () => onSort("company"))}

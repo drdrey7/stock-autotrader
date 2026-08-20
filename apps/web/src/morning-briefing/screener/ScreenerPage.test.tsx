@@ -116,13 +116,13 @@ describe("ScreenerPage", () => {
     // Open filters menu
     fireEvent.click(screen.getByRole("button", { name: /Filters/i }));
     // Click Gainers
-    fireEvent.click(screen.getByRole("menuitem", { name: "Gainers" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Gainers" }));
     await waitFor(() => expect(screen.queryByText("S01")).not.toBeInTheDocument());
     expect(screen.getByText("S00")).toBeInTheDocument();
     // Open filters menu again
     fireEvent.click(screen.getByRole("button", { name: /Filters/i }));
     // Click Losers
-    fireEvent.click(screen.getByRole("menuitem", { name: "Losers" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Losers" }));
     await waitFor(() => expect(screen.queryByText("S00")).not.toBeInTheDocument());
     expect(screen.getByText("S01")).toBeInTheDocument();
   });
@@ -400,28 +400,28 @@ describe("ScreenerPage", () => {
 
     // A) Closed → click → opens
     fireEvent.click(filtersBtn);
-    expect(screen.getByRole("menuitem", { name: "Gainers" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitemradio", { name: "Gainers" })).toBeInTheDocument();
     expect(filtersBtn).toHaveAttribute("aria-expanded", "true");
 
     // B) Open → click same button → closes (NOT reopen due to outside click race)
     fireEvent.click(filtersBtn);
-    await waitFor(() => expect(screen.queryByRole("menuitem", { name: "Gainers" })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("menuitemradio", { name: "Gainers" })).not.toBeInTheDocument());
     expect(filtersBtn).toHaveAttribute("aria-expanded", "false");
 
     // C) Open → outside click → closes
     fireEvent.click(filtersBtn);
-    expect(screen.getByRole("menuitem", { name: "Gainers" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitemradio", { name: "Gainers" })).toBeInTheDocument();
     // Simulate mousedown outside the filters container
     const outside = document.createElement("div");
     document.body.appendChild(outside);
     fireEvent.mouseDown(outside);
-    await waitFor(() => expect(screen.queryByRole("menuitem", { name: "Gainers" })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("menuitemradio", { name: "Gainers" })).not.toBeInTheDocument());
     expect(filtersBtn).toHaveAttribute("aria-expanded", "false");
     document.body.removeChild(outside);
 
     // D) Open → click inside popover → does NOT close before selection
     fireEvent.click(filtersBtn);
-    expect(screen.getByRole("menuitem", { name: "Gainers" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitemradio", { name: "Gainers" })).toBeInTheDocument();
   });
 
   it("filter menu supports keyboard navigation and Escape restores trigger focus", async () => {
@@ -430,9 +430,9 @@ describe("ScreenerPage", () => {
     const filtersBtn = screen.getByRole("button", { name: /Filters/i });
     fireEvent.click(filtersBtn);
 
-    const all = screen.getByRole("menuitem", { name: "All" });
-    const gainers = screen.getByRole("menuitem", { name: "Gainers" });
-    const last = screen.getByRole("menuitem", { name: "Above Support" });
+    const all = screen.getByRole("menuitemradio", { name: "All" });
+    const gainers = screen.getByRole("menuitemradio", { name: "Gainers" });
+    const last = screen.getByRole("menuitemradio", { name: "Above Support" });
     await waitFor(() => expect(document.activeElement).toBe(all));
 
     fireEvent.keyDown(all, { key: "ArrowDown" });
@@ -443,9 +443,22 @@ describe("ScreenerPage", () => {
     expect(document.activeElement).toBe(all);
     fireEvent.keyDown(all, { key: "Escape" });
 
-    await waitFor(() => expect(screen.queryByRole("menuitem", { name: "All" })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("menuitemradio", { name: "All" })).not.toBeInTheDocument());
     expect(filtersBtn).toHaveAttribute("aria-expanded", "false");
     expect(document.activeElement).toBe(filtersBtn);
+  });
+
+  it("filter menu closes when focus tabs outside", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    fireEvent.click(screen.getByRole("button", { name: /Filters/i }));
+    const all = screen.getByRole("menuitemradio", { name: "All" });
+    const search = screen.getByRole("searchbox");
+    await waitFor(() => expect(document.activeElement).toBe(all));
+
+    fireEvent.blur(all, { relatedTarget: search });
+    await waitFor(() => expect(screen.queryByRole("menuitemradio", { name: "All" })).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: /Filters/i })).toHaveAttribute("aria-expanded", "false");
   });
 
   // --- Active filter chip tests ---
@@ -459,16 +472,20 @@ describe("ScreenerPage", () => {
     render(<ScreenerPage />);
     await screen.findByRole("table");
     fireEvent.click(screen.getByRole("button", { name: /Filters/i }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Below IV" }));
+    const belowIv = screen.getByRole("menuitemradio", { name: "Below IV" });
+    expect(belowIv).toHaveAttribute("aria-checked", "false");
+    fireEvent.click(belowIv);
     expect(screen.getByText("Below IV")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Clear Below IV filter" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Filters/i }));
+    expect(screen.getByRole("menuitemradio", { name: "Below IV" })).toHaveAttribute("aria-checked", "true");
   });
 
   it("C) click X → filter returns to All", async () => {
     render(<ScreenerPage />);
     await screen.findByRole("table");
     fireEvent.click(screen.getByRole("button", { name: /Filters/i }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Gainers" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Gainers" }));
     await waitFor(() => expect(screen.getByText("Gainers")).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: "Clear Gainers filter" }));
     await waitFor(() => expect(screen.queryByText("Gainers")).not.toBeInTheDocument());
@@ -482,7 +499,7 @@ describe("ScreenerPage", () => {
     await screen.findByRole("table");
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "S42" } });
     fireEvent.click(screen.getByRole("button", { name: /Filters/i }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Gainers" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Gainers" }));
     fireEvent.click(screen.getByRole("button", { name: "Clear Gainers filter" }));
     await waitFor(() => expect(screen.getByText("S42")).toBeInTheDocument());
     expect(screen.getByRole("searchbox")).toHaveValue("S42");
@@ -496,7 +513,7 @@ describe("ScreenerPage", () => {
     fireEvent.click(priceBtn); // desc
     fireEvent.click(priceBtn); // asc
     fireEvent.click(screen.getByRole("button", { name: /Filters/i }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Below IV" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Below IV" }));
     fireEvent.click(screen.getByRole("button", { name: "Clear Below IV filter" }));
     // Price header should still have aria-sort=ascending
     const priceHeader = screen.getByRole("columnheader", { name: /Price/ });
@@ -509,17 +526,17 @@ describe("ScreenerPage", () => {
     await screen.findByRole("table");
     // Open Filters and select Below IV
     fireEvent.click(screen.getByRole("button", { name: /Filters/i }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Below IV" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Below IV" }));
     await waitFor(() => expect(screen.getByText("Below IV")).toBeInTheDocument());
     // Reopen Filters (filter is now active, chip is visible)
     fireEvent.click(screen.getByRole("button", { name: /Filters/i }));
-    expect(screen.getByRole("menuitem", { name: "All" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitemradio", { name: "All" })).toBeInTheDocument();
     // Click X to clear
     fireEvent.click(screen.getByRole("button", { name: "Clear Below IV filter" }));
     // Chip should disappear
     await waitFor(() => expect(screen.queryByText("Below IV")).not.toBeInTheDocument());
     // Popover should close
-    await waitFor(() => expect(screen.queryByRole("menuitem", { name: "All" })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("menuitemradio", { name: "All" })).not.toBeInTheDocument());
     expect(screen.getByRole("button", { name: /Filters/i })).toHaveAttribute("aria-expanded", "false");
   });
 
@@ -535,6 +552,21 @@ describe("ScreenerPage", () => {
     await waitFor(() => expect(region.classList.contains("scr-table-scrolled")).toBe(true));
     fireEvent.scroll(bodyScroll, { target: { scrollLeft: 0 } });
     await waitFor(() => expect(region.classList.contains("scr-table-scrolled")).toBe(false));
+  });
+
+  it("horizontal scroll stays synchronized in both directions", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    const bodyScroll = document.querySelector(".scr-table-body-scroll") as HTMLDivElement;
+    const headScroll = document.querySelector(".scr-table-head-scroll") as HTMLDivElement;
+
+    Object.defineProperty(bodyScroll, "scrollLeft", { configurable: true, writable: true, value: 100 });
+    fireEvent.scroll(bodyScroll);
+    expect(headScroll.scrollLeft).toBe(100);
+
+    Object.defineProperty(headScroll, "scrollLeft", { configurable: true, writable: true, value: 40 });
+    fireEvent.scroll(headScroll);
+    expect(bodyScroll.scrollLeft).toBe(40);
   });
 
   // --- aria-sort tests ---
@@ -613,10 +645,10 @@ describe("ScreenerPage", () => {
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "ZZZZZZ" } });
     expect(screen.getByText("No matching stocks.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Filters/i }));
-    const options = screen.getAllByRole("menuitem");
+    const options = screen.getAllByRole("menuitemradio");
     expect(options).toHaveLength(10);
-    expect(screen.getByRole("menuitem", { name: "Above Support" })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "All" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitemradio", { name: "Above Support" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitemradio", { name: "All" })).toBeInTheDocument();
   });
 
   it("renders sibling sticky header and horizontal body scroll containers", async () => {
