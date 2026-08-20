@@ -424,6 +424,30 @@ describe("ScreenerPage", () => {
     expect(screen.getByRole("menuitem", { name: "Gainers" })).toBeInTheDocument();
   });
 
+  it("filter menu supports keyboard navigation and Escape restores trigger focus", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    const filtersBtn = screen.getByRole("button", { name: /Filters/i });
+    fireEvent.click(filtersBtn);
+
+    const all = screen.getByRole("menuitem", { name: "All" });
+    const gainers = screen.getByRole("menuitem", { name: "Gainers" });
+    const last = screen.getByRole("menuitem", { name: "Above Support" });
+    await waitFor(() => expect(document.activeElement).toBe(all));
+
+    fireEvent.keyDown(all, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(gainers);
+    fireEvent.keyDown(gainers, { key: "End" });
+    expect(document.activeElement).toBe(last);
+    fireEvent.keyDown(last, { key: "Home" });
+    expect(document.activeElement).toBe(all);
+    fireEvent.keyDown(all, { key: "Escape" });
+
+    await waitFor(() => expect(screen.queryByRole("menuitem", { name: "All" })).not.toBeInTheDocument());
+    expect(filtersBtn).toHaveAttribute("aria-expanded", "false");
+    expect(document.activeElement).toBe(filtersBtn);
+  });
+
   // --- Active filter chip tests ---
   it("A) filter=all → no chip", async () => {
     render(<ScreenerPage />);

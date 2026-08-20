@@ -134,8 +134,15 @@ export function ScreenerTable({
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const filtersContainerRef = useRef<HTMLDivElement>(null);
+  const filtersButtonRef = useRef<HTMLButtonElement>(null);
+  const filterOptionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const bodyScrollRef = useRef<HTMLDivElement>(null);
   const headScrollRef = useRef<HTMLDivElement>(null);
+
+  const closeFilters = useCallback((restoreFocus = false) => {
+    setFiltersOpen(false);
+    if (restoreFocus) filtersButtonRef.current?.focus();
+  }, []);
 
   const handleClickOutside = useCallback((event: MouseEvent) => {
     if (filtersContainerRef.current && !filtersContainerRef.current.contains(event.target as Node)) {
@@ -145,9 +152,39 @@ export function ScreenerTable({
 
   useEffect(() => {
     if (!filtersOpen) return;
+    filterOptionRefs.current[0]?.focus();
+  }, [filtersOpen]);
+
+  useEffect(() => {
+    if (!filtersOpen) return;
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [filtersOpen, handleClickOutside]);
+
+  const handleFilterMenuKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    const currentIndex = filterOptionRefs.current.findIndex((option) => option === document.activeElement);
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeFilters(true);
+      return;
+    }
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const lastIndex = SCREENER_FILTERS.length - 1;
+    const nextIndex = event.key === "Home"
+      ? 0
+      : event.key === "End"
+        ? lastIndex
+        : event.key === "ArrowDown"
+          ? Math.min(currentIndex + 1, lastIndex)
+          : Math.max(currentIndex - 1, 0);
+    filterOptionRefs.current[nextIndex]?.focus();
+  }, [closeFilters]);
+
+  const handleFilterSelection = useCallback((value: ScreenerFilter) => {
+    onFilterChange(value);
+    closeFilters(true);
+  }, [closeFilters, onFilterChange]);
 
   const handleBodyScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
     const scrollLeft = event.currentTarget.scrollLeft;
@@ -177,9 +214,11 @@ export function ScreenerTable({
         <div className="scr-toolbar-left">
           <div className="scr-filters-container" ref={filtersContainerRef}>
             <button
+              ref={filtersButtonRef}
               type="button"
               className="scr-filters-btn"
               aria-haspopup="true"
+              aria-controls="scr-filters-menu"
               aria-expanded={filtersOpen}
               onClick={() => setFiltersOpen((open) => !open)}
             >
@@ -195,7 +234,7 @@ export function ScreenerTable({
                   aria-label={`Clear ${activeFilterLabel} filter`}
                   onClick={() => {
                     onFilterChange("all");
-                    setFiltersOpen(false);
+                    closeFilters();
                   }}
                 >
                   ×
@@ -203,17 +242,23 @@ export function ScreenerTable({
               </span>
             )}
             {filtersOpen && (
-              <div className="scr-filters-popover" role="menu" aria-label="Screener filters">
-                {SCREENER_FILTERS.map(({ value, label }) => (
+              <div
+                id="scr-filters-menu"
+                className="scr-filters-popover"
+                role="menu"
+                aria-label="Screener filters"
+                onKeyDown={handleFilterMenuKeyDown}
+              >
+                {SCREENER_FILTERS.map(({ value, label }, index) => (
                   <button
                     key={value}
+                    ref={(element) => {
+                      filterOptionRefs.current[index] = element;
+                    }}
                     type="button"
                     role="menuitem"
                     className={`scr-filter-option ${filter === value ? "scr-filter-option-active" : ""}`}
-                    onClick={() => {
-                      onFilterChange(value);
-                      setFiltersOpen(false);
-                    }}
+                    onClick={() => handleFilterSelection(value)}
                   >
                     {label}
                   </button>
