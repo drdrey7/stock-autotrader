@@ -1,0 +1,75 @@
+/* How Are The Markets design tokens.
+ *
+ * Brand blue is reserved for interface actions and navigation. Market meaning
+ * uses the semantic positive/negative/warning tokens below, so a green market
+ * result can never be confused with the product chrome.
+ */
+:root {
+  color-scheme: light;
+
+  --brand-navy: #0d1a48;
+  --brand-blue: #3979df;
+  --brand-blue-strong: #2f66c4;
+  --brand-teal: #32998c;
+
+  --positive: #239b61;
+  --negative: #d64550;
+  --warning: #b7791f;
+
+  --app-bg: #f7f9fc;
+  --surface: #ffffff;
+  --surface-elevated: #ffffff;
+  --surface-muted: #f2f5f9;
+  --text: var(--brand-navy);
+  --muted: #667085;
+  --border: #dfe5ee;
+
+  --brand-blue-soft: #edf3ff;
+  --positive-soft: #eaf7ef;
+  --negative-soft: #fff0f1;
+  --warning-soft: #fff7e6;
+
+  --shadow-card: 0 1px 2px rgb(13 26 72 / 0.025), 0 8px 24px rgb(13 26 72 / 0.045);
+
+  /* Compatibility aliases for the older feature styles. New UI should use
+     the named brand and semantic tokens above. */
+  --green: var(--brand-blue);
+  --green-2: var(--brand-blue-strong);
+  --green-soft: var(--positive-soft);
+  --mint: var(--brand-blue-soft);
+  --ink: var(--text);
+  --line: var(--border);
+  --off: var(--surface-muted);
+  --red: var(--negative);
+  --red-soft: var(--negative-soft);
+  --amber: var(--warning);
+  --amber-soft: var(--warning-soft);
+  --surface-2: var(--surface-muted);
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --brand-blue: #4c8dff;
+  --brand-blue-strong: #76a8ff;
+  --brand-teal: #45b9a9;
+
+  --positive: #38c95a;
+  --negative: #ff6b75;
+  --warning: #f0b84b;
+
+  --app-bg: #080d1a;
+  --surface: #0f1728;
+  --surface-elevated: #141e32;
+  --surface-muted: #111b2e;
+  --text: #f4f7fc;
+  --muted: #98a2b3;
+  --border: #202b42;
+
+  --brand-blue-soft: #162846;
+  --positive-soft: #123822;
+  --negative-soft: #3a1a23;
+  --warning-soft: #382c13;
+
+  --shadow-card: 0 10px 30px rgb(0 0 0 / 0.2);
+}

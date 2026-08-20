@@ -88,7 +88,6 @@ export function AppShell({ children }: { children: ReactNode }) {
           <SidebarNavigation />
           <div className="shell-sidebar-footer">
             <ThemeToggle />
-            <p>Public, read-only market intelligence.</p>
           </div>
         </div>
         <MobileHeader ref={menuButtonRef} menuOpen={menuOpen} onMenuToggle={toggleMenu} />

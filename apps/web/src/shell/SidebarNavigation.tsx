@@ -1,18 +1,12 @@
-import { BarChart3 } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
+import { BrandLogo } from "../branding/BrandLogo";
 import { isNavItemActive, shellNavGroups } from "./navigation";
 
 /** Product identity used by the desktop sidebar and the mobile drawer/top bar. */
 export function ShellBrand({ compact = false }: { compact?: boolean }) {
   return (
-    <Link className="shell-brand" to="/dashboard" aria-label="Morning Briefing home">
-      <span className="shell-brand-mark" aria-hidden="true">
-        <BarChart3 size={18} />
-      </span>
-      <span className="shell-brand-copy">
-        <strong>Morning Briefing</strong>
-        {!compact && <small>Markets • Opportunities • Insights</small>}
-      </span>
+    <Link className="shell-brand" to="/" aria-label="How Are The Markets home">
+      <BrandLogo compact={compact} />
     </Link>
   );
 }

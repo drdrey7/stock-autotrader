@@ -5,11 +5,11 @@ import { localDateLabel, marketGreeting } from "./local-time";
 import { useSentiment } from "./useSentiment";
 
 const SENTIMENT_META: Record<string, { label: string; color: string }> = {
-  extreme_fear: { label: "Extreme Fear", color: "#e5484d" },
-  fear: { label: "Fear", color: "#f76b15" },
-  neutral: { label: "Neutral", color: "#8b8d98" },
-  greed: { label: "Greed", color: "#f5a524" },
-  extreme_greed: { label: "Extreme Greed", color: "#30a46c" },
+  extreme_fear: { label: "Extreme Fear", color: "var(--negative)" },
+  fear: { label: "Fear", color: "var(--warning)" },
+  neutral: { label: "Neutral", color: "var(--muted)" },
+  greed: { label: "Greed", color: "var(--positive)" },
+  extreme_greed: { label: "Extreme Greed", color: "var(--positive)" },
 };
 
 const GAUGE_ARC_LENGTH = Math.PI * 65;
@@ -34,7 +34,7 @@ function Sentiment() {
     );
   }
 
-  const meta = SENTIMENT_META[sentiment.rating] ?? { label: "Neutral", color: "#8b8d98" };
+  const meta = SENTIMENT_META[sentiment.rating] ?? { label: "Neutral", color: "var(--muted)" };
   const dash = (sentiment.score / 100) * GAUGE_ARC_LENGTH;
 
   return (
@@ -75,7 +75,7 @@ export default function MorningBriefingPage() {
 
         <section className="widget-block market-overview-block" aria-label="Market overview">
           <div className="widget-head">
-            <span className="eyebrow">MARKET OVERVIEW</span>
+            <span className="eyebrow">Market Overview</span>
             <span className="section-meta">TradingView · 12M</span>
           </div>
           <MarketOverview sections={MARKET_OVERVIEW_SECTIONS} colorTheme={theme} className="market-overview-frame"/>
@@ -83,7 +83,7 @@ export default function MorningBriefingPage() {
 
         <section className="widget-block calendar-block" aria-label="Economic calendar">
           <div className="widget-head">
-            <span className="eyebrow">ECONOMIC CALENDAR</span>
+            <span className="eyebrow">Economic Calendar</span>
             <span className="section-meta">TradingView</span>
           </div>
           <EconomicCalendar/>
@@ -91,7 +91,7 @@ export default function MorningBriefingPage() {
 
         <section className="widget-block stories-block" aria-label="Top stories">
           <div className="widget-head">
-            <span className="eyebrow">TOP STORIES</span>
+            <span className="eyebrow">Top Stories</span>
             <span className="section-meta">TradingView</span>
           </div>
           <TopStories/>

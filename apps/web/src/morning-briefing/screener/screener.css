@@ -1,5 +1,5 @@
-/* Screener PR1 — feature-scoped styles. Up/down colors reuse the theme's
-   semantic tokens (green/red) so dark mode is handled for free. */
+/* Screener PR1 — feature-scoped styles. Brand blue is interface chrome;
+   positive/negative tokens carry market meaning. */
 
 .screener-page{max-width:1100px}
 .screener-heading h1{letter-spacing:-.04em}
@@ -12,14 +12,14 @@
 .scr-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border-bottom:1px solid var(--border);flex-wrap:wrap}
 .scr-chips{display:flex;gap:6px}
 .scr-chip{padding:7px 13px;border:1px solid var(--border);border-radius:999px;background:var(--surface-2);color:var(--muted);font-size:10px;font-weight:800;cursor:pointer;letter-spacing:.03em}
-.scr-chip:hover{border-color:var(--green)}
-.scr-chip-active{background:var(--green);border-color:var(--green);color:#fff}
+.scr-chip:hover{border-color:var(--brand-blue)}
+.scr-chip-active{background:var(--brand-blue);border-color:var(--brand-blue);color:#fff}
 .scr-toolbar-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .scr-preset-label{font-size:9px;font-weight:800;letter-spacing:.08em;color:var(--muted);text-transform:uppercase}
 .scr-preset{padding:7px 10px;border:1px solid var(--border);border-radius:9px;background:var(--surface-2);color:var(--text);font-size:11px;font-weight:700;outline:none;cursor:pointer}
-.scr-preset:focus{border-color:var(--green)}
+.scr-preset:focus{border-color:var(--brand-blue)}
 .scr-search{min-width:220px;padding:8px 12px;border:1px solid var(--border);border-radius:9px;background:var(--surface-2);color:var(--text);font-size:11px;outline:none}
-.scr-search:focus{border-color:var(--green)}
+.scr-search:focus{border-color:var(--brand-blue)}
 
 .scr-table-wrap{overflow-x:auto}
 .scr-table{width:100%;border-collapse:collapse;min-width:720px}
@@ -32,7 +32,7 @@
 .scr-company b{font-size:12px;letter-spacing:-.01em}
 .scr-company small{color:var(--muted);font-size:9px;max-width:220px;overflow:hidden;text-overflow:ellipsis}
 .scr-price{font-variant-numeric:tabular-nums;font-weight:700}
-.scr-up{color:var(--green);font-weight:700;font-variant-numeric:tabular-nums}
+.scr-up{color:var(--positive);font-weight:700;font-variant-numeric:tabular-nums}
 .scr-down{color:var(--red);font-weight:700;font-variant-numeric:tabular-nums}
 .scr-near{color:var(--amber);font-weight:700;font-variant-numeric:tabular-nums}
 .scr-flat{color:var(--muted);font-variant-numeric:tabular-nums}
@@ -42,19 +42,19 @@
 .scr-sort-arrow{font-size:9px}
 .scr-state{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:999px;font-size:9px;font-weight:800}
 .scr-state::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
-.scr-state-live{background:var(--green-soft);color:var(--green)}
+.scr-state-live{background:var(--positive-soft);color:var(--positive)}
 .scr-state-cached{background:var(--amber-soft);color:var(--amber)}
 .scr-state-stale{background:var(--amber-soft);color:var(--amber)}
 .scr-state-error{background:var(--red-soft);color:var(--red)}
 .scr-state-unavailable{background:var(--surface-2);color:var(--muted)}
-.scr-state-text.scr-state-live{color:var(--green)}
+.scr-state-text.scr-state-live{color:var(--positive)}
 .scr-state-text.scr-state-cached,.scr-state-text.scr-state-stale{color:var(--amber)}
 .scr-state-text.scr-state-unavailable{color:var(--muted)}
 .scr-empty,.scr-message{padding:34px;text-align:center;color:var(--muted);font-size:11px}
 .scr-banner{padding:10px 16px;background:var(--amber-soft);color:var(--amber);font-size:10px;font-weight:700;border-bottom:1px solid var(--border)}
 .scr-error{padding:22px;color:var(--red);background:var(--red-soft);font-size:11px;font-weight:600;border-color:var(--red)}
 .scr-support{font-variant-numeric:tabular-nums;font-weight:700;color:var(--text)}
-.scr-support-pill{display:inline-flex;align-items:center;justify-content:center;padding:3px 8px;border-radius:999px;background:var(--green-soft);color:var(--green);border:1px solid var(--green);font-weight:700;font-variant-numeric:tabular-nums;min-width:42px}
+.scr-support-pill{display:inline-flex;align-items:center;justify-content:center;padding:3px 8px;border-radius:999px;background:var(--positive-soft);color:var(--positive);border:1px solid var(--positive);font-weight:700;font-variant-numeric:tabular-nums;min-width:42px}
 
 @media (max-width:900px){
   .scr-toolbar{align-items:stretch}

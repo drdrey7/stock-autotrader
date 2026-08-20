@@ -12,9 +12,12 @@ import { installShadowRootProbe, waitForTradingViewElement } from "./tv-helpers.
 test.skip(({ isMobile }) => isMobile, "Responsive matrix runs on the desktop project");
 
 const VIEWPORTS = [
+  { width: 375, height: 812, label: "375px phone" },
   { width: 390, height: 844, label: "390px phone" },
   { width: 430, height: 932, label: "430px phone" },
+  { width: 768, height: 1024, label: "768px tablet" },
   { width: 820, height: 1180, label: "820px tablet" },
+  { width: 1024, height: 900, label: "1024px desktop" },
   { width: 1440, height: 900, label: "1440px desktop" },
 ];
 
@@ -43,6 +46,26 @@ for (const viewport of VIEWPORTS) {
     await waitForTradingViewElement(page, "tv-ticker-tape");
     await waitForTradingViewElement(page, "tv-market-overview");
 
+    if (viewport.width <= 900) {
+      const brand = page.locator(".shell-topbar .shell-brand");
+      const hamburger = page.locator(".shell-topbar .shell-menu-button");
+      await expect(brand).toBeVisible();
+      await expect(hamburger).toBeVisible();
+      await expect(page.locator(".shell-bottom-nav")).toHaveCount(0);
+      const [tickerBox, topbarBox] = await Promise.all([
+        page.locator(".global-ticker").boundingBox(),
+        page.locator(".shell-topbar").boundingBox(),
+      ]);
+      expect(tickerBox).not.toBeNull();
+      expect(topbarBox).not.toBeNull();
+      expect(tickerBox.y + tickerBox.height).toBeLessThanOrEqual(topbarBox.y + 1);
+      const [brandBox, hamburgerBox] = await Promise.all([brand.boundingBox(), hamburger.boundingBox()]);
+      expect(brandBox).not.toBeNull();
+      expect(hamburgerBox).not.toBeNull();
+      expect(hamburgerBox.x).toBeGreaterThan(brandBox.x);
+      expect(hamburgerBox.x + hamburgerBox.width).toBeGreaterThan(brandBox.x + brandBox.width - 4);
+    }
+
     const noOverflow = () =>
       page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
 
@@ -62,7 +85,10 @@ for (const viewport of VIEWPORTS) {
       await expect(tape).toBeVisible();
       const tapeBox = await tape.boundingBox();
       expect(tapeBox).not.toBeNull();
-      const contentBox = await page.locator(".shell-main").boundingBox();
+      // On mobile .shell-main intentionally uses display: contents so the
+      // ticker can be ordered before the top bar without changing the DOM.
+      // Measure the routed page surface instead; it keeps a real layout box.
+      const contentBox = await page.locator(".page-content").boundingBox();
       expect(contentBox).not.toBeNull();
       expect(tapeBox.width, "ticker strip must span the content column").toBeGreaterThan(contentBox.width * 0.9);
       expect(tapeBox.height, "ticker strip must stay compact").toBeLessThan(64);

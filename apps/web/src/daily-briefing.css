@@ -1,15 +1,15 @@
 :root {
-  --brief-bg: #071017;
-  --brief-panel: #0c171f;
-  --brief-panel-2: #101d26;
-  --brief-line: rgba(184, 216, 202, 0.13);
-  --brief-line-strong: rgba(184, 216, 202, 0.22);
-  --brief-text: #eef6f1;
-  --brief-muted: #8ea39a;
-  --brief-green: #61dda0;
-  --brief-green-strong: #29c782;
-  --brief-amber: #f4c56b;
-  --brief-red: #ff8d82;
+  --brief-bg: var(--app-bg);
+  --brief-panel: var(--surface);
+  --brief-panel-2: var(--surface-elevated);
+  --brief-line: var(--border);
+  --brief-line-strong: color-mix(in srgb, var(--border) 75%, var(--text));
+  --brief-text: var(--text);
+  --brief-muted: var(--muted);
+  --brief-green: var(--brand-blue);
+  --brief-green-strong: var(--brand-blue);
+  --brief-amber: var(--warning);
+  --brief-red: var(--negative);
   --brief-serif: "Manrope", "DM Sans", system-ui, sans-serif;
   --brief-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 }
@@ -1260,8 +1260,8 @@
 /* Methodology, status, disclaimer */
 .briefing-information-page {
   min-height: 100%;
-  color: #132019;
-  background: #f3f1eb;
+  color: var(--text);
+  background: var(--app-bg);
   padding: 64px 28px 96px;
 }
 
@@ -1272,7 +1272,7 @@
 
 .briefing-information-body > h1 {
   margin: 9px 0 20px;
-  color: #0d1913;
+  color: var(--text);
   font-family: var(--brief-serif);
   font-size: clamp(38px, 6vw, 56px);
   letter-spacing: -0.055em;
@@ -1280,21 +1280,21 @@
 
 .briefing-information-lead {
   margin: 0 0 45px;
-  color: #586a61;
+  color: var(--muted);
   font-size: 18px;
   line-height: 1.7;
 }
 
 .briefing-information-body h2 {
   margin: 33px 0 8px;
-  color: #18251e;
+  color: var(--text);
   font-size: 17px;
   letter-spacing: -0.025em;
 }
 
 .briefing-information-body p:not(.briefing-information-lead) {
   margin: 0;
-  color: #627169;
+  color: var(--muted);
   font-size: 13px;
   line-height: 1.7;
 }
@@ -1309,15 +1309,15 @@
   display: flex;
   align-items: center;
   gap: 13px;
-  border: 1px solid rgba(48, 107, 78, 0.17);
+  border: 1px solid color-mix(in srgb, var(--positive) 24%, var(--border));
   border-radius: 9px;
-  color: #2b9f6b;
-  background: rgba(62, 179, 119, 0.06);
+  color: var(--positive);
+  background: var(--positive-soft);
 }
 
 .briefing-status-grid > span.is-pending {
-  color: #9d771f;
-  background: rgba(211, 167, 64, 0.08);
+  color: var(--warning);
+  background: var(--warning-soft);
 }
 
 .briefing-status-grid > span > span {
@@ -1326,12 +1326,12 @@
 }
 
 .briefing-status-grid strong {
-  color: #1a2821;
+  color: var(--text);
   font-size: 12px;
 }
 
 .briefing-status-grid small {
-  color: #5d6f66;
+  color: var(--muted);
   font-size: 10px;
 }
 
@@ -1342,13 +1342,13 @@
   place-content: center;
   justify-items: center;
   text-align: center;
-  color: #132019;
-  background: #f3f1eb;
+  color: var(--text);
+  background: var(--app-bg);
 }
 
 .briefing-not-found > svg {
   margin-top: 55px;
-  color: #319f6c;
+  color: var(--brand-blue);
 }
 
 .briefing-not-found h1 {
@@ -1359,7 +1359,7 @@
 
 .briefing-not-found p {
   margin: 0 0 24px;
-  color: #66776e;
+  color: var(--muted);
 }
 
 @media (max-width: 1050px) {
@@ -1872,4 +1872,28 @@
   display: block;
   border-radius: 12px;
   background: var(--briefing-surface, #16181c);
+}
+
+/* The older public landing routes share the central brand component. Keep
+ * their legacy wrapper from changing the logo's inline layout or palette. */
+.briefing-brand > .brand-logo {
+  display: inline-flex;
+  min-width: 0;
+  line-height: normal;
+}
+
+.briefing-brand .brand-logo-fallback-copy strong {
+  color: var(--brand-navy);
+}
+
+.briefing-brand .brand-logo-fallback-copy em {
+  color: var(--brand-blue);
+}
+
+.briefing-brand .brand-logo-fallback-copy small {
+  color: var(--muted);
+}
+
+[data-theme="dark"] .briefing-brand .brand-logo-fallback-copy strong {
+  color: var(--text);
 }

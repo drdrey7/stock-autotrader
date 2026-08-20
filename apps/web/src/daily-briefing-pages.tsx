@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
-  BarChart3,
   CalendarClock,
   CheckCircle2,
   ChevronDown,
@@ -18,6 +17,7 @@ import {
   X as CloseIcon,
 } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
+import { BRAND_HOME, BRAND_NAME, BrandLogo } from "./branding/BrandLogo";
 import {
   exampleDailyBriefing,
   type BriefingIdea,
@@ -26,14 +26,8 @@ import {
 
 function Brand({ compact = false }: { compact?: boolean }) {
   return (
-    <Link className="briefing-brand" to="/" aria-label="Morning Briefing home">
-      <span className="briefing-brand-mark" aria-hidden="true">
-        <BarChart3 size={18} />
-      </span>
-      <span>
-        Morning Briefing
-        {!compact && <small>New York market intelligence</small>}
-      </span>
+    <Link className="briefing-brand" to={BRAND_HOME} aria-label={`${BRAND_NAME} home`}>
+      <BrandLogo compact={compact} />
     </Link>
   );
 }
@@ -80,7 +74,7 @@ const briefingEditionCode = exampleDailyBriefing.editionType === "post_close" ? 
 function BriefingFooter() {
   return (
     <footer className="briefing-footer">
-      <span>© 2026 Morning Briefing</span>
+      <span>© 2026 {BRAND_NAME}</span>
       <span className="briefing-footer-links">
         <Link to="/status">Status</Link>
       </span>
@@ -96,7 +90,7 @@ function TerminalPreview() {
     <div
       className="briefing-terminal-preview"
       role="img"
-      aria-label="Morning Briefing terminal preview"
+      aria-label={`${BRAND_NAME} terminal preview`}
     >
       <div className="briefing-window-bar">
         <span>
@@ -664,7 +658,7 @@ export function DailyBriefingStatusPage() {
     <InformationLayout
       eyebrow="PUBLIC INFORMATION"
       title="System status"
-      lead="Morning Briefing is a public, read-only research interface for market context, curated X Pulse posts and earnings."
+      lead={`${BRAND_NAME} is a public, read-only research interface for market context, curated X Pulse posts and earnings.`}
     >
       <h2>What is included</h2>
       <p>

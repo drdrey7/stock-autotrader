@@ -2,17 +2,9 @@
 
 :root {
   font-family: "DM Sans", system-ui, sans-serif;
-  color: #15201c;
-  background: #f8faf8;
+  color: var(--text);
+  background: var(--app-bg);
   font-synthesis: none;
-  --green: #25745a;
-  --green-2: #1d5d48;
-  --mint: #e9f3ee;
-  --ink: #15201c;
-  --muted: #66736d;
-  --line: #e3e9e5;
-  --surface: #fff;
-  --off: #f5f7f5;
 }
 * {
   box-sizing: border-box;
@@ -23,7 +15,8 @@ html {
 body {
   margin: 0;
   min-width: 320px;
-  background: #f8faf8;
+  background: var(--app-bg);
+  color: var(--text);
 }
 button,
 input,
@@ -102,19 +95,19 @@ p {
   white-space: nowrap;
 }
 .badge-positive {
-  color: #176143;
-  background: #e9f5ee;
-  border-color: #cce6d8;
+  color: var(--positive);
+  background: var(--positive-soft);
+  border-color: color-mix(in srgb, var(--positive) 24%, var(--border));
 }
 .badge-warning {
-  color: #89651a;
-  background: #fbf5df;
-  border-color: #ece0ad;
+  color: var(--warning);
+  background: var(--warning-soft);
+  border-color: color-mix(in srgb, var(--warning) 24%, var(--border));
 }
 .badge-negative {
-  color: #9b4242;
-  background: #fcf0f0;
-  border-color: #f0d2d2;
+  color: var(--negative);
+  background: var(--negative-soft);
+  border-color: color-mix(in srgb, var(--negative) 24%, var(--border));
 }
 .badge-demo {
   color: #6558a8;
@@ -1414,11 +1407,11 @@ p {
   font-size: 14px;
 }
 .positive-text {
-  color: var(--green);
+  color: var(--positive);
   font-weight: 700;
 }
 .negative-text {
-  color: #a13f3f;
+  color: var(--negative);
   font-weight: 700;
 }
 .risk-grid {

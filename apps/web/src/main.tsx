@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import App from "./App";
+import "./branding/tokens.css";
 import "./styles.css";
 import "./daily-briefing.css";
 // The Morning Briefing stylesheet must come last: Vite hoists component CSS
