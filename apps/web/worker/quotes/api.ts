@@ -26,12 +26,30 @@ import { readTechnicalMetrics, readLatestSplitEffectiveDate } from "../sma/stora
 import { readManualSupportLevels, type SupportLevelsForSymbol } from "../supports/storage";
 import type { ScreenerSupportLevel } from "@stock-autotrader/contracts";
 
-/** Build the support-level list for one symbol, with triggered derived. */
+/** Build the support-level list for one symbol, with triggered derived.
+ *
+ * Split-safety (P1): if a stock split happened AFTER the support reference
+ * date, the stored manual support prices are on the wrong scale and must
+ * not be displayed. Reuses the same `latestSplitEffectiveDates` map that
+ * the SMA200W split-safety already reads — no extra provider/D1 calls.
+ *
+ * Rule:
+ *  - no split effective date for this symbol → supports valid
+ *  - latestSplitEffectiveDate <= support.asOf → supports valid
+ *  - latestSplitEffectiveDate > support.asOf → return [] (stale) */
 function buildSupportLevels(
   currentPrice: number | null,
   grouped: SupportLevelsForSymbol | undefined,
+  splitEffectiveDate: string | undefined,
 ): ScreenerSupportLevel[] {
   if (!grouped) return [];
+  // Split-safety: if a split happened after the supports were defined, the
+  // stored prices are on the wrong scale. Hide them entirely — showing
+  // triggered=null on wrong-scale numbers would be misleading.
+  if (splitEffectiveDate) {
+    const maxAsOf = grouped.levels.reduce((max, l) => l.as_of_date > max ? l.as_of_date : max, grouped.levels[0]!.as_of_date);
+    if (splitEffectiveDate > maxAsOf) return [];
+  }
   return grouped.levels.map((level) => ({
     level: level.level as ScreenerSupportLevel["level"],
     price: level.price,
@@ -147,7 +165,7 @@ export async function readScreenerApi(env: Env, now = new Date()): Promise<Scree
       sma200wState: sma.sma200wState,
       sma200wHistoryWeeks: sma.sma200wHistoryWeeks,
       sma200wAsOf: sma.sma200wAsOf,
-      supportLevels: buildSupportLevels(currentPrice, supportLevels.get(symbol)),
+      supportLevels: buildSupportLevels(currentPrice, supportLevels.get(symbol), latestSplitEffectiveDates.get(symbol)),
     };
   });
 

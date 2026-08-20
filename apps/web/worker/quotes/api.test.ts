@@ -614,4 +614,67 @@ describe("readScreenerApi — manual support levels", () => {
     const meta = response.rows.find((row) => row.symbol === "META")!;
     expect(meta.supportLevels.map((l) => l.level)).toEqual([1, 2, 3, 4]);
   });
+
+  // Split-safety tests (P1): manual supports must not be shown after a
+  // stock split post-dating the support reference date.
+
+  it("split AFTER support asOf -> supportLevels = [] (no false triggered)", async () => {
+    const db = createApiDb({
+      quotes: [quoteRow("META", 500, NOW_ISO)],
+      supportLevels: META_SUPPORT,
+      wsHealth: wsHealthRow(),
+      splitEvents: [{ symbol: "META", effective_date: "2026-08-10" }], // after 2026-08-03
+    });
+    const response = await readScreenerApi(envFrom(db), REGULAR);
+    const meta = response.rows.find((row) => row.symbol === "META")!;
+    expect(meta.supportLevels).toEqual([]);
+  });
+
+  it("split effective date ON support asOf -> supports kept", async () => {
+    const db = createApiDb({
+      quotes: [quoteRow("META", 500, NOW_ISO)],
+      supportLevels: META_SUPPORT,
+      wsHealth: wsHealthRow(),
+      splitEvents: [{ symbol: "META", effective_date: "2026-08-03" }], // same day
+    });
+    const response = await readScreenerApi(envFrom(db), REGULAR);
+    const meta = response.rows.find((row) => row.symbol === "META")!;
+    expect(meta.supportLevels).toHaveLength(4);
+  });
+
+  it("split effective date BEFORE support asOf -> supports kept", async () => {
+    const db = createApiDb({
+      quotes: [quoteRow("META", 500, NOW_ISO)],
+      supportLevels: META_SUPPORT,
+      wsHealth: wsHealthRow(),
+      splitEvents: [{ symbol: "META", effective_date: "2026-07-15" }], // before
+    });
+    const response = await readScreenerApi(envFrom(db), REGULAR);
+    const meta = response.rows.find((row) => row.symbol === "META")!;
+    expect(meta.supportLevels).toHaveLength(4);
+  });
+
+  it("split does not affect SMA split-safety logic", async () => {
+    const metricsRow = () => ({
+      symbol: "META",
+      anchor_week: "2026-08-14",
+      completed_weeks_available: 1200,
+      sum_199: 19900,
+      anchor_close: 100,
+      closed_sma_200w: 100,
+      historical_data_as_of: "2026-08-19T06:00:00.000Z",
+      calculated_at: "2026-08-19T06:00:00.000Z",
+      status: "ok",
+      source: "alpha-vantage",
+    });
+    const db = createApiDb({
+      quotes: [quoteRow("META", 110, "2026-08-19T15:00:00.000Z")],
+      metrics: [metricsRow()],
+      wsHealth: wsHealthRow(),
+      splitEvents: [{ symbol: "META", effective_date: "2026-08-10" }], // before quote week
+    });
+    const response = await readScreenerApi(envFrom(db), REGULAR);
+    const meta = response.rows.find((row) => row.symbol === "META")!;
+    expect(meta.sma200w).toBeCloseTo((19900 + 110) / 200, 10);
+  });
 });
