@@ -498,7 +498,7 @@ describe("ScreenerPage", () => {
   it("mobile: horizontal scroll adds scr-table-scrolled class", async () => {
     render(<ScreenerPage />);
     await screen.findByRole("table");
-    const wrap = document.querySelector(".scr-table-wrap") as HTMLDivElement;
+    const wrap = document.querySelector(".scr-table-clip") as HTMLDivElement;
     expect(wrap).not.toBeNull();
     // Initially no scrolled class
     expect(wrap.classList.contains("scr-table-scrolled")).toBe(false);
@@ -572,7 +572,7 @@ describe("ScreenerPage", () => {
   it("compact mode hides company name but preserves ticker", async () => {
     render(<ScreenerPage />);
     await screen.findByRole("table");
-    const wrap = document.querySelector(".scr-table-wrap") as HTMLDivElement;
+    const wrap = document.querySelector(".scr-table-clip") as HTMLDivElement;
     fireEvent.scroll(wrap, { target: { scrollLeft: 30 } });
     await waitFor(() => expect(wrap.classList.contains("scr-table-scrolled")).toBe(true));
     // Ticker should still be visible
@@ -600,6 +600,5 @@ describe("ScreenerPage", () => {
     expect(card).not.toBeNull();
     expect(clip).not.toBeNull();
     expect(card!.contains(clip!)).toBe(true);
-    expect(clip!.querySelector(".scr-table-wrap")).not.toBeNull();
   });
 });
