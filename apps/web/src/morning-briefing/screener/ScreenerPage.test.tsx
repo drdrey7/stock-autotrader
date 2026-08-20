@@ -434,11 +434,16 @@ describe("ScreenerPage", () => {
     const gainers = screen.getByRole("menuitemradio", { name: "Gainers" });
     const last = screen.getByRole("menuitemradio", { name: "Above Support" });
     await waitFor(() => expect(document.activeElement).toBe(all));
+    expect(all).toHaveAttribute("tabindex", "0");
+    expect(gainers).toHaveAttribute("tabindex", "-1");
 
     fireEvent.keyDown(all, { key: "ArrowDown" });
     expect(document.activeElement).toBe(gainers);
+    expect(all).toHaveAttribute("tabindex", "-1");
+    expect(gainers).toHaveAttribute("tabindex", "0");
     fireEvent.keyDown(gainers, { key: "End" });
     expect(document.activeElement).toBe(last);
+    expect(last).toHaveAttribute("tabindex", "0");
     fireEvent.keyDown(last, { key: "Home" });
     expect(document.activeElement).toBe(all);
     fireEvent.keyDown(all, { key: "Escape" });
@@ -478,7 +483,10 @@ describe("ScreenerPage", () => {
     expect(screen.getByText("Below IV")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Clear Below IV filter" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Filters/i }));
-    expect(screen.getByRole("menuitemradio", { name: "Below IV" })).toHaveAttribute("aria-checked", "true");
+    const selectedBelowIv = screen.getByRole("menuitemradio", { name: "Below IV" });
+    expect(selectedBelowIv).toHaveAttribute("aria-checked", "true");
+    await waitFor(() => expect(document.activeElement).toBe(selectedBelowIv));
+    expect(selectedBelowIv).toHaveAttribute("tabindex", "0");
   });
 
   it("C) click X → filter returns to All", async () => {
@@ -554,7 +562,7 @@ describe("ScreenerPage", () => {
     await waitFor(() => expect(region.classList.contains("scr-table-scrolled")).toBe(false));
   });
 
-  it("horizontal scroll stays synchronized in both directions", async () => {
+  it("body owns horizontal scroll and header mirrors its visual offset", async () => {
     render(<ScreenerPage />);
     await screen.findByRole("table");
     const bodyScroll = document.querySelector(".scr-table-body-scroll") as HTMLDivElement;
@@ -562,11 +570,55 @@ describe("ScreenerPage", () => {
 
     Object.defineProperty(bodyScroll, "scrollLeft", { configurable: true, writable: true, value: 100 });
     fireEvent.scroll(bodyScroll);
-    expect(headScroll.scrollLeft).toBe(100);
+    expect(headScroll.scrollLeft).toBe(0);
+    expect(headScroll.style.getPropertyValue("--scr-head-scroll-left")).toBe("100px");
 
     Object.defineProperty(headScroll, "scrollLeft", { configurable: true, writable: true, value: 40 });
     fireEvent.scroll(headScroll);
-    expect(bodyScroll.scrollLeft).toBe(40);
+    expect(bodyScroll.scrollLeft).toBe(100);
+  });
+
+  it("focus on an off-screen sortable header moves the body scroller", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    const bodyScroll = document.querySelector(".scr-table-body-scroll") as HTMLDivElement;
+    const headScroll = document.querySelector(".scr-table-head-scroll") as HTMLDivElement;
+    const ivCell = screen.getByRole("columnheader", { name: "IV" });
+    const ivButton = ivCell.querySelector("button")!;
+
+    Object.defineProperty(bodyScroll, "clientWidth", { configurable: true, value: 390 });
+    Object.defineProperty(bodyScroll, "scrollLeft", { configurable: true, writable: true, value: 0 });
+    Object.defineProperty(ivCell, "offsetLeft", { configurable: true, value: 500 });
+    Object.defineProperty(ivCell, "offsetWidth", { configurable: true, value: 80 });
+    fireEvent.focus(ivButton);
+
+    expect(bodyScroll.scrollLeft).toBe(190);
+    fireEvent.scroll(bodyScroll);
+    expect(headScroll.style.getPropertyValue("--scr-head-scroll-left")).toBe("190px");
+  });
+
+  it("numeric headers use flex-end alignment and S1-S4 share the support tracks", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    const numericLabels = ["Price", "1D", "IV", "IV Dist", "200W SMA", "SMA Dist", "S1", "S2", "S3", "S4"];
+    for (const label of numericLabels) {
+      expect(screen.getByRole("columnheader", { name: label })).toHaveClass("scr-align-right");
+    }
+
+    const supportHeaders = ["S1", "S2", "S3", "S4"].map((label) => screen.getByRole("columnheader", { name: label }));
+    expect(supportHeaders.map((header) => header.className)).toEqual([
+      "scr-head-cell scr-col-s1 scr-align-right",
+      "scr-head-cell scr-col-s2 scr-align-right",
+      "scr-head-cell scr-col-s3 scr-align-right",
+      "scr-head-cell scr-col-s4 scr-align-right",
+    ]);
+    const bodyRow = document.querySelector(".scr-body-row")!;
+    expect(Array.from(bodyRow.children).slice(7, 11).map((cell) => cell.className)).toEqual([
+      "scr-cell scr-col-s1 scr-align-right",
+      "scr-cell scr-col-s2 scr-align-right",
+      "scr-cell scr-col-s3 scr-align-right",
+      "scr-cell scr-col-s4 scr-align-right",
+    ]);
   });
 
   // --- aria-sort tests ---

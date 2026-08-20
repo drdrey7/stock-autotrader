@@ -132,6 +132,7 @@ export function ScreenerTable({
   onSort,
 }: ScreenerTableProps) {
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [focusedFilterIndex, setFocusedFilterIndex] = useState(0);
   const [scrolled, setScrolled] = useState(false);
   const filtersContainerRef = useRef<HTMLDivElement>(null);
   const filtersButtonRef = useRef<HTMLButtonElement>(null);
@@ -150,10 +151,13 @@ export function ScreenerTable({
     }
   }, []);
 
+  const selectedFilterIndex = Math.max(0, SCREENER_FILTERS.findIndex((entry) => entry.value === filter));
+
   useEffect(() => {
     if (!filtersOpen) return;
-    filterOptionRefs.current[0]?.focus();
-  }, [filtersOpen]);
+    setFocusedFilterIndex(selectedFilterIndex);
+    filterOptionRefs.current[selectedFilterIndex]?.focus();
+  }, [filtersOpen, selectedFilterIndex]);
 
   useEffect(() => {
     if (!filtersOpen) return;
@@ -178,6 +182,7 @@ export function ScreenerTable({
         : event.key === "ArrowDown"
           ? Math.min(currentIndex + 1, lastIndex)
           : Math.max(currentIndex - 1, 0);
+    setFocusedFilterIndex(nextIndex);
     filterOptionRefs.current[nextIndex]?.focus();
   }, [closeFilters]);
 
@@ -194,19 +199,27 @@ export function ScreenerTable({
     });
   }, []);
 
-  const syncHorizontalScroll = useCallback((scrollLeft: number, source: "body" | "head") => {
-    const target = source === "body" ? headScrollRef.current : bodyScrollRef.current;
-    if (target && target.scrollLeft !== scrollLeft) target.scrollLeft = scrollLeft;
+  const handleBodyScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
+    const scrollLeft = event.currentTarget.scrollLeft;
+    // Body owns horizontal scroll. Header only mirrors it visually.
+    headScrollRef.current?.style.setProperty("--scr-head-scroll-left", `${scrollLeft}px`);
     updateCompactState(scrollLeft);
   }, [updateCompactState]);
 
-  const handleBodyScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
-    syncHorizontalScroll(event.currentTarget.scrollLeft, "body");
-  }, [syncHorizontalScroll]);
+  const handleHeaderFocus = useCallback((event: React.FocusEvent<HTMLDivElement>) => {
+    const cell = (event.target as HTMLElement).closest<HTMLElement>(".scr-head-cell");
+    const body = bodyScrollRef.current;
+    if (!cell || !body || cell.classList.contains("scr-col-company") || cell.classList.contains("scr-col-price")) return;
 
-  const handleHeadScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
-    syncHorizontalScroll(event.currentTarget.scrollLeft, "head");
-  }, [syncHorizontalScroll]);
+    const left = cell.offsetLeft;
+    const right = left + cell.offsetWidth;
+    const viewportLeft = body.scrollLeft;
+    const viewportRight = viewportLeft + body.clientWidth;
+    let nextScrollLeft = viewportLeft;
+    if (left < viewportLeft) nextScrollLeft = left;
+    else if (right > viewportRight) nextScrollLeft = right - body.clientWidth;
+    if (nextScrollLeft !== viewportLeft) body.scrollLeft = Math.max(0, nextScrollLeft);
+  }, []);
 
   const activeFilterLabel = SCREENER_FILTERS.find((entry) => entry.value === filter)?.label ?? "All";
   const getAriaSort = (key: ScreenerSortKey) => {
@@ -272,6 +285,7 @@ export function ScreenerTable({
                     type="button"
                     role="menuitemradio"
                     aria-checked={filter === value}
+                    tabIndex={focusedFilterIndex === index ? 0 : -1}
                     className={`scr-filter-option ${filter === value ? "scr-filter-option-active" : ""}`}
                     onClick={() => handleFilterSelection(value)}
                   >
@@ -295,8 +309,8 @@ export function ScreenerTable({
       </div>
 
       <div className="scr-table-head-shell" role="rowgroup">
-        <div className="scr-table-head-scroll" ref={headScrollRef} onScroll={handleHeadScroll}>
-          <div className="scr-grid-row scr-table-head-grid" role="row">
+        <div className="scr-table-head-scroll" ref={headScrollRef}>
+          <div className="scr-grid-row scr-table-head-grid" role="row" onFocus={handleHeaderFocus}>
             <div className="scr-head-cell scr-col-company" role="columnheader" aria-sort={getAriaSort("company")}>
               {sortIndicator("Company", sortKey === "company", sortDirection, () => onSort("company"))}
             </div>
