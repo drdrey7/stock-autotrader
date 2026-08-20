@@ -677,4 +677,64 @@ describe("readScreenerApi — manual support levels", () => {
     const meta = response.rows.find((row) => row.symbol === "META")!;
     expect(meta.sma200w).toBeCloseTo((19900 + 110) / 200, 10);
   });
+
+  // Future split tests (P2): supports must remain visible until split is effective
+  const AUG_20 = new Date("2026-08-20T14:00:00Z"); // Thursday 10:00 ET → NY: 2026-08-20
+  const SEP_15 = new Date("2026-09-15T14:00:00Z"); // Tuesday 10:00 ET → NY: 2026-09-15
+  const SEP_16 = new Date("2026-09-16T14:00:00Z"); // Wednesday 10:00 ET → NY: 2026-09-16
+
+  it("future split (now < effective) -> supports remain visible", async () => {
+    const db = createApiDb({
+      quotes: [quoteRow("META", 450, "2026-08-20T14:00:00.000Z")],
+      supportLevels: META_SUPPORT,
+      wsHealth: wsHealthRow(),
+      splitEvents: [{ symbol: "META", effective_date: "2026-09-15" }], // future
+    });
+    const response = await readScreenerApi(envFrom(db), AUG_20);
+    const meta = response.rows.find((row) => row.symbol === "META")!;
+    expect(meta.supportLevels).toHaveLength(4);
+    expect(meta.supportLevels.every((l) => l.triggered === true)).toBe(true);
+  });
+
+  it("split effective today -> supportLevels = []", async () => {
+    const db = createApiDb({
+      quotes: [quoteRow("META", 500, "2026-09-15T14:00:00.000Z")],
+      supportLevels: META_SUPPORT,
+      wsHealth: wsHealthRow(),
+      splitEvents: [{ symbol: "META", effective_date: "2026-09-15" }], // today
+    });
+    const response = await readScreenerApi(envFrom(db), SEP_15);
+    const meta = response.rows.find((row) => row.symbol === "META")!;
+    expect(meta.supportLevels).toEqual([]);
+  });
+
+  it("split effective yesterday -> supportLevels = []", async () => {
+    const db = createApiDb({
+      quotes: [quoteRow("META", 500, "2026-09-16T14:00:00.000Z")],
+      supportLevels: META_SUPPORT,
+      wsHealth: wsHealthRow(),
+      splitEvents: [{ symbol: "META", effective_date: "2026-09-15" }], // yesterday
+    });
+    const response = await readScreenerApi(envFrom(db), SEP_16);
+    const meta = response.rows.find((row) => row.symbol === "META")!;
+    expect(meta.supportLevels).toEqual([]);
+  });
+
+  it("mixed asOf (S4 after split) + split effective -> supportLevels = []", async () => {
+    const MIXED_SUPPORT = [
+      { symbol: "META", method: "manual", level: 1, price: 635, as_of_date: "2026-08-03", updated_at: "2026-08-03T00:00:00.000Z" },
+      { symbol: "META", method: "manual", level: 2, price: 580, as_of_date: "2026-08-03", updated_at: "2026-08-03T00:00:00.000Z" },
+      { symbol: "META", method: "manual", level: 3, price: 532, as_of_date: "2026-08-03", updated_at: "2026-08-03T00:00:00.000Z" },
+      { symbol: "META", method: "manual", level: 4, price: 481, as_of_date: "2026-09-20", updated_at: "2026-09-20T00:00:00.000Z" }, // after split
+    ];
+    const db = createApiDb({
+      quotes: [quoteRow("META", 500, "2026-09-16T14:00:00.000Z")],
+      supportLevels: MIXED_SUPPORT,
+      wsHealth: wsHealthRow(),
+      splitEvents: [{ symbol: "META", effective_date: "2026-09-15" }], // effective
+    });
+    const response = await readScreenerApi(envFrom(db), SEP_16);
+    const meta = response.rows.find((row) => row.symbol === "META")!;
+    expect(meta.supportLevels).toEqual([]);
+  });
 });

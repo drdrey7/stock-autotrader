@@ -25,30 +25,36 @@ import { computeLiveSma200w, type QuoteInput } from "../sma/metrics";
 import { readTechnicalMetrics, readLatestSplitEffectiveDate } from "../sma/storage";
 import { readManualSupportLevels, type SupportLevelsForSymbol } from "../supports/storage";
 import type { ScreenerSupportLevel } from "@stock-autotrader/contracts";
+import { nyDateKeyOf } from "./freshness";
 
 /** Build the support-level list for one symbol, with triggered derived.
  *
- * Split-safety (P1): if a stock split happened AFTER the support reference
- * date, the stored manual support prices are on the wrong scale and must
- * not be displayed. Reuses the same `latestSplitEffectiveDates` map that
- * the SMA200W split-safety already reads — no extra provider/D1 calls.
+ * Split-safety (P1/P2): if a stock split happened AFTER the support reference
+ * date AND is already effective today, the stored manual support prices are on
+ * the wrong scale and must not be displayed. Reuses the same
+ * `latestSplitEffectiveDates` map that the SMA200W split-safety already reads —
+ * no extra provider/D1 calls.
+ *
+ * Uses the OLDEST asOf from the curated set (conservative: S1-S4 are a set,
+ * never mix pre/post-split scales).
  *
  * Rule:
- *  - no split effective date for this symbol → supports valid
- *  - latestSplitEffectiveDate <= support.asOf → supports valid
- *  - latestSplitEffectiveDate > support.asOf → return [] (stale) */
+ *  - no split effective date → supports valid
+ *  - splitEffectiveDate <= oldestAsOf → supports valid
+ *  - splitEffectiveDate > oldestAsOf AND splitEffectiveDate <= currentMarketDate
+ *    → return [] (split already effective, supports stale)
+ *  - splitEffectiveDate > oldestAsOf AND splitEffectiveDate > currentMarketDate
+ *    → supports valid (future split, quote still on pre-split scale) */
 function buildSupportLevels(
   currentPrice: number | null,
   grouped: SupportLevelsForSymbol | undefined,
   splitEffectiveDate: string | undefined,
+  currentMarketDate: string | undefined,
 ): ScreenerSupportLevel[] {
   if (!grouped) return [];
-  // Split-safety: if a split happened after the supports were defined, the
-  // stored prices are on the wrong scale. Hide them entirely — showing
-  // triggered=null on wrong-scale numbers would be misleading.
-  if (splitEffectiveDate) {
-    const maxAsOf = grouped.levels.reduce((max, l) => l.as_of_date > max ? l.as_of_date : max, grouped.levels[0]!.as_of_date);
-    if (splitEffectiveDate > maxAsOf) return [];
+  if (splitEffectiveDate && currentMarketDate) {
+    const oldestAsOf = grouped.levels.reduce((min, l) => l.as_of_date < min ? l.as_of_date : min, grouped.levels[0]!.as_of_date);
+    if (splitEffectiveDate > oldestAsOf && splitEffectiveDate <= currentMarketDate) return [];
   }
   return grouped.levels.map((level) => ({
     level: level.level as ScreenerSupportLevel["level"],
@@ -138,6 +144,7 @@ export async function readScreenerApi(env: Env, now = new Date()): Promise<Scree
   const companyBySymbol = new Map(companies.map((company) => [company.symbol, company.company]));
 
   const marketState: ScreenerMarketState = quotesMarketState(now);
+  const currentMarketDate = nyDateKeyOf(now) ?? undefined;
   const rows: ScreenerRow[] = CORE_UNIVERSE.map((symbol) => {
     const quote = quoteBySymbol.get(symbol);
     const state: SourceState = quoteState(quote?.updated_at ?? null, now);
@@ -165,7 +172,7 @@ export async function readScreenerApi(env: Env, now = new Date()): Promise<Scree
       sma200wState: sma.sma200wState,
       sma200wHistoryWeeks: sma.sma200wHistoryWeeks,
       sma200wAsOf: sma.sma200wAsOf,
-      supportLevels: buildSupportLevels(currentPrice, supportLevels.get(symbol), latestSplitEffectiveDates.get(symbol)),
+      supportLevels: buildSupportLevels(currentPrice, supportLevels.get(symbol), latestSplitEffectiveDates.get(symbol), currentMarketDate),
     };
   });
 

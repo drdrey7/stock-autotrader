@@ -24,11 +24,13 @@ function formatSigned(value: number | null, digits = 2): string {
 }
 
 /** Compact support price: max 2 decimals, strip trailing zeros (246, 1219, 125.8, 105.2). */
+const supportPriceFormatter = new Intl.NumberFormat("en-US", {
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 2,
+});
+
 function formatSupportPrice(value: number): string {
-  return Number.isInteger(value) ? String(value) : value.toLocaleString("en-US", {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 2,
-  });
+  return Number.isInteger(value) ? String(value) : supportPriceFormatter.format(value);
 }
 
 /** Find the support level (1..4) inside a row's supportLevels, or undefined. */
