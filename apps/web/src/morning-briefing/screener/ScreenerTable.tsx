@@ -63,6 +63,34 @@ function stateLabel(row: ScreenerRow): string {
   return "Unavailable";
 }
 
+/** Format IV base: max 2 decimals, strip trailing zeros. */
+const ivPriceFormatter = new Intl.NumberFormat("en-US", {
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 2,
+});
+
+function formatIVPrice(value: number | null): string {
+  if (value === null) return "—";
+  return Number.isInteger(value) ? String(value) : ivPriceFormatter.format(value);
+}
+
+function ivCell(row: ScreenerRow): ReactNode {
+  const iv = row.intrinsicValue;
+  if (!iv) return <span className="scr-flat">—</span>;
+  return <span className="scr-price">{formatIVPrice(iv.base)}</span>;
+}
+
+function ivDistanceCell(row: ScreenerRow): ReactNode {
+  const iv = row.intrinsicValue;
+  if (!iv || iv.distancePct === null) return <span className="scr-flat">—</span>;
+  const cls = iv.distancePct < 0 ? "scr-up" : iv.distancePct > 0 ? "scr-down" : "scr-flat";
+  return (
+    <span className={cls}>
+      {formatSigned(iv.distancePct, 2)}%
+    </span>
+  );
+}
+
 /** Distance display + state color (PR2). Full-precision value, 1-decimal display. */
 function distanceCell(row: ScreenerRow): ReactNode {
   const distance = row.distanceToSma200wPct ?? null;
@@ -165,6 +193,18 @@ const buildColumns = (
     label: "S4",
     alignRight: true,
     render: (row) => supportCell(row, 4),
+  },
+  {
+    key: "iv",
+    label: "IV",
+    alignRight: true,
+    render: ivCell,
+  },
+  {
+    key: "ivDistance",
+    label: "IV Dist",
+    alignRight: true,
+    render: ivDistanceCell,
   },
   {
     key: "state",

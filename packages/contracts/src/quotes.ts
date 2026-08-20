@@ -85,6 +85,36 @@ export const supportLevelRowSchema = z.object({
 });
 export type SupportLevelRow = z.infer<typeof supportLevelRowSchema>;
 
+/** Intrinsic value per symbol exposed on the Screener. base is the primary IV; low/high optional. */
+export const screenerIntrinsicValueSchema = z.object({
+  low: z.number().positive().finite().nullable(),
+  base: z.number().positive().finite(),
+  high: z.number().positive().finite().nullable(),
+  method: z.string().trim().min(1).max(128),
+  asOf: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  distancePct: z.number().finite().nullable(),
+})
+  .refine((v) => v.low === null || v.low <= v.base, "low must be <= base")
+  .refine((v) => v.high === null || v.base <= v.high, "base must be <= high");
+export type ScreenerIntrinsicValue = z.infer<typeof screenerIntrinsicValueSchema>;
+
+/** Raw D1 row shape for `stock_intrinsic_values`. Validated at the storage boundary. */
+export const intrinsicValueRowSchema = z.object({
+  symbol: z.string().regex(/^[A-Z][A-Z0-9-]{0,11}$/),
+  method: z.string().trim().min(1).max(128),
+  low_value: z.number().positive().finite().nullable(),
+  base_value: z.number().positive().finite(),
+  high_value: z.number().positive().finite().nullable(),
+  as_of_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+})
+  .refine((v) => v.low_value === null || v.low_value <= v.base_value, {
+    message: "low_value must be <= base_value",
+  })
+  .refine((v) => v.high_value === null || v.base_value <= v.high_value, {
+    message: "base_value must be <= high_value",
+  });
+export type IntrinsicValueRow = z.infer<typeof intrinsicValueRowSchema>;
+
 export const screenerRowSchema = z.object({
   symbol: z.string().regex(/^[A-Z][A-Z0-9-]{0,11}$/),
   company: z.string().nullable(),
@@ -113,6 +143,12 @@ export const screenerRowSchema = z.object({
   // persisted): currentPrice <= supportPrice, or null when price is null.
   // Empty array when the support table is unavailable — never fatal.
   supportLevels: z.array(screenerSupportLevelSchema).max(4),
+  // Manual intrinsic value (Screener PR). base is the primary IV. low/high
+  // are optional/null in v1 (prepared for Stock Detail Page). distancePct is
+  // the % distance from current price to base IV, computed in runtime by the
+  // Worker (never persisted). Null when the stock has no manual IV or when
+  // split-safety invalidates it.
+  intrinsicValue: screenerIntrinsicValueSchema.nullable(),
 });
 export type ScreenerRow = z.infer<typeof screenerRowSchema>;
 

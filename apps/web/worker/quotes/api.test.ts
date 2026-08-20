@@ -40,6 +40,7 @@ function createApiDb(options: {
   metrics?: Array<Record<string, unknown>>;
   splitEvents?: Array<{ symbol: string; effective_date: string }>;
   supportLevels?: Array<{ symbol: string; method: string; level: number; price: number; as_of_date: string; updated_at: string }>;
+  intrinsicValues?: Array<{ symbol: string; method: string; low_value: number | null; base_value: number; high_value: number | null; as_of_date: string; updated_at: string }>;
 }) {
   const meta = new Map<string, string>();
   if (options.health !== undefined) meta.set(QUOTES_HEALTH_META_KEY, JSON.stringify(options.health));
@@ -67,6 +68,11 @@ function createApiDb(options: {
             const rows = (options.supportLevels ?? [])
               .filter((r) => r.method === "manual")
               .sort((a, b) => a.level - b.level);
+            return { results: rows as T[] };
+          }
+          if (sql.includes("FROM stock_intrinsic_values")) {
+            const rows = (options.intrinsicValues ?? [])
+              .filter((r) => r.method === "manual");
             return { results: rows as T[] };
           }
           if (sql.includes("effective_date <=")) {
@@ -761,5 +767,154 @@ describe("readScreenerApi — manual support levels", () => {
     const response = await readScreenerApi(envFrom(db), SEP_16);
     const meta = response.rows.find((row) => row.symbol === "META")!;
     expect(meta.supportLevels).toEqual([]);
+  });
+});
+
+describe("readScreenerApi — manual intrinsic value", () => {
+  const AAPL_IV = [
+    { symbol: "AAPL", method: "manual", low_value: null, base_value: 251.12, high_value: null, as_of_date: "2026-08-03", updated_at: "2026-08-03T00:00:00.000Z" },
+  ];
+
+  it("AAPL price=200, IV=251.12 -> distancePct = -20.36%", async () => {
+    const db = createApiDb({
+      quotes: [quoteRow("AAPL", 200, NOW_ISO)],
+      intrinsicValues: AAPL_IV,
+      wsHealth: wsHealthRow(),
+    });
+    const response = await readScreenerApi(envFrom(db), REGULAR);
+    const apple = response.rows.find((row) => row.symbol === "AAPL")!;
+    expect(apple.intrinsicValue).not.toBeNull();
+    expect(apple.intrinsicValue!.base).toBe(251.12);
+    expect(apple.intrinsicValue!.distancePct).toBeCloseTo((200 / 251.12 - 1) * 100, 10);
+    expect(apple.intrinsicValue!.low).toBeNull();
+    expect(apple.intrinsicValue!.high).toBeNull();
+    expect(apple.intrinsicValue!.method).toBe("manual");
+    expect(apple.intrinsicValue!.asOf).toBe("2026-08-03");
+  });
+
+  it("AAPL price=300, IV=251.12 -> distancePct = +19.46%", async () => {
+    const db = createApiDb({
+      quotes: [quoteRow("AAPL", 300, NOW_ISO)],
+      intrinsicValues: AAPL_IV,
+      wsHealth: wsHealthRow(),
+    });
+    const response = await readScreenerApi(envFrom(db), REGULAR);
+    const apple = response.rows.find((row) => row.symbol === "AAPL")!;
+    expect(apple.intrinsicValue!.distancePct).toBeCloseTo((300 / 251.12 - 1) * 100, 10);
+  });
+
+  it("AAPL price=251.12, IV=251.12 -> distancePct = 0%", async () => {
+    const db = createApiDb({
+      quotes: [quoteRow("AAPL", 251.12, NOW_ISO)],
+      intrinsicValues: AAPL_IV,
+      wsHealth: wsHealthRow(),
+    });
+    const response = await readScreenerApi(envFrom(db), REGULAR);
+    const apple = response.rows.find((row) => row.symbol === "AAPL")!;
+    expect(apple.intrinsicValue!.distancePct).toBe(0);
+  });
+
+  it("no quote -> distancePct = null", async () => {
+    const db = createApiDb({
+      intrinsicValues: AAPL_IV,
+      wsHealth: wsHealthRow(),
+    });
+    const response = await readScreenerApi(envFrom(db), REGULAR);
+    const apple = response.rows.find((row) => row.symbol === "AAPL")!;
+    expect(apple.intrinsicValue).not.toBeNull();
+    expect(apple.intrinsicValue!.base).toBe(251.12);
+    expect(apple.intrinsicValue!.distancePct).toBeNull();
+  });
+
+  it("no IV -> intrinsicValue = null", async () => {
+    const db = createApiDb({
+      quotes: [quoteRow("MSFT", 400, NOW_ISO)],
+      wsHealth: wsHealthRow(),
+    });
+    const response = await readScreenerApi(envFrom(db), REGULAR);
+    const msft = response.rows.find((row) => row.symbol === "MSFT")!;
+    expect(msft.intrinsicValue).toBeNull();
+  });
+
+  // Split-safety tests for IV
+  const AUG_20 = new Date("2026-08-20T14:00:00Z");
+  const SEP_15 = new Date("2026-09-15T14:00:00Z");
+  const SEP_16 = new Date("2026-09-16T14:00:00Z");
+
+  it("future split (now < effective) -> IV remains visible", async () => {
+    const db = createApiDb({
+      quotes: [quoteRow("AAPL", 200, "2026-08-20T14:00:00.000Z")],
+      intrinsicValues: AAPL_IV,
+      wsHealth: wsHealthRow(),
+      splitEvents: [{ symbol: "AAPL", effective_date: "2026-09-15" }],
+    });
+    const response = await readScreenerApi(envFrom(db), AUG_20);
+    const apple = response.rows.find((row) => row.symbol === "AAPL")!;
+    expect(apple.intrinsicValue).not.toBeNull();
+    expect(apple.intrinsicValue!.base).toBe(251.12);
+  });
+
+  it("split effective today -> intrinsicValue = null", async () => {
+    const db = createApiDb({
+      quotes: [quoteRow("AAPL", 200, "2026-09-15T14:00:00.000Z")],
+      intrinsicValues: AAPL_IV,
+      wsHealth: wsHealthRow(),
+      splitEvents: [{ symbol: "AAPL", effective_date: "2026-09-15" }],
+    });
+    const response = await readScreenerApi(envFrom(db), SEP_15);
+    const apple = response.rows.find((row) => row.symbol === "AAPL")!;
+    expect(apple.intrinsicValue).toBeNull();
+  });
+
+  it("split effective yesterday -> intrinsicValue = null", async () => {
+    const db = createApiDb({
+      quotes: [quoteRow("AAPL", 200, "2026-09-16T14:00:00.000Z")],
+      intrinsicValues: AAPL_IV,
+      wsHealth: wsHealthRow(),
+      splitEvents: [{ symbol: "AAPL", effective_date: "2026-09-15" }],
+    });
+    const response = await readScreenerApi(envFrom(db), SEP_16);
+    const apple = response.rows.find((row) => row.symbol === "AAPL")!;
+    expect(apple.intrinsicValue).toBeNull();
+  });
+
+  it("split before IV asOf -> IV valid", async () => {
+    const db = createApiDb({
+      quotes: [quoteRow("AAPL", 200, NOW_ISO)],
+      intrinsicValues: AAPL_IV,
+      wsHealth: wsHealthRow(),
+      splitEvents: [{ symbol: "AAPL", effective_date: "2026-07-15" }],
+    });
+    const response = await readScreenerApi(envFrom(db), REGULAR);
+    const apple = response.rows.find((row) => row.symbol === "AAPL")!;
+    expect(apple.intrinsicValue).not.toBeNull();
+    expect(apple.intrinsicValue!.base).toBe(251.12);
+  });
+
+  it("split exactly on IV asOf -> IV valid", async () => {
+    const db = createApiDb({
+      quotes: [quoteRow("AAPL", 200, NOW_ISO)],
+      intrinsicValues: AAPL_IV,
+      wsHealth: wsHealthRow(),
+      splitEvents: [{ symbol: "AAPL", effective_date: "2026-08-03" }],
+    });
+    const response = await readScreenerApi(envFrom(db), REGULAR);
+    const apple = response.rows.find((row) => row.symbol === "AAPL")!;
+    expect(apple.intrinsicValue).not.toBeNull();
+  });
+
+  it("effective past split + future announced split -> IV = null (future does not mask past)", async () => {
+    const db = createApiDb({
+      quotes: [quoteRow("AAPL", 200, "2026-09-16T14:00:00.000Z")],
+      intrinsicValues: AAPL_IV,
+      wsHealth: wsHealthRow(),
+      splitEvents: [
+        { symbol: "AAPL", effective_date: "2026-08-10" },
+        { symbol: "AAPL", effective_date: "2026-12-01" },
+      ],
+    });
+    const response = await readScreenerApi(envFrom(db), SEP_16);
+    const apple = response.rows.find((row) => row.symbol === "AAPL")!;
+    expect(apple.intrinsicValue).toBeNull();
   });
 });
