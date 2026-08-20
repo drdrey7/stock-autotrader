@@ -123,4 +123,56 @@ describe("normalizeScreenerResponse — old production payload compatibility", (
     expect(normalizeScreenerResponse({ rows: "nope" })).toBeNull();
     expect(normalizeScreenerResponse({ marketState: "regular" })).toBeNull();
   });
+
+  it("OLD payload without supportLevels -> [] (no crash, renders '—')", () => {
+    const normalized = normalizeScreenerResponse(OLD_PRODUCTION_PAYLOAD);
+    expect(normalized).not.toBeNull();
+    for (const row of normalized!.rows) {
+      expect(row.supportLevels).toEqual([]);
+    }
+  });
+
+  it("malformed supportLevels are filtered out safely", () => {
+    const row = normalizeScreenerRow({
+      supportLevels: [
+        { level: 1, price: 635, method: "manual", asOf: "2026-08-03", triggered: true },
+        { level: 5, price: 100, method: "manual", asOf: "2026-08-03", triggered: true }, // invalid level
+        { level: 2, price: -10, method: "manual", asOf: "2026-08-03", triggered: false }, // invalid price
+        "garbage",
+        null,
+      ],
+    } as Record<string, unknown> as never);
+    expect(row.supportLevels).toHaveLength(1);
+    expect(row.supportLevels[0]!.level).toBe(1);
+  });
+
+  it("supportLevels are sorted S1->S4 and de-duplicated", () => {
+    const row = normalizeScreenerRow({
+      supportLevels: [
+        { level: 3, price: 532, method: "manual", asOf: "2026-08-03", triggered: true },
+        { level: 1, price: 635, method: "manual", asOf: "2026-08-03", triggered: true },
+        { level: 2, price: 580, method: "manual", asOf: "2026-08-03", triggered: true },
+        { level: 1, price: 999, method: "manual", asOf: "2026-08-03", triggered: false }, // duplicate level
+      ],
+    } as Record<string, unknown> as never);
+    expect(row.supportLevels.map((s) => s.level)).toEqual([1, 2, 3]);
+    expect(row.supportLevels[0]!.price).toBe(635); // first valid wins
+  });
+
+  it("passes valid supportLevels through unchanged", () => {
+    const modern = normalizeScreenerResponse({
+      ...OLD_PRODUCTION_PAYLOAD,
+      rows: [{
+        ...OLD_PRODUCTION_PAYLOAD.rows[0]!,
+        supportLevels: [
+          { level: 1, price: 635, method: "manual", asOf: "2026-08-03", triggered: true },
+          { level: 2, price: 580, method: "manual", asOf: "2026-08-03", triggered: false },
+        ],
+      }],
+    });
+    const row = modern!.rows[0]!;
+    expect(row.supportLevels).toHaveLength(2);
+    expect(row.supportLevels[0]!.triggered).toBe(true);
+    expect(row.supportLevels[1]!.triggered).toBe(false);
+  });
 });

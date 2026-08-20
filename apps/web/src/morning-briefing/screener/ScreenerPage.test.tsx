@@ -3,7 +3,7 @@ import { cleanup, render, screen, fireEvent, waitFor } from "@testing-library/re
 import type { ScreenerApiResponse, ScreenerRow } from "@stock-autotrader/contracts";
 import ScreenerPage from "./ScreenerPage";
 
-const row = (symbol: string, price: number | null, changePct: number | null, state: ScreenerRow["state"]): ScreenerRow => ({
+const row = (symbol: string, price: number | null, changePct: number | null, state: ScreenerRow["state"], supportLevels: ScreenerRow["supportLevels"] = []): ScreenerRow => ({
   symbol,
   company: `${symbol} Co`,
   price,
@@ -22,6 +22,7 @@ const row = (symbol: string, price: number | null, changePct: number | null, sta
   sma200wState: "Unavailable",
   sma200wHistoryWeeks: null,
   sma200wAsOf: null,
+  supportLevels,
 });
 
 const makeResponse = (rows: ScreenerRow[]): ScreenerApiResponse => {
@@ -156,7 +157,7 @@ describe("ScreenerPage", () => {
     };
     const oldPayload = rows50().map((r) =>
       omit(
-        ["sma200w", "distanceToSma200wPct", "sma200wState", "sma200wHistoryWeeks", "sma200wAsOf"],
+        ["sma200w", "distanceToSma200wPct", "sma200wState", "sma200wHistoryWeeks", "sma200wAsOf", "supportLevels"],
         r as unknown as Record<string, unknown>,
       ));
     fetchMock.mockImplementation(async () =>
@@ -171,5 +172,49 @@ describe("ScreenerPage", () => {
     expect(screen.queryByText(/Page unavailable/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/temporarily unavailable/i)).not.toBeInTheDocument();
     expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(100); // 2 SMA cols x 50 rows
+  });
+
+  it("renders S1-S4 columns headers and triggered pills", async () => {
+    const metaRow = row("META", 500, 1.5, "Live", [
+      { level: 1, price: 635, method: "manual", asOf: "2026-08-03", triggered: true },
+      { level: 2, price: 580, method: "manual", asOf: "2026-08-03", triggered: true },
+      { level: 3, price: 532, method: "manual", asOf: "2026-08-03", triggered: true },
+      { level: 4, price: 481, method: "manual", asOf: "2026-08-03", triggered: false },
+    ]);
+    fetchMock.mockImplementation(async () =>
+      new Response(JSON.stringify(makeResponse([metaRow])), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    // Headers
+    expect(screen.getByText("S1")).toBeInTheDocument();
+    expect(screen.getByText("S2")).toBeInTheDocument();
+    expect(screen.getByText("S3")).toBeInTheDocument();
+    expect(screen.getByText("S4")).toBeInTheDocument();
+    // 3 green pills
+    const pills = document.querySelectorAll(".scr-support-pill");
+    expect(pills.length).toBe(3);
+    expect(screen.getByText("635")).toBeInTheDocument();
+    expect(screen.getByText("580")).toBeInTheDocument();
+    expect(screen.getByText("532")).toBeInTheDocument();
+    expect(screen.getByText("481")).toBeInTheDocument();
+  });
+
+  it("renders '—' for stocks without support levels", async () => {
+    const noSupport = row("XYZ", 100, 1.0, "Live");
+    fetchMock.mockImplementation(async () =>
+      new Response(JSON.stringify(makeResponse([noSupport])), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    expect(screen.getByText("XYZ")).toBeInTheDocument();
+    // 4 dash cells for the S1-S4 columns
+    expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(4);
   });
 });

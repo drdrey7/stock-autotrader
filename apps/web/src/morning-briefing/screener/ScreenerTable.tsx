@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { ScreenerRow } from "@stock-autotrader/contracts";
+import type { ScreenerRow, ScreenerSupportLevel } from "@stock-autotrader/contracts";
 import { SCREENER_FILTERS, SCREENER_PRESETS } from "./screener-filter";
 import type {
   ScreenerFilter,
@@ -21,6 +21,32 @@ function formatSigned(value: number | null, digits = 2): string {
   if (value === null) return "—";
   const sign = value > 0 ? "+" : "";
   return `${sign}${value.toFixed(digits)}`;
+}
+
+/** Compact support price: max 2 decimals, strip trailing zeros (246, 1219, 125.8, 105.2). */
+function formatSupportPrice(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toLocaleString("en-US", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  });
+}
+
+/** Find the support level (1..4) inside a row's supportLevels, or undefined. */
+function getSupportLevel(row: ScreenerRow, level: number): ScreenerSupportLevel | undefined {
+  return row.supportLevels.find((s) => s.level === level);
+}
+
+function supportCell(row: ScreenerRow, level: number): ReactNode {
+  const support = getSupportLevel(row, level);
+  if (!support) return <span className="scr-flat">—</span>;
+  if (support.triggered === true) {
+    return (
+      <span className="scr-support-pill" title={`S${level} triggered`}>
+        {formatSupportPrice(support.price)}
+      </span>
+    );
+  }
+  return <span className="scr-support">{formatSupportPrice(support.price)}</span>;
 }
 
 function stateLabel(row: ScreenerRow): string {
@@ -113,6 +139,30 @@ const buildColumns = (
     label: sortIndicator("Dist", sortKey === "smaDistance", sortDirection, () => onSort("smaDistance")),
     alignRight: true,
     render: distanceCell,
+  },
+  {
+    key: "s1",
+    label: "S1",
+    alignRight: true,
+    render: (row) => supportCell(row, 1),
+  },
+  {
+    key: "s2",
+    label: "S2",
+    alignRight: true,
+    render: (row) => supportCell(row, 2),
+  },
+  {
+    key: "s3",
+    label: "S3",
+    alignRight: true,
+    render: (row) => supportCell(row, 3),
+  },
+  {
+    key: "s4",
+    label: "S4",
+    alignRight: true,
+    render: (row) => supportCell(row, 4),
   },
   {
     key: "state",

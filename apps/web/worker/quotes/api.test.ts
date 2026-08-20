@@ -39,6 +39,7 @@ function createApiDb(options: {
   wsHealth?: unknown;
   metrics?: Array<Record<string, unknown>>;
   splitEvents?: Array<{ symbol: string; effective_date: string }>;
+  supportLevels?: Array<{ symbol: string; method: string; level: number; price: number; as_of_date: string; updated_at: string }>;
 }) {
   const meta = new Map<string, string>();
   if (options.health !== undefined) meta.set(QUOTES_HEALTH_META_KEY, JSON.stringify(options.health));
@@ -62,6 +63,12 @@ function createApiDb(options: {
           if (sql.includes("FROM latest_quotes")) return { results: (options.quotes ?? []) as T[] };
           if (sql.includes("FROM earnings_universe")) return { results: (options.companies ?? []) as T[] };
           if (sql.includes("FROM technical_metrics")) return { results: (options.metrics ?? []) as T[] };
+          if (sql.includes("FROM stock_support_levels")) {
+            const rows = (options.supportLevels ?? [])
+              .filter((r) => r.method === "manual")
+              .sort((a, b) => a.level - b.level);
+            return { results: rows as T[] };
+          }
           if (sql.includes("MAX(effective_date)")) {
             const events = options.splitEvents ?? [];
             // GROUP BY symbol: return one row per symbol with its latest effective_date
@@ -523,5 +530,88 @@ describe("readScreenerApi — SMA200W fields (PR2)", () => {
     const apple = response.rows.find((row) => row.symbol === "AAPL")!;
     expect(apple.sma200w).toBeNull();
     expect(apple.sma200wState).toBe("Unavailable");
+  });
+});
+
+describe("readScreenerApi — manual support levels", () => {
+  const META_SUPPORT = [
+    { symbol: "META", method: "manual", level: 1, price: 635, as_of_date: "2026-08-03", updated_at: "2026-08-03T00:00:00.000Z" },
+    { symbol: "META", method: "manual", level: 2, price: 580, as_of_date: "2026-08-03", updated_at: "2026-08-03T00:00:00.000Z" },
+    { symbol: "META", method: "manual", level: 3, price: 532, as_of_date: "2026-08-03", updated_at: "2026-08-03T00:00:00.000Z" },
+    { symbol: "META", method: "manual", level: 4, price: 481, as_of_date: "2026-08-03", updated_at: "2026-08-03T00:00:00.000Z" },
+  ];
+
+  it("META price=500 -> S1,S2,S3 triggered, S4 not", async () => {
+    const db = createApiDb({
+      quotes: [quoteRow("META", 500, NOW_ISO)],
+      supportLevels: META_SUPPORT,
+      wsHealth: wsHealthRow(),
+    });
+    const response = await readScreenerApi(envFrom(db), REGULAR);
+    const meta = response.rows.find((row) => row.symbol === "META")!;
+    expect(meta.supportLevels).toHaveLength(4);
+    expect(meta.supportLevels[0]!.level).toBe(1);
+    expect(meta.supportLevels[0]!.price).toBe(635);
+    expect(meta.supportLevels[0]!.triggered).toBe(true);
+    expect(meta.supportLevels[1]!.triggered).toBe(true);
+    expect(meta.supportLevels[2]!.triggered).toBe(true);
+    expect(meta.supportLevels[3]!.price).toBe(481);
+    expect(meta.supportLevels[3]!.triggered).toBe(false);
+  });
+
+  it("META price=700 -> no triggered", async () => {
+    const db = createApiDb({
+      quotes: [quoteRow("META", 700, NOW_ISO)],
+      supportLevels: META_SUPPORT,
+      wsHealth: wsHealthRow(),
+    });
+    const response = await readScreenerApi(envFrom(db), REGULAR);
+    const meta = response.rows.find((row) => row.symbol === "META")!;
+    expect(meta.supportLevels.every((l) => l.triggered === false)).toBe(true);
+  });
+
+  it("META price=450 -> all four triggered", async () => {
+    const db = createApiDb({
+      quotes: [quoteRow("META", 450, NOW_ISO)],
+      supportLevels: META_SUPPORT,
+      wsHealth: wsHealthRow(),
+    });
+    const response = await readScreenerApi(envFrom(db), REGULAR);
+    const meta = response.rows.find((row) => row.symbol === "META")!;
+    expect(meta.supportLevels.every((l) => l.triggered === true)).toBe(true);
+  });
+
+  it("price null -> triggered = null for all levels", async () => {
+    const db = createApiDb({
+      supportLevels: META_SUPPORT,
+      wsHealth: wsHealthRow(),
+    });
+    const response = await readScreenerApi(envFrom(db), REGULAR);
+    const meta = response.rows.find((row) => row.symbol === "META")!;
+    expect(meta.supportLevels).toHaveLength(4);
+    expect(meta.supportLevels.every((l) => l.triggered === null)).toBe(true);
+  });
+
+  it("ticker without supports -> empty array", async () => {
+    const db = createApiDb({
+      quotes: [quoteRow("AAPL", 232.5, NOW_ISO)],
+      supportLevels: META_SUPPORT,
+      wsHealth: wsHealthRow(),
+    });
+    const response = await readScreenerApi(envFrom(db), REGULAR);
+    const apple = response.rows.find((row) => row.symbol === "AAPL")!;
+    expect(apple.supportLevels).toEqual([]);
+  });
+
+  it("levels are ordered S1 -> S4", async () => {
+    const shuffled = [META_SUPPORT[2], META_SUPPORT[0], META_SUPPORT[3], META_SUPPORT[1]] as typeof META_SUPPORT;
+    const db = createApiDb({
+      quotes: [quoteRow("META", 500, NOW_ISO)],
+      supportLevels: shuffled,
+      wsHealth: wsHealthRow(),
+    });
+    const response = await readScreenerApi(envFrom(db), REGULAR);
+    const meta = response.rows.find((row) => row.symbol === "META")!;
+    expect(meta.supportLevels.map((l) => l.level)).toEqual([1, 2, 3, 4]);
   });
 });

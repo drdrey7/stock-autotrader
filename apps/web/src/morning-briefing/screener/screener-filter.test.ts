@@ -21,6 +21,7 @@ const row = (overrides: Partial<ScreenerRow>): ScreenerRow => ({
   sma200wState: "Unavailable",
   sma200wHistoryWeeks: null,
   sma200wAsOf: null,
+  supportLevels: [],
   ...overrides,
 });
 

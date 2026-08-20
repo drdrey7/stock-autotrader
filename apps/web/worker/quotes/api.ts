@@ -23,6 +23,23 @@ import {
 import { readLatestQuotes } from "./storage";
 import { computeLiveSma200w, type QuoteInput } from "../sma/metrics";
 import { readTechnicalMetrics, readLatestSplitEffectiveDate } from "../sma/storage";
+import { readManualSupportLevels, type SupportLevelsForSymbol } from "../supports/storage";
+import type { ScreenerSupportLevel } from "@stock-autotrader/contracts";
+
+/** Build the support-level list for one symbol, with triggered derived. */
+function buildSupportLevels(
+  currentPrice: number | null,
+  grouped: SupportLevelsForSymbol | undefined,
+): ScreenerSupportLevel[] {
+  if (!grouped) return [];
+  return grouped.levels.map((level) => ({
+    level: level.level as ScreenerSupportLevel["level"],
+    price: level.price,
+    method: level.method,
+    asOf: level.as_of_date,
+    triggered: currentPrice === null ? null : currentPrice <= level.price,
+  }));
+}
 
 interface CompanyRow {
   symbol: string;
@@ -88,12 +105,13 @@ function safeguardWsCollectorState(
  * collector is fully independent of frontend traffic.
  */
 export async function readScreenerApi(env: Env, now = new Date()): Promise<ScreenerApiResponse> {
-  const [quotes, companies, wsHealth, metrics, latestSplitEffectiveDates] = await Promise.all([
+  const [quotes, companies, wsHealth, metrics, latestSplitEffectiveDates, supportLevels] = await Promise.all([
     readLatestQuotes(env.DB),
     readCoreCompanies(env.DB),
     readWsIngestorHealth(env.DB),
     readTechnicalMetrics(env.DB),
     readLatestSplitEffectiveDate(env.DB),
+    readManualSupportLevels(env.DB),
   ]);
   // REST shard health is only used as a fallback (manual/diagnostic runs)
   // when the WebSocket collector has never written a record.
@@ -109,10 +127,11 @@ export async function readScreenerApi(env: Env, now = new Date()): Promise<Scree
       ? { price: quote.price, provider_timestamp: quote.provider_timestamp }
       : null;
     const sma = computeLiveSma200w(quoteInput, metrics.get(symbol) ?? null, latestSplitEffectiveDates);
+    const currentPrice = quote?.price ?? null;
     return {
       symbol,
       company: companyBySymbol.get(symbol) ?? null,
-      price: quote?.price ?? null,
+      price: currentPrice,
       changeAbs: quote?.change_abs ?? null,
       changePct: quote?.change_pct ?? null,
       dayHigh: quote?.day_high ?? null,
@@ -128,6 +147,7 @@ export async function readScreenerApi(env: Env, now = new Date()): Promise<Scree
       sma200wState: sma.sma200wState,
       sma200wHistoryWeeks: sma.sma200wHistoryWeeks,
       sma200wAsOf: sma.sma200wAsOf,
+      supportLevels: buildSupportLevels(currentPrice, supportLevels.get(symbol)),
     };
   });
 
