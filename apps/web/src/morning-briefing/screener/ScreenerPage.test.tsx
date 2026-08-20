@@ -275,7 +275,7 @@ describe("ScreenerPage", () => {
     );
     render(<ScreenerPage />);
     await screen.findByRole("table");
-    const cells = document.querySelectorAll("td");
+    const cells = document.querySelectorAll("[role=\"cell\"]");
     const zeroCell = Array.from(cells).find(
       (c) => c.textContent === "0.00%" && c.classList.contains("scr-align-right"),
     );
@@ -374,17 +374,22 @@ describe("ScreenerPage", () => {
   it("S1-S4 headers are not sortable (no button)", async () => {
     render(<ScreenerPage />);
     await screen.findByRole("table");
-    const s1 = screen.getByText("S1").closest("th");
+    const s1 = screen.getByRole("columnheader", { name: "S1" });
     expect(s1?.querySelector("button")).toBeNull();
-    const s4 = screen.getByText("S4").closest("th");
+    const s4 = screen.getByRole("columnheader", { name: "S4" });
     expect(s4?.querySelector("button")).toBeNull();
   });
 
-  it("Company header is sortable", async () => {
+  it("Company header sorts by company name", async () => {
     render(<ScreenerPage />);
     await screen.findByRole("table");
-    const companyHeader = screen.getByText("Company").closest("th");
-    expect(companyHeader?.querySelector("button")).not.toBeNull();
+    const companyHeader = screen.getByRole("columnheader", { name: "Company" });
+    const button = companyHeader.querySelector("button")!;
+    expect(button).not.toBeNull();
+    fireEvent.click(button);
+    expect(companyHeader).toHaveAttribute("aria-sort", "descending");
+    fireEvent.click(button);
+    expect(companyHeader).toHaveAttribute("aria-sort", "ascending");
   });
 
   // --- P2 filter toggle tests ---
@@ -498,16 +503,14 @@ describe("ScreenerPage", () => {
   it("mobile: horizontal scroll adds scr-table-scrolled class", async () => {
     render(<ScreenerPage />);
     await screen.findByRole("table");
-    const wrap = document.querySelector(".scr-table-clip") as HTMLDivElement;
-    expect(wrap).not.toBeNull();
-    // Initially no scrolled class
-    expect(wrap.classList.contains("scr-table-scrolled")).toBe(false);
-    // Simulate scroll beyond threshold
-    fireEvent.scroll(wrap, { target: { scrollLeft: 30 } });
-    await waitFor(() => expect(wrap.classList.contains("scr-table-scrolled")).toBe(true));
-    // Simulate scroll back near 0
-    fireEvent.scroll(wrap, { target: { scrollLeft: 0 } });
-    await waitFor(() => expect(wrap.classList.contains("scr-table-scrolled")).toBe(false));
+    const bodyScroll = document.querySelector(".scr-table-body-scroll") as HTMLDivElement;
+    const region = screen.getByRole("table");
+    expect(bodyScroll).not.toBeNull();
+    expect(region.classList.contains("scr-table-scrolled")).toBe(false);
+    fireEvent.scroll(bodyScroll, { target: { scrollLeft: 30 } });
+    await waitFor(() => expect(region.classList.contains("scr-table-scrolled")).toBe(true));
+    fireEvent.scroll(bodyScroll, { target: { scrollLeft: 0 } });
+    await waitFor(() => expect(region.classList.contains("scr-table-scrolled")).toBe(false));
   });
 
   // --- aria-sort tests ---
@@ -541,8 +544,8 @@ describe("ScreenerPage", () => {
   it("aria-sort: S1-S4 never have aria-sort", async () => {
     render(<ScreenerPage />);
     await screen.findByRole("table");
-    const s1 = screen.getByText("S1").closest("th");
-    const s4 = screen.getByText("S4").closest("th");
+    const s1 = screen.getByRole("columnheader", { name: "S1" });
+    const s4 = screen.getByRole("columnheader", { name: "S4" });
     expect(s1).not.toHaveAttribute("aria-sort");
     expect(s4).not.toHaveAttribute("aria-sort");
   });
@@ -551,8 +554,8 @@ describe("ScreenerPage", () => {
   it("sticky Company + Price headers have higher z-index than normal headers", async () => {
     render(<ScreenerPage />);
     await screen.findByRole("table");
-    const companyHeader = screen.getByText("Company").closest("th");
-    const priceHeader = screen.getByText("Price").closest("th");
+    const companyHeader = screen.getByRole("columnheader", { name: "Company" });
+    const priceHeader = screen.getByRole("columnheader", { name: "Price" });
     const oneDHeader = screen.getByRole("columnheader", { name: /1D/ });
     expect(companyHeader?.classList.contains("scr-col-company")).toBe(true);
     expect(priceHeader?.classList.contains("scr-col-price")).toBe(true);
@@ -562,8 +565,8 @@ describe("ScreenerPage", () => {
   it("Company and Price headers are sticky with top:0", async () => {
     render(<ScreenerPage />);
     await screen.findByRole("table");
-    const companyHeader = screen.getByText("Company").closest("th");
-    const priceHeader = screen.getByText("Price").closest("th");
+    const companyHeader = screen.getByRole("columnheader", { name: "Company" });
+    const priceHeader = screen.getByRole("columnheader", { name: "Price" });
     expect(companyHeader).toHaveClass("scr-col-company");
     expect(priceHeader).toHaveClass("scr-col-price");
   });
@@ -572,10 +575,10 @@ describe("ScreenerPage", () => {
   it("compact mode hides company name but preserves ticker", async () => {
     render(<ScreenerPage />);
     await screen.findByRole("table");
-    const wrap = document.querySelector(".scr-table-clip") as HTMLDivElement;
-    fireEvent.scroll(wrap, { target: { scrollLeft: 30 } });
-    await waitFor(() => expect(wrap.classList.contains("scr-table-scrolled")).toBe(true));
-    // Ticker should still be visible
+    const bodyScroll = document.querySelector(".scr-table-body-scroll") as HTMLDivElement;
+    const region = screen.getByRole("table");
+    fireEvent.scroll(bodyScroll, { target: { scrollLeft: 30 } });
+    await waitFor(() => expect(region.classList.contains("scr-table-scrolled")).toBe(true));
     expect(screen.getByText("S00")).toBeInTheDocument();
   });
 
@@ -592,13 +595,20 @@ describe("ScreenerPage", () => {
     expect(screen.getByRole("menuitem", { name: "All" })).toBeInTheDocument();
   });
 
-  it("card uses scr-table-clip wrapper for table clipping", async () => {
+  it("renders sibling sticky header and horizontal body scroll containers", async () => {
     render(<ScreenerPage />);
     await screen.findByRole("table");
-    const card = document.querySelector(".scr-card");
-    const clip = document.querySelector(".scr-table-clip");
-    expect(card).not.toBeNull();
-    expect(clip).not.toBeNull();
-    expect(card!.contains(clip!)).toBe(true);
+    const region = screen.getByRole("table");
+    const headShell = document.querySelector(".scr-table-head-shell");
+    const headScroll = document.querySelector(".scr-table-head-scroll");
+    const bodyScroll = document.querySelector(".scr-table-body-scroll");
+    expect(headShell).not.toBeNull();
+    expect(headScroll).not.toBeNull();
+    expect(bodyScroll).not.toBeNull();
+    expect(region.contains(headShell!)).toBe(true);
+    expect(region.contains(bodyScroll!)).toBe(true);
+    expect(headShell!.nextElementSibling).toBe(bodyScroll);
+    expect(screen.getAllByRole("columnheader")).toHaveLength(11);
+    expect(screen.getAllByRole("rowgroup")).toHaveLength(2);
   });
 });

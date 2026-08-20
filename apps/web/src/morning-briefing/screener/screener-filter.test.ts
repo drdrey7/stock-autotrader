@@ -74,6 +74,21 @@ describe("Screener filter/sort logic", () => {
       .toEqual(["C", "B", "A"]);
   });
 
+  it("sorts Company by company name with symbol fallback and tie-break", () => {
+    const rows = [
+      row({ symbol: "GOOG", company: "Alphabet Inc." }),
+      row({ symbol: "AMZN", company: "Amazon.com, Inc." }),
+      row({ symbol: "AAPL", company: "Apple Inc." }),
+      row({ symbol: "ZZZ", company: null }),
+      row({ symbol: "AAA", company: "Same Co" }),
+      row({ symbol: "BBB", company: "Same Co" }),
+    ];
+    expect(applyScreenerQuery(rows, query({ sortKey: "company", direction: "asc" })).map((item) => item.symbol))
+      .toEqual(["GOOG", "AMZN", "AAPL", "AAA", "BBB", "ZZZ"]);
+    expect(applyScreenerQuery(rows, query({ sortKey: "company", direction: "desc" })).map((item) => item.symbol))
+      .toEqual(["ZZZ", "BBB", "AAA", "AAPL", "AMZN", "GOOG"]);
+  });
+
   it("combines search + filter", () => {
     const rows = [
       row({ symbol: "UP1", changePct: 4 }),

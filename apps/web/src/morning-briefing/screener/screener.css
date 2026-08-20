@@ -10,6 +10,7 @@
 .scr-market-open .scr-market-dot{background:var(--positive);box-shadow:0 0 0 2px var(--positive-soft)}
 .scr-market-closed .scr-market-dot{background:var(--red);box-shadow:0 0 0 2px var(--red-soft)}
 
+/* Card stays overflow-visible so Filters popover can escape short result sets. */
 .scr-card{border:1px solid var(--border);border-radius:15px;background:var(--surface);box-shadow:var(--shadow)}
 
 /* Toolbar */
@@ -36,40 +37,47 @@
 .scr-search{min-width:180px;padding:8px 12px;border:1px solid var(--border);border-radius:9px;background:var(--surface-2);color:var(--text);font-size:11px;outline:none}
 .scr-search:focus{border-color:var(--brand-blue)}
 
-/* Sticky table header — CSS Grid layout, sticks to viewport */
-.scr-table-head{position:sticky;top:0;z-index:20;background:var(--surface);border-bottom:1px solid var(--border);overflow:hidden}
-.scr-table-head-inner{will-change:transform}
-.scr-table-head-grid{display:grid;grid-template-columns:var(--scr-company-width) var(--scr-price-width) 75px 70px 80px 90px 80px 70px 70px 70px 70px;min-width:980px;align-items:stretch}
-.scr-table-head-row{display:contents}
-.scr-head-cell{text-align:left;padding:9px 12px;color:var(--muted);background:var(--surface-2);font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;white-space:nowrap;border-bottom:1px solid var(--border);display:flex;align-items:center}
+/* One source of truth for all 11 grid tracks. Sticky top follows shell chrome per breakpoint. */
+.scr-table-region{
+  /* Desktop shell has fixed sidebar, not top chrome. Mobile shell-topbar is added below. */
+  --scr-sticky-top:0px;
+  --scr-grid-min-width:980px;
+  --scr-company-width:180px;
+  --scr-price-width:80px;
+  --scr-grid-template:var(--scr-company-width) var(--scr-price-width) 75px 70px 80px 90px 80px 70px 70px 70px minmax(70px,1fr);
+  box-sizing:border-box;
+}
+.scr-table-region *{box-sizing:border-box}
 
-/* Scrollable body */
-.scr-table-clip{overflow-x:auto;border-bottom-left-radius:15px;border-bottom-right-radius:15px;--scr-company-width:180px;--scr-price-width:80px}
+/* Grid row shared by header and every body row. */
+.scr-grid-row{display:grid;grid-template-columns:var(--scr-grid-template);width:max(100%,var(--scr-grid-min-width));min-width:var(--scr-grid-min-width);}
+.scr-grid-row>*{min-width:0}
 
-/* Shared table layout */
-.scr-table-body-grid{width:100%;border-collapse:collapse;min-width:980px}
+/* Sticky header sibling of body horizontal scroller. */
+.scr-table-head-shell{position:sticky;top:var(--scr-sticky-top);z-index:30;background:var(--surface);border-bottom:1px solid var(--border)}
+.scr-table-head-scroll{width:100%;overflow:hidden;--scr-head-scroll-left:0px}
+.scr-table-head-grid{position:relative}
+.scr-head-cell{position:relative;z-index:1;display:flex;align-items:center;padding:9px 12px;color:var(--muted);background:var(--surface-2);font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;white-space:nowrap}
+.scr-table-head-grid>*:nth-child(n+3){transform:translateX(calc(-1 * var(--scr-head-scroll-left)));will-change:transform}
+.scr-table-head-grid>.scr-col-company,.scr-table-head-grid>.scr-col-price{position:sticky;background:var(--surface-2);z-index:3}
+.scr-table-head-grid>.scr-col-company{left:0}
+.scr-table-head-grid>.scr-col-price{left:var(--scr-company-width)}
 
-/* Body cells */
-.scr-table-body-grid td{padding:9px 12px;border-top:1px solid var(--border);font-size:12px;white-space:nowrap;vertical-align:middle;background:var(--surface)}
-.scr-table-body-grid tbody tr:hover td{background:var(--surface-2)}
-.scr-align-right{text-align:right}
-
-/* Sticky columns — CSS custom properties for dynamic widths */
-.scr-col-company{min-width:160px;width:var(--scr-company-width);position:sticky;left:0;z-index:15;background:var(--surface-2)}
-.scr-table-body-grid td.scr-col-company{background:var(--surface);z-index:10}
-.scr-table-body-grid tbody tr:hover td.scr-col-company{background:var(--surface-2)}
-.scr-col-price{min-width:75px;width:var(--scr-price-width);position:sticky;left:var(--scr-company-width);z-index:15;background:var(--surface-2)}
-.scr-table-body-grid td.scr-col-price{background:var(--surface);z-index:10}
-.scr-table-body-grid tbody tr:hover td.scr-col-price{background:var(--surface-2)}
+/* Body owns horizontal scroll. No height/max-height: page keeps normal vertical scroll. */
+.scr-table-body-scroll{width:100%;overflow-x:auto;border-bottom-left-radius:15px;border-bottom-right-radius:15px}
+.scr-table-body{width:max(100%,var(--scr-grid-min-width));min-width:var(--scr-grid-min-width)}
+.scr-body-row{position:relative}
+.scr-cell{position:relative;z-index:0;padding:9px 12px;border-top:1px solid var(--border);font-size:12px;white-space:nowrap;vertical-align:middle;background:var(--surface)}
+.scr-body-row:hover>.scr-cell{background:var(--surface-2)}
+.scr-body-row>.scr-col-company,.scr-body-row>.scr-col-price{position:sticky;background:var(--surface);z-index:2}
+.scr-body-row>.scr-col-company{left:0}
+.scr-body-row>.scr-col-price{left:var(--scr-company-width)}
+.scr-body-row:hover>.scr-col-company,.scr-body-row:hover>.scr-col-price{background:var(--surface-2)}
 .scr-col-price::after{content:"";position:absolute;top:0;right:-8px;bottom:0;width:8px;background:linear-gradient(to right,rgba(0,0,0,.04),transparent);pointer-events:none}
 
-/* Column group widths */
-.scr-col-1d{min-width:70px;width:75px}
-.scr-col-iv{min-width:65px;width:70px}
-.scr-col-iv-dist{min-width:75px;width:80px}
-.scr-col-sma{min-width:85px;width:90px}
-.scr-col-sma-dist{min-width:75px;width:80px}
-.scr-col-s1,.scr-col-s2,.scr-col-s3,.scr-col-s4{min-width:65px;width:70px}
+/* Empty state spans full grid. */
+.scr-empty-row>.scr-empty{grid-column:1 / -1}
+.scr-align-right{text-align:right}
 
 /* Company cell */
 .scr-company{display:flex;align-items:center;gap:8px;line-height:1.25}
@@ -108,11 +116,7 @@
   .scr-toolbar-left{flex-wrap:wrap}
   .scr-toolbar-right{flex:1;justify-content:flex-end}
   .scr-search{min-width:0;flex:1;max-width:220px}
-  .scr-table-body-grid{min-width:980px}
-  .scr-table-head-grid{min-width:980px;grid-template-columns:var(--scr-company-width) var(--scr-price-width) 75px 70px 80px 90px 80px 70px 70px 70px 70px}
-  .scr-table-clip{--scr-company-width:135px;--scr-price-width:60px}
-  .scr-col-company{min-width:130px;padding-left:10px;padding-right:6px}
-  .scr-col-price{min-width:55px;padding-left:6px;padding-right:8px}
+  .scr-table-region{--scr-sticky-top:64px;--scr-company-width:135px;--scr-price-width:60px}
 }
 
 @media (max-width:600px){
@@ -123,12 +127,11 @@
   .scr-filters-btn{padding:6px 10px}
 }
 
-/* Mobile: compact mode when horizontally scrolled */
+/* Mobile compact state: scrollLeft >20; expansion below 8 is controlled by React. */
 @media (max-width:700px){
-  .scr-table-scrolled{--scr-company-width:86px;--scr-price-width:56px}
-  .scr-table-scrolled .scr-table-head-grid{grid-template-columns:var(--scr-company-width) var(--scr-price-width) 75px 70px 80px 90px 80px 70px 70px 70px 70px}
-  .scr-table-scrolled .scr-col-company{min-width:82px;padding-left:6px;padding-right:4px}
-  .scr-table-scrolled .scr-col-price{min-width:50px;padding-left:4px;padding-right:6px}
+  .scr-table-region.scr-table-scrolled{--scr-company-width:86px;--scr-price-width:56px}
   .scr-table-scrolled .scr-company-text small{opacity:0;max-width:0;margin:0;padding:0}
   .scr-table-scrolled .scr-company{gap:5px}
+  .scr-table-scrolled .scr-head-cell,.scr-table-scrolled .scr-cell{padding-left:6px;padding-right:4px}
+  .scr-table-scrolled .scr-col-price{padding-left:4px;padding-right:6px}
 }
