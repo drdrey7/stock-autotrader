@@ -88,7 +88,7 @@ function EarningsCalendar({
                         onClick={() => onSelect(event)}
                         title={`${event.company} · ${event.timing}`}
                       >
-                        <CompanyLogo event={event} className="calendar-logo"/>
+                        <CompanyLogo symbol={event.symbol} logoUrl={event.logoUrl} className="calendar-logo"/>
                         <b>{event.symbol}</b>
                         <small>{event.timing}</small>
                       </button>
@@ -154,7 +154,7 @@ function PastEarnings({
           visible.length ? visible.map((event) => (
             <button key={event.id} onClick={() => onSelect(event)}>
               <span className="table-company">
-                <CompanyLogo event={event} className="table-logo"/>
+                <CompanyLogo symbol={event.symbol} logoUrl={event.logoUrl} className="table-logo"/>
                 <b>{event.company}</b>
                 <small>{event.symbol}</small>
               </span>

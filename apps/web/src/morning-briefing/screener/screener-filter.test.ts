@@ -23,6 +23,7 @@ const row = (overrides: Partial<ScreenerRow>): ScreenerRow => ({
   sma200wAsOf: null,
   supportLevels: [],
   intrinsicValue: null,
+  logoUrl: null,
   ...overrides,
 });
 
@@ -84,7 +85,21 @@ describe("Screener filter/sort logic", () => {
   });
 });
 
-describe("Screener SMA200W filters (PR2)", () => {
+describe("Screener IV filters", () => {
+  it("filters Below IV / Above IV by distancePct", () => {
+    const rows = [
+      row({ symbol: "BEL", intrinsicValue: { low: null, base: 200, high: null, method: "manual", asOf: "2026-08-03", distancePct: -10 } }),
+      row({ symbol: "ABV", intrinsicValue: { low: null, base: 200, high: null, method: "manual", asOf: "2026-08-03", distancePct: 15 } }),
+      row({ symbol: "ZERO", intrinsicValue: { low: null, base: 200, high: null, method: "manual", asOf: "2026-08-03", distancePct: 0 } }),
+      row({ symbol: "NULL", intrinsicValue: { low: null, base: 200, high: null, method: "manual", asOf: "2026-08-03", distancePct: null } }),
+      row({ symbol: "NOIV", intrinsicValue: null }),
+    ];
+    expect(applyScreenerQuery(rows, query({ filter: "belowIv" })).map((r) => r.symbol)).toEqual(["BEL"]);
+    expect(applyScreenerQuery(rows, query({ filter: "aboveIv" })).map((r) => r.symbol)).toEqual(["ABV"]);
+  });
+});
+
+describe("Screener SMA200W filters", () => {
   it("filters Above / Near / Below by sma200wState", () => {
     const rows = [
       row({ symbol: "ABOVE", sma200wState: "Above", distanceToSma200wPct: 8.2 }),
@@ -93,49 +108,92 @@ describe("Screener SMA200W filters (PR2)", () => {
       row({ symbol: "NOHIST", sma200wState: "NotEnoughHistory", distanceToSma200wPct: null }),
       row({ symbol: "NODATA", sma200wState: "Unavailable", distanceToSma200wPct: null }),
     ];
-    expect(applyScreenerQuery(rows, query({ filter: "above" })).map((r) => r.symbol)).toEqual(["ABOVE"]);
-    expect(applyScreenerQuery(rows, query({ filter: "near" })).map((r) => r.symbol)).toEqual(["NEAR"]);
-    expect(applyScreenerQuery(rows, query({ filter: "below" })).map((r) => r.symbol)).toEqual(["BELOW"]);
-  });
-
-  it("combines SMA filter with search and existing gainers/losers", () => {
-    const rows = [
-      row({ symbol: "UP1", changePct: 3, sma200wState: "Above", distanceToSma200wPct: 5 }),
-      row({ symbol: "UP2", changePct: 3, sma200wState: "Below", distanceToSma200wPct: -5 }),
-      row({ symbol: "DN1", changePct: -2, sma200wState: "Above", distanceToSma200wPct: 6 }),
-    ];
-    expect(applyScreenerQuery(rows, query({ filter: "gainers" })).map((r) => r.symbol)).toEqual(["UP1", "UP2"]);
-    expect(applyScreenerQuery(rows, query({ filter: "above", search: "up" })).map((r) => r.symbol)).toEqual(["UP1"]);
+    expect(applyScreenerQuery(rows, query({ filter: "above200w" })).map((r) => r.symbol)).toEqual(["ABOVE"]);
+    expect(applyScreenerQuery(rows, query({ filter: "near200w" })).map((r) => r.symbol)).toEqual(["NEAR"]);
+    expect(applyScreenerQuery(rows, query({ filter: "below200w" })).map((r) => r.symbol)).toEqual(["BELOW"]);
   });
 });
 
-describe("Screener SMA200W sorting (PR2)", () => {
-  const smaRows = [
-    row({ symbol: "PLUS3", distanceToSma200wPct: 3.0, sma200wState: "Near" }),
-    row({ symbol: "PLUS12", distanceToSma200wPct: 12.4, sma200wState: "Above" }),
-    row({ symbol: "MINUS4", distanceToSma200wPct: -3.9, sma200wState: "Below" }),
-    row({ symbol: "PLUS1_7", distanceToSma200wPct: 1.7, sma200wState: "Near" }),
-    row({ symbol: "NOVAL", distanceToSma200wPct: null, sma200wState: "Unavailable" }),
-  ];
-
-  it("closest to 200W sorts by ABS(distance) ascending, nulls last", () => {
-    expect(applyScreenerQuery(smaRows, query({ sortKey: "smaDistance", direction: "asc" })).map((r) => r.symbol))
-      .toEqual(["PLUS1_7", "PLUS3", "MINUS4", "PLUS12", "NOVAL"]);
+describe("Screener Support filters", () => {
+  it("Below Support: any triggered support", () => {
+    const rows = [
+      // Case A: no supports -> excluded
+      row({ symbol: "NONE", supportLevels: [], price: 500 }),
+      // Case B: 1 support triggered -> included
+      row({ symbol: "S1T", price: 500, supportLevels: [
+        { level: 1, price: 600, method: "manual", asOf: "2026-08-03", triggered: true },
+      ]}),
+      // Case C: mixed true/false -> included
+      row({ symbol: "MIX", price: 500, supportLevels: [
+        { level: 1, price: 600, method: "manual", asOf: "2026-08-03", triggered: true },
+        { level: 2, price: 550, method: "manual", asOf: "2026-08-03", triggered: false },
+      ]}),
+      // Case E: triggered null (no price) -> excluded
+      row({ symbol: "NULLTRIG", price: null, supportLevels: [
+        { level: 1, price: 600, method: "manual", asOf: "2026-08-03", triggered: null },
+      ]}),
+    ];
+    expect(applyScreenerQuery(rows, query({ filter: "belowSupport" })).map((r) => r.symbol)).toEqual(["S1T", "MIX"]);
   });
 
-  it("smaDistance desc sorts by ABS(distance) descending, nulls last", () => {
-    expect(applyScreenerQuery(smaRows, query({ sortKey: "smaDistance", direction: "desc" })).map((r) => r.symbol))
-      .toEqual(["PLUS12", "MINUS4", "PLUS3", "PLUS1_7", "NOVAL"]);
+  it("Above Support: all supports false (none triggered)", () => {
+    const rows = [
+      // No supports -> excluded
+      row({ symbol: "NONE", supportLevels: [], price: 500 }),
+      // All false -> included
+      row({ symbol: "ALLF", price: 500, supportLevels: [
+        { level: 1, price: 400, method: "manual", asOf: "2026-08-03", triggered: false },
+        { level: 2, price: 350, method: "manual", asOf: "2026-08-03", triggered: false },
+      ]}),
+      // One true -> excluded
+      row({ symbol: "ONET", price: 500, supportLevels: [
+        { level: 1, price: 600, method: "manual", asOf: "2026-08-03", triggered: true },
+        { level: 2, price: 350, method: "manual", asOf: "2026-08-03", triggered: false },
+      ]}),
+      // Mixed null/false (price unavailable) -> excluded
+      row({ symbol: "NULLF", price: null, supportLevels: [
+        { level: 1, price: 400, method: "manual", asOf: "2026-08-03", triggered: null },
+        { level: 2, price: 350, method: "manual", asOf: "2026-08-03", triggered: false },
+      ]}),
+    ];
+    expect(applyScreenerQuery(rows, query({ filter: "aboveSupport" })).map((r) => r.symbol)).toEqual(["ALLF"]);
+  });
+});
+
+describe("Screener sorting", () => {
+  it("sorts by IV base value with nulls last", () => {
+    const rows = [
+      row({ symbol: "A", intrinsicValue: { low: null, base: 300, high: null, method: "manual", asOf: "2026-08-03", distancePct: null } }),
+      row({ symbol: "B", intrinsicValue: { low: null, base: 100, high: null, method: "manual", asOf: "2026-08-03", distancePct: null } }),
+      row({ symbol: "C", intrinsicValue: null }),
+    ];
+    expect(applyScreenerQuery(rows, query({ sortKey: "iv", direction: "asc" })).map((r) => r.symbol)).toEqual(["B", "A", "C"]);
+    expect(applyScreenerQuery(rows, query({ sortKey: "iv", direction: "desc" })).map((r) => r.symbol)).toEqual(["A", "B", "C"]);
   });
 
-  it("furthest above sorts raw distance descending (fixed direction)", () => {
-    expect(applyScreenerQuery(smaRows, query({ sortKey: "smaAbove", direction: "desc" })).map((r) => r.symbol))
-      .toEqual(["PLUS12", "PLUS3", "PLUS1_7", "MINUS4", "NOVAL"]);
+  it("IV Dist: asc = more negative first, desc = more positive first, nulls last", () => {
+    const rows = [
+      row({ symbol: "NEG", intrinsicValue: { low: null, base: 200, high: null, method: "manual", asOf: "2026-08-03", distancePct: -20 } }),
+      row({ symbol: "POS", intrinsicValue: { low: null, base: 200, high: null, method: "manual", asOf: "2026-08-03", distancePct: 30 } }),
+      row({ symbol: "ZERO", intrinsicValue: { low: null, base: 200, high: null, method: "manual", asOf: "2026-08-03", distancePct: 0 } }),
+      row({ symbol: "NULL", intrinsicValue: { low: null, base: 200, high: null, method: "manual", asOf: "2026-08-03", distancePct: null } }),
+    ];
+    expect(applyScreenerQuery(rows, query({ sortKey: "ivDistance", direction: "asc" })).map((r) => r.symbol)).toEqual(["NEG", "ZERO", "POS", "NULL"]);
+    expect(applyScreenerQuery(rows, query({ sortKey: "ivDistance", direction: "desc" })).map((r) => r.symbol)).toEqual(["POS", "ZERO", "NEG", "NULL"]);
   });
 
-  it("furthest below sorts raw distance ascending (fixed direction)", () => {
-    expect(applyScreenerQuery(smaRows, query({ sortKey: "smaBelow", direction: "asc" })).map((r) => r.symbol))
-      .toEqual(["MINUS4", "PLUS1_7", "PLUS3", "PLUS12", "NOVAL"]);
+  it("SMA Dist: raw distance (NOT ABS), nulls last", () => {
+    const rows = [
+      row({ symbol: "A", distanceToSma200wPct: -20 }),
+      row({ symbol: "B", distanceToSma200wPct: -2 }),
+      row({ symbol: "C", distanceToSma200wPct: 5 }),
+      row({ symbol: "D", distanceToSma200wPct: 30 }),
+      row({ symbol: "E", distanceToSma200wPct: null }),
+    ];
+    expect(applyScreenerQuery(rows, query({ sortKey: "smaDistance", direction: "asc" })).map((r) => r.symbol))
+      .toEqual(["A", "B", "C", "D", "E"]);
+    expect(applyScreenerQuery(rows, query({ sortKey: "smaDistance", direction: "desc" })).map((r) => r.symbol))
+      .toEqual(["D", "C", "B", "A", "E"]);
   });
 
   it("sorts by sma200w value with nulls last", () => {

@@ -149,6 +149,10 @@ export const screenerRowSchema = z.object({
   // Worker (never persisted). Null when the stock has no manual IV or when
   // split-safety invalidates it.
   intrinsicValue: screenerIntrinsicValueSchema.nullable(),
+  // Company logo URL (reused from Earnings). Joined from earnings_universe at
+  // read time. Null when the company has not been enriched yet; the frontend
+  // falls back to a deterministic ticker icon in that case.
+  logoUrl: z.string().url().nullable(),
 });
 export type ScreenerRow = z.infer<typeof screenerRowSchema>;
 

@@ -76,6 +76,7 @@ export function normalizeScreenerRow(raw: Record<string, unknown>): ScreenerRow 
       .sort((a, b) => a.level - b.level)
       .slice(0, 4),
     intrinsicValue: normalizeIntrinsicValue(raw.intrinsicValue),
+    logoUrl: typeof raw.logoUrl === "string" && raw.logoUrl.length > 0 ? raw.logoUrl : null,
   };
 }
 

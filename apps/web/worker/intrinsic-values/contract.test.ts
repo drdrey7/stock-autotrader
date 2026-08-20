@@ -116,6 +116,7 @@ describe("screenerRowSchema — intrinsicValue field", () => {
       sma200wAsOf: "2026-08-19T06:00:00.000Z",
       supportLevels: [],
       intrinsicValue: null,
+      logoUrl: null,
       ...overrides,
     };
   }

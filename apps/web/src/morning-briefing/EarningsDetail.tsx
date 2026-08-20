@@ -171,7 +171,7 @@ export default function EarningsDetail({ item, onClose }: { item: EarningsCompan
         </div>
 
         <div className="drawer-company">
-          <CompanyLogo event={item} className="drawer-logo"/>
+          <CompanyLogo symbol={item.symbol} logoUrl={item.logoUrl} className="drawer-logo"/>
           <div className="drawer-company-copy">
             <h2>{item.company}</h2>
             <p>

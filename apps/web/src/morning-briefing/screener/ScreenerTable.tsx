@@ -1,9 +1,9 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { ScreenerRow, ScreenerSupportLevel } from "@stock-autotrader/contracts";
-import { SCREENER_FILTERS, SCREENER_PRESETS } from "./screener-filter";
+import { CompanyLogo } from "../EarningsLogo";
+import { SCREENER_FILTERS } from "./screener-filter";
 import type {
   ScreenerFilter,
-  ScreenerPreset,
   ScreenerSortDirection,
   ScreenerSortKey,
 } from "./screener-filter";
@@ -23,7 +23,7 @@ function formatSigned(value: number | null, digits = 2): string {
   return `${sign}${value.toFixed(digits)}`;
 }
 
-/** Compact support price: max 2 decimals, strip trailing zeros (246, 1219, 125.8, 105.2). */
+/** Compact support price: max 2 decimals, strip trailing zeros. */
 const supportPriceFormatter = new Intl.NumberFormat("en-US", {
   minimumFractionDigits: 0,
   maximumFractionDigits: 2,
@@ -33,7 +33,6 @@ function formatSupportPrice(value: number): string {
   return Number.isInteger(value) ? String(value) : supportPriceFormatter.format(value);
 }
 
-/** Find the support level (1..4) inside a row's supportLevels, or undefined. */
 function getSupportLevel(row: ScreenerRow, level: number): ScreenerSupportLevel | undefined {
   return row.supportLevels.find((s) => s.level === level);
 }
@@ -49,18 +48,6 @@ function supportCell(row: ScreenerRow, level: number): ReactNode {
     );
   }
   return <span className="scr-support">{formatSupportPrice(support.price)}</span>;
-}
-
-function stateLabel(row: ScreenerRow): string {
-  if (row.state === "Live") return "Live";
-  // Neutral label: Cached applies both to a closed market and to the
-  // market-open grace window (the sweep has not refreshed this symbol yet),
-  // so "Market closed" would be wrong during the first 10 minutes of a
-  // session. The actual market state is shown in the summary chips.
-  if (row.state === "Cached") return "Cached";
-  if (row.state === "Stale") return "Stale";
-  if (row.state === "Error") return "Error";
-  return "Unavailable";
 }
 
 /** Format IV base: max 2 decimals, strip trailing zeros. */
@@ -91,7 +78,7 @@ function ivDistanceCell(row: ScreenerRow): ReactNode {
   );
 }
 
-/** Distance display + state color (PR2). Full-precision value, 1-decimal display. */
+/** Distance display + state color. Full-precision value, 1-decimal display. */
 function distanceCell(row: ScreenerRow): ReactNode {
   const distance = row.distanceToSma200wPct ?? null;
   if (distance === null) return <span className="scr-flat">—</span>;
@@ -114,118 +101,18 @@ function smaCell(row: ScreenerRow): ReactNode {
   return <span className="scr-price">{sma.toFixed(2)}</span>;
 }
 
-export interface ScreenerColumn {
-  key: string;
-  label: ReactNode;
-  alignRight?: boolean;
-  render: (row: ScreenerRow) => ReactNode;
-}
-
-/**
- * Column-driven table so future screens (Intrinsic Value, Support,
- * Opportunity) only append a column config — no component rewrite.
- */
-const buildColumns = (
-  onSort: (key: ScreenerSortKey) => void,
-  sortKey: ScreenerSortKey,
-  sortDirection: ScreenerSortDirection,
-): ScreenerColumn[] => [
-  {
-    key: "symbol",
-    label: sortIndicator("Ticker", sortKey === "symbol", sortDirection, () => onSort("symbol")),
-    render: (row) => (
-      <span className="scr-company">
-        <b>{row.symbol}</b>
-        <small>{row.company ?? "—"}</small>
-      </span>
-    ),
-  },
-  {
-    key: "price",
-    label: sortIndicator("Price", sortKey === "price", sortDirection, () => onSort("price")),
-    alignRight: true,
-    render: (row) => <span className="scr-price">{row.price === null ? "—" : row.price.toFixed(2)}</span>,
-  },
-  {
-    key: "changeAbs",
-    label: "Chg $",
-    alignRight: true,
-    render: (row) => <span className={changeClass(row)}>{formatSigned(row.changeAbs)}</span>,
-  },
-  {
-    key: "changePct",
-    label: sortIndicator("Chg %", sortKey === "changePct", sortDirection, () => onSort("changePct")),
-    alignRight: true,
-    render: (row) => <span className={changeClass(row)}>{formatSigned(row.changePct)}%</span>,
-  },
-  {
-    key: "sma200w",
-    label: sortIndicator("200W SMA", sortKey === "sma200w", sortDirection, () => onSort("sma200w")),
-    alignRight: true,
-    render: smaCell,
-  },
-  {
-    key: "smaDistance",
-    label: sortIndicator("Dist", sortKey === "smaDistance", sortDirection, () => onSort("smaDistance")),
-    alignRight: true,
-    render: distanceCell,
-  },
-  {
-    key: "s1",
-    label: "S1",
-    alignRight: true,
-    render: (row) => supportCell(row, 1),
-  },
-  {
-    key: "s2",
-    label: "S2",
-    alignRight: true,
-    render: (row) => supportCell(row, 2),
-  },
-  {
-    key: "s3",
-    label: "S3",
-    alignRight: true,
-    render: (row) => supportCell(row, 3),
-  },
-  {
-    key: "s4",
-    label: "S4",
-    alignRight: true,
-    render: (row) => supportCell(row, 4),
-  },
-  {
-    key: "iv",
-    label: "IV",
-    alignRight: true,
-    render: ivCell,
-  },
-  {
-    key: "ivDistance",
-    label: "IV Dist",
-    alignRight: true,
-    render: ivDistanceCell,
-  },
-  {
-    key: "state",
-    label: "Status",
-    render: (row) => <span className={`scr-state scr-state-${row.state.toLowerCase()}`}>{stateLabel(row)}</span>,
-  },
-];
-
 function sortIndicator(label: string, active: boolean, direction: ScreenerSortDirection, onClick: () => void): ReactNode {
   return (
-    <button className={`scr-sort ${active ? "scr-sort-active" : ""}`} type="button" onClick={onClick}>
+    <button
+      className={`scr-sort ${active ? "scr-sort-active" : ""}`}
+      type="button"
+      onClick={onClick}
+      aria-sort={active ? (direction === "asc" ? "ascending" : "descending") : undefined}
+    >
       {label}
       <span className="scr-sort-arrow">{active ? (direction === "asc" ? "↑" : "↓") : ""}</span>
     </button>
   );
-}
-
-/** Which preset the current (sortKey, direction) maps to, if any. */
-function presetFor(sortKey: ScreenerSortKey, direction: ScreenerSortDirection): ScreenerPreset["key"] | null {
-  const preset = SCREENER_PRESETS.find((p) => p.sortKey === sortKey && p.direction === direction);
-  return preset?.key ?? null;
 }
 
 interface ScreenerTableProps {
@@ -237,13 +124,54 @@ interface ScreenerTableProps {
   sortKey: ScreenerSortKey;
   sortDirection: ScreenerSortDirection;
   onSort: (key: ScreenerSortKey) => void;
-  onPreset: (preset: ScreenerPreset) => void;
+}
+
+/** Popover menu for filters. */
+function FiltersMenu({
+  filter,
+  onFilterChange,
+  onClose,
+}: {
+  filter: ScreenerFilter;
+  onFilterChange: (filter: ScreenerFilter) => void;
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (ref.current && !ref.current.contains(event.target as Node)) {
+        onClose();
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [onClose]);
+
+  return (
+    <div ref={ref} className="scr-filters-popover" role="menu" aria-label="Screener filters">
+      {SCREENER_FILTERS.map(({ value, label }) => (
+        <button
+          key={value}
+          type="button"
+          role="menuitem"
+          className={`scr-filter-option ${filter === value ? "scr-filter-option-active" : ""}`}
+          onClick={() => {
+            onFilterChange(value);
+            onClose();
+          }}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 /**
- * Premium, responsive Screener table. Rows with no quote yet render honest
- * "—" placeholders — never fabricates a live-looking price. The SMA columns
- * (200W SMA / Dist) show "—" while the historical basis is unavailable.
+ * Premium, responsive Screener table.
+ * All 11 columns visible on both desktop and mobile. Horizontal scroll on mobile.
+ * Company + Price are sticky. Sortable via headers (except S1-S4).
  */
 export function ScreenerTable({
   rows,
@@ -254,51 +182,47 @@ export function ScreenerTable({
   sortKey,
   sortDirection,
   onSort,
-  onPreset,
 }: ScreenerTableProps) {
-  const columns = buildColumns(onSort, sortKey, sortDirection);
-  const activePreset = presetFor(sortKey, sortDirection);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+
+  const activeFilterLabel = SCREENER_FILTERS.find((f) => f.value === filter)?.label ?? "All";
+
   return (
     <div className="scr-card">
       <div className="scr-toolbar">
-        <div className="scr-chips" role="tablist" aria-label="Screener filter">
-          {SCREENER_FILTERS.map(({ value, label }) => (
+        <div className="scr-toolbar-left">
+          <div className="scr-filters-wrapper">
             <button
-              key={value}
               type="button"
-              role="tab"
-              aria-selected={filter === value}
-              className={`scr-chip ${filter === value ? "scr-chip-active" : ""}`}
-              onClick={() => onFilterChange(value)}
+              className="scr-filters-btn"
+              aria-haspopup="true"
+              aria-expanded={filtersOpen}
+              onClick={() => setFiltersOpen((open) => !open)}
             >
-              {label}
+              Filters
+              <span className="scr-filters-caret" aria-hidden="true">▾</span>
+              {filter !== "all" && (
+                <span className="scr-filters-active-dot" aria-label={`Active: ${activeFilterLabel}`} />
+              )}
             </button>
-          ))}
+            {filter !== "all" && (
+              <span className="scr-active-filter-label">{activeFilterLabel}</span>
+            )}
+            {filtersOpen && (
+              <FiltersMenu
+                filter={filter}
+                onFilterChange={onFilterChange}
+                onClose={() => setFiltersOpen(false)}
+              />
+            )}
+          </div>
         </div>
         <div className="scr-toolbar-right">
-          <label className="scr-preset-label" htmlFor="scr-preset">
-            Sort
-          </label>
-          <select
-            id="scr-preset"
-            className="scr-preset"
-            value={activePreset ?? "none"}
-            aria-label="SMA sort preset"
-            onChange={(event) => {
-              const preset = SCREENER_PRESETS.find((p) => p.key === event.target.value);
-              if (preset) onPreset(preset);
-            }}
-          >
-            <option value="none">Chg %</option>
-            {SCREENER_PRESETS.map((preset) => (
-              <option key={preset.key} value={preset.key}>{preset.label}</option>
-            ))}
-          </select>
           <input
             className="scr-search"
             type="search"
-            aria-label="Search ticker or company"
-            placeholder="Search ticker or company…"
+            aria-label="Search stocks"
+            placeholder="Search stocks…"
             value={search}
             onChange={(event) => onSearchChange(event.target.value)}
           />
@@ -309,27 +233,65 @@ export function ScreenerTable({
         <table className="scr-table">
           <thead>
             <tr>
-              {columns.map((column) => (
-                <th key={column.key} className={column.alignRight ? "scr-align-right" : undefined}>
-                  {column.label}
-                </th>
-              ))}
+              <th className="scr-col-company">
+                {sortIndicator("Company", sortKey === "symbol", sortDirection, () => onSort("symbol"))}
+              </th>
+              <th className="scr-col-price scr-align-right">
+                {sortIndicator("Price", sortKey === "price", sortDirection, () => onSort("price"))}
+              </th>
+              <th className="scr-col-1d scr-align-right">
+                {sortIndicator("1D", sortKey === "changePct", sortDirection, () => onSort("changePct"))}
+              </th>
+              <th className="scr-col-iv scr-align-right">
+                {sortIndicator("IV", sortKey === "iv", sortDirection, () => onSort("iv"))}
+              </th>
+              <th className="scr-col-iv-dist scr-align-right">
+                {sortIndicator("IV Dist", sortKey === "ivDistance", sortDirection, () => onSort("ivDistance"))}
+              </th>
+              <th className="scr-col-sma scr-align-right">
+                {sortIndicator("200W SMA", sortKey === "sma200w", sortDirection, () => onSort("sma200w"))}
+              </th>
+              <th className="scr-col-sma-dist scr-align-right">
+                {sortIndicator("SMA Dist", sortKey === "smaDistance", sortDirection, () => onSort("smaDistance"))}
+              </th>
+              <th className="scr-col-s1 scr-align-right">S1</th>
+              <th className="scr-col-s2 scr-align-right">S2</th>
+              <th className="scr-col-s3 scr-align-right">S3</th>
+              <th className="scr-col-s4 scr-align-right">S4</th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={columns.length} className="scr-empty">
+                <td colSpan={11} className="scr-empty">
                   No matching stocks.
                 </td>
               </tr>
             ) : rows.map((row) => (
               <tr key={row.symbol}>
-                {columns.map((column) => (
-                  <td key={column.key} className={column.alignRight ? "scr-align-right" : undefined}>
-                    {column.render(row)}
-                  </td>
-                ))}
+                <td className="scr-col-company scr-sticky-left">
+                  <span className="scr-company">
+                    <CompanyLogo symbol={row.symbol} logoUrl={row.logoUrl} className="scr-company-logo" size={24} />
+                    <span className="scr-company-text">
+                      <b>{row.symbol}</b>
+                      <small>{row.company ?? "—"}</small>
+                    </span>
+                  </span>
+                </td>
+                <td className="scr-col-price scr-align-right scr-sticky-price">
+                  <span className="scr-price">{row.price === null ? "—" : row.price.toFixed(2)}</span>
+                </td>
+                <td className="scr-col-1d scr-align-right">
+                  <span className={changeClass(row)}>{formatSigned(row.changePct)}%</span>
+                </td>
+                <td className="scr-col-iv scr-align-right">{ivCell(row)}</td>
+                <td className="scr-col-iv-dist scr-align-right">{ivDistanceCell(row)}</td>
+                <td className="scr-col-sma scr-align-right">{smaCell(row)}</td>
+                <td className="scr-col-sma-dist scr-align-right">{distanceCell(row)}</td>
+                <td className="scr-col-s1 scr-align-right">{supportCell(row, 1)}</td>
+                <td className="scr-col-s2 scr-align-right">{supportCell(row, 2)}</td>
+                <td className="scr-col-s3 scr-align-right">{supportCell(row, 3)}</td>
+                <td className="scr-col-s4 scr-align-right">{supportCell(row, 4)}</td>
               </tr>
             ))}
           </tbody>

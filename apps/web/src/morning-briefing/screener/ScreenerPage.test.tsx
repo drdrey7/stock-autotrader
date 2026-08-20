@@ -24,9 +24,10 @@ const row = (symbol: string, price: number | null, changePct: number | null, sta
   sma200wAsOf: null,
   supportLevels,
   intrinsicValue: null,
+  logoUrl: null,
 });
 
-const makeResponse = (rows: ScreenerRow[]): ScreenerApiResponse => {
+const makeResponse = (rows: ScreenerRow[], marketState = "regular"): ScreenerApiResponse => {
   const counts = rows.reduce(
     (acc, item) => {
       if (item.state === "Live") acc.live += 1;
@@ -39,7 +40,7 @@ const makeResponse = (rows: ScreenerRow[]): ScreenerApiResponse => {
   );
   return {
     universe: { version: 1, total: 50 },
-    marketState: "regular",
+    marketState: marketState as ScreenerApiResponse["marketState"],
     quotes: {
       state: counts.stale === 0 && counts.live > 0 ? "Live" : counts.stale === 0 ? "Cached" : "Stale",
       provider: "finnhub-quote",
@@ -109,13 +110,19 @@ describe("ScreenerPage", () => {
     expect(screen.getByText("S42")).toBeInTheDocument();
   });
 
-  it("filters gainers and losers", async () => {
+  it("filters gainers and losers via Filters menu", async () => {
     render(<ScreenerPage />);
     await screen.findByRole("table");
-    fireEvent.click(screen.getByRole("tab", { name: "Gainers" }));
+    // Open filters menu
+    fireEvent.click(screen.getByRole("button", { name: /Filters/i }));
+    // Click Gainers
+    fireEvent.click(screen.getByRole("menuitem", { name: "Gainers" }));
     await waitFor(() => expect(screen.queryByText("S01")).not.toBeInTheDocument());
     expect(screen.getByText("S00")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: "Losers" }));
+    // Open filters menu again
+    fireEvent.click(screen.getByRole("button", { name: /Filters/i }));
+    // Click Losers
+    fireEvent.click(screen.getByRole("menuitem", { name: "Losers" }));
     await waitFor(() => expect(screen.queryByText("S00")).not.toBeInTheDocument());
     expect(screen.getByText("S01")).toBeInTheDocument();
   });
@@ -134,23 +141,7 @@ describe("ScreenerPage", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(/temporarily unavailable/i);
   });
 
-  it("labels Cached rows neutrally — never 'Market closed' during the open grace", async () => {
-    const cached: ScreenerRow = row("ZZZ", 100, null, "Cached");
-    fetchMock.mockImplementation(async () =>
-      new Response(JSON.stringify(makeResponse([cached])), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }));
-    render(<ScreenerPage />);
-    // "Cached" appears in the row status cell (and possibly the summary chip).
-    expect(await screen.findAllByText("Cached")).toHaveLength(2);
-    expect(screen.queryByText("Market closed")).not.toBeInTheDocument();
-  });
-
   it("renders a pre-PR2 production payload (SMA fields OMITTED) — '—' placeholders, no crash", async () => {
-    // Cloudflare PR preview proxies /api/* to the PRODUCTION worker, which
-    // returns the OLD shape: rows have NO sma200w/distanceToSma200wPct/
-    // sma200wState/sma200wHistoryWeeks/sma200wAsOf. Never .toFixed(undefined).
     const omit = (keys: string[], raw: Record<string, unknown>) => {
       const copy = { ...raw };
       for (const key of keys) delete copy[key];
@@ -168,11 +159,10 @@ describe("ScreenerPage", () => {
       }));
     render(<ScreenerPage />);
     await screen.findByRole("table");
-    await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(51)); // header + 50
-    // SMA cells degrade to the em-dash placeholder; no "Page unavailable".
+    await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(51));
     expect(screen.queryByText(/Page unavailable/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/temporarily unavailable/i)).not.toBeInTheDocument();
-    expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(100); // 2 SMA cols x 50 rows
+    expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(100);
   });
 
   it("renders S1-S4 columns headers and triggered pills", async () => {
@@ -215,7 +205,6 @@ describe("ScreenerPage", () => {
     render(<ScreenerPage />);
     await screen.findByRole("table");
     expect(screen.getByText("XYZ")).toBeInTheDocument();
-    // 4 dash cells for the S1-S4 columns
     expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(4);
   });
 
@@ -227,7 +216,7 @@ describe("ScreenerPage", () => {
       high: null,
       method: "manual",
       asOf: "2026-08-03",
-      distancePct: (200 / 251.12 - 1) * 100, // ~-20.36%
+      distancePct: (200 / 251.12 - 1) * 100,
     };
     fetchMock.mockImplementation(async () =>
       new Response(JSON.stringify(makeResponse([ivRow])), {
@@ -237,12 +226,9 @@ describe("ScreenerPage", () => {
     );
     render(<ScreenerPage />);
     await screen.findByRole("table");
-    // Headers
     expect(screen.getByText("IV")).toBeInTheDocument();
     expect(screen.getByText("IV Dist")).toBeInTheDocument();
-    // IV Base value
     expect(screen.getByText("251.12")).toBeInTheDocument();
-    // IV Dist negative value (green) — should have scr-up class
     const ivDistCell = document.querySelector(".scr-up");
     expect(ivDistCell).not.toBeNull();
     expect(ivDistCell!.textContent).toContain("-20");
@@ -256,7 +242,7 @@ describe("ScreenerPage", () => {
       high: null,
       method: "manual",
       asOf: "2026-08-03",
-      distancePct: (300 / 251.12 - 1) * 100, // ~+19.46%
+      distancePct: (300 / 251.12 - 1) * 100,
     };
     fetchMock.mockImplementation(async () =>
       new Response(JSON.stringify(makeResponse([ivRow])), {
@@ -289,14 +275,11 @@ describe("ScreenerPage", () => {
     );
     render(<ScreenerPage />);
     await screen.findByRole("table");
-    // 0% should be scr-flat (neutral) and render "0.00%"
-    // Find the cell containing "0.00%" (the IV Dist value)
     const cells = document.querySelectorAll("td");
     const zeroCell = Array.from(cells).find(
-      (c) => c.textContent === "0.00%" && c.className === "scr-align-right",
+      (c) => c.textContent === "0.00%" && c.classList.contains("scr-align-right"),
     );
     expect(zeroCell).not.toBeNull();
-    expect(zeroCell!.className).toBe("scr-align-right");
     expect(zeroCell!.textContent).toBe("0.00%");
   });
 
@@ -318,7 +301,6 @@ describe("ScreenerPage", () => {
     );
     render(<ScreenerPage />);
     await screen.findByRole("table");
-    // IV shows base value, IV Dist shows "—"
     expect(screen.getByText("251.12")).toBeInTheDocument();
     expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(1);
   });
@@ -334,7 +316,74 @@ describe("ScreenerPage", () => {
     render(<ScreenerPage />);
     await screen.findByRole("table");
     expect(screen.getByText("MSFT")).toBeInTheDocument();
-    // Both IV and IV Dist show "—"
     expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("renders Market Open badge when marketState is regular", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    expect(screen.getByText("Market Open")).toBeInTheDocument();
+  });
+
+  it("renders Market Closed badge when marketState is closed", async () => {
+    fetchMock.mockImplementation(async () =>
+      new Response(JSON.stringify(makeResponse([row("A", 100, 1, "Live")], "closed")), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    expect(screen.getByText("Market Closed")).toBeInTheDocument();
+  });
+
+  it("does not render old summary chips (Fresh, Stale, etc.)", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    expect(screen.queryByText(/Fresh/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Stale/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Cached/i)).not.toBeInTheDocument();
+  });
+
+  it("does not render old sort preset select", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    expect(screen.queryByLabelText(/SMA sort preset/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Closest to 200W/i)).not.toBeInTheDocument();
+  });
+
+  it("renders exactly 11 columns in correct order", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    const headers = screen.getAllByRole("columnheader").map((h) => h.textContent?.replace(/[↑↓]/g, "").trim());
+    expect(headers).toEqual([
+      "Company", "Price", "1D", "IV", "IV Dist", "200W SMA", "SMA Dist", "S1", "S2", "S3", "S4",
+    ]);
+  });
+
+  it("does not render Chg $ or Status columns", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    const headers = screen.getAllByRole("columnheader").map((h) => h.textContent?.trim());
+    expect(headers).not.toContain("Chg $");
+    expect(headers).not.toContain("Status");
+    expect(headers).not.toContain("Chg %");
+    expect(headers).not.toContain("Dist");
+  });
+
+  it("S1-S4 headers are not sortable (no button)", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    const s1 = screen.getByText("S1").closest("th");
+    expect(s1?.querySelector("button")).toBeNull();
+    const s4 = screen.getByText("S4").closest("th");
+    expect(s4?.querySelector("button")).toBeNull();
+  });
+
+  it("Company header is sortable", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    const companyHeader = screen.getByText("Company").closest("th");
+    expect(companyHeader?.querySelector("button")).not.toBeNull();
   });
 });

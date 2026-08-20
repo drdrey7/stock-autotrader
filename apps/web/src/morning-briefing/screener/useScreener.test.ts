@@ -24,6 +24,7 @@ const row = (symbol: string): ScreenerRow => ({
   sma200wAsOf: null,
   supportLevels: [],
   intrinsicValue: null,
+  logoUrl: null,
 });
 
 const response = (): ScreenerApiResponse => ({
