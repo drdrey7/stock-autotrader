@@ -85,7 +85,10 @@ for (const viewport of VIEWPORTS) {
       await expect(tape).toBeVisible();
       const tapeBox = await tape.boundingBox();
       expect(tapeBox).not.toBeNull();
-      const contentBox = await page.locator(".shell-main").boundingBox();
+      // On mobile .shell-main intentionally uses display: contents so the
+      // ticker can be ordered before the top bar without changing the DOM.
+      // Measure the routed page surface instead; it keeps a real layout box.
+      const contentBox = await page.locator(".page-content").boundingBox();
       expect(contentBox).not.toBeNull();
       expect(tapeBox.width, "ticker strip must span the content column").toBeGreaterThan(contentBox.width * 0.9);
       expect(tapeBox.height, "ticker strip must stay compact").toBeLessThan(64);
