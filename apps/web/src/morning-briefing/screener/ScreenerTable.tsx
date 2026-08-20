@@ -197,7 +197,10 @@ export function ScreenerTable({
                   type="button"
                   className="scr-clear-filter-btn"
                   aria-label={`Clear ${activeFilterLabel} filter`}
-                  onClick={() => onFilterChange("all")}
+                  onClick={() => {
+                    onFilterChange("all");
+                    setFiltersOpen(false);
+                  }}
                 >
                   ×
                 </button>

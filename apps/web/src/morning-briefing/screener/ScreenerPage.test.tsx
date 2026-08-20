@@ -474,6 +474,26 @@ describe("ScreenerPage", () => {
     expect(priceHeader).toHaveAttribute("aria-sort", "ascending");
   });
 
+  // --- X closes popover test ---
+  it("F) click X clears filter AND closes popover", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    // Open Filters and select Below IV
+    fireEvent.click(screen.getByRole("button", { name: /Filters/i }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Below IV" }));
+    await waitFor(() => expect(screen.getByText("Below IV")).toBeInTheDocument());
+    // Reopen Filters (filter is now active, chip is visible)
+    fireEvent.click(screen.getByRole("button", { name: /Filters/i }));
+    expect(screen.getByRole("menuitem", { name: "All" })).toBeInTheDocument();
+    // Click X to clear
+    fireEvent.click(screen.getByRole("button", { name: "Clear Below IV filter" }));
+    // Chip should disappear
+    await waitFor(() => expect(screen.queryByText("Below IV")).not.toBeInTheDocument());
+    // Popover should close
+    await waitFor(() => expect(screen.queryByRole("menuitem", { name: "All" })).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: /Filters/i })).toHaveAttribute("aria-expanded", "false");
+  });
+
   // --- Mobile scroll state test ---
   it("mobile: horizontal scroll adds scr-table-scrolled class", async () => {
     render(<ScreenerPage />);

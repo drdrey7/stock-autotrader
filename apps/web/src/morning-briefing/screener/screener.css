@@ -101,9 +101,9 @@
   .scr-toolbar-right{flex:1;justify-content:flex-end}
   .scr-search{min-width:0;flex:1;max-width:220px}
   .scr-table{min-width:980px}
-  .scr-table{--scr-company-width:150px;--scr-price-width:70px}
-  .scr-col-company{min-width:140px}
-  .scr-col-price{min-width:65px}
+  .scr-table{--scr-company-width:135px;--scr-price-width:60px}
+  .scr-col-company{min-width:130px;padding-left:10px;padding-right:6px}
+  .scr-col-price{min-width:55px;padding-left:6px;padding-right:8px}
 }
 
 @media (max-width:600px){
@@ -116,9 +116,9 @@
 
 /* Mobile: compact mode when horizontally scrolled */
 @media (max-width:700px){
-  .scr-table-scrolled .scr-table{--scr-company-width:88px;--scr-price-width:58px}
-  .scr-table-scrolled .scr-col-company{min-width:84px;padding-left:8px;padding-right:4px}
-  .scr-table-scrolled .scr-col-price{min-width:52px}
+  .scr-table-scrolled .scr-table{--scr-company-width:86px;--scr-price-width:56px}
+  .scr-table-scrolled .scr-col-company{min-width:82px;padding-left:6px;padding-right:4px}
+  .scr-table-scrolled .scr-col-price{min-width:50px;padding-left:4px;padding-right:6px}
   .scr-table-scrolled .scr-company-text small{opacity:0;max-width:0;margin:0;padding:0}
   .scr-table-scrolled .scr-company{gap:5px}
 }
