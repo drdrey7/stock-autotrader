@@ -1,0 +1,15 @@
+# Daily bootstrap resume cadence (06:00 UTC).
+# Runs before permanent maintenance at 07:00 UTC. Persistent=true catches up
+# after an outage; service ordering prevents overlap with maintenance/due-split.
+# Disable once bootstrap coverage is complete.
+
+[Unit]
+Description=Stock Autotrader history bootstrap (daily; temporary until complete)
+
+[Timer]
+OnCalendar=*-*-* 06:00:00 UTC
+RandomizedDelaySec=15m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
