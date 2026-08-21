@@ -24,9 +24,9 @@
 #     3. systemctl start runs only after validation and state reset
 #
 #   Schedules verified at install time:
-#     *-*-* 07:00:00       (maintenance)
-#     *-*-* 06:00:00       (bootstrap)
-#     Tue..Sat *-*-* 13:10 (due-split)
+#     *-*-* 07:00:00 UTC       (maintenance)
+#     *-*-* 06:00:00 UTC       (bootstrap)
+#     Tue..Sat *-*-* 13:10 UTC (due-split)
 set -euo pipefail
 
 REPO=/home/hermes/projects/stock-autotrader
@@ -66,6 +66,28 @@ for var in ALPHA_VANTAGE_API_KEYS CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID CLO
         exit 1
     fi
 done
+
+# Match history_ingestor.config.parse_keys(): comma-separated, non-empty,
+# alphanumeric keys only. Never print the key values.
+validate_alpha_vantage_keys() {
+    local raw key
+    local -a keys
+    raw=$(awk -F= '$1 == "ALPHA_VANTAGE_API_KEYS" { sub(/^[^=]*=/, ""); print; exit }' "$CANDIDATE")
+    IFS=',' read -r -a keys <<< "$raw"
+    if ((${#keys[@]} == 0)); then
+        echo "ERROR: ALPHA_VANTAGE_API_KEYS is empty or malformed" >&2
+        return 1
+    fi
+    for key in "${keys[@]}"; do
+        key="${key#"${key%%[![:space:]]*}"}"
+        key="${key%"${key##*[![:space:]]}"}"
+        if [[ -z "$key" || ! "$key" =~ ^[A-Za-z0-9]+$ ]]; then
+            echo "ERROR: ALPHA_VANTAGE_API_KEYS contains an empty or malformed key" >&2
+            return 1
+        fi
+    done
+}
+validate_alpha_vantage_keys
 
 chown hermes:hermes "$CANDIDATE"
 chmod 0600 "$CANDIDATE"
@@ -122,9 +144,9 @@ timestamp_to_epoch() {
 # Verify next legitimate triggers are in a future UTC day (proof of safety).
 echo
 echo "=== Verifying next OnCalendar windows (must be in a future UTC day) ==="
-if ! MAINT_NEXT=$(calendar_next_timestamp '*-*-* 07:00:00'); then exit 1; fi
-if ! BOOT_NEXT=$(calendar_next_timestamp '*-*-* 06:00:00'); then exit 1; fi
-if ! DUE_NEXT=$(calendar_next_timestamp 'Tue..Sat *-*-* 13:10:00'); then exit 1; fi
+if ! MAINT_NEXT=$(calendar_next_timestamp '*-*-* 07:00:00 UTC'); then exit 1; fi
+if ! BOOT_NEXT=$(calendar_next_timestamp '*-*-* 06:00:00 UTC'); then exit 1; fi
+if ! DUE_NEXT=$(calendar_next_timestamp 'Tue..Sat *-*-* 13:10:00 UTC'); then exit 1; fi
 if ! MAINT_NEXT_EPOCH=$(timestamp_to_epoch "$MAINT_NEXT"); then exit 1; fi
 if ! BOOT_NEXT_EPOCH=$(timestamp_to_epoch "$BOOT_NEXT"); then exit 1; fi
 if ! DUE_NEXT_EPOCH=$(timestamp_to_epoch "$DUE_NEXT"); then exit 1; fi

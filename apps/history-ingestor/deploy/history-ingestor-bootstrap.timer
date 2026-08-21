@@ -19,7 +19,7 @@
 Description=Stock Autotrader history bootstrap (daily; temporary until 50/50)
 
 [Timer]
-OnCalendar=*-*-* 06:00:00
+OnCalendar=*-*-* 06:00:00 UTC
 RandomizedDelaySec=15m
 Persistent=true
 

@@ -160,9 +160,9 @@ sudo ./deploy/install-history-ingestor-production.sh
 `deploy/install-history-ingestor-production.sh` wires the permanent maintenance
 and due-split units plus the temporary resumable bootstrap units and environment
 file in one idempotent step. Automatic timer installation requires root. The
-permanent maintenance timer is `OnCalendar=*-*-* 07:00:00` (daily, before NY
+permanent maintenance timer is `OnCalendar=*-*-* 07:00:00 UTC` (daily, before NY
 market open) with `RandomizedDelaySec=30m`; the bootstrap timer runs at
-`OnCalendar=*-*-* 06:00:00` with `RandomizedDelaySec=15m` and `Persistent=true`.
+`OnCalendar=*-*-* 06:00:00 UTC` with `RandomizedDelaySec=15m` and `Persistent=true`.
 Bootstrap runs before maintenance while coverage is incomplete, then becomes a
 zero-provider no-op after 50/50 completion:
 
