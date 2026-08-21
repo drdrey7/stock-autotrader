@@ -17,6 +17,7 @@ User=hermes
 Group=hermes
 WorkingDirectory=/home/hermes/projects/stock-autotrader/apps/history-ingestor
 EnvironmentFile=/etc/stock-autotrader/alpha-vantage.env
+EnvironmentFile=/etc/stock-autotrader/cloudflare.env
 ExecStart=/usr/bin/python3 -m history_ingestor bootstrap
 ProtectSystem=full
 ProtectHome=read-only
