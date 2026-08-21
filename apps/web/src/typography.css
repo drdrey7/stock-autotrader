@@ -1,0 +1,151 @@
+/*
+ * Public product typography layer.
+ *
+ * Desktop market-data surfaces use a readable hierarchy at normal monitor
+ * distance while the compact mobile layout stays unchanged. Rules are scoped
+ * through .shell so they keep precedence even when lazy routes inject their
+ * feature CSS after this entry stylesheet.
+ */
+
+:root {
+  --type-meta: 12px;
+  --type-control: 13px;
+  --type-data: 14px;
+  --type-body: 16px;
+}
+
+/* iOS/WebKit auto-zooms focused form controls below 16px. Keep public search
+ * controls at 16px on every viewport, including wide-phone landscape layouts. */
+.shell .scr-search,
+.shell .earnings-search input {
+  font-size: 16px;
+}
+
+@media (min-width: 901px) {
+  /* Shared shell */
+  .shell .shell-nav-link { font-size: 14px; }
+  .shell .brand-logo-fallback-copy strong { font-size: 14px; }
+  .shell .brand-logo-fallback-copy small { font-size: 10px; }
+
+  /* Shared public page hierarchy */
+  .shell .mb-demo { font-size: 15px; }
+  .shell .mb-demo .page-heading h1 { font-size: 36px; }
+  .shell .mb-demo .page-heading p {
+    font-size: var(--type-body);
+    line-height: 1.6;
+  }
+  .shell .mb-demo .eyebrow { font-size: 11px; }
+  .shell .mb-demo .mb-hero p { font-size: var(--type-body); }
+  .shell .mb-demo .section-title h2,
+  .shell .mb-demo .widget-head .eyebrow { font-size: 16px; }
+  .shell .mb-demo .section-title button,
+  .shell .mb-demo .card-subtitle { font-size: var(--type-control); }
+  .shell .mb-demo .section-meta,
+  .shell .mb-demo .widget-head .section-meta,
+  .shell .mb-demo .empty-state { font-size: var(--type-meta); }
+  .shell .filter-row button { font-size: var(--type-control); }
+
+  /* X Pulse */
+  .shell .post-shell .post-card p {
+    font-size: 15px;
+    line-height: 1.6;
+  }
+  .shell .post-shell .post-head strong { font-size: 13px; }
+  .shell .post-shell .post-head small,
+  .shell .post-shell .post-head time,
+  .shell .post-shell .post-meta { font-size: 11px; }
+
+  /* Earnings */
+  .shell .calendar-head h2 { font-size: 22px; }
+  .shell .calendar-head button.today { font-size: 12px; }
+  .shell .weekdays span { font-size: 11px; }
+  .shell .day-number { font-size: 12px; }
+  .shell .calendar-events b { font-size: 11px; }
+  .shell .calendar-events small { font-size: 10px; }
+  .shell .earnings-top-summary span,
+  .shell .earnings-top-summary small { font-size: 11px; }
+  .shell .earnings-top-summary strong { font-size: 24px; }
+  .shell .table-head { font-size: 11px; }
+  .shell .earnings-table > button { font-size: 13px; }
+  .shell .table-company b { font-size: 13px; }
+  .shell .table-company small,
+  .shell .table-date-state small { font-size: 11px; }
+  .shell .result { font-size: 11px; }
+  .shell .earnings-table > button,
+  .shell .table-head { min-width: 800px; }
+  .shell .drawer-head span { font-size: 13px; }
+  .shell .drawer-company p { font-size: 12px; }
+  .shell .report-grid section > span,
+  .shell .earnings-metric > span { font-size: 11px; }
+  .shell .report-grid small,
+  .shell .metric-row small,
+  .shell .drawer-metadata span,
+  .shell .subsection-head small,
+  .shell .detail-metrics span { font-size: 11px; }
+  .shell .detail-metrics strong,
+  .shell .drawer-metadata strong { font-size: 13px; }
+  .shell .metric-row strong { font-size: 14px; }
+  .shell .official-link { font-size: 13px; }
+  .shell .earnings-glossary summary,
+  .shell .earnings-glossary dt,
+  .shell .earnings-glossary dd,
+  .shell .earnings-glossary .glossary-note,
+  .shell .data-quality-note { font-size: 12px; }
+
+  /* Screener */
+  .shell .scr-market-badge { font-size: 12px; }
+  .shell .scr-filters-btn,
+  .shell .scr-filter-option { font-size: var(--type-control); }
+  .shell .scr-active-filter-chip { font-size: 12px; }
+  .shell .scr-table-region {
+    --scr-company-width: 205px;
+    --scr-price-width: 95px;
+    --scr-grid-content-width: calc(var(--scr-company-width) + var(--scr-price-width) + 765px);
+    --scr-grid-template: var(--scr-company-width) var(--scr-price-width) 90px 80px 95px 105px 95px 75px 75px 75px 75px;
+  }
+  .shell .scr-head-cell { font-size: 11px; }
+  .shell .scr-cell { font-size: var(--type-data); }
+  .shell .scr-company-text b { font-size: var(--type-data); }
+  .shell .scr-company-text small {
+    max-width: 140px;
+    font-size: 11px;
+  }
+  .shell .scr-support-pill { font-size: 13px; }
+  .shell .scr-empty,
+  .shell .scr-message,
+  .shell .scr-error,
+  .shell .scr-banner { font-size: 13px; }
+
+  /* Stock Detail. Kept here instead of stock-detail.css so this PR can run in
+     parallel with the real-data Stock Detail PR without creating a CSS conflict. */
+  .shell .stock-back-link { font-size: 12px; }
+  .shell .stock-company-identity h1 { font-size: 28px; }
+  .shell .stock-company-identity p { font-size: 14px; }
+  .shell .stock-preview-badge { font-size: 11px; }
+  .shell .stock-quote-row > span { font-size: 15px; }
+  .shell .stock-market-state { font-size: 13px; }
+  .shell .stock-card h2 { font-size: 16px; }
+  .shell .stock-scenario-labels small { font-size: 11px; }
+  .shell .stock-scenario-labels b { font-size: 12px; }
+  .shell .stock-data-list dt,
+  .shell .stock-data-list dd { font-size: 13px; }
+  .shell .stock-data-list dd span { font-size: 11px; }
+  .shell .stock-chart-legend { font-size: 11px; }
+  .shell .stock-chart-crosshair,
+  .shell .stock-chart-credit { font-size: 10px; }
+  .shell .stock-chart-empty,
+  .shell .stock-page-message p,
+  .shell .stock-page-message a { font-size: 13px; }
+  .shell .stock-metric small { font-size: 12px; }
+  .shell .stock-metric strong { font-size: 16px; }
+
+  /* Heatmap chrome. TradingView iframe typography is owned by TradingView. */
+  .shell .heatmap-context span,
+  .shell .heatmap-context button { font-size: 12px; }
+  .shell .tv-stock-heatmap-embed .tradingview-widget-copyright { font-size: 10px; }
+  .shell .tv-stock-heatmap-state { font-size: 13px; }
+
+  /* Public status / information surfaces */
+  .shell .briefing-information-body p:not(.briefing-information-lead) { font-size: 15px; }
+  .shell .briefing-footer { font-size: 10px; }
+}
