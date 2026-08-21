@@ -63,10 +63,10 @@ rollback() {
     echo "=== ROLLBACK: Restoring previous state ===" >&2
     local rc=0
 
-    # Restore EnvironmentFile
+    # Restore EnvironmentFile from backup (preserves permissions)
     if [ "$ORIGINAL_ENV_EXISTS" -eq 1 ]; then
-        if [ -n "$ORIGINAL_ENV_CONTENT" ]; then
-            echo "$ORIGINAL_ENV_CONTENT" > "$ENV_FILE" 2>/dev/null || rc=1
+        if [ -f "$BACKUP_DIR/alpha-vantage.env" ]; then
+            cp -p "$BACKUP_DIR/alpha-vantage.env" "$ENV_FILE" 2>/dev/null || rc=1
         fi
     else
         rm -f "$ENV_FILE" 2>/dev/null || rc=1
@@ -76,7 +76,7 @@ rollback() {
     if [ -n "$BACKUP_DIR" ] && [ -d "$BACKUP_DIR" ]; then
         for unit in "${UNITS[@]}"; do
             if [ -f "$BACKUP_DIR/$unit" ]; then
-                cp -f "$BACKUP_DIR/$unit" "/etc/systemd/system/$unit" 2>/dev/null || rc=1
+                cp -p "$BACKUP_DIR/$unit" "/etc/systemd/system/$unit" 2>/dev/null || rc=1
             fi
         done
     fi
@@ -98,7 +98,6 @@ rollback() {
         if [ "${ORIGINAL_TIMER_ACTIVE[$timer]:-0}" -eq 1 ]; then
             systemctl start "$timer" 2>/dev/null || rc=1
         fi
-        # If originally inactive, it stays stopped (no need to re-stop)
     done
 
     cleanup_backup_dir
