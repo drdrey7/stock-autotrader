@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { Link, useInRouterContext } from "react-router-dom";
 import type { ScreenerRow, ScreenerSupportLevel } from "@stock-autotrader/contracts";
 import { CompanyLogo } from "../EarningsLogo";
-import { SCREENER_FILTERS } from "./screener-filter";
+import { DEFAULT_SCREENER_QUERY, SCREENER_FILTERS } from "./screener-filter";
 import type {
   ScreenerFilter,
+  ScreenerQuery,
   ScreenerSortDirection,
   ScreenerSortKey,
 } from "./screener-filter";
@@ -110,6 +112,24 @@ function sortIndicator(
   );
 }
 
+function StockDetailLink({ row, returnQuery, children }: { row: ScreenerRow; returnQuery: ScreenerQuery; children: ReactNode }) {
+  const inRouter = useInRouterContext();
+  const path = `/stocks/${row.symbol}`;
+  const ariaLabel = `Open ${row.company ?? row.symbol} stock details`;
+  return inRouter
+    ? (
+        <Link
+          className="scr-company-link"
+          to={path}
+          state={{ logoUrl: row.logoUrl, screenerQuery: returnQuery }}
+          aria-label={ariaLabel}
+        >
+          {children}
+        </Link>
+      )
+    : <a className="scr-company-link" href={path} aria-label={ariaLabel}>{children}</a>;
+}
+
 interface ScreenerTableProps {
   rows: ScreenerRow[];
   filter: ScreenerFilter;
@@ -119,6 +139,7 @@ interface ScreenerTableProps {
   sortKey: ScreenerSortKey;
   sortDirection: ScreenerSortDirection;
   onSort: (key: ScreenerSortKey) => void;
+  returnQuery?: ScreenerQuery;
 }
 
 export function ScreenerTable({
@@ -130,6 +151,7 @@ export function ScreenerTable({
   sortKey,
   sortDirection,
   onSort,
+  returnQuery = DEFAULT_SCREENER_QUERY,
 }: ScreenerTableProps) {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [focusedFilterIndex, setFocusedFilterIndex] = useState(0);
@@ -201,7 +223,6 @@ export function ScreenerTable({
 
   const handleBodyScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
     const scrollLeft = event.currentTarget.scrollLeft;
-    // Body owns horizontal scroll. Header only mirrors it visually.
     headScrollRef.current?.style.setProperty("--scr-head-scroll-left", `${scrollLeft}px`);
     updateCompactState(scrollLeft);
   }, [updateCompactState]);
@@ -364,13 +385,15 @@ export function ScreenerTable({
           ) : rows.map((row) => (
             <div className="scr-grid-row scr-body-row" role="row" key={row.symbol}>
               <div className="scr-cell scr-col-company" role="cell">
-                <span className="scr-company">
-                  <CompanyLogo symbol={row.symbol} logoUrl={row.logoUrl} className="scr-company-logo" size={24} />
-                  <span className="scr-company-text">
-                    <b>{row.symbol}</b>
-                    <small>{row.company ?? "—"}</small>
+                <StockDetailLink row={row} returnQuery={returnQuery}>
+                  <span className="scr-company">
+                    <CompanyLogo symbol={row.symbol} logoUrl={row.logoUrl} className="scr-company-logo" size={24} />
+                    <span className="scr-company-text">
+                      <b>{row.symbol}</b>
+                      <small>{row.company ?? "—"}</small>
+                    </span>
                   </span>
-                </span>
+                </StockDetailLink>
               </div>
               <div className="scr-cell scr-col-price scr-align-right" role="cell">
                 <span className="scr-price">{row.price === null ? "—" : row.price.toFixed(2)}</span>

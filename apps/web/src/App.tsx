@@ -1,11 +1,14 @@
+import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { DailyBriefingNotFoundPage, DailyBriefingStatusPage } from "./daily-briefing-pages";
 import MorningBriefingApp from "./morning-briefing/MorningBriefingApp";
+import { LazyPageErrorBoundary, PageLoadingFallback } from "./morning-briefing/shared";
 import { AppShell } from "./shell/AppShell";
+
+const StockDetailPage = lazy(() => import("./morning-briefing/stock-detail/StockDetailPage"));
 
 const legacyRoutes = [
   "/signals",
-  "/stocks/:symbol",
   "/strategies",
   "/strategies/:strategyId",
   "/research",
@@ -26,6 +29,16 @@ export default function App() {
         <Route path="/x-search" element={<Navigate to="/x" replace />} />
         <Route path="/earnings" element={<MorningBriefingApp />} />
         <Route path="/screener" element={<MorningBriefingApp />} />
+        <Route
+          path="/stocks/:symbol"
+          element={(
+            <LazyPageErrorBoundary resetKey="stock-detail">
+              <Suspense fallback={<PageLoadingFallback />}>
+                <StockDetailPage />
+              </Suspense>
+            </LazyPageErrorBoundary>
+          )}
+        />
         {/* /scanner was the older name for the screener: keep the intent. */}
         <Route path="/scanner" element={<Navigate to="/screener" replace />} />
         <Route path="/status" element={<DailyBriefingStatusPage />} />

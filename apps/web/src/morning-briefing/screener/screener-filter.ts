@@ -56,6 +56,35 @@ export const SCREENER_FILTERS: Array<{ value: ScreenerFilter; label: string }> =
   { value: "aboveSupport", label: "Above Support" },
 ];
 
+const SCREENER_SORT_KEYS: readonly ScreenerSortKey[] = [
+  "symbol",
+  "company",
+  "price",
+  "changePct",
+  "iv",
+  "ivDistance",
+  "sma200w",
+  "smaDistance",
+];
+
+/** Safely reads Screener query context forwarded through React Router state. */
+export function screenerQueryFromNavigationState(state: unknown): ScreenerQuery | null {
+  if (typeof state !== "object" || state === null || !("screenerQuery" in state)) return null;
+  const query = (state as { screenerQuery?: unknown }).screenerQuery;
+  if (typeof query !== "object" || query === null) return null;
+  const candidate = query as Partial<ScreenerQuery>;
+  if (!SCREENER_FILTERS.some(({ value }) => value === candidate.filter)) return null;
+  if (typeof candidate.search !== "string") return null;
+  if (!SCREENER_SORT_KEYS.includes(candidate.sortKey as ScreenerSortKey)) return null;
+  if (candidate.direction !== "asc" && candidate.direction !== "desc") return null;
+  return {
+    filter: candidate.filter as ScreenerFilter,
+    search: candidate.search,
+    sortKey: candidate.sortKey as ScreenerSortKey,
+    direction: candidate.direction,
+  };
+}
+
 export function matchesFilter(row: ScreenerRow, filter: ScreenerFilter): boolean {
   if (filter === "gainers") return row.changePct !== null && row.changePct > 0;
   if (filter === "losers") return row.changePct !== null && row.changePct < 0;
@@ -78,7 +107,6 @@ export function matchesFilter(row: ScreenerRow, filter: ScreenerFilter): boolean
   if (filter === "aboveSupport") {
     if (row.supportLevels.length === 0) return false;
     if (row.price === null) return false;
-    // All defined supports must be false (not triggered)
     return row.supportLevels.every((s) => s.triggered === false);
   }
   return true;
@@ -120,7 +148,6 @@ export function applyScreenerQuery(
         const leftValue = (left.company ?? left.symbol).toLowerCase();
         const rightValue = (right.company ?? right.symbol).toLowerCase();
         if (leftValue === rightValue) {
-          // Tie-break: symbol
           const leftSym = left.symbol.toLowerCase();
           const rightSym = right.symbol.toLowerCase();
           if (leftSym === rightSym) return 0;
@@ -145,12 +172,11 @@ export function applyScreenerQuery(
           direction,
         );
       case "sma200w":
-        return compareNullableNumber(left.sma200w, right.sma200w, direction);
+        return compareNullableNumber(left.sma200w ?? null, right.sma200w ?? null, direction);
       case "smaDistance":
-        // Raw distance value (NOT ABS) — asc = more negative first, desc = more positive first
         return compareNullableNumber(
-          left.distanceToSma200wPct,
-          right.distanceToSma200wPct,
+          left.distanceToSma200wPct ?? null,
+          right.distanceToSma200wPct ?? null,
           direction,
         );
       default:

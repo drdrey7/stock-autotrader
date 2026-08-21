@@ -4,8 +4,13 @@ import { lazy, Suspense } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { LazyPageErrorBoundary } from "./morning-briefing/shared";
+import appSource from "./App.tsx?raw";
 import indexHtml from "../index.html?raw";
 import cloudflareHeaders from "../public/_headers?raw";
+
+vi.mock("./morning-briefing/stock-detail/StockDetailPage", () => ({
+  default: () => <div className="stock-detail-test-route"><h1>Stock detail route</h1><p>Dynamic stock detail page</p></div>,
+}));
 
 beforeEach(() => {
   localStorage.clear();
@@ -73,6 +78,12 @@ it("ships How Are The Markets metadata in the static HTML fallback", () => {
   expect(indexHtml).not.toContain("Stock Daily Briefing");
 });
 
+it("keeps Stock Detail and Lightweight Charts behind the lazy route boundary", () => {
+  expect(appSource).toContain('lazy(() => import("./morning-briefing/stock-detail/StockDetailPage"))');
+  expect(appSource).not.toContain("lightweight-charts");
+  expect(appSource).not.toMatch(/from\s+["']\.\/morning-briefing\/stock-detail\/StockDetailPage["']/);
+});
+
 it("shows an accessible recovery state when a lazy page fails", async () => {
   const FailedPage = lazy(() => Promise.reject(new Error("chunk failed")));
   const ReadyPage = () => <h1>Recovered page</h1>;
@@ -116,14 +127,21 @@ describe("Morning Briefing public experience", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "Heatmap" })).toBeInTheDocument();
   });
 
+  it("opens the dynamic stock detail route inside the existing shell", async () => {
+    render(<MemoryRouter initialEntries={["/stocks/NVDA"]}><App /></MemoryRouter>);
+    expect(await screen.findByRole("heading", { name: "Stock detail route" })).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Primary navigation" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Screener/ })).toBeInTheDocument();
+  });
+
   it.each([
-    "/signals", "/stocks/NVDA", "/strategies",
+    "/signals", "/strategies",
     "/strategies/trend_breakout_v1", "/research", "/research/example",
     "/portfolio", "/market-data", "/activity",
   ])("redirects legacy route %s to Morning Briefing", async (path) => {
     render(<MemoryRouter initialEntries={[path]}><App /></MemoryRouter>);
     // Static hero subtitle confirms the briefing landed, independent of the
-    // machine timezone the local-time greeting depends on.
+    // machine timezone the local-time greeting/date depends on.
     expect(await screen.findByText(/economic calendar and top stories/)).toBeInTheDocument();
   });
 

@@ -1,9 +1,14 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { AnimatePresence, MotionConfig, motion } from "motion/react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { BRAND_NAME } from "../branding/BrandLogo";
 import type { EarningsCompany } from "./data/earnings-view";
 import MorningBriefingPage from "./MorningBriefingPage";
+import {
+  DEFAULT_SCREENER_QUERY,
+  screenerQueryFromNavigationState,
+  type ScreenerQuery,
+} from "./screener/screener-filter";
 import { LazyPageErrorBoundary, PageLoadingFallback, spring } from "./shared";
 
 const HeatmapPage = lazy(() => import("./HeatmapPage"));
@@ -16,6 +21,7 @@ type Page = "briefing" | "heatmap" | "surge" | "earnings" | "screener";
 
 function MorningBriefingShell() {
   const location = useLocation();
+  const navigate = useNavigate();
   const page: Page = location.pathname === "/heatmap"
     ? "heatmap"
     : location.pathname === "/x"
@@ -26,6 +32,15 @@ function MorningBriefingShell() {
           ? "screener"
           : "briefing";
   const [selectedEarnings, setSelectedEarnings] = useState<EarningsCompany | null>(null);
+  const screenerInitialQuery = page === "screener"
+    ? screenerQueryFromNavigationState(location.state) ?? DEFAULT_SCREENER_QUERY
+    : DEFAULT_SCREENER_QUERY;
+  const persistScreenerQuery = useCallback((query: ScreenerQuery) => {
+    navigate("/screener", {
+      replace: true,
+      state: { screenerQuery: query },
+    });
+  }, [navigate]);
 
   useEffect(() => {
     const reduced = typeof window.matchMedia === "function"
@@ -53,7 +68,12 @@ function MorningBriefingShell() {
               {page === "heatmap" && <HeatmapPage/>}
               {page === "surge" && <XPulsePage/>}
               {page === "earnings" && <EarningsPage onSelect={setSelectedEarnings}/>}
-              {page === "screener" && <ScreenerPage/>}
+              {page === "screener" && (
+                <ScreenerPage
+                  initialQuery={screenerInitialQuery}
+                  onQueryChange={persistScreenerQuery}
+                />
+              )}
             </Suspense>
           </LazyPageErrorBoundary>
         </motion.div>
