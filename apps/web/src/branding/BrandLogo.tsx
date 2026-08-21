@@ -5,9 +5,9 @@ export const BRAND_NAME = "How Are The Markets";
 export const BRAND_HOME = "/";
 
 interface BrandLogoProps {
-  /** Keep the horizontal wordmark readable in the compact mobile header. */
+  /** Keep the wordmark readable in the compact mobile header. */
   compact?: boolean;
-  /** Prepared for a future mark-only sidebar/mobile treatment. */
+  /** Render only the approved brand mark when space is extremely constrained. */
   markOnly?: boolean;
   className?: string;
 }
@@ -15,32 +15,33 @@ interface BrandLogoProps {
 /**
  * Central brand asset integration.
  *
- * The approved logo files live in /public/brand. If an asset cannot be loaded,
- * the accessible text fallback keeps the shell usable without introducing a
- * competing monogram or chart icon.
+ * The approved mark lives in /public/brand. The product name is rendered as
+ * normal HTML instead of being embedded inside the SVG, so the sidebar/mobile
+ * wordmark cannot disappear because of SVG text sizing/loading behaviour.
  */
 export function BrandLogo({ compact = false, markOnly = false, className = "" }: BrandLogoProps) {
   const { theme } = useShellTheme();
   const [assetReady, setAssetReady] = useState(false);
-  const assetName = markOnly ? "logo-mark" : "logo-horizontal";
-  const assetPath = `/brand/${assetName}-${theme}.svg`;
+  const assetPath = `/brand/logo-mark-${theme}.svg`;
 
   return (
     <span className={`brand-logo${compact ? " is-compact" : ""}${markOnly ? " is-mark-only" : ""}${className ? ` ${className}` : ""}`}>
-      <img
-        className={`brand-logo-asset${assetReady ? " is-ready" : ""}`}
-        src={assetPath}
-        alt={markOnly ? "" : BRAND_NAME}
-        aria-hidden={markOnly ? true : undefined}
-        onLoad={() => setAssetReady(true)}
-        onError={() => setAssetReady(false)}
-      />
-      <span className={`brand-logo-fallback${assetReady ? " is-hidden" : ""}`} aria-hidden={assetReady}>
-        <span className="brand-logo-fallback-mark" aria-hidden="true" />
+      <span className="brand-logo-fallback">
+        <img
+          className={`brand-logo-asset${assetReady ? " is-ready" : ""}`}
+          src={assetPath}
+          width="38"
+          height="38"
+          alt=""
+          aria-hidden="true"
+          onLoad={() => setAssetReady(true)}
+          onError={() => setAssetReady(false)}
+        />
+        {!assetReady && <span className="brand-logo-fallback-mark" aria-hidden="true" />}
         {!markOnly && (
           <span className="brand-logo-fallback-copy">
             <strong>
-              HOW ARE <em>THE MARKETS</em>
+              HOW ARE <em>THE</em> MARKETS
             </strong>
             {!compact && <small>Market intelligence</small>}
           </span>

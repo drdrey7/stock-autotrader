@@ -145,7 +145,7 @@ describe("EconomicCalendar (iframe widget)", () => {
     expect(config.countryFilter).toBe("us,eu");
     expect(config.importanceFilter).toBe("1"); // official scale: -1 low, 0 medium, 1 high
     expect(config.currencyFilter).toBeUndefined(); // unsupported key removed
-    expect(config.colorTheme).toBe("light");
+    expect(config.colorTheme).toBe("dark");
     expect(config.locale).toBe("en");
   });
 
@@ -182,7 +182,7 @@ describe("TopStories (iframe widget)", () => {
     expect(config.container_id).toBe("tradingview-timeline");
     expect(config.feedMode).toBe("all_symbols"); // not market:"stock"
     expect(config.displayMode).toBe("regular");
-    expect(config.colorTheme).toBe("light");
+    expect(config.colorTheme).toBe("dark");
   });
 
   it("still loads lazy widgets when IntersectionObserver is unavailable", () => {
@@ -200,10 +200,10 @@ describe("theme → iframe widget", () => {
       </>,
     );
     const script = () => document.querySelector("script[data-tv-iframe-widget='timeline']");
-    await waitFor(() => expect(JSON.parse(script()!.textContent ?? "{}").colorTheme).toBe("light"));
-
-    fireEvent.click(screen.getByRole("button", { name: "Switch to dark mode" }));
     await waitFor(() => expect(JSON.parse(script()!.textContent ?? "{}").colorTheme).toBe("dark"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Switch to light mode" }));
+    await waitFor(() => expect(JSON.parse(script()!.textContent ?? "{}").colorTheme).toBe("light"));
     // Exactly one script stays in the DOM after the remount — no duplicates.
     expect(document.querySelectorAll("script[data-tv-iframe-widget='timeline']")).toHaveLength(1);
   });
@@ -216,10 +216,10 @@ describe("theme → iframe widget", () => {
       </>,
     );
     const script = () => document.querySelector("script[data-tv-iframe-widget='events']");
-    await waitFor(() => expect(JSON.parse(script()!.textContent ?? "{}").colorTheme).toBe("light"));
-
-    fireEvent.click(screen.getByRole("button", { name: "Switch to dark mode" }));
     await waitFor(() => expect(JSON.parse(script()!.textContent ?? "{}").colorTheme).toBe("dark"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Switch to light mode" }));
+    await waitFor(() => expect(JSON.parse(script()!.textContent ?? "{}").colorTheme).toBe("light"));
     expect(document.querySelectorAll("script[data-tv-iframe-widget='events']")).toHaveLength(1);
   });
 });
