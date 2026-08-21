@@ -11,6 +11,10 @@ import "./daily-briefing.css";
 // the cascade over the scoped Morning Briefing rules. Keep it here, after the
 // globals, so the app's component styles are the final authority.
 import "./morning-briefing/morning-briefing.css";
+// Product-wide typography policy is intentionally the final stylesheet. It
+// raises desktop readability consistently while preserving compact mobile
+// layouts and prevents iOS search-field focus zoom.
+import "./typography.css";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
