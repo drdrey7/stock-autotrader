@@ -108,6 +108,22 @@ verify_future_schedules() {
 echo "=== Preflight: verify future UTC schedule windows ==="
 verify_future_schedules
 
+echo
+echo "=== Step 0: Quiesce existing timers BEFORE any deployment mutation ==="
+# Stop all 3 timers before touching EnvironmentFile or units, so an existing
+# timer (with RandomizedDelaySec) cannot fire while we are mutating state.
+stop_active_timer() {
+    local timer="$1"
+    if systemctl is-active --quiet "$timer"; then
+        systemctl stop "$timer"
+    fi
+}
+for timer in history-ingestor-maintenance.timer history-ingestor-due-split.timer history-ingestor-bootstrap.timer; do
+    stop_active_timer "$timer"
+done
+echo "All history-ingestor timers quiesced before deployment mutation."
+
+echo
 echo "=== Step 1: Validate and install $ENV_FILE ==="
 mkdir -p "$DIR"
 umask 077
@@ -230,24 +246,14 @@ echo
 echo "=== Step 3: daemon-reload ==="
 systemctl daemon-reload
 
-# Prevent Persistent=true from catching up a missed occurrence. Stop active
-# timers only after the future-window check, then clear their in-memory/on-disk
-# stamps before the first start.
-stop_active_timer() {
-    local timer="$1"
-    if systemctl is-active --quiet "$timer"; then
-        systemctl stop "$timer"
-    fi
-}
-
-echo "=== Resetting persistent timer state before start ==="
+echo
+echo "=== Step 4: Clear persistent timer state ==="
 for timer in history-ingestor-maintenance.timer history-ingestor-due-split.timer history-ingestor-bootstrap.timer; do
-    stop_active_timer "$timer"
     systemctl clean --what=state "$timer"
 done
 
 echo
-echo "=== Step 4: Enable + start timers ==="
+echo "=== Step 5: Enable + start timers ==="
 systemctl enable history-ingestor-maintenance.timer
 systemctl enable history-ingestor-due-split.timer
 systemctl enable history-ingestor-bootstrap.timer
