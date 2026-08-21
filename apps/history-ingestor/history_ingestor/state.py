@@ -74,7 +74,7 @@ def _utc_date() -> str:
 
 
 def _utc_now_iso() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()) + "Z"
+    return dt.datetime.now(dt.UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
 def _payload_updated_at_epoch(payload: dict | None) -> float:
@@ -143,7 +143,13 @@ class StateStore:
             mirror_payload = None
         if d1_payload is None or (
             mirror_payload is not None
-            and _payload_updated_at_epoch(mirror_payload) > _payload_updated_at_epoch(d1_payload)
+            and (
+                _payload_updated_at_epoch(mirror_payload) > _payload_updated_at_epoch(d1_payload)
+                or (
+                    _payload_updated_at_epoch(mirror_payload) == _payload_updated_at_epoch(d1_payload)
+                    and mirror_payload != d1_payload
+                )
+            )
         ):
             payload = mirror_payload
         else:

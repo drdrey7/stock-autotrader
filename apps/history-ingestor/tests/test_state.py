@@ -127,6 +127,25 @@ class StateTests(unittest.TestCase):
             self.assertEqual(store.key_used(0), 7)
             self.assertEqual(store.symbol_status("NVDA", "weekly"), "done")
 
+    def test_equal_timestamp_prefers_divergent_local_mirror(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            timestamp = "2030-01-02T00:00:01Z"
+            d1.meta[META_KEY] = {
+                "version": 1, "day": TEST_TODAY,
+                "keys": [{"index": 0, "used": 1, "status": "ok"}, {"index": 1, "used": 0, "status": "ok"}],
+                "symbols": {}, "started_at": "", "updated_at": timestamp,
+            }
+            path = Path(tmp) / "checkpoint.json"
+            path.write_text(json.dumps({
+                "version": 1, "day": TEST_TODAY,
+                "keys": [{"index": 0, "used": 2, "status": "ok"}, {"index": 1, "used": 0, "status": "ok"}],
+                "symbols": {}, "started_at": "", "updated_at": timestamp,
+            }))
+            store = self._store(d1, tmp)
+            store.load()
+            self.assertEqual(store.key_used(0), 2)
+
     def test_day_rollover_resets_usage_keeps_symbol_status(self):
         with tempfile.TemporaryDirectory() as tmp:
             d1 = FakeD1()
