@@ -47,6 +47,67 @@ cleanup_candidate() {
 }
 trap cleanup_candidate EXIT
 
+# Preflight schedule safety before changing EnvironmentFile or unit files.
+# Ignore weekday display text; compare actual UTC timestamps numerically.
+calendar_next_timestamp() {
+    local expression="$1"
+    local output
+    local timestamp
+
+    if ! output=$(systemd-analyze calendar "$expression" 2>&1); then
+        echo "ERROR: Could not calculate next trigger for $expression" >&2
+        return 1
+    fi
+    if [[ "$output" =~ ([0-9]{4}-[0-9]{2}-[0-9]{2})[[:space:]]([0-9]{2}:[0-9]{2}:[0-9]{2})([[:space:]][A-Za-z][A-Za-z0-9_+:/-]*)? ]]; then
+        timestamp="${BASH_REMATCH[1]} ${BASH_REMATCH[2]}${BASH_REMATCH[3]:- UTC}"
+    else
+        echo "ERROR: Could not parse next trigger for $expression" >&2
+        return 1
+    fi
+    printf '%s\n' "$timestamp"
+}
+
+timestamp_to_epoch() {
+    local timestamp="$1"
+    local epoch
+    if ! epoch=$(date -u -d "$timestamp" +%s 2>/dev/null); then
+        echo "ERROR: Could not parse timestamp: $timestamp" >&2
+        return 1
+    fi
+    printf '%s\n' "$epoch"
+}
+
+verify_future_schedules() {
+    local maint_next boot_next due_next
+    local maint_epoch boot_epoch due_epoch now_epoch today_start_epoch tomorrow_start_epoch
+
+    if ! maint_next=$(calendar_next_timestamp '*-*-* 07:00:00 UTC'); then return 1; fi
+    if ! boot_next=$(calendar_next_timestamp '*-*-* 06:00:00 UTC'); then return 1; fi
+    if ! due_next=$(calendar_next_timestamp 'Tue..Sat *-*-* 13:10:00 UTC'); then return 1; fi
+    if ! maint_epoch=$(timestamp_to_epoch "$maint_next"); then return 1; fi
+    if ! boot_epoch=$(timestamp_to_epoch "$boot_next"); then return 1; fi
+    if ! due_epoch=$(timestamp_to_epoch "$due_next"); then return 1; fi
+
+    now_epoch=$(date -u +%s)
+    today_start_epoch=$(date -u -d "$(date -u +%Y-%m-%d) 00:00:00 UTC" +%s)
+    tomorrow_start_epoch=$((today_start_epoch + 86400))
+    if (( maint_epoch <= now_epoch || maint_epoch < tomorrow_start_epoch \
+        || boot_epoch <= now_epoch || boot_epoch < tomorrow_start_epoch \
+        || due_epoch <= now_epoch || due_epoch < tomorrow_start_epoch )); then
+        echo "ERROR: A next trigger is not in a future UTC day" >&2
+        return 1
+    fi
+    MAINT_NEXT="$maint_next"
+    BOOT_NEXT="$boot_next"
+    DUE_NEXT="$due_next"
+    echo "  maintenance: $MAINT_NEXT"
+    echo "  bootstrap:   $BOOT_NEXT"
+    echo "  due-split:    $DUE_NEXT"
+}
+
+echo "=== Preflight: verify future UTC schedule windows ==="
+verify_future_schedules
+
 echo "=== Step 1: Validate and install $ENV_FILE ==="
 mkdir -p "$DIR"
 umask 077
@@ -161,59 +222,6 @@ echo "Installed 6 unit files to /etc/systemd/system/"
 echo
 echo "=== Step 3: daemon-reload ==="
 systemctl daemon-reload
-
-# Parse the actual ISO timestamp from systemd output. Ignore weekday names;
-# they are presentation text and must not participate in safety decisions.
-calendar_next_timestamp() {
-    local expression="$1"
-    local output
-    local timestamp
-
-    if ! output=$(systemd-analyze calendar "$expression" 2>&1); then
-        echo "ERROR: Could not calculate next trigger for $expression" >&2
-        return 1
-    fi
-    if [[ "$output" =~ ([0-9]{4}-[0-9]{2}-[0-9]{2})[[:space:]]([0-9]{2}:[0-9]{2}:[0-9]{2})([[:space:]][A-Za-z][A-Za-z0-9_+:/-]*)? ]]; then
-        timestamp="${BASH_REMATCH[1]} ${BASH_REMATCH[2]}${BASH_REMATCH[3]:- UTC}"
-    else
-        echo "ERROR: Could not parse next trigger for $expression" >&2
-        return 1
-    fi
-    printf '%s\n' "$timestamp"
-}
-
-timestamp_to_epoch() {
-    local timestamp="$1"
-    local epoch
-    if ! epoch=$(date -u -d "$timestamp" +%s 2>/dev/null); then
-        echo "ERROR: Could not parse timestamp: $timestamp" >&2
-        return 1
-    fi
-    printf '%s\n' "$epoch"
-}
-
-# Verify next legitimate triggers are in a future UTC day (proof of safety).
-echo
-echo "=== Verifying next OnCalendar windows (must be in a future UTC day) ==="
-if ! MAINT_NEXT=$(calendar_next_timestamp '*-*-* 07:00:00 UTC'); then exit 1; fi
-if ! BOOT_NEXT=$(calendar_next_timestamp '*-*-* 06:00:00 UTC'); then exit 1; fi
-if ! DUE_NEXT=$(calendar_next_timestamp 'Tue..Sat *-*-* 13:10:00 UTC'); then exit 1; fi
-if ! MAINT_NEXT_EPOCH=$(timestamp_to_epoch "$MAINT_NEXT"); then exit 1; fi
-if ! BOOT_NEXT_EPOCH=$(timestamp_to_epoch "$BOOT_NEXT"); then exit 1; fi
-if ! DUE_NEXT_EPOCH=$(timestamp_to_epoch "$DUE_NEXT"); then exit 1; fi
-
-NOW_EPOCH=$(date -u +%s)
-TODAY_START_EPOCH=$(date -u -d "$(date -u +%Y-%m-%d) 00:00:00 UTC" +%s)
-TOMORROW_START_EPOCH=$((TODAY_START_EPOCH + 86400))
-if (( MAINT_NEXT_EPOCH <= NOW_EPOCH || MAINT_NEXT_EPOCH < TOMORROW_START_EPOCH \
-    || BOOT_NEXT_EPOCH <= NOW_EPOCH || BOOT_NEXT_EPOCH < TOMORROW_START_EPOCH \
-    || DUE_NEXT_EPOCH <= NOW_EPOCH || DUE_NEXT_EPOCH < TOMORROW_START_EPOCH )); then
-    echo "ERROR: A next trigger is not in a future UTC day" >&2
-    exit 1
-fi
-echo "  maintenance: $MAINT_NEXT"
-echo "  bootstrap:   $BOOT_NEXT"
-echo "  due-split:    $DUE_NEXT"
 
 # Prevent Persistent=true from catching up a missed occurrence. Stop active
 # timers only after the future-window check, then clear their in-memory/on-disk
