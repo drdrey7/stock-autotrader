@@ -89,12 +89,6 @@ echo
 echo "=== Step 3: daemon-reload ==="
 systemctl daemon-reload
 
-echo
-echo "=== Step 4: Enable + start timers ==="
-systemctl enable history-ingestor-maintenance.timer
-systemctl enable history-ingestor-due-split.timer
-systemctl enable history-ingestor-bootstrap.timer
-
 # Parse the actual ISO timestamp from systemd output. Ignore weekday names;
 # they are presentation text and must not participate in safety decisions.
 calendar_next_timestamp() {
@@ -163,6 +157,12 @@ for timer in history-ingestor-maintenance.timer history-ingestor-due-split.timer
     stop_active_timer "$timer"
     systemctl clean --what=state "$timer"
 done
+
+echo
+echo "=== Step 4: Enable + start timers ==="
+systemctl enable history-ingestor-maintenance.timer
+systemctl enable history-ingestor-due-split.timer
+systemctl enable history-ingestor-bootstrap.timer
 
 # Safe to start timers now
 systemctl start history-ingestor-maintenance.timer
