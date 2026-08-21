@@ -51,13 +51,18 @@ for unit in "${UNITS[@]}"; do
 done
 
 # Keep deployment deliberately simple and safe: never replace unit files while
-# a managed timer or service is active. Quiesce the history-ingestor first in a
-# planned maintenance window, then re-run this installer.
+# a managed timer or service is running, starting, or stopping. Fresh installs
+# may not have these units loaded yet; an empty state is therefore acceptable.
 for unit in "${TIMERS[@]}" "${SERVICES[@]}"; do
-  if systemctl is-active --quiet "$unit" 2>/dev/null; then
-    echo "ERROR: $unit is active; stop history-ingestor units before reinstalling" >&2
-    exit 1
-  fi
+  state=$(systemctl show --property=ActiveState --value "$unit" 2>/dev/null || true)
+  case "$state" in
+    ""|inactive|failed)
+      ;;
+    *)
+      echo "ERROR: $unit is $state; wait until history-ingestor units are fully stopped before reinstalling" >&2
+      exit 1
+      ;;
+  esac
 done
 
 if command -v systemd-analyze >/dev/null 2>&1; then
