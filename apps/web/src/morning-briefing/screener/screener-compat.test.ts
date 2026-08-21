@@ -199,4 +199,21 @@ describe("normalizeScreenerResponse — old production payload compatibility", (
     expect(row.intrinsicValue!.base).toBe(251.12);
     expect(row.intrinsicValue!.distancePct).toBe(-20);
   });
+
+  it("logoUrl passes through when present", () => {
+    const row = normalizeScreenerRow({
+      logoUrl: "https://example.com/logo.png",
+    } as never);
+    expect(row.logoUrl).toBe("https://example.com/logo.png");
+  });
+
+  it("logoUrl is null when missing (old payload)", () => {
+    const row = normalizeScreenerRow({} as never);
+    expect(row.logoUrl).toBeNull();
+  });
+
+  it("logoUrl is null when empty string", () => {
+    const row = normalizeScreenerRow({ logoUrl: "" } as never);
+    expect(row.logoUrl).toBeNull();
+  });
 });

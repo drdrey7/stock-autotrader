@@ -1,31 +1,43 @@
 import { useState } from "react";
-import type { EarningsCompany } from "./data/earnings-view";
+import { tickerColour } from "./data/earnings-view";
 
 /**
- * Company logo with a graceful deterministic fallback.
+ * Reusable company logo with a graceful deterministic fallback.
  *
  * Primary: persisted Finnhub logo URL (see earnings_universe.logo_url).
  * Fallback: a colored ticker-initial chip, so a broken or missing external
  * logo can never render a broken-image icon. The fallback also covers the
  * period before metadata enrichment reaches a company.
  */
-export function CompanyLogo({ event, className }: { event: Pick<EarningsCompany, "symbol" | "logoUrl" | "color">; className: string }) {
+export interface CompanyLogoProps {
+  symbol: string;
+  logoUrl?: string | null;
+  className: string;
+  size?: number;
+}
+
+export function CompanyLogo({ symbol, logoUrl, className, size }: CompanyLogoProps) {
   const [failed, setFailed] = useState(false);
-  if (!failed && event.logoUrl) {
+  const color = tickerColour(symbol);
+  if (!failed && logoUrl) {
     return (
       <img
         className={`${className} company-logo-img`}
-        src={event.logoUrl}
+        src={logoUrl}
         alt=""
         loading="lazy"
         referrerPolicy="no-referrer"
+        style={size ? { width: size, height: size } : undefined}
         onError={() => setFailed(true)}
       />
     );
   }
   return (
-    <i className={`${className} company-logo-fallback`} style={{ "--company": event.color } as React.CSSProperties}>
-      {event.symbol.slice(0, 1)}
+    <i
+      className={`${className} company-logo-fallback`}
+      style={{ "--company": color, ...(size ? { width: size, height: size, fontSize: size * 0.4 } : {}) } as React.CSSProperties}
+    >
+      {symbol.slice(0, 1)}
     </i>
   );
 }

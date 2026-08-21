@@ -1,9 +1,9 @@
-import type { ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { ScreenerRow, ScreenerSupportLevel } from "@stock-autotrader/contracts";
-import { SCREENER_FILTERS, SCREENER_PRESETS } from "./screener-filter";
+import { CompanyLogo } from "../EarningsLogo";
+import { SCREENER_FILTERS } from "./screener-filter";
 import type {
   ScreenerFilter,
-  ScreenerPreset,
   ScreenerSortDirection,
   ScreenerSortKey,
 } from "./screener-filter";
@@ -23,7 +23,6 @@ function formatSigned(value: number | null, digits = 2): string {
   return `${sign}${value.toFixed(digits)}`;
 }
 
-/** Compact support price: max 2 decimals, strip trailing zeros (246, 1219, 125.8, 105.2). */
 const supportPriceFormatter = new Intl.NumberFormat("en-US", {
   minimumFractionDigits: 0,
   maximumFractionDigits: 2,
@@ -33,9 +32,8 @@ function formatSupportPrice(value: number): string {
   return Number.isInteger(value) ? String(value) : supportPriceFormatter.format(value);
 }
 
-/** Find the support level (1..4) inside a row's supportLevels, or undefined. */
 function getSupportLevel(row: ScreenerRow, level: number): ScreenerSupportLevel | undefined {
-  return row.supportLevels.find((s) => s.level === level);
+  return row.supportLevels.find((support) => support.level === level);
 }
 
 function supportCell(row: ScreenerRow, level: number): ReactNode {
@@ -51,19 +49,6 @@ function supportCell(row: ScreenerRow, level: number): ReactNode {
   return <span className="scr-support">{formatSupportPrice(support.price)}</span>;
 }
 
-function stateLabel(row: ScreenerRow): string {
-  if (row.state === "Live") return "Live";
-  // Neutral label: Cached applies both to a closed market and to the
-  // market-open grace window (the sweep has not refreshed this symbol yet),
-  // so "Market closed" would be wrong during the first 10 minutes of a
-  // session. The actual market state is shown in the summary chips.
-  if (row.state === "Cached") return "Cached";
-  if (row.state === "Stale") return "Stale";
-  if (row.state === "Error") return "Error";
-  return "Unavailable";
-}
-
-/** Format IV base: max 2 decimals, strip trailing zeros. */
 const ivPriceFormatter = new Intl.NumberFormat("en-US", {
   minimumFractionDigits: 0,
   maximumFractionDigits: 2,
@@ -75,157 +60,54 @@ function formatIVPrice(value: number | null): string {
 }
 
 function ivCell(row: ScreenerRow): ReactNode {
-  const iv = row.intrinsicValue;
-  if (!iv) return <span className="scr-flat">—</span>;
-  return <span className="scr-price">{formatIVPrice(iv.base)}</span>;
+  const intrinsicValue = row.intrinsicValue;
+  if (!intrinsicValue) return <span className="scr-flat">—</span>;
+  return <span className="scr-price">{formatIVPrice(intrinsicValue.base)}</span>;
 }
 
 function ivDistanceCell(row: ScreenerRow): ReactNode {
-  const iv = row.intrinsicValue;
-  if (!iv || iv.distancePct === null) return <span className="scr-flat">—</span>;
-  const cls = iv.distancePct < 0 ? "scr-up" : iv.distancePct > 0 ? "scr-down" : "scr-flat";
-  return (
-    <span className={cls}>
-      {formatSigned(iv.distancePct, 2)}%
-    </span>
-  );
+  const intrinsicValue = row.intrinsicValue;
+  if (!intrinsicValue || intrinsicValue.distancePct === null) {
+    return <span className="scr-flat">—</span>;
+  }
+  const className = intrinsicValue.distancePct < 0
+    ? "scr-up"
+    : intrinsicValue.distancePct > 0
+      ? "scr-down"
+      : "scr-flat";
+  return <span className={className}>{formatSigned(intrinsicValue.distancePct, 2)}%</span>;
 }
 
-/** Distance display + state color (PR2). Full-precision value, 1-decimal display. */
 function distanceCell(row: ScreenerRow): ReactNode {
   const distance = row.distanceToSma200wPct ?? null;
   if (distance === null) return <span className="scr-flat">—</span>;
   const state = row.sma200wState ?? "Unavailable";
-  const cls = state === "Above" ? "scr-up" : state === "Below" ? "scr-down" : "scr-near";
-  return (
-    <span className={cls} title={state}>
-      {formatSigned(distance, 1)}%
-    </span>
-  );
+  const className = state === "Above" ? "scr-up" : state === "Below" ? "scr-down" : "scr-near";
+  return <span className={className} title={state}>{formatSigned(distance, 1)}%</span>;
 }
 
 function smaCell(row: ScreenerRow): ReactNode {
   const sma = row.sma200w ?? null;
   if (sma === null) {
-    return row.sma200wState === "NotEnoughHistory"
-      ? <span className="scr-flat" title="Fewer than 199 completed weeks">—</span>
-      : <span className="scr-flat">—</span>;
+    return <span className="scr-flat" title={row.sma200wState === "NotEnoughHistory" ? "Fewer than 199 completed weeks" : undefined}>—</span>;
   }
   return <span className="scr-price">{sma.toFixed(2)}</span>;
 }
 
-export interface ScreenerColumn {
-  key: string;
-  label: ReactNode;
-  alignRight?: boolean;
-  render: (row: ScreenerRow) => ReactNode;
-}
-
-/**
- * Column-driven table so future screens (Intrinsic Value, Support,
- * Opportunity) only append a column config — no component rewrite.
- */
-const buildColumns = (
-  onSort: (key: ScreenerSortKey) => void,
-  sortKey: ScreenerSortKey,
-  sortDirection: ScreenerSortDirection,
-): ScreenerColumn[] => [
-  {
-    key: "symbol",
-    label: sortIndicator("Ticker", sortKey === "symbol", sortDirection, () => onSort("symbol")),
-    render: (row) => (
-      <span className="scr-company">
-        <b>{row.symbol}</b>
-        <small>{row.company ?? "—"}</small>
-      </span>
-    ),
-  },
-  {
-    key: "price",
-    label: sortIndicator("Price", sortKey === "price", sortDirection, () => onSort("price")),
-    alignRight: true,
-    render: (row) => <span className="scr-price">{row.price === null ? "—" : row.price.toFixed(2)}</span>,
-  },
-  {
-    key: "changeAbs",
-    label: "Chg $",
-    alignRight: true,
-    render: (row) => <span className={changeClass(row)}>{formatSigned(row.changeAbs)}</span>,
-  },
-  {
-    key: "changePct",
-    label: sortIndicator("Chg %", sortKey === "changePct", sortDirection, () => onSort("changePct")),
-    alignRight: true,
-    render: (row) => <span className={changeClass(row)}>{formatSigned(row.changePct)}%</span>,
-  },
-  {
-    key: "sma200w",
-    label: sortIndicator("200W SMA", sortKey === "sma200w", sortDirection, () => onSort("sma200w")),
-    alignRight: true,
-    render: smaCell,
-  },
-  {
-    key: "smaDistance",
-    label: sortIndicator("Dist", sortKey === "smaDistance", sortDirection, () => onSort("smaDistance")),
-    alignRight: true,
-    render: distanceCell,
-  },
-  {
-    key: "s1",
-    label: "S1",
-    alignRight: true,
-    render: (row) => supportCell(row, 1),
-  },
-  {
-    key: "s2",
-    label: "S2",
-    alignRight: true,
-    render: (row) => supportCell(row, 2),
-  },
-  {
-    key: "s3",
-    label: "S3",
-    alignRight: true,
-    render: (row) => supportCell(row, 3),
-  },
-  {
-    key: "s4",
-    label: "S4",
-    alignRight: true,
-    render: (row) => supportCell(row, 4),
-  },
-  {
-    key: "iv",
-    label: "IV",
-    alignRight: true,
-    render: ivCell,
-  },
-  {
-    key: "ivDistance",
-    label: "IV Dist",
-    alignRight: true,
-    render: ivDistanceCell,
-  },
-  {
-    key: "state",
-    label: "Status",
-    render: (row) => <span className={`scr-state scr-state-${row.state.toLowerCase()}`}>{stateLabel(row)}</span>,
-  },
-];
-
-function sortIndicator(label: string, active: boolean, direction: ScreenerSortDirection, onClick: () => void): ReactNode {
+function sortIndicator(
+  label: string,
+  active: boolean,
+  direction: ScreenerSortDirection,
+  onClick: () => void,
+): ReactNode {
   return (
     <button className={`scr-sort ${active ? "scr-sort-active" : ""}`} type="button" onClick={onClick}>
       {label}
-      <span className="scr-sort-arrow">{active ? (direction === "asc" ? "↑" : "↓") : ""}</span>
+      <span className="scr-sort-arrow" aria-hidden="true">
+        {active ? (direction === "asc" ? "↑" : "↓") : ""}
+      </span>
     </button>
   );
-}
-
-/** Which preset the current (sortKey, direction) maps to, if any. */
-function presetFor(sortKey: ScreenerSortKey, direction: ScreenerSortDirection): ScreenerPreset["key"] | null {
-  const preset = SCREENER_PRESETS.find((p) => p.sortKey === sortKey && p.direction === direction);
-  return preset?.key ?? null;
 }
 
 interface ScreenerTableProps {
@@ -237,14 +119,8 @@ interface ScreenerTableProps {
   sortKey: ScreenerSortKey;
   sortDirection: ScreenerSortDirection;
   onSort: (key: ScreenerSortKey) => void;
-  onPreset: (preset: ScreenerPreset) => void;
 }
 
-/**
- * Premium, responsive Screener table. Rows with no quote yet render honest
- * "—" placeholders — never fabricates a live-looking price. The SMA columns
- * (200W SMA / Dist) show "—" while the historical basis is unavailable.
- */
 export function ScreenerTable({
   rows,
   filter,
@@ -254,86 +130,265 @@ export function ScreenerTable({
   sortKey,
   sortDirection,
   onSort,
-  onPreset,
 }: ScreenerTableProps) {
-  const columns = buildColumns(onSort, sortKey, sortDirection);
-  const activePreset = presetFor(sortKey, sortDirection);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [focusedFilterIndex, setFocusedFilterIndex] = useState(0);
+  const [scrolled, setScrolled] = useState(false);
+  const filtersContainerRef = useRef<HTMLDivElement>(null);
+  const filtersButtonRef = useRef<HTMLButtonElement>(null);
+  const filterOptionRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const bodyScrollRef = useRef<HTMLDivElement>(null);
+  const headScrollRef = useRef<HTMLDivElement>(null);
+
+  const closeFilters = useCallback((restoreFocus = false) => {
+    setFiltersOpen(false);
+    if (restoreFocus) filtersButtonRef.current?.focus();
+  }, []);
+
+  const handleClickOutside = useCallback((event: MouseEvent) => {
+    if (filtersContainerRef.current && !filtersContainerRef.current.contains(event.target as Node)) {
+      setFiltersOpen(false);
+    }
+  }, []);
+
+  const selectedFilterIndex = Math.max(0, SCREENER_FILTERS.findIndex((entry) => entry.value === filter));
+
+  useEffect(() => {
+    if (!filtersOpen) return;
+    setFocusedFilterIndex(selectedFilterIndex);
+    filterOptionRefs.current[selectedFilterIndex]?.focus();
+  }, [filtersOpen, selectedFilterIndex]);
+
+  useEffect(() => {
+    if (!filtersOpen) return;
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [filtersOpen, handleClickOutside]);
+
+  const handleFilterMenuKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    const currentIndex = filterOptionRefs.current.findIndex((option) => option === document.activeElement);
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeFilters(true);
+      return;
+    }
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const lastIndex = SCREENER_FILTERS.length - 1;
+    const nextIndex = event.key === "Home"
+      ? 0
+      : event.key === "End"
+        ? lastIndex
+        : event.key === "ArrowDown"
+          ? Math.min(currentIndex + 1, lastIndex)
+          : Math.max(currentIndex - 1, 0);
+    setFocusedFilterIndex(nextIndex);
+    filterOptionRefs.current[nextIndex]?.focus();
+  }, [closeFilters]);
+
+  const handleFilterSelection = useCallback((value: ScreenerFilter) => {
+    onFilterChange(value);
+    closeFilters(true);
+  }, [closeFilters, onFilterChange]);
+
+  const updateCompactState = useCallback((scrollLeft: number) => {
+    setScrolled((previous) => {
+      if (previous && scrollLeft < 8) return false;
+      if (!previous && scrollLeft > 20) return true;
+      return previous;
+    });
+  }, []);
+
+  const handleBodyScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
+    const scrollLeft = event.currentTarget.scrollLeft;
+    // Body owns horizontal scroll. Header only mirrors it visually.
+    headScrollRef.current?.style.setProperty("--scr-head-scroll-left", `${scrollLeft}px`);
+    updateCompactState(scrollLeft);
+  }, [updateCompactState]);
+
+  const handleHeaderFocus = useCallback((event: React.FocusEvent<HTMLDivElement>) => {
+    const cell = (event.target as HTMLElement).closest<HTMLElement>(".scr-head-cell");
+    const body = bodyScrollRef.current;
+    if (!cell || !body || cell.classList.contains("scr-col-company") || cell.classList.contains("scr-col-price")) return;
+
+    const firstRow = body.querySelector<HTMLElement>(".scr-body-row");
+    const companyCell = firstRow?.querySelector<HTMLElement>(".scr-col-company");
+    const priceCell = firstRow?.querySelector<HTMLElement>(".scr-col-price");
+    const region = body.closest<HTMLElement>(".scr-table-region") ?? body;
+    const cssWidth = (name: string) => Number.parseFloat(getComputedStyle(region).getPropertyValue(name)) || 0;
+    const stickyCompanyPriceWidth = companyCell && priceCell
+      ? priceCell.getBoundingClientRect().right - companyCell.getBoundingClientRect().left
+      : cssWidth("--scr-company-width") + cssWidth("--scr-price-width");
+
+    const left = cell.offsetLeft;
+    const right = left + cell.offsetWidth;
+    const viewportLeft = body.scrollLeft;
+    const visibleLeft = viewportLeft + stickyCompanyPriceWidth;
+    const visibleRight = viewportLeft + body.clientWidth;
+    let nextScrollLeft = viewportLeft;
+    if (left < visibleLeft) nextScrollLeft = left - stickyCompanyPriceWidth;
+    else if (right > visibleRight) nextScrollLeft = right - body.clientWidth;
+
+    const maxScrollLeft = Math.max(0, body.scrollWidth - body.clientWidth);
+    const clampedScrollLeft = Math.min(maxScrollLeft, Math.max(0, nextScrollLeft));
+    if (clampedScrollLeft !== viewportLeft) body.scrollLeft = clampedScrollLeft;
+  }, []);
+
+  const activeFilterLabel = SCREENER_FILTERS.find((entry) => entry.value === filter)?.label ?? "All";
+  const getAriaSort = (key: ScreenerSortKey) => {
+    if (sortKey !== key) return undefined;
+    return sortDirection === "asc" ? "ascending" : "descending";
+  };
+
   return (
-    <div className="scr-card">
+    <div
+      className={`scr-card scr-table-region${scrolled ? " scr-table-scrolled" : ""}`}
+      role="table"
+      aria-label="Screener results"
+      aria-colcount={11}
+    >
       <div className="scr-toolbar">
-        <div className="scr-chips" role="tablist" aria-label="Screener filter">
-          {SCREENER_FILTERS.map(({ value, label }) => (
+        <div className="scr-toolbar-left">
+          <div className="scr-filters-container" ref={filtersContainerRef}>
             <button
-              key={value}
+              ref={filtersButtonRef}
               type="button"
-              role="tab"
-              aria-selected={filter === value}
-              className={`scr-chip ${filter === value ? "scr-chip-active" : ""}`}
-              onClick={() => onFilterChange(value)}
+              className="scr-filters-btn"
+              aria-haspopup="true"
+              aria-controls="scr-filters-menu"
+              aria-expanded={filtersOpen}
+              onClick={() => setFiltersOpen((open) => !open)}
             >
-              {label}
+              Filters
+              <span className="scr-filters-caret" aria-hidden="true">▾</span>
             </button>
-          ))}
+            {filter !== "all" && (
+              <span className="scr-active-filter-chip">
+                {activeFilterLabel}
+                <button
+                  type="button"
+                  className="scr-clear-filter-btn"
+                  aria-label={`Clear ${activeFilterLabel} filter`}
+                  onClick={() => {
+                    onFilterChange("all");
+                    closeFilters();
+                  }}
+                >
+                  ×
+                </button>
+              </span>
+            )}
+            {filtersOpen && (
+              <div
+                id="scr-filters-menu"
+                className="scr-filters-popover"
+                role="menu"
+                aria-label="Screener filters"
+                onKeyDown={handleFilterMenuKeyDown}
+                onBlur={(event) => {
+                  const nextTarget = event.relatedTarget as Node | null;
+                  if (nextTarget === filtersButtonRef.current) return;
+                  if (!event.currentTarget.contains(nextTarget)) closeFilters();
+                }}
+              >
+                {SCREENER_FILTERS.map(({ value, label }, index) => (
+                  <button
+                    key={value}
+                    ref={(element) => {
+                      filterOptionRefs.current[index] = element;
+                    }}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={filter === value}
+                    tabIndex={focusedFilterIndex === index ? 0 : -1}
+                    className={`scr-filter-option ${filter === value ? "scr-filter-option-active" : ""}`}
+                    onClick={() => handleFilterSelection(value)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
         <div className="scr-toolbar-right">
-          <label className="scr-preset-label" htmlFor="scr-preset">
-            Sort
-          </label>
-          <select
-            id="scr-preset"
-            className="scr-preset"
-            value={activePreset ?? "none"}
-            aria-label="SMA sort preset"
-            onChange={(event) => {
-              const preset = SCREENER_PRESETS.find((p) => p.key === event.target.value);
-              if (preset) onPreset(preset);
-            }}
-          >
-            <option value="none">Chg %</option>
-            {SCREENER_PRESETS.map((preset) => (
-              <option key={preset.key} value={preset.key}>{preset.label}</option>
-            ))}
-          </select>
           <input
             className="scr-search"
             type="search"
-            aria-label="Search ticker or company"
-            placeholder="Search ticker or company…"
+            aria-label="Search stocks"
+            placeholder="Search stocks…"
             value={search}
             onChange={(event) => onSearchChange(event.target.value)}
           />
         </div>
       </div>
 
-      <div className="scr-table-wrap">
-        <table className="scr-table">
-          <thead>
-            <tr>
-              {columns.map((column) => (
-                <th key={column.key} className={column.alignRight ? "scr-align-right" : undefined}>
-                  {column.label}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 ? (
-              <tr>
-                <td colSpan={columns.length} className="scr-empty">
-                  No matching stocks.
-                </td>
-              </tr>
-            ) : rows.map((row) => (
-              <tr key={row.symbol}>
-                {columns.map((column) => (
-                  <td key={column.key} className={column.alignRight ? "scr-align-right" : undefined}>
-                    {column.render(row)}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="scr-table-head-shell" role="rowgroup">
+        <div className="scr-table-head-scroll" ref={headScrollRef}>
+          <div className="scr-grid-row scr-table-head-grid" role="row" onFocus={handleHeaderFocus}>
+            <div className="scr-head-cell scr-col-company" role="columnheader" aria-sort={getAriaSort("company")}>
+              {sortIndicator("Company", sortKey === "company", sortDirection, () => onSort("company"))}
+            </div>
+            <div className="scr-head-cell scr-col-price scr-align-right" role="columnheader" aria-sort={getAriaSort("price")}>
+              {sortIndicator("Price", sortKey === "price", sortDirection, () => onSort("price"))}
+            </div>
+            <div className="scr-head-cell scr-col-1d scr-align-right" role="columnheader" aria-sort={getAriaSort("changePct")}>
+              {sortIndicator("1D", sortKey === "changePct", sortDirection, () => onSort("changePct"))}
+            </div>
+            <div className="scr-head-cell scr-col-iv scr-align-right" role="columnheader" aria-sort={getAriaSort("iv")}>
+              {sortIndicator("IV", sortKey === "iv", sortDirection, () => onSort("iv"))}
+            </div>
+            <div className="scr-head-cell scr-col-iv-dist scr-align-right" role="columnheader" aria-sort={getAriaSort("ivDistance")}>
+              {sortIndicator("IV Dist", sortKey === "ivDistance", sortDirection, () => onSort("ivDistance"))}
+            </div>
+            <div className="scr-head-cell scr-col-sma scr-align-right" role="columnheader" aria-sort={getAriaSort("sma200w")}>
+              {sortIndicator("200W SMA", sortKey === "sma200w", sortDirection, () => onSort("sma200w"))}
+            </div>
+            <div className="scr-head-cell scr-col-sma-dist scr-align-right" role="columnheader" aria-sort={getAriaSort("smaDistance")}>
+              {sortIndicator("SMA Dist", sortKey === "smaDistance", sortDirection, () => onSort("smaDistance"))}
+            </div>
+            <div className="scr-head-cell scr-col-s1 scr-align-right" role="columnheader">S1</div>
+            <div className="scr-head-cell scr-col-s2 scr-align-right" role="columnheader">S2</div>
+            <div className="scr-head-cell scr-col-s3 scr-align-right" role="columnheader">S3</div>
+            <div className="scr-head-cell scr-col-s4 scr-align-right" role="columnheader">S4</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="scr-table-body-scroll" ref={bodyScrollRef} onScroll={handleBodyScroll}>
+        <div className="scr-table-body" role="rowgroup">
+          {rows.length === 0 ? (
+            <div className="scr-grid-row scr-empty-row" role="row">
+              <div className="scr-empty" role="cell" aria-colspan={11}>No matching stocks.</div>
+            </div>
+          ) : rows.map((row) => (
+            <div className="scr-grid-row scr-body-row" role="row" key={row.symbol}>
+              <div className="scr-cell scr-col-company" role="cell">
+                <span className="scr-company">
+                  <CompanyLogo symbol={row.symbol} logoUrl={row.logoUrl} className="scr-company-logo" size={24} />
+                  <span className="scr-company-text">
+                    <b>{row.symbol}</b>
+                    <small>{row.company ?? "—"}</small>
+                  </span>
+                </span>
+              </div>
+              <div className="scr-cell scr-col-price scr-align-right" role="cell">
+                <span className="scr-price">{row.price === null ? "—" : row.price.toFixed(2)}</span>
+              </div>
+              <div className="scr-cell scr-col-1d scr-align-right" role="cell">
+                <span className={changeClass(row)}>{formatSigned(row.changePct)}%</span>
+              </div>
+              <div className="scr-cell scr-col-iv scr-align-right" role="cell">{ivCell(row)}</div>
+              <div className="scr-cell scr-col-iv-dist scr-align-right" role="cell">{ivDistanceCell(row)}</div>
+              <div className="scr-cell scr-col-sma scr-align-right" role="cell">{smaCell(row)}</div>
+              <div className="scr-cell scr-col-sma-dist scr-align-right" role="cell">{distanceCell(row)}</div>
+              <div className="scr-cell scr-col-s1 scr-align-right" role="cell">{supportCell(row, 1)}</div>
+              <div className="scr-cell scr-col-s2 scr-align-right" role="cell">{supportCell(row, 2)}</div>
+              <div className="scr-cell scr-col-s3 scr-align-right" role="cell">{supportCell(row, 3)}</div>
+              <div className="scr-cell scr-col-s4 scr-align-right" role="cell">{supportCell(row, 4)}</div>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );

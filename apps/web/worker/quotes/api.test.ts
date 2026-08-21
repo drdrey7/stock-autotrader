@@ -34,7 +34,7 @@ const quoteRow = (symbol: string, price: number, updatedAt: string): LatestRow =
 
 function createApiDb(options: {
   quotes?: LatestRow[];
-  companies?: Array<{ symbol: string; company: string }>;
+  companies?: Array<{ symbol: string; company: string; logo_url?: string | null }>;
   health?: unknown;
   wsHealth?: unknown;
   metrics?: Array<Record<string, unknown>>;
@@ -163,15 +163,16 @@ describe("readScreenerApi", () => {
     }
   });
 
-  it("merges latest quotes with Core Universe and company names", async () => {
+  it("merges latest quotes with Core Universe, company names, and logos", async () => {
     const db = createApiDb({
       quotes: [quoteRow("AAPL", 232.5, NOW_ISO)],
-      companies: [{ symbol: "AAPL", company: "Apple Inc." }],
+      companies: [{ symbol: "AAPL", company: "Apple Inc.", logo_url: "https://example.com/aapl.png" }],
       health: health(NOW_ISO),
     });
     const response = await readScreenerApi(envFrom(db), REGULAR);
     const apple = response.rows.find((row) => row.symbol === "AAPL")!;
     expect(apple.company).toBe("Apple Inc.");
+    expect(apple.logoUrl).toBe("https://example.com/aapl.png");
     expect(apple.price).toBe(232.5);
     expect(apple.changePct).toBe(1.2);
     expect(apple.state).toBe("Live");
@@ -185,6 +186,17 @@ describe("readScreenerApi", () => {
     expect(response.quotes.counts).toEqual({ total: 50, live: 1, cached: 0, stale: 0, unavailable: 49 });
     // The other 49 rows stay present and honest.
     expect(response.rows.filter((row) => row.symbol !== "AAPL")).toHaveLength(49);
+  });
+
+  it("logoUrl is null when the company has no logo_url", async () => {
+    const db = createApiDb({
+      quotes: [quoteRow("AAPL", 232.5, NOW_ISO)],
+      companies: [{ symbol: "AAPL", company: "Apple Inc." }],
+      health: health(NOW_ISO),
+    });
+    const response = await readScreenerApi(envFrom(db), REGULAR);
+    const apple = response.rows.find((row) => row.symbol === "AAPL")!;
+    expect(apple.logoUrl).toBeNull();
   });
 
   it("is NOT Live when exactly one of fifty is stale (49 fresh + 1 stale)", async () => {

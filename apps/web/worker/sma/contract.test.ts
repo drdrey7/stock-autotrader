@@ -28,6 +28,7 @@ function row(overrides: Record<string, unknown> = {}): Record<string, unknown> {
     sma200wAsOf: "2026-08-19T06:00:00.000Z",
     supportLevels: [],
     intrinsicValue: null,
+    logoUrl: null,
     ...overrides,
   };
 }

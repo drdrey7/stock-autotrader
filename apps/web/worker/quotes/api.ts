@@ -102,13 +102,14 @@ function buildIntrinsicValue(
 interface CompanyRow {
   symbol: string;
   company: string;
+  logo_url: string | null;
 }
 
-/** Core Universe company names are best-effort enrichment — never fatal. */
+/** Core Universe company names + logo are best-effort enrichment — never fatal. */
 async function readCoreCompanies(db: D1Database): Promise<CompanyRow[]> {
   try {
     const result = await db.prepare(
-      "SELECT symbol, company FROM earnings_universe WHERE source = 'core' AND active = 1",
+      "SELECT symbol, company, logo_url FROM earnings_universe WHERE source = 'core' AND active = 1",
     ).all<CompanyRow>();
     return result.results ?? [];
   } catch {
@@ -178,11 +179,12 @@ export async function readScreenerApi(env: Env, now = new Date()): Promise<Scree
   // when the WebSocket collector has never written a record.
   const restHealth = wsHealth ? null : await readQuotesHealth(env.DB);
   const quoteBySymbol = new Map(quotes.map((quote) => [quote.symbol, quote]));
-  const companyBySymbol = new Map(companies.map((company) => [company.symbol, company.company]));
+  const companyBySymbol = new Map(companies.map((company) => [company.symbol, company]));
 
   const marketState: ScreenerMarketState = quotesMarketState(now);
   const rows: ScreenerRow[] = CORE_UNIVERSE.map((symbol) => {
     const quote = quoteBySymbol.get(symbol);
+    const company = companyBySymbol.get(symbol);
     const state: SourceState = quoteState(quote?.updated_at ?? null, now);
     const quoteInput: QuoteInput | null = quote && quote.price > 0
       ? { price: quote.price, provider_timestamp: quote.provider_timestamp }
@@ -191,7 +193,7 @@ export async function readScreenerApi(env: Env, now = new Date()): Promise<Scree
     const currentPrice = quote?.price ?? null;
     return {
       symbol,
-      company: companyBySymbol.get(symbol) ?? null,
+      company: company?.company ?? null,
       price: currentPrice,
       changeAbs: quote?.change_abs ?? null,
       changePct: quote?.change_pct ?? null,
@@ -210,6 +212,7 @@ export async function readScreenerApi(env: Env, now = new Date()): Promise<Scree
       sma200wAsOf: sma.sma200wAsOf,
       supportLevels: buildSupportLevels(currentPrice, supportLevels.get(symbol), splitEffectiveDatesAsOf.get(symbol), currentMarketDate),
       intrinsicValue: buildIntrinsicValue(currentPrice, intrinsicValues.get(symbol), splitEffectiveDatesAsOf.get(symbol), currentMarketDate),
+      logoUrl: company?.logo_url ?? null,
     };
   });
 

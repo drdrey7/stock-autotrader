@@ -1,63 +1,138 @@
-/* Screener PR1 — feature-scoped styles. Brand blue is interface chrome;
-   positive/negative tokens carry market meaning. */
+/* Screener Responsive UX PR — feature-scoped styles. */
 
-.screener-page{max-width:1100px}
+.screener-page{max-width:1200px}
 .screener-heading h1{letter-spacing:-.04em}
 
-.scr-summary{display:flex;flex-wrap:wrap;gap:8px;margin:4px 0 14px}
-.scr-summary-item{display:inline-flex;align-items:center;gap:8px;padding:8px 13px;border:1px solid var(--border);border-radius:999px;background:var(--surface);font-size:10px;font-weight:700;color:var(--muted);letter-spacing:.04em}
-.scr-summary-item b{font-size:11px;color:var(--text);font-weight:800}
+/* Market status badge */
+.scr-market-status{margin:8px 0 14px}
+.scr-market-badge{display:inline-flex;align-items:center;gap:6px;font-size:10px;font-weight:700;letter-spacing:.04em;color:var(--muted)}
+.scr-market-dot{width:7px;height:7px;border-radius:50%;background:currentColor}
+.scr-market-open .scr-market-dot{background:var(--positive);box-shadow:0 0 0 2px var(--positive-soft)}
+.scr-market-closed .scr-market-dot{background:var(--red);box-shadow:0 0 0 2px var(--red-soft)}
 
-.scr-card{border:1px solid var(--border);border-radius:15px;background:var(--surface);box-shadow:var(--shadow);overflow:hidden}
-.scr-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border-bottom:1px solid var(--border);flex-wrap:wrap}
-.scr-chips{display:flex;gap:6px}
-.scr-chip{padding:7px 13px;border:1px solid var(--border);border-radius:999px;background:var(--surface-2);color:var(--muted);font-size:10px;font-weight:800;cursor:pointer;letter-spacing:.03em}
-.scr-chip:hover{border-color:var(--brand-blue)}
-.scr-chip-active{background:var(--brand-blue);border-color:var(--brand-blue);color:#fff}
-.scr-toolbar-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.scr-preset-label{font-size:9px;font-weight:800;letter-spacing:.08em;color:var(--muted);text-transform:uppercase}
-.scr-preset{padding:7px 10px;border:1px solid var(--border);border-radius:9px;background:var(--surface-2);color:var(--text);font-size:11px;font-weight:700;outline:none;cursor:pointer}
-.scr-preset:focus{border-color:var(--brand-blue)}
-.scr-search{min-width:220px;padding:8px 12px;border:1px solid var(--border);border-radius:9px;background:var(--surface-2);color:var(--text);font-size:11px;outline:none}
+/* Card stays overflow-visible so Filters popover can escape short result sets. */
+.scr-card{border:1px solid var(--border);border-radius:15px;background:var(--surface);box-shadow:var(--shadow)}
+
+/* Toolbar */
+.scr-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;border-bottom:1px solid var(--border)}
+.scr-toolbar-left{display:flex;align-items:center;gap:8px}
+.scr-toolbar-right{display:flex;align-items:center;flex:1;justify-content:flex-end}
+.scr-filters-container{position:relative;display:flex;align-items:center;gap:6px}
+.scr-filters-btn{display:inline-flex;align-items:center;gap:5px;padding:7px 12px;border:1px solid var(--border);border-radius:9px;background:var(--surface-2);color:var(--text);font-size:11px;font-weight:700;cursor:pointer;letter-spacing:.03em;white-space:nowrap}
+.scr-filters-btn:hover{border-color:var(--brand-blue)}
+.scr-filters-caret{font-size:9px}
+
+/* Active filter chip with X */
+.scr-active-filter-chip{display:inline-flex;align-items:center;gap:4px;padding:4px 8px 4px 10px;border:1px solid var(--border);border-radius:999px;background:var(--surface-2);font-size:10px;font-weight:600;color:var(--brand-blue);white-space:nowrap}
+.scr-clear-filter-btn{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;padding:0;border:0;background:none;color:var(--muted);font-size:14px;font-weight:600;line-height:1;cursor:pointer;border-radius:50%}
+.scr-clear-filter-btn:hover{color:var(--text);background:var(--border)}
+
+/* Popover */
+.scr-filters-popover{position:absolute;top:calc(100% + 4px);left:0;z-index:100;min-width:160px;padding:4px;border:1px solid var(--border);border-radius:10px;background:var(--surface);box-shadow:0 8px 24px rgba(0,0,0,.12);display:flex;flex-direction:column;gap:1px;max-height:min(420px,calc(100vh - 120px));overflow-y:auto}
+.scr-filter-option{padding:8px 12px;border:0;background:none;text-align:left;font-size:11px;font-weight:600;color:var(--text);cursor:pointer;border-radius:7px;white-space:nowrap}
+.scr-filter-option:hover{background:var(--surface-2)}
+.scr-filter-option-active{background:var(--brand-blue);color:#fff}
+.scr-filter-option-active:hover{background:var(--brand-blue)}
+
+.scr-search{min-width:180px;padding:8px 12px;border:1px solid var(--border);border-radius:9px;background:var(--surface-2);color:var(--text);font-size:11px;outline:none}
 .scr-search:focus{border-color:var(--brand-blue)}
 
-.scr-table-wrap{overflow-x:auto}
-.scr-table{width:100%;border-collapse:collapse;min-width:720px}
-.scr-table th{text-align:left;padding:10px 16px;color:var(--muted);background:var(--surface-2);font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.09em;white-space:nowrap}
-.scr-table td{padding:11px 16px;border-top:1px solid var(--border);font-size:12px;white-space:nowrap}
-.scr-table tbody tr:hover{background:var(--surface-2)}
+/* One source of truth for all 11 grid tracks. Sticky top follows shell chrome per breakpoint. */
+.scr-table-region{
+  /* Desktop shell has fixed sidebar, not top chrome. Mobile shell-topbar is added below. */
+  --scr-sticky-top:0px;
+  --scr-company-width:180px;
+  --scr-price-width:80px;
+  --scr-grid-content-width:calc(var(--scr-company-width) + var(--scr-price-width) + 675px);
+  --scr-grid-template:var(--scr-company-width) var(--scr-price-width) 75px 70px 80px 90px 80px 70px 70px 70px 70px;
+  box-sizing:border-box;
+}
+.scr-table-region *{box-sizing:border-box}
+
+/* Grid row shared by header and every body row. */
+.scr-grid-row{display:grid;grid-template-columns:var(--scr-grid-template);width:max(100%,var(--scr-grid-content-width));min-width:var(--scr-grid-content-width);}
+.scr-grid-row>*{min-width:0}
+
+/* Sticky header sibling of body horizontal scroller. */
+.scr-table-head-shell{position:sticky;top:var(--scr-sticky-top);z-index:30;background:var(--surface);border-bottom:1px solid var(--border)}
+.scr-table-head-scroll{width:100%;overflow:clip;--scr-head-scroll-left:0px}
+.scr-table-head-grid{position:relative}
+.scr-head-cell{position:relative;z-index:1;display:flex;align-items:center;padding:9px 12px;color:var(--muted);background:var(--surface-2);font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;white-space:nowrap}
+.scr-head-cell.scr-align-right{justify-content:flex-end;text-align:right}
+.scr-table-head-grid>*:nth-child(n+3){transform:translateX(calc(-1 * var(--scr-head-scroll-left)));will-change:transform}
+.scr-table-head-grid>.scr-col-company,.scr-table-head-grid>.scr-col-price{position:sticky;background:var(--surface-2);z-index:3}
+.scr-table-head-grid>.scr-col-company{left:0}
+.scr-table-head-grid>.scr-col-price{left:var(--scr-company-width)}
+
+/* Body owns horizontal scroll. No height/max-height: page keeps normal vertical scroll. */
+.scr-table-body-scroll{width:100%;overflow-x:auto;border-bottom-left-radius:15px;border-bottom-right-radius:15px}
+.scr-table-body{width:max(100%,var(--scr-grid-content-width));min-width:var(--scr-grid-content-width)}
+.scr-body-row{position:relative}
+.scr-cell{position:relative;z-index:0;padding:9px 12px;border-top:1px solid var(--border);font-size:12px;white-space:nowrap;vertical-align:middle;background:var(--surface)}
+.scr-body-row:hover>.scr-cell{background:var(--surface-2)}
+.scr-body-row>.scr-col-company,.scr-body-row>.scr-col-price{position:sticky;background:var(--surface);z-index:2}
+.scr-body-row>.scr-col-company{left:0}
+.scr-body-row>.scr-col-price{left:var(--scr-company-width)}
+.scr-body-row:hover>.scr-col-company,.scr-body-row:hover>.scr-col-price{background:var(--surface-2)}
+.scr-col-price::after{content:"";position:absolute;top:0;right:-8px;bottom:0;width:8px;background:linear-gradient(to right,rgba(0,0,0,.04),transparent);pointer-events:none}
+
+/* Empty state spans full grid. */
+.scr-empty-row>.scr-empty{grid-column:1 / -1}
 .scr-align-right{text-align:right}
-.scr-align-right th{text-align:right}
-.scr-company{display:flex;flex-direction:column;line-height:1.25}
-.scr-company b{font-size:12px;letter-spacing:-.01em}
-.scr-company small{color:var(--muted);font-size:9px;max-width:220px;overflow:hidden;text-overflow:ellipsis}
+
+/* Company cell */
+.scr-company{display:flex;align-items:center;gap:8px;line-height:1.25}
+.scr-company-logo{flex-shrink:0;border-radius:4px;overflow:hidden}
+.scr-company-text{display:flex;flex-direction:column;min-width:0;overflow:hidden}
+.scr-company-text b{font-size:12px;letter-spacing:-.01em}
+.scr-company-text small{color:var(--muted);font-size:9px;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;transition:opacity .15s ease,max-width .15s ease}
+.company-logo-img{display:block;object-fit:contain;background:var(--surface-2)}
+.company-logo-fallback{display:inline-flex;align-items:center;justify-content:center;border-radius:4px;background:var(--company);color:#fff;font-weight:800;font-size:11px;flex-shrink:0}
+
+/* Numbers and colors */
 .scr-price{font-variant-numeric:tabular-nums;font-weight:700}
 .scr-up{color:var(--positive);font-weight:700;font-variant-numeric:tabular-nums}
 .scr-down{color:var(--red);font-weight:700;font-variant-numeric:tabular-nums}
 .scr-near{color:var(--amber);font-weight:700;font-variant-numeric:tabular-nums}
 .scr-flat{color:var(--muted);font-variant-numeric:tabular-nums}
+
+/* Sort button */
 .scr-sort{background:none;border:0;padding:0;color:inherit;font:inherit;font-weight:800;cursor:pointer;letter-spacing:inherit;text-transform:inherit;display:inline-flex;align-items:center;gap:4px}
 .scr-sort:hover{color:var(--text)}
 .scr-sort-active{color:var(--text)}
 .scr-sort-arrow{font-size:9px}
-.scr-state{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:999px;font-size:9px;font-weight:800}
-.scr-state::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
-.scr-state-live{background:var(--positive-soft);color:var(--positive)}
-.scr-state-cached{background:var(--amber-soft);color:var(--amber)}
-.scr-state-stale{background:var(--amber-soft);color:var(--amber)}
-.scr-state-error{background:var(--red-soft);color:var(--red)}
-.scr-state-unavailable{background:var(--surface-2);color:var(--muted)}
-.scr-state-text.scr-state-live{color:var(--positive)}
-.scr-state-text.scr-state-cached,.scr-state-text.scr-state-stale{color:var(--amber)}
-.scr-state-text.scr-state-unavailable{color:var(--muted)}
+
+/* Supports */
+.scr-support{font-variant-numeric:tabular-nums;font-weight:700;color:var(--text)}
+.scr-support-pill{display:inline-flex;align-items:center;justify-content:center;padding:2px 6px;border-radius:999px;background:var(--positive-soft);color:var(--positive);border:1px solid var(--positive);font-weight:700;font-variant-numeric:tabular-nums;min-width:38px;font-size:11px}
+
+/* Empty / loading */
 .scr-empty,.scr-message{padding:34px;text-align:center;color:var(--muted);font-size:11px}
 .scr-banner{padding:10px 16px;background:var(--amber-soft);color:var(--amber);font-size:10px;font-weight:700;border-bottom:1px solid var(--border)}
 .scr-error{padding:22px;color:var(--red);background:var(--red-soft);font-size:11px;font-weight:600;border-color:var(--red)}
-.scr-support{font-variant-numeric:tabular-nums;font-weight:700;color:var(--text)}
-.scr-support-pill{display:inline-flex;align-items:center;justify-content:center;padding:3px 8px;border-radius:999px;background:var(--positive-soft);color:var(--positive);border:1px solid var(--positive);font-weight:700;font-variant-numeric:tabular-nums;min-width:42px}
 
+/* Responsive */
 @media (max-width:900px){
-  .scr-toolbar{align-items:stretch}
-  .scr-search{min-width:0;flex:1}
-  .scr-summary-item{flex:1;justify-content:space-between}
+  .scr-toolbar{align-items:stretch;gap:8px}
+  .scr-toolbar-left{flex-wrap:wrap}
+  .scr-toolbar-right{flex:1;justify-content:flex-end}
+  .scr-search{min-width:0;flex:1;max-width:220px}
+  .scr-table-region{--scr-sticky-top:64px;--scr-company-width:135px;--scr-price-width:60px}
+}
+
+@media (max-width:600px){
+  .scr-toolbar{flex-direction:column}
+  .scr-toolbar-left{width:100%;flex-wrap:wrap}
+  .scr-toolbar-right{width:100%;justify-content:stretch}
+  .scr-search{max-width:none;flex:1}
+  .scr-filters-btn{padding:6px 10px}
+}
+
+/* Mobile compact state: scrollLeft >20; expansion below 8 is controlled by React. */
+@media (max-width:700px){
+  .scr-table-region.scr-table-scrolled{--scr-company-width:86px;--scr-price-width:56px}
+  .scr-table-scrolled .scr-company-text small{opacity:0;max-width:0;margin:0;padding:0}
+  .scr-table-scrolled .scr-company{gap:5px}
+  .scr-table-scrolled .scr-head-cell,.scr-table-scrolled .scr-cell{padding-left:6px;padding-right:4px}
+  .scr-table-scrolled .scr-col-price{padding-left:4px;padding-right:6px}
 }

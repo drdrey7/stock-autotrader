@@ -5,22 +5,16 @@ import {
   applyScreenerQuery,
   DEFAULT_SCREENER_QUERY,
   type ScreenerFilter,
-  type ScreenerPreset,
   type ScreenerSortDirection,
   type ScreenerSortKey,
 } from "./screener-filter";
 import "./screener.css";
 
-const MARKET_STATE_LABEL = { regular: "Open", post_close: "Post-close", closed: "Closed" } as const;
-
-const freshCount = (data: NonNullable<ReturnType<typeof useScreener>["data"]>): number =>
-  data.quotes.counts.live + data.quotes.counts.cached;
+const marketOpen = (state: string): boolean => state === "regular";
 
 /**
- * Lazy-loaded Screener route (Screener PR1). Owns the search/filter/sort
- * state; the table is presentational and reads from pure screener-filter
- * logic. Loading, stale and unavailable states are visually distinct and no
- * mock value is ever presented as live.
+ * Lazy-loaded Screener route. Owns the search/filter/sort state;
+ * the table is presentational and reads from pure screener-filter logic.
  */
 export default function ScreenerPage() {
   const { data, loading, error } = useScreener();
@@ -44,10 +38,7 @@ export default function ScreenerPage() {
     }
   };
 
-  const onPreset = (preset: ScreenerPreset) => {
-    setSortKey(preset.sortKey);
-    setSortDirection(preset.direction);
-  };
+  const isOpen = data ? marketOpen(data.marketState) : false;
 
   return (
     <div className="page-content inner-page screener-page">
@@ -60,27 +51,11 @@ export default function ScreenerPage() {
       </div>
 
       {data && (
-        <div className="scr-summary" aria-live="polite">
-          <span className="scr-summary-item">
-            Market
-            <b>{MARKET_STATE_LABEL[data.marketState]}</b>
+        <div className="scr-market-status" aria-live="polite">
+          <span className={`scr-market-badge ${isOpen ? "scr-market-open" : "scr-market-closed"}`}>
+            <span className="scr-market-dot" aria-hidden="true" />
+            {isOpen ? "Market Open" : "Market Closed"}
           </span>
-          <span className="scr-summary-item">
-            Quotes
-            <b className={`scr-state-text scr-state-${data.quotes.state.toLowerCase()}`}>
-              {data.quotes.state}
-            </b>
-          </span>
-          <span className="scr-summary-item">
-            Fresh
-            <b>{freshCount(data)}/{data.universe.total}</b>
-          </span>
-          {data.quotes.counts.stale > 0 && (
-            <span className="scr-summary-item">
-              Stale
-              <b className="scr-state-text scr-state-stale">{data.quotes.counts.stale}</b>
-            </span>
-          )}
         </div>
       )}
 
@@ -110,7 +85,6 @@ export default function ScreenerPage() {
           sortKey={sortKey}
           sortDirection={sortDirection}
           onSort={onSort}
-          onPreset={onPreset}
         />
       )}
     </div>

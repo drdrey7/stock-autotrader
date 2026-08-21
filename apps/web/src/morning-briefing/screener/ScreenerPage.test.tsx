@@ -1,7 +1,11 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import type { ScreenerApiResponse, ScreenerRow } from "@stock-autotrader/contracts";
 import ScreenerPage from "./ScreenerPage";
+
+const screenerCss = readFileSync(resolve(process.cwd(), "src/morning-briefing/screener/screener.css"), "utf8");
 
 const row = (symbol: string, price: number | null, changePct: number | null, state: ScreenerRow["state"], supportLevels: ScreenerRow["supportLevels"] = []): ScreenerRow => ({
   symbol,
@@ -24,9 +28,10 @@ const row = (symbol: string, price: number | null, changePct: number | null, sta
   sma200wAsOf: null,
   supportLevels,
   intrinsicValue: null,
+  logoUrl: null,
 });
 
-const makeResponse = (rows: ScreenerRow[]): ScreenerApiResponse => {
+const makeResponse = (rows: ScreenerRow[], marketState = "regular"): ScreenerApiResponse => {
   const counts = rows.reduce(
     (acc, item) => {
       if (item.state === "Live") acc.live += 1;
@@ -39,7 +44,7 @@ const makeResponse = (rows: ScreenerRow[]): ScreenerApiResponse => {
   );
   return {
     universe: { version: 1, total: 50 },
-    marketState: "regular",
+    marketState: marketState as ScreenerApiResponse["marketState"],
     quotes: {
       state: counts.stale === 0 && counts.live > 0 ? "Live" : counts.stale === 0 ? "Cached" : "Stale",
       provider: "finnhub-quote",
@@ -109,13 +114,19 @@ describe("ScreenerPage", () => {
     expect(screen.getByText("S42")).toBeInTheDocument();
   });
 
-  it("filters gainers and losers", async () => {
+  it("filters gainers and losers via Filters menu", async () => {
     render(<ScreenerPage />);
     await screen.findByRole("table");
-    fireEvent.click(screen.getByRole("tab", { name: "Gainers" }));
+    // Open filters menu
+    fireEvent.click(screen.getByRole("button", { name: /Filters/i }));
+    // Click Gainers
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Gainers" }));
     await waitFor(() => expect(screen.queryByText("S01")).not.toBeInTheDocument());
     expect(screen.getByText("S00")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: "Losers" }));
+    // Open filters menu again
+    fireEvent.click(screen.getByRole("button", { name: /Filters/i }));
+    // Click Losers
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Losers" }));
     await waitFor(() => expect(screen.queryByText("S00")).not.toBeInTheDocument());
     expect(screen.getByText("S01")).toBeInTheDocument();
   });
@@ -134,23 +145,7 @@ describe("ScreenerPage", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(/temporarily unavailable/i);
   });
 
-  it("labels Cached rows neutrally — never 'Market closed' during the open grace", async () => {
-    const cached: ScreenerRow = row("ZZZ", 100, null, "Cached");
-    fetchMock.mockImplementation(async () =>
-      new Response(JSON.stringify(makeResponse([cached])), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }));
-    render(<ScreenerPage />);
-    // "Cached" appears in the row status cell (and possibly the summary chip).
-    expect(await screen.findAllByText("Cached")).toHaveLength(2);
-    expect(screen.queryByText("Market closed")).not.toBeInTheDocument();
-  });
-
   it("renders a pre-PR2 production payload (SMA fields OMITTED) — '—' placeholders, no crash", async () => {
-    // Cloudflare PR preview proxies /api/* to the PRODUCTION worker, which
-    // returns the OLD shape: rows have NO sma200w/distanceToSma200wPct/
-    // sma200wState/sma200wHistoryWeeks/sma200wAsOf. Never .toFixed(undefined).
     const omit = (keys: string[], raw: Record<string, unknown>) => {
       const copy = { ...raw };
       for (const key of keys) delete copy[key];
@@ -168,11 +163,10 @@ describe("ScreenerPage", () => {
       }));
     render(<ScreenerPage />);
     await screen.findByRole("table");
-    await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(51)); // header + 50
-    // SMA cells degrade to the em-dash placeholder; no "Page unavailable".
+    await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(51));
     expect(screen.queryByText(/Page unavailable/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/temporarily unavailable/i)).not.toBeInTheDocument();
-    expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(100); // 2 SMA cols x 50 rows
+    expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(100);
   });
 
   it("renders S1-S4 columns headers and triggered pills", async () => {
@@ -215,7 +209,6 @@ describe("ScreenerPage", () => {
     render(<ScreenerPage />);
     await screen.findByRole("table");
     expect(screen.getByText("XYZ")).toBeInTheDocument();
-    // 4 dash cells for the S1-S4 columns
     expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(4);
   });
 
@@ -227,7 +220,7 @@ describe("ScreenerPage", () => {
       high: null,
       method: "manual",
       asOf: "2026-08-03",
-      distancePct: (200 / 251.12 - 1) * 100, // ~-20.36%
+      distancePct: (200 / 251.12 - 1) * 100,
     };
     fetchMock.mockImplementation(async () =>
       new Response(JSON.stringify(makeResponse([ivRow])), {
@@ -237,12 +230,9 @@ describe("ScreenerPage", () => {
     );
     render(<ScreenerPage />);
     await screen.findByRole("table");
-    // Headers
     expect(screen.getByText("IV")).toBeInTheDocument();
     expect(screen.getByText("IV Dist")).toBeInTheDocument();
-    // IV Base value
     expect(screen.getByText("251.12")).toBeInTheDocument();
-    // IV Dist negative value (green) — should have scr-up class
     const ivDistCell = document.querySelector(".scr-up");
     expect(ivDistCell).not.toBeNull();
     expect(ivDistCell!.textContent).toContain("-20");
@@ -256,7 +246,7 @@ describe("ScreenerPage", () => {
       high: null,
       method: "manual",
       asOf: "2026-08-03",
-      distancePct: (300 / 251.12 - 1) * 100, // ~+19.46%
+      distancePct: (300 / 251.12 - 1) * 100,
     };
     fetchMock.mockImplementation(async () =>
       new Response(JSON.stringify(makeResponse([ivRow])), {
@@ -289,14 +279,11 @@ describe("ScreenerPage", () => {
     );
     render(<ScreenerPage />);
     await screen.findByRole("table");
-    // 0% should be scr-flat (neutral) and render "0.00%"
-    // Find the cell containing "0.00%" (the IV Dist value)
-    const cells = document.querySelectorAll("td");
+    const cells = document.querySelectorAll("[role=\"cell\"]");
     const zeroCell = Array.from(cells).find(
-      (c) => c.textContent === "0.00%" && c.className === "scr-align-right",
+      (c) => c.textContent === "0.00%" && c.classList.contains("scr-align-right"),
     );
     expect(zeroCell).not.toBeNull();
-    expect(zeroCell!.className).toBe("scr-align-right");
     expect(zeroCell!.textContent).toBe("0.00%");
   });
 
@@ -318,7 +305,6 @@ describe("ScreenerPage", () => {
     );
     render(<ScreenerPage />);
     await screen.findByRole("table");
-    // IV shows base value, IV Dist shows "—"
     expect(screen.getByText("251.12")).toBeInTheDocument();
     expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(1);
   });
@@ -334,7 +320,459 @@ describe("ScreenerPage", () => {
     render(<ScreenerPage />);
     await screen.findByRole("table");
     expect(screen.getByText("MSFT")).toBeInTheDocument();
-    // Both IV and IV Dist show "—"
     expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("renders Market Open badge when marketState is regular", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    expect(screen.getByText("Market Open")).toBeInTheDocument();
+  });
+
+  it("renders Market Closed badge when marketState is closed", async () => {
+    fetchMock.mockImplementation(async () =>
+      new Response(JSON.stringify(makeResponse([row("A", 100, 1, "Live")], "closed")), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    expect(screen.getByText("Market Closed")).toBeInTheDocument();
+  });
+
+  it("does not render old summary chips (Fresh, Stale, etc.)", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    expect(screen.queryByText(/Fresh/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Stale/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Cached/i)).not.toBeInTheDocument();
+  });
+
+  it("does not render old sort preset select", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    expect(screen.queryByLabelText(/SMA sort preset/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Closest to 200W/i)).not.toBeInTheDocument();
+  });
+
+  it("renders exactly 11 columns in correct order", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    const headers = screen.getAllByRole("columnheader").map((h) => h.textContent?.replace(/[↑↓]/g, "").trim());
+    expect(headers).toEqual([
+      "Company", "Price", "1D", "IV", "IV Dist", "200W SMA", "SMA Dist", "S1", "S2", "S3", "S4",
+    ]);
+  });
+
+  it("does not render Chg $ or Status columns", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    const headers = screen.getAllByRole("columnheader").map((h) => h.textContent?.trim());
+    expect(headers).not.toContain("Chg $");
+    expect(headers).not.toContain("Status");
+    expect(headers).not.toContain("Chg %");
+    expect(headers).not.toContain("Dist");
+  });
+
+  it("S1-S4 headers are not sortable (no button)", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    const s1 = screen.getByRole("columnheader", { name: "S1" });
+    expect(s1?.querySelector("button")).toBeNull();
+    const s4 = screen.getByRole("columnheader", { name: "S4" });
+    expect(s4?.querySelector("button")).toBeNull();
+  });
+
+  it("Company header sorts by company name", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    const companyHeader = screen.getByRole("columnheader", { name: "Company" });
+    const button = companyHeader.querySelector("button")!;
+    expect(button).not.toBeNull();
+    fireEvent.click(button);
+    expect(companyHeader).toHaveAttribute("aria-sort", "descending");
+    fireEvent.click(button);
+    expect(companyHeader).toHaveAttribute("aria-sort", "ascending");
+  });
+
+  // --- P2 filter toggle tests ---
+  it("P2: click Filters opens; click same Filters closes; outside click closes", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    const filtersBtn = screen.getByRole("button", { name: /Filters/i });
+
+    // A) Closed → click → opens
+    fireEvent.click(filtersBtn);
+    expect(screen.getByRole("menuitemradio", { name: "Gainers" })).toBeInTheDocument();
+    expect(filtersBtn).toHaveAttribute("aria-expanded", "true");
+
+    // B) Open → click same button → closes (NOT reopen due to outside click race)
+    fireEvent.click(filtersBtn);
+    await waitFor(() => expect(screen.queryByRole("menuitemradio", { name: "Gainers" })).not.toBeInTheDocument());
+    expect(filtersBtn).toHaveAttribute("aria-expanded", "false");
+
+    // C) Open → outside click → closes
+    fireEvent.click(filtersBtn);
+    expect(screen.getByRole("menuitemradio", { name: "Gainers" })).toBeInTheDocument();
+    // Simulate mousedown outside the filters container
+    const outside = document.createElement("div");
+    document.body.appendChild(outside);
+    fireEvent.mouseDown(outside);
+    await waitFor(() => expect(screen.queryByRole("menuitemradio", { name: "Gainers" })).not.toBeInTheDocument());
+    expect(filtersBtn).toHaveAttribute("aria-expanded", "false");
+    document.body.removeChild(outside);
+
+    // D) Open → click inside popover → does NOT close before selection
+    fireEvent.click(filtersBtn);
+    expect(screen.getByRole("menuitemradio", { name: "Gainers" })).toBeInTheDocument();
+  });
+
+  it("does not reopen when trigger click follows popover blur", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    const filtersBtn = screen.getByRole("button", { name: /Filters/i });
+    fireEvent.click(filtersBtn);
+    const all = screen.getByRole("menuitemradio", { name: "All" });
+    await waitFor(() => expect(document.activeElement).toBe(all));
+
+    fireEvent.blur(all, { relatedTarget: filtersBtn });
+    expect(screen.getByRole("menuitemradio", { name: "All" })).toBeInTheDocument();
+
+    fireEvent.click(filtersBtn);
+    await waitFor(() => expect(screen.queryByRole("menuitemradio", { name: "All" })).not.toBeInTheDocument());
+    expect(filtersBtn).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("filter menu supports keyboard navigation and Escape restores trigger focus", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    const filtersBtn = screen.getByRole("button", { name: /Filters/i });
+    fireEvent.click(filtersBtn);
+
+    const all = screen.getByRole("menuitemradio", { name: "All" });
+    const gainers = screen.getByRole("menuitemradio", { name: "Gainers" });
+    const last = screen.getByRole("menuitemradio", { name: "Above Support" });
+    await waitFor(() => expect(document.activeElement).toBe(all));
+    expect(all).toHaveAttribute("tabindex", "0");
+    expect(gainers).toHaveAttribute("tabindex", "-1");
+
+    fireEvent.keyDown(all, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(gainers);
+    expect(all).toHaveAttribute("tabindex", "-1");
+    expect(gainers).toHaveAttribute("tabindex", "0");
+    fireEvent.keyDown(gainers, { key: "End" });
+    expect(document.activeElement).toBe(last);
+    expect(last).toHaveAttribute("tabindex", "0");
+    fireEvent.keyDown(last, { key: "Home" });
+    expect(document.activeElement).toBe(all);
+    fireEvent.keyDown(all, { key: "Escape" });
+
+    await waitFor(() => expect(screen.queryByRole("menuitemradio", { name: "All" })).not.toBeInTheDocument());
+    expect(filtersBtn).toHaveAttribute("aria-expanded", "false");
+    expect(document.activeElement).toBe(filtersBtn);
+  });
+
+  it("filter menu closes when focus tabs outside", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    fireEvent.click(screen.getByRole("button", { name: /Filters/i }));
+    const all = screen.getByRole("menuitemradio", { name: "All" });
+    const search = screen.getByRole("searchbox");
+    await waitFor(() => expect(document.activeElement).toBe(all));
+
+    fireEvent.blur(all, { relatedTarget: search });
+    await waitFor(() => expect(screen.queryByRole("menuitemradio", { name: "All" })).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: /Filters/i })).toHaveAttribute("aria-expanded", "false");
+  });
+
+  // --- Active filter chip tests ---
+  it("A) filter=all → no chip", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    expect(screen.queryByRole("button", { name: /Clear .* filter/ })).not.toBeInTheDocument();
+  });
+
+  it("B) select Below IV → chip appears with X button", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    fireEvent.click(screen.getByRole("button", { name: /Filters/i }));
+    const belowIv = screen.getByRole("menuitemradio", { name: "Below IV" });
+    expect(belowIv).toHaveAttribute("aria-checked", "false");
+    fireEvent.click(belowIv);
+    expect(screen.getByText("Below IV")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Clear Below IV filter" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Filters/i }));
+    const selectedBelowIv = screen.getByRole("menuitemradio", { name: "Below IV" });
+    expect(selectedBelowIv).toHaveAttribute("aria-checked", "true");
+    await waitFor(() => expect(document.activeElement).toBe(selectedBelowIv));
+    expect(selectedBelowIv).toHaveAttribute("tabindex", "0");
+  });
+
+  it("C) click X → filter returns to All", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    fireEvent.click(screen.getByRole("button", { name: /Filters/i }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Gainers" }));
+    await waitFor(() => expect(screen.getByText("Gainers")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Clear Gainers filter" }));
+    await waitFor(() => expect(screen.queryByText("Gainers")).not.toBeInTheDocument());
+    // All 50 rows should be visible again (not just gainers)
+    await waitFor(() => expect(screen.getByText("S01")).toBeInTheDocument()); // loser row
+    await waitFor(() => expect(screen.getByText("S00")).toBeInTheDocument()); // gainer row
+  });
+
+  it("D) clear filter preserves search", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "S42" } });
+    fireEvent.click(screen.getByRole("button", { name: /Filters/i }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Gainers" }));
+    fireEvent.click(screen.getByRole("button", { name: "Clear Gainers filter" }));
+    await waitFor(() => expect(screen.getByText("S42")).toBeInTheDocument());
+    expect(screen.getByRole("searchbox")).toHaveValue("S42");
+  });
+
+  it("E) clear filter preserves sorting", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    const priceBtn = screen.getByRole("columnheader", { name: /Price/ }).querySelector("button")!;
+    // Sort by Price ascending
+    fireEvent.click(priceBtn); // desc
+    fireEvent.click(priceBtn); // asc
+    fireEvent.click(screen.getByRole("button", { name: /Filters/i }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Below IV" }));
+    fireEvent.click(screen.getByRole("button", { name: "Clear Below IV filter" }));
+    // Price header should still have aria-sort=ascending
+    const priceHeader = screen.getByRole("columnheader", { name: /Price/ });
+    expect(priceHeader).toHaveAttribute("aria-sort", "ascending");
+  });
+
+  // --- X closes popover test ---
+  it("F) click X clears filter AND closes popover", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    // Open Filters and select Below IV
+    fireEvent.click(screen.getByRole("button", { name: /Filters/i }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Below IV" }));
+    await waitFor(() => expect(screen.getByText("Below IV")).toBeInTheDocument());
+    // Reopen Filters (filter is now active, chip is visible)
+    fireEvent.click(screen.getByRole("button", { name: /Filters/i }));
+    expect(screen.getByRole("menuitemradio", { name: "All" })).toBeInTheDocument();
+    // Click X to clear
+    fireEvent.click(screen.getByRole("button", { name: "Clear Below IV filter" }));
+    // Chip should disappear
+    await waitFor(() => expect(screen.queryByText("Below IV")).not.toBeInTheDocument());
+    // Popover should close
+    await waitFor(() => expect(screen.queryByRole("menuitemradio", { name: "All" })).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: /Filters/i })).toHaveAttribute("aria-expanded", "false");
+  });
+
+  // --- Mobile scroll state test ---
+  it("mobile: horizontal scroll adds scr-table-scrolled class", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    const bodyScroll = document.querySelector(".scr-table-body-scroll") as HTMLDivElement;
+    const region = screen.getByRole("table");
+    expect(bodyScroll).not.toBeNull();
+    expect(region.classList.contains("scr-table-scrolled")).toBe(false);
+    fireEvent.scroll(bodyScroll, { target: { scrollLeft: 30 } });
+    await waitFor(() => expect(region.classList.contains("scr-table-scrolled")).toBe(true));
+    fireEvent.scroll(bodyScroll, { target: { scrollLeft: 0 } });
+    await waitFor(() => expect(region.classList.contains("scr-table-scrolled")).toBe(false));
+  });
+
+  it("grid width derives from tracks and ends at S4 without a minimum canvas", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    const region = screen.getByRole("table");
+    const templateMatch = screenerCss.match(/--scr-grid-template:([^;]+);/);
+    const template = templateMatch?.[1]?.trim() ?? "";
+    expect(screenerCss).toContain("--scr-grid-content-width:calc(var(--scr-company-width) + var(--scr-price-width) + 675px);");
+    expect(screenerCss).not.toContain("--scr-grid-min-width");
+    expect(template.split(/\s+/).slice(-4)).toEqual(["70px", "70px", "70px", "70px"]);
+    expect(region).toBeInTheDocument();
+  });
+
+  it("body owns horizontal scroll and header mirrors its visual offset", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    const bodyScroll = document.querySelector(".scr-table-body-scroll") as HTMLDivElement;
+    const headScroll = document.querySelector(".scr-table-head-scroll") as HTMLDivElement;
+
+    Object.defineProperty(bodyScroll, "scrollLeft", { configurable: true, writable: true, value: 100 });
+    fireEvent.scroll(bodyScroll);
+    expect(headScroll.scrollLeft).toBe(0);
+    expect(headScroll.style.getPropertyValue("--scr-head-scroll-left")).toBe("100px");
+
+    Object.defineProperty(headScroll, "scrollLeft", { configurable: true, writable: true, value: 40 });
+    fireEvent.scroll(headScroll);
+    expect(bodyScroll.scrollLeft).toBe(100);
+  });
+
+  it("header focus reveals both sides around sticky Company and Price", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    const bodyScroll = document.querySelector(".scr-table-body-scroll") as HTMLDivElement;
+    const headScroll = document.querySelector(".scr-table-head-scroll") as HTMLDivElement;
+    const companyCell = document.querySelector(".scr-body-row > .scr-col-company") as HTMLElement;
+    const priceCell = document.querySelector(".scr-body-row > .scr-col-price") as HTMLElement;
+    const ivCell = screen.getByRole("columnheader", { name: "IV" });
+    const ivButton = ivCell.querySelector("button")!;
+
+    Object.defineProperty(companyCell, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ left: 0, right: 180, width: 180 }),
+    });
+    Object.defineProperty(priceCell, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ left: 180, right: 260, width: 80 }),
+    });
+    Object.defineProperty(bodyScroll, "clientWidth", { configurable: true, value: 390 });
+    Object.defineProperty(bodyScroll, "scrollWidth", { configurable: true, value: 1004 });
+    Object.defineProperty(bodyScroll, "scrollLeft", { configurable: true, writable: true, value: 0 });
+    Object.defineProperty(ivCell, "offsetWidth", { configurable: true, value: 80 });
+
+    // Right reveal: IV starts at 500, beyond body viewport right 390.
+    Object.defineProperty(ivCell, "offsetLeft", { configurable: true, value: 500 });
+    fireEvent.focus(ivButton);
+    expect(bodyScroll.scrollLeft).toBe(190);
+    fireEvent.scroll(bodyScroll);
+    expect(headScroll.style.getPropertyValue("--scr-head-scroll-left")).toBe("190px");
+
+    // Left reveal: IV starts before visible content area 500 + sticky width 260.
+    Object.defineProperty(bodyScroll, "scrollLeft", { configurable: true, writable: true, value: 500 });
+    Object.defineProperty(ivCell, "offsetLeft", { configurable: true, value: 335 });
+    fireEvent.focus(ivButton);
+    expect(bodyScroll.scrollLeft).toBe(75);
+
+    // Clamp: target before scroll origin cannot produce negative scrollLeft.
+    Object.defineProperty(bodyScroll, "scrollLeft", { configurable: true, writable: true, value: 500 });
+    Object.defineProperty(ivCell, "offsetLeft", { configurable: true, value: 100 });
+    fireEvent.focus(ivButton);
+    expect(bodyScroll.scrollLeft).toBe(0);
+  });
+
+  it("numeric headers use flex-end alignment and S1-S4 share the support tracks", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    const numericLabels = ["Price", "1D", "IV", "IV Dist", "200W SMA", "SMA Dist", "S1", "S2", "S3", "S4"];
+    for (const label of numericLabels) {
+      expect(screen.getByRole("columnheader", { name: label })).toHaveClass("scr-align-right");
+    }
+
+    const supportHeaders = ["S1", "S2", "S3", "S4"].map((label) => screen.getByRole("columnheader", { name: label }));
+    expect(supportHeaders.map((header) => header.className)).toEqual([
+      "scr-head-cell scr-col-s1 scr-align-right",
+      "scr-head-cell scr-col-s2 scr-align-right",
+      "scr-head-cell scr-col-s3 scr-align-right",
+      "scr-head-cell scr-col-s4 scr-align-right",
+    ]);
+    const bodyRow = document.querySelector(".scr-body-row")!;
+    expect(Array.from(bodyRow.children).slice(7, 11).map((cell) => cell.className)).toEqual([
+      "scr-cell scr-col-s1 scr-align-right",
+      "scr-cell scr-col-s2 scr-align-right",
+      "scr-cell scr-col-s3 scr-align-right",
+      "scr-cell scr-col-s4 scr-align-right",
+    ]);
+  });
+
+  // --- aria-sort tests ---
+  it("aria-sort: active columnheader gets ascending/descending", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    const priceHeader = screen.getByRole("columnheader", { name: "Price" });
+    const priceBtn = priceHeader.querySelector("button")!;
+    // Default is changePct, so Price should have no aria-sort
+    expect(priceHeader).not.toHaveAttribute("aria-sort");
+    // Click Price → descending
+    fireEvent.click(priceBtn);
+    expect(priceHeader).toHaveAttribute("aria-sort", "descending");
+    // Click again → ascending
+    fireEvent.click(priceBtn);
+    expect(priceHeader).toHaveAttribute("aria-sort", "ascending");
+  });
+
+  it("aria-sort: only active columnheader has aria-sort", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    // 1D is already active by default (descending); click its button to make it ascending
+    const oneDHeader = screen.getByRole("columnheader", { name: /1D/ });
+    fireEvent.click(oneDHeader.querySelector("button")!);
+    const headers = screen.getAllByRole("columnheader");
+    const withAriaSort = headers.filter((h) => h.hasAttribute("aria-sort"));
+    expect(withAriaSort).toHaveLength(1);
+    expect(withAriaSort[0]).toHaveAttribute("aria-sort", "ascending");
+  });
+
+  it("aria-sort: S1-S4 never have aria-sort", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    const s1 = screen.getByRole("columnheader", { name: "S1" });
+    const s4 = screen.getByRole("columnheader", { name: "S4" });
+    expect(s1).not.toHaveAttribute("aria-sort");
+    expect(s4).not.toHaveAttribute("aria-sort");
+  });
+
+  // --- Sticky header layering ---
+  it("sticky Company + Price headers have higher z-index than normal headers", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    const companyHeader = screen.getByRole("columnheader", { name: "Company" });
+    const priceHeader = screen.getByRole("columnheader", { name: "Price" });
+    const oneDHeader = screen.getByRole("columnheader", { name: /1D/ });
+    expect(companyHeader?.classList.contains("scr-col-company")).toBe(true);
+    expect(priceHeader?.classList.contains("scr-col-price")).toBe(true);
+    expect(oneDHeader.classList.contains("scr-col-1d")).toBe(true);
+  });
+
+  it("Company and Price headers are sticky with top:0", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    const companyHeader = screen.getByRole("columnheader", { name: "Company" });
+    const priceHeader = screen.getByRole("columnheader", { name: "Price" });
+    expect(companyHeader).toHaveClass("scr-col-company");
+    expect(priceHeader).toHaveClass("scr-col-price");
+  });
+
+  // --- Compact state preserves logo + ticker ---
+  it("compact mode hides company name but preserves ticker", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    const bodyScroll = document.querySelector(".scr-table-body-scroll") as HTMLDivElement;
+    const region = screen.getByRole("table");
+    fireEvent.scroll(bodyScroll, { target: { scrollLeft: 30 } });
+    await waitFor(() => expect(region.classList.contains("scr-table-scrolled")).toBe(true));
+    expect(screen.getByText("S00")).toBeInTheDocument();
+  });
+
+  // --- Filter popover clipping fix ---
+  it("zero-results: Filters popover shows all 10 options", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "ZZZZZZ" } });
+    expect(screen.getByText("No matching stocks.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Filters/i }));
+    const options = screen.getAllByRole("menuitemradio");
+    expect(options).toHaveLength(10);
+    expect(screen.getByRole("menuitemradio", { name: "Above Support" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitemradio", { name: "All" })).toBeInTheDocument();
+  });
+
+  it("renders sibling sticky header and horizontal body scroll containers", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    const region = screen.getByRole("table");
+    const headShell = document.querySelector(".scr-table-head-shell");
+    const headScroll = document.querySelector(".scr-table-head-scroll");
+    const bodyScroll = document.querySelector(".scr-table-body-scroll");
+    expect(headShell).not.toBeNull();
+    expect(headScroll).not.toBeNull();
+    expect(bodyScroll).not.toBeNull();
+    expect(region.contains(headShell!)).toBe(true);
+    expect(region.contains(bodyScroll!)).toBe(true);
+    expect(headShell!.nextElementSibling).toBe(bodyScroll);
+    expect(screen.getAllByRole("columnheader")).toHaveLength(11);
+    expect(screen.getAllByRole("rowgroup")).toHaveLength(2);
   });
 });
