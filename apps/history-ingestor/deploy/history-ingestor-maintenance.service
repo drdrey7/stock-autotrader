@@ -2,8 +2,9 @@
 
 [Unit]
 Description=Stock Autotrader weekly history maintenance (Alpha Vantage)
-After=network-online.target
+After=network-online.target history-ingestor-bootstrap.service
 Wants=network-online.target
+Before=history-ingestor-due-split.service
 
 [Service]
 Type=oneshot
