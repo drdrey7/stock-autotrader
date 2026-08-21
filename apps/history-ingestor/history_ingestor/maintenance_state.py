@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import Settings
-from .state import _payload_revision, _payload_updated_at_epoch
+from .state import _resolve_checkpoint_payload
 
 ENDPOINTS = ("splits", "weekly", "metrics")
 STATUS_PENDING = "pending"
@@ -141,25 +141,7 @@ class MaintenanceStore:
                 mirror_payload = json.loads(self._state_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             mirror_payload = None
-        if d1_payload is None or (
-            mirror_payload is not None
-            and (
-                _payload_revision(mirror_payload) > _payload_revision(d1_payload)
-                or (
-                    _payload_revision(mirror_payload) == _payload_revision(d1_payload)
-                    and (
-                        _payload_updated_at_epoch(mirror_payload) > _payload_updated_at_epoch(d1_payload)
-                        or (
-                            _payload_updated_at_epoch(mirror_payload) == _payload_updated_at_epoch(d1_payload)
-                            and mirror_payload != d1_payload
-                        )
-                    )
-                )
-            )
-        ):
-            payload = mirror_payload
-        else:
-            payload = d1_payload
+        payload = _resolve_checkpoint_payload(d1_payload, mirror_payload)
         self._state = MaintenanceState.from_dict(payload)
         self._loaded = True
         return self._state

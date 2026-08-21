@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from history_ingestor.config import Settings, from_env
-from history_ingestor.state import Checkpoint, StateStore
+from history_ingestor.state import AmbiguousLegacyCheckpointError, Checkpoint, StateStore, _resolve_checkpoint_payload
 
 META_KEY = "historyBootstrapState"
 TEST_TODAY = "2030-01-02"
@@ -127,7 +127,28 @@ class StateTests(unittest.TestCase):
             self.assertEqual(store.key_used(0), 7)
             self.assertEqual(store.symbol_status("NVDA", "weekly"), "done")
 
-    def test_equal_timestamp_prefers_divergent_local_mirror(self):
+    def test_equal_timestamp_different_payloads_mirror_wins_with_revision(self):
+        """Non-legacy checkpoints (revision>0) with equal timestamps → mirror wins."""
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            timestamp = "2030-01-02T00:00:01Z"
+            d1.meta[META_KEY] = {
+                "version": 1, "day": TEST_TODAY, "revision": 5,
+                "keys": [{"index": 0, "used": 1, "status": "ok"}, {"index": 1, "used": 0, "status": "ok"}],
+                "symbols": {}, "started_at": "", "updated_at": timestamp,
+            }
+            path = Path(tmp) / "checkpoint.json"
+            path.write_text(json.dumps({
+                "version": 1, "day": TEST_TODAY, "revision": 5,
+                "keys": [{"index": 0, "used": 2, "status": "ok"}, {"index": 1, "used": 0, "status": "ok"}],
+                "symbols": {}, "started_at": "", "updated_at": timestamp,
+            }))
+            store = self._store(d1, tmp)
+            store.load()
+            self.assertEqual(store.key_used(0), 2)
+
+    def test_equal_timestamp_different_payloads_fails_closed_for_legacy(self):
+        """Legacy checkpoints (revision=0) with equal timestamps but different payloads → fail closed."""
         with tempfile.TemporaryDirectory() as tmp:
             d1 = FakeD1()
             timestamp = "2030-01-02T00:00:01Z"
@@ -143,8 +164,8 @@ class StateTests(unittest.TestCase):
                 "symbols": {}, "started_at": "", "updated_at": timestamp,
             }))
             store = self._store(d1, tmp)
-            store.load()
-            self.assertEqual(store.key_used(0), 2)
+            with self.assertRaises(AmbiguousLegacyCheckpointError):
+                store.load()
 
     def test_higher_revision_wins_over_stale_d1(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -276,6 +297,138 @@ class StateTests(unittest.TestCase):
             store.mark_key_exhausted(0)
             self.assertEqual(store.key_remaining(0), 0)
             self.assertFalse(store.any_budget_remaining())
+
+
+class LegacyCheckpointResolutionTests(unittest.TestCase):
+    """Tests for fail-closed behavior with ambiguous legacy checkpoints."""
+
+    def test_legacy_identical_payloads_load_normally(self):
+        """Legacy checkpoints (revision=0) with same timestamp and same payloads → load normally."""
+        d1 = {
+            "version": 1, "day": "2030-01-02",
+            "keys": [{"index": 0, "used": 5, "status": "ok"}],
+            "symbols": {"NVDA": {"splits": "done"}},
+            "updated_at": "2030-01-02T00:00:00Z",
+        }
+        mirror = dict(d1)
+        result = _resolve_checkpoint_payload(d1, mirror)
+        self.assertEqual(result, d1)
+
+    def test_legacy_different_timestamps_newer_wins(self):
+        """Legacy checkpoints with different timestamps → newer timestamp wins."""
+        d1 = {
+            "version": 1, "day": "2030-01-02",
+            "keys": [{"index": 0, "used": 5, "status": "ok"}],
+            "symbols": {},
+            "updated_at": "2030-01-02T00:00:00Z",
+        }
+        mirror = {
+            "version": 1, "day": "2030-01-02",
+            "keys": [{"index": 0, "used": 10, "status": "ok"}],
+            "symbols": {},
+            "updated_at": "2030-01-02T00:00:01Z",
+        }
+        result = _resolve_checkpoint_payload(d1, mirror)
+        self.assertEqual(result, mirror)
+
+    def test_legacy_same_timestamp_different_payloads_fails_closed(self):
+        """Legacy checkpoints (revision=0) with same timestamp but different payloads → fail closed."""
+        d1 = {
+            "version": 1, "day": "2030-01-02",
+            "keys": [{"index": 0, "used": 5, "status": "ok"}],
+            "symbols": {"NVDA": {"splits": "done"}},
+            "updated_at": "2030-01-02T00:00:00Z",
+        }
+        mirror = {
+            "version": 1, "day": "2030-01-02",
+            "keys": [{"index": 0, "used": 10, "status": "ok"}],
+            "symbols": {"AAPL": {"splits": "done"}},
+            "updated_at": "2030-01-02T00:00:00Z",
+        }
+        with self.assertRaises(AmbiguousLegacyCheckpointError) as ctx:
+            _resolve_checkpoint_payload(d1, mirror)
+        self.assertIn("Ambiguous legacy checkpoint", str(ctx.exception))
+        self.assertIn("Manual reconciliation required", str(ctx.exception))
+
+    def test_revision_greater_than_zero_same_timestamp_different_payloads_mirror_wins(self):
+        """Non-legacy checkpoints (revision>0) with same timestamp → mirror wins (newer write)."""
+        d1 = {
+            "version": 1, "day": "2030-01-02", "revision": 5,
+            "keys": [{"index": 0, "used": 5, "status": "ok"}],
+            "symbols": {},
+            "updated_at": "2030-01-02T00:00:00Z",
+        }
+        mirror = {
+            "version": 1, "day": "2030-01-02", "revision": 5,
+            "keys": [{"index": 0, "used": 10, "status": "ok"}],
+            "symbols": {},
+            "updated_at": "2030-01-02T00:00:00Z",
+        }
+        result = _resolve_checkpoint_payload(d1, mirror)
+        self.assertEqual(result, mirror)
+
+    def test_different_revisions_higher_wins(self):
+        """Checkpoints with different revisions → higher revision wins."""
+        d1 = {
+            "version": 1, "day": "2030-01-02", "revision": 3,
+            "keys": [{"index": 0, "used": 5, "status": "ok"}],
+            "symbols": {},
+            "updated_at": "2030-01-02T00:00:05Z",
+        }
+        mirror = {
+            "version": 1, "day": "2030-01-02", "revision": 7,
+            "keys": [{"index": 0, "used": 10, "status": "ok"}],
+            "symbols": {},
+            "updated_at": "2030-01-02T00:00:00Z",
+        }
+        result = _resolve_checkpoint_payload(d1, mirror)
+        self.assertEqual(result, mirror)
+
+    def test_only_d1_exists(self):
+        """Only D1 exists → D1."""
+        d1 = {
+            "version": 1, "day": "2030-01-02",
+            "keys": [{"index": 0, "used": 5, "status": "ok"}],
+            "symbols": {},
+        }
+        result = _resolve_checkpoint_payload(d1, None)
+        self.assertEqual(result, d1)
+
+    def test_only_mirror_exists(self):
+        """Only mirror exists → mirror."""
+        mirror = {
+            "version": 1, "day": "2030-01-02",
+            "keys": [{"index": 0, "used": 5, "status": "ok"}],
+            "symbols": {},
+        }
+        result = _resolve_checkpoint_payload(None, mirror)
+        self.assertEqual(result, mirror)
+
+    def test_neither_exists(self):
+        """Neither exists → None."""
+        result = _resolve_checkpoint_payload(None, None)
+        self.assertIsNone(result)
+
+    def test_ambiguous_legacy_raises_before_provider_calls(self):
+        """Verify that ambiguous legacy checkpoint raises immediately on load, before any provider work."""
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            d1.meta[META_KEY] = {
+                "version": 1, "day": TEST_TODAY,
+                "keys": [{"index": 0, "used": 5, "status": "ok"}],
+                "symbols": {"NVDA": {"splits": "done"}},
+                "updated_at": "2030-01-02T00:00:00Z",
+            }
+            path = Path(tmp) / "checkpoint.json"
+            path.write_text(json.dumps({
+                "version": 1, "day": TEST_TODAY,
+                "keys": [{"index": 0, "used": 10, "status": "ok"}],
+                "symbols": {"AAPL": {"splits": "done"}},
+                "updated_at": "2030-01-02T00:00:00Z",
+            }))
+            store = StateStore(settings_with(), d1, state_path=path)
+            with self.assertRaises(AmbiguousLegacyCheckpointError):
+                store.load()
 
 
 if __name__ == "__main__":

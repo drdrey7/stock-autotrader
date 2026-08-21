@@ -100,6 +100,70 @@ def _payload_revision(payload: dict | None) -> int:
     return int(payload.get("revision", 0) or 0)
 
 
+class AmbiguousLegacyCheckpointError(RuntimeError):
+    """Raised when two legacy checkpoints (revision=0) have the same timestamp
+    but different payloads — the code cannot determine which is newer and
+    must NOT choose arbitrarily. Requires manual reconciliation."""
+
+
+def _resolve_checkpoint_payload(
+    d1_payload: dict | None,
+    mirror_payload: dict | None,
+) -> dict | None:
+    """Resolve which payload to load, with fail-closed behavior for ambiguous legacy checkpoints.
+
+    Rules:
+    - Only D1 exists → D1
+    - Only mirror exists → mirror
+    - Both exist:
+      - Higher revision wins
+      - Same revision + different timestamps → newer timestamp wins
+      - Same revision + same timestamp + same payload → either (deterministic)
+      - Same revision=0 + same timestamp + DIFFERENT payloads → FAIL CLOSED
+      - Same revision>0 + same timestamp + different payloads → mirror wins (newer write)
+    - Neither exists → None
+    """
+    if d1_payload is None:
+        return mirror_payload
+    if mirror_payload is None:
+        return d1_payload
+
+    d1_rev = _payload_revision(d1_payload)
+    mirror_rev = _payload_revision(mirror_payload)
+
+    # Different revisions → higher wins
+    if mirror_rev > d1_rev:
+        return mirror_payload
+    if d1_rev > mirror_rev:
+        return d1_payload
+
+    # Same revision — compare timestamps
+    d1_epoch = _payload_updated_at_epoch(d1_payload)
+    mirror_epoch = _payload_updated_at_epoch(mirror_payload)
+
+    if mirror_epoch > d1_epoch:
+        return mirror_payload
+    if d1_epoch > mirror_epoch:
+        return d1_payload
+
+    # Same revision AND same timestamp
+    if d1_payload == mirror_payload:
+        # Identical payloads — deterministic, return either
+        return d1_payload
+
+    # Same revision, same timestamp, different payloads
+    if d1_rev == 0:
+        # Legacy ambiguity — cannot determine which is newer, fail closed
+        raise AmbiguousLegacyCheckpointError(
+            "Ambiguous legacy checkpoint: D1 and mirror have revision=0, "
+            "identical timestamps, but different payloads. "
+            "Manual reconciliation required."
+        )
+
+    # revision > 0 with same timestamp — mirror is the newer write
+    return mirror_payload
+
+
 def _iso_day_of(iso_timestamp: str) -> str:
     """UTC calendar day of a stored ISO timestamp ('' for unparseable)."""
     try:
@@ -151,25 +215,7 @@ class StateStore:
                 mirror_payload = json.loads(self._state_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             mirror_payload = None
-        if d1_payload is None or (
-            mirror_payload is not None
-            and (
-                _payload_revision(mirror_payload) > _payload_revision(d1_payload)
-                or (
-                    _payload_revision(mirror_payload) == _payload_revision(d1_payload)
-                    and (
-                        _payload_updated_at_epoch(mirror_payload) > _payload_updated_at_epoch(d1_payload)
-                        or (
-                            _payload_updated_at_epoch(mirror_payload) == _payload_updated_at_epoch(d1_payload)
-                            and mirror_payload != d1_payload
-                        )
-                    )
-                )
-            )
-        ):
-            payload = mirror_payload
-        else:
-            payload = d1_payload
+        payload = _resolve_checkpoint_payload(d1_payload, mirror_payload)
         self._state = Checkpoint.from_dict(payload) if payload else Checkpoint()
         today = _utc_date()
         if self._state.day != today:

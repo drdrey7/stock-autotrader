@@ -10,7 +10,8 @@ from pathlib import Path
 
 from history_ingestor.config import Settings
 from history_ingestor.maintenance import MaintenanceRunner
-from history_ingestor.maintenance_state import MaintenanceStore
+from history_ingestor.maintenance_state import MaintenanceStore, _resolve_checkpoint_payload
+from history_ingestor.state import AmbiguousLegacyCheckpointError
 
 try:
     from test_bootstrap import FakeD1, FakeProvider, future_splits_payload, splits_payload, weekly_payload
@@ -51,7 +52,26 @@ class MaintenanceStoreTests(unittest.TestCase):
             store.load()
             self.assertEqual(store.state.symbol_status("NVDA", "metrics"), "done")
 
-    def test_equal_timestamp_prefers_divergent_local_mirror(self):
+    def test_equal_timestamp_different_payloads_mirror_wins_with_revision(self):
+        """Non-legacy maintenance checkpoints (revision>0) with equal timestamps → mirror wins."""
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            timestamp = "2030-01-02T00:00:01Z"
+            d1.meta["historyMaintenanceState"] = {
+                "version": 1, "cycle_week": "2026-W33", "revision": 5, "updated_at": timestamp,
+                "symbols": {"NVDA": {"splits": "pending", "weekly": "pending", "metrics": "pending"}},
+            }
+            path = Path(tmp) / "maintenance.json"
+            path.write_text(json.dumps({
+                "version": 1, "cycle_week": "2026-W33", "revision": 5, "updated_at": timestamp,
+                "symbols": {"NVDA": {"splits": "done", "weekly": "done", "metrics": "done"}},
+            }))
+            store = MaintenanceStore(settings_with(), d1, state_path=path)
+            store.load()
+            self.assertEqual(store.state.symbol_status("NVDA", "metrics"), "done")
+
+    def test_equal_timestamp_different_payloads_fails_closed_for_legacy(self):
+        """Legacy maintenance checkpoints (revision=0) with equal timestamps but different payloads → fail closed."""
         with tempfile.TemporaryDirectory() as tmp:
             d1 = FakeD1()
             timestamp = "2030-01-02T00:00:01Z"
@@ -65,8 +85,8 @@ class MaintenanceStoreTests(unittest.TestCase):
                 "symbols": {"NVDA": {"splits": "done", "weekly": "done", "metrics": "done"}},
             }))
             store = MaintenanceStore(settings_with(), d1, state_path=path)
-            store.load()
-            self.assertEqual(store.state.symbol_status("NVDA", "metrics"), "done")
+            with self.assertRaises(AmbiguousLegacyCheckpointError):
+                store.load()
 
     def test_higher_revision_wins_over_stale_d1(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -143,6 +163,71 @@ class MaintenanceStoreTests(unittest.TestCase):
                 import json
                 mirror = json.load(f)
             self.assertEqual(mirror["revision"], 1)
+
+
+class LegacyMaintenanceCheckpointTests(unittest.TestCase):
+    """Tests for fail-closed behavior with ambiguous legacy maintenance checkpoints."""
+
+    def test_legacy_identical_payloads_load_normally(self):
+        """Legacy maintenance checkpoints (revision=0) with same timestamp and same payloads → load normally."""
+        d1 = {
+            "version": 1, "cycle_week": "2026-W33",
+            "symbols": {"NVDA": {"splits": "done", "weekly": "done", "metrics": "done"}},
+            "updated_at": "2030-01-02T00:00:00Z",
+        }
+        mirror = dict(d1)
+        result = _resolve_checkpoint_payload(d1, mirror)
+        self.assertEqual(result, d1)
+
+    def test_legacy_different_timestamps_newer_wins(self):
+        """Legacy maintenance checkpoints with different timestamps → newer timestamp wins."""
+        d1 = {
+            "version": 1, "cycle_week": "2026-W33",
+            "symbols": {"NVDA": {"splits": "pending", "weekly": "pending", "metrics": "pending"}},
+            "updated_at": "2030-01-02T00:00:00Z",
+        }
+        mirror = {
+            "version": 1, "cycle_week": "2026-W33",
+            "symbols": {"NVDA": {"splits": "done", "weekly": "done", "metrics": "done"}},
+            "updated_at": "2030-01-02T00:00:01Z",
+        }
+        result = _resolve_checkpoint_payload(d1, mirror)
+        self.assertEqual(result, mirror)
+
+    def test_legacy_same_timestamp_different_payloads_fails_closed(self):
+        """Legacy maintenance checkpoints (revision=0) with same timestamp but different payloads → fail closed."""
+        d1 = {
+            "version": 1, "cycle_week": "2026-W33",
+            "symbols": {"NVDA": {"splits": "done", "weekly": "pending", "metrics": "pending"}},
+            "updated_at": "2030-01-02T00:00:00Z",
+        }
+        mirror = {
+            "version": 1, "cycle_week": "2026-W33",
+            "symbols": {"NVDA": {"splits": "pending", "weekly": "done", "metrics": "done"}},
+            "updated_at": "2030-01-02T00:00:00Z",
+        }
+        with self.assertRaises(AmbiguousLegacyCheckpointError) as ctx:
+            _resolve_checkpoint_payload(d1, mirror)
+        self.assertIn("Ambiguous legacy checkpoint", str(ctx.exception))
+
+    def test_ambiguous_legacy_maintenance_raises_before_provider_calls(self):
+        """Verify that ambiguous legacy maintenance checkpoint raises immediately on load."""
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            d1.meta["historyMaintenanceState"] = {
+                "version": 1, "cycle_week": "2026-W33",
+                "symbols": {"NVDA": {"splits": "done", "weekly": "pending", "metrics": "pending"}},
+                "updated_at": "2030-01-02T00:00:00Z",
+            }
+            path = Path(tmp) / "maintenance.json"
+            path.write_text(json.dumps({
+                "version": 1, "cycle_week": "2026-W33",
+                "symbols": {"NVDA": {"splits": "pending", "weekly": "done", "metrics": "done"}},
+                "updated_at": "2030-01-02T00:00:00Z",
+            }))
+            store = MaintenanceStore(settings_with(), d1, state_path=path)
+            with self.assertRaises(AmbiguousLegacyCheckpointError):
+                store.load()
 
 
 # --- cycle calendars ---------------------------------------------------------
