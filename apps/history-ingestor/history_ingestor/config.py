@@ -159,6 +159,10 @@ def from_env(environ: os._Environ | dict[str, str] | None = None) -> Settings:
                 "HISTORY_INGESTOR_STATE",
                 str(Path.home() / ".local" / "state" / "history-ingestor" / "checkpoint.json"),
             )),
+            maintenance_state_path=Path(os.environ.get(
+                "HISTORY_INGESTOR_MAINTENANCE_STATE",
+                str(Path.home() / ".local" / "state" / "history-ingestor" / "maintenance.json"),
+            )),
         )
     finally:
         if environ is not None:

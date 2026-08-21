@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from history_ingestor.config import Settings
+from history_ingestor.config import Settings, from_env
 from history_ingestor.state import Checkpoint, StateStore
 
 META_KEY = "historyBootstrapState"
@@ -45,6 +45,19 @@ class StateTests(unittest.TestCase):
         utc_date_patcher = patch("history_ingestor.state._utc_date", return_value=TEST_TODAY)
         utc_date_patcher.start()
         self.addCleanup(utc_date_patcher.stop)
+
+    def test_maintenance_state_path_can_use_service_state_directory(self):
+        settings = from_env({
+            "ALPHA_VANTAGE_API_KEYS": "K",
+            "CLOUDFLARE_API_TOKEN": "t",
+            "CLOUDFLARE_ACCOUNT_ID": "a",
+            "CLOUDFLARE_D1_DATABASE_ID": "d",
+            "HISTORY_INGESTOR_MAINTENANCE_STATE": "/var/lib/history-ingestor/maintenance.json",
+        })
+        self.assertEqual(
+            settings.maintenance_state_path,
+            Path("/var/lib/history-ingestor/maintenance.json"),
+        )
 
     def _store(self, d1, tmp):
         return StateStore(settings_with(), d1, state_path=Path(tmp) / "checkpoint.json")
