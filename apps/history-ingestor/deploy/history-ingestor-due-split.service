@@ -17,7 +17,6 @@ Type=oneshot
 User=hermes
 Group=hermes
 WorkingDirectory=/home/hermes/projects/stock-autotrader/apps/history-ingestor
-EnvironmentFile=/etc/stock-autotrader/cloudflare.env
 EnvironmentFile=/etc/stock-autotrader/alpha-vantage.env
 ExecStart=/usr/bin/python3 -m history_ingestor apply-due-splits
 # Same protection as the weekly maintenance service.

@@ -100,24 +100,58 @@ systemctl clean --what=state history-ingestor-maintenance.timer 2>/dev/null || t
 systemctl clean --what=state history-ingestor-due-split.timer 2>/dev/null || true
 systemctl clean --what=state history-ingestor-bootstrap.timer 2>/dev/null || true
 
-# Verify next legitimate trigger is in the future (proof of safety)
-echo
-echo "=== Verifying next OnCalendar windows (must be in the future) ==="
-MAINT_NEXT=$(systemd-analyze calendar '*-*-* 07:00:00' 2>&1 | grep 'Next elapse' | awk '{print $3, $4}')
-BOOT_NEXT=$(systemd-analyze calendar '*-*-* 06:00:00' 2>&1 | grep 'Next elapse' | awk '{print $3, $4}')
-DUE_NEXT=$(systemd-analyze calendar 'Tue..Sat *-*-* 13:10:00' 2>&1 | grep 'Next elapse' | awk '{print $3, $4}')
-echo "  maintenance: $MAINT_NEXT"
-echo "  bootstrap:   $BOOT_NEXT"
-echo "  due-split:   $DUE_NEXT"
+# Parse the actual ISO timestamp from systemd output. Ignore weekday names;
+# they are presentation text and must not participate in safety decisions.
+calendar_next_timestamp() {
+    local expression="$1"
+    local output
+    local timestamp
 
-# Confirm all next triggers are in the future (after today)
-TODAY=$(date -u +%Y-%m-%d)
-if [[ "$MAINT_NEXT" > "$TODAY" ]] && [[ "$BOOT_NEXT" > "$TODAY" ]] && [[ "$DUE_NEXT" > "$TODAY" ]]; then
-    echo "  ✓ All next triggers confirmed in the future"
-else
-    echo "  ERROR: A next trigger appears to be today or in the past" >&2
+    if ! output=$(systemd-analyze calendar "$expression" 2>&1); then
+        echo "ERROR: Could not calculate next trigger for $expression" >&2
+        return 1
+    fi
+    if [[ "$output" =~ ([0-9]{4}-[0-9]{2}-[0-9]{2})[[:space:]]([0-9]{2}:[0-9]{2}:[0-9]{2})([[:space:]][A-Za-z][A-Za-z0-9_+:/-]*)? ]]; then
+        timestamp="${BASH_REMATCH[1]} ${BASH_REMATCH[2]}${BASH_REMATCH[3]:- UTC}"
+    else
+        echo "ERROR: Could not parse next trigger for $expression" >&2
+        return 1
+    fi
+    printf '%s\n' "$timestamp"
+}
+
+timestamp_to_epoch() {
+    local timestamp="$1"
+    local epoch
+    if ! epoch=$(date -u -d "$timestamp" +%s 2>/dev/null); then
+        echo "ERROR: Could not parse timestamp: $timestamp" >&2
+        return 1
+    fi
+    printf '%s\n' "$epoch"
+}
+
+# Verify next legitimate triggers are in a future UTC day (proof of safety).
+echo
+echo "=== Verifying next OnCalendar windows (must be in a future UTC day) ==="
+if ! MAINT_NEXT=$(calendar_next_timestamp '*-*-* 07:00:00'); then exit 1; fi
+if ! BOOT_NEXT=$(calendar_next_timestamp '*-*-* 06:00:00'); then exit 1; fi
+if ! DUE_NEXT=$(calendar_next_timestamp 'Tue..Sat *-*-* 13:10:00'); then exit 1; fi
+if ! MAINT_NEXT_EPOCH=$(timestamp_to_epoch "$MAINT_NEXT"); then exit 1; fi
+if ! BOOT_NEXT_EPOCH=$(timestamp_to_epoch "$BOOT_NEXT"); then exit 1; fi
+if ! DUE_NEXT_EPOCH=$(timestamp_to_epoch "$DUE_NEXT"); then exit 1; fi
+
+NOW_EPOCH=$(date -u +%s)
+TODAY_START_EPOCH=$(date -u -d "$(date -u +%Y-%m-%d) 00:00:00 UTC" +%s)
+TOMORROW_START_EPOCH=$((TODAY_START_EPOCH + 86400))
+if (( MAINT_NEXT_EPOCH <= NOW_EPOCH || MAINT_NEXT_EPOCH < TOMORROW_START_EPOCH \
+    || BOOT_NEXT_EPOCH <= NOW_EPOCH || BOOT_NEXT_EPOCH < TOMORROW_START_EPOCH \
+    || DUE_NEXT_EPOCH <= NOW_EPOCH || DUE_NEXT_EPOCH < TOMORROW_START_EPOCH )); then
+    echo "ERROR: A next trigger is not in a future UTC day" >&2
     exit 1
 fi
+echo "  maintenance: $MAINT_NEXT"
+echo "  bootstrap:   $BOOT_NEXT"
+echo "  due-split:    $DUE_NEXT"
 
 # Safe to start timers now
 systemctl start history-ingestor-maintenance.timer
@@ -130,10 +164,10 @@ echo "=== Verification ==="
 systemctl list-timers --all | grep history-ingestor || true
 echo
 echo "=== DONE ==="
-echo "Timers are active. First provider calls will occur at:"
-echo "  - maintenance: next 07:00 UTC (tomorrow)"
-echo "  - bootstrap: next 06:00 UTC (tomorrow)"
-echo "  - due-split: next Tue-Sat 13:10 UTC"
+echo "Timers are active. Next scheduled windows:"
+echo "  - maintenance: $MAINT_NEXT"
+echo "  - bootstrap:   $BOOT_NEXT"
+echo "  - due-split:   $DUE_NEXT"
 echo "No Alpha Vantage calls were made today."
 echo ""
 echo "To verify after run: sudo systemctl list-timers --all | grep history-ingestor"
