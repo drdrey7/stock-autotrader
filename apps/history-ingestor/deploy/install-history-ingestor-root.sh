@@ -8,8 +8,8 @@ set -euo pipefail
 
 APP=${APP:-/home/hermes/projects/stock-autotrader/apps/history-ingestor}
 SYSTEMD_DIR=${SYSTEMD_DIR:-/etc/systemd/system}
-ALPHA_ENV=${ALPHA_ENV:-/etc/stock-autotrader/alpha-vantage.env}
-CLOUDFLARE_ENV=${CLOUDFLARE_ENV:-/etc/stock-autotrader/cloudflare.env}
+ALPHA_ENV=/etc/stock-autotrader/alpha-vantage.env
+CLOUDFLARE_ENV=/etc/stock-autotrader/cloudflare.env
 
 UNITS=(
   history-ingestor-bootstrap.service
