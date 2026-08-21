@@ -37,8 +37,10 @@ def extract_operations() -> list[tuple[int, str, str]]:
         if not stripped or stripped.startswith("#"):
             continue
 
-        # Detect operations
-        if "stop_active_timer" in stripped and "for timer in" in stripped:
+        # Detect operations - order matters: validation happens before stop
+        if "validate_effective_value" in stripped or "validate_alpha_vantage_keys" in stripped:
+            operations.append((i, "validate", stripped))
+        elif "stop_active_timer" in stripped and "for timer in" in stripped:
             operations.append((i, "stop_loop", stripped))
         elif "stop_active_timer" in stripped and "$timer" in stripped:
             operations.append((i, "stop", stripped))
@@ -56,6 +58,49 @@ def extract_operations() -> list[tuple[int, str, str]]:
             operations.append((i, "start", stripped))
 
     return operations
+
+
+def test_credentials_validated_before_timers_stopped():
+    """Credentials must be validated BEFORE any timer is stopped (fail-closed)."""
+    ops = extract_operations()
+    assert ops, "No operations extracted — harness did not parse correctly"
+
+    first_validate_idx = None
+    first_stop_idx = None
+    for i, (line_num, op_type, line) in enumerate(ops):
+        if op_type == "validate" and first_validate_idx is None:
+            first_validate_idx = i
+        if op_type in ("stop", "stop_loop") and first_stop_idx is None:
+            first_stop_idx = i
+
+    assert first_validate_idx is not None, "No validation operations found"
+    assert first_stop_idx is not None, "No timer stop operations found"
+    assert first_validate_idx < first_stop_idx, (
+        f"Validation (idx={first_validate_idx}) must come BEFORE timer stop "
+        f"(idx={first_stop_idx}). Operations: {ops}"
+    )
+
+
+def test_validation_failure_aborts_without_touching_timers():
+    """If validation fails, the installer must abort without stopping timers."""
+    installer = get_installer_path()
+    content = installer.read_text()
+
+    # The validation section should exit before the stop section
+    # Find the line numbers
+    validate_section_end = content.find("Credentials validated")
+    stop_section_start = content.find("Step 1: Quiesce existing timers")
+
+    assert validate_section_end != -1, "Could not find 'Credentials validated' marker"
+    assert stop_section_start != -1, "Could not find 'Step 1: Quiesce' marker"
+    assert validate_section_end < stop_section_start, (
+        "Credentials validated marker must come before timer stop section"
+    )
+
+    # Verify that validation failures exit before reaching the stop section
+    # Look for exit 1 calls in the validation section
+    validation_block = content[:validate_section_end]
+    assert "exit 1" in validation_block, "Validation block must have exit 1 on failure"
 
 
 def test_timers_stopped_before_mutation():

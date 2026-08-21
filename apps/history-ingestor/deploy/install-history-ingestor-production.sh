@@ -109,22 +109,9 @@ echo "=== Preflight: verify future UTC schedule windows ==="
 verify_future_schedules
 
 echo
-echo "=== Step 0: Quiesce existing timers BEFORE any deployment mutation ==="
-# Stop all 3 timers before touching EnvironmentFile or units, so an existing
-# timer (with RandomizedDelaySec) cannot fire while we are mutating state.
-stop_active_timer() {
-    local timer="$1"
-    if systemctl is-active --quiet "$timer"; then
-        systemctl stop "$timer"
-    fi
-}
-for timer in history-ingestor-maintenance.timer history-ingestor-due-split.timer history-ingestor-bootstrap.timer; do
-    stop_active_timer "$timer"
-done
-echo "All history-ingestor timers quiesced before deployment mutation."
-
-echo
-echo "=== Step 1: Validate and install $ENV_FILE ==="
+echo "=== Step 0: Validate credentials BEFORE touching timers ==="
+# Fail-closed: validate all credentials BEFORE stopping any timers.
+# If validation fails, abort without touching timers or deployment state.
 mkdir -p "$DIR"
 umask 077
 
@@ -217,6 +204,24 @@ validate_alpha_vantage_keys() {
 }
 validate_alpha_vantage_keys
 
+# Credentials validated. Now stop timers before deployment mutation.
+echo
+echo "=== Step 1: Quiesce existing timers BEFORE deployment mutation ==="
+# Stop all 3 timers before touching EnvironmentFile or units, so an existing
+# timer (with RandomizedDelaySec) cannot fire while we are mutating state.
+stop_active_timer() {
+    local timer="$1"
+    if systemctl is-active --quiet "$timer"; then
+        systemctl stop "$timer"
+    fi
+}
+for timer in history-ingestor-maintenance.timer history-ingestor-due-split.timer history-ingestor-bootstrap.timer; do
+    stop_active_timer "$timer"
+done
+echo "All history-ingestor timers quiesced before deployment mutation."
+
+echo
+echo "=== Step 2: Install validated EnvironmentFile ==="
 chown hermes:hermes "$CANDIDATE"
 chmod 0600 "$CANDIDATE"
 # CANDIDATE and ENV_FILE share DIR, so rename is atomic on the same filesystem.
@@ -226,14 +231,14 @@ echo "Created: $ENV_FILE (mode 0600, owner hermes:hermes)"
 echo "Required vars verified: 4/4"
 
 echo
-echo "=== Step 1.5: Create shared lock/state directory ==="
+echo "=== Step 2.5: Create shared lock/state directory ==="
 mkdir -p /var/lib/history-ingestor
 chown hermes:hermes /var/lib/history-ingestor
 chmod 0755 /var/lib/history-ingestor
 echo "Created: /var/lib/history-ingestor (owner hermes:hermes, mode 0755)"
 
 echo
-echo "=== Step 2: Install systemd units ==="
+echo "=== Step 3: Install systemd units ==="
 install -o root -g root -m 0644 "$APP/deploy/history-ingestor-maintenance.service" /etc/systemd/system/
 install -o root -g root -m 0644 "$APP/deploy/history-ingestor-maintenance.timer" /etc/systemd/system/
 install -o root -g root -m 0644 "$APP/deploy/history-ingestor-due-split.service" /etc/systemd/system/
@@ -243,17 +248,17 @@ install -o root -g root -m 0644 "$APP/deploy/history-ingestor-bootstrap.timer" /
 echo "Installed 6 unit files to /etc/systemd/system/"
 
 echo
-echo "=== Step 3: daemon-reload ==="
+echo "=== Step 4: daemon-reload ==="
 systemctl daemon-reload
 
 echo
-echo "=== Step 4: Clear persistent timer state ==="
+echo "=== Step 5: Clear persistent timer state ==="
 for timer in history-ingestor-maintenance.timer history-ingestor-due-split.timer history-ingestor-bootstrap.timer; do
     systemctl clean --what=state "$timer"
 done
 
 echo
-echo "=== Step 5: Enable + start timers ==="
+echo "=== Step 6: Enable + start timers ==="
 systemctl enable history-ingestor-maintenance.timer
 systemctl enable history-ingestor-due-split.timer
 systemctl enable history-ingestor-bootstrap.timer
