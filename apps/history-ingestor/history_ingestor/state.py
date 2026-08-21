@@ -34,6 +34,7 @@ class Checkpoint:
     symbols: dict[str, dict[str, str]] = field(default_factory=dict)
     started_at: str = ""
     updated_at: str = ""
+    revision: int = 0  # monotonic persistence counter; higher = newer
 
     def to_dict(self) -> dict:
         return {
@@ -43,6 +44,7 @@ class Checkpoint:
             "symbols": self.symbols,
             "started_at": self.started_at,
             "updated_at": self.updated_at,
+            "revision": self.revision,
         }
 
     @classmethod
@@ -66,6 +68,7 @@ class Checkpoint:
             symbols=symbols,
             started_at=str(payload.get("started_at", "")),
             updated_at=str(payload.get("updated_at", "")),
+            revision=int(payload.get("revision", 0) or 0),
         )
 
 
@@ -88,6 +91,13 @@ def _payload_updated_at_epoch(payload: dict | None) -> float:
         return dt.datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
     except (ValueError, OverflowError):
         return -1.0
+
+
+def _payload_revision(payload: dict | None) -> int:
+    """Return the revision of a persisted checkpoint payload (0 if missing)."""
+    if not isinstance(payload, dict):
+        return 0
+    return int(payload.get("revision", 0) or 0)
 
 
 def _iso_day_of(iso_timestamp: str) -> str:
@@ -144,10 +154,16 @@ class StateStore:
         if d1_payload is None or (
             mirror_payload is not None
             and (
-                _payload_updated_at_epoch(mirror_payload) > _payload_updated_at_epoch(d1_payload)
+                _payload_revision(mirror_payload) > _payload_revision(d1_payload)
                 or (
-                    _payload_updated_at_epoch(mirror_payload) == _payload_updated_at_epoch(d1_payload)
-                    and mirror_payload != d1_payload
+                    _payload_revision(mirror_payload) == _payload_revision(d1_payload)
+                    and (
+                        _payload_updated_at_epoch(mirror_payload) > _payload_updated_at_epoch(d1_payload)
+                        or (
+                            _payload_updated_at_epoch(mirror_payload) == _payload_updated_at_epoch(d1_payload)
+                            and mirror_payload != d1_payload
+                        )
+                    )
                 )
             )
         ):
@@ -214,6 +230,7 @@ class StateStore:
 
     def save(self) -> bool:
         """Persist to D1 (primary) and the local file (mirror). Best effort."""
+        self._state.revision += 1
         payload = self._state.to_dict()
         ok = True
         try:

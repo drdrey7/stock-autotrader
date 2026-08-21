@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import Settings
-from .state import _payload_updated_at_epoch
+from .state import _payload_revision, _payload_updated_at_epoch
 
 ENDPOINTS = ("splits", "weekly", "metrics")
 STATUS_PENDING = "pending"
@@ -58,6 +58,7 @@ class MaintenanceState:
     cycle_week: str = ""  # ISO week label of the target completed week, e.g. "2026-W34"
     updated_at: str = ""
     symbols: dict[str, dict[str, str]] = field(default_factory=dict)
+    revision: int = 0  # monotonic persistence counter; higher = newer
 
     def to_dict(self) -> dict:
         return {
@@ -65,6 +66,7 @@ class MaintenanceState:
             "cycle_week": self.cycle_week,
             "updated_at": self.updated_at,
             "symbols": self.symbols,
+            "revision": self.revision,
         }
 
     @classmethod
@@ -85,6 +87,7 @@ class MaintenanceState:
             cycle_week=str(payload.get("cycle_week", "")),
             updated_at=str(payload.get("updated_at", "")),
             symbols=symbols,
+            revision=int(payload.get("revision", 0) or 0),
         )
 
     def symbol_status(self, symbol: str, endpoint: str) -> str:
@@ -141,10 +144,16 @@ class MaintenanceStore:
         if d1_payload is None or (
             mirror_payload is not None
             and (
-                _payload_updated_at_epoch(mirror_payload) > _payload_updated_at_epoch(d1_payload)
+                _payload_revision(mirror_payload) > _payload_revision(d1_payload)
                 or (
-                    _payload_updated_at_epoch(mirror_payload) == _payload_updated_at_epoch(d1_payload)
-                    and mirror_payload != d1_payload
+                    _payload_revision(mirror_payload) == _payload_revision(d1_payload)
+                    and (
+                        _payload_updated_at_epoch(mirror_payload) > _payload_updated_at_epoch(d1_payload)
+                        or (
+                            _payload_updated_at_epoch(mirror_payload) == _payload_updated_at_epoch(d1_payload)
+                            and mirror_payload != d1_payload
+                        )
+                    )
                 )
             )
         ):
@@ -167,6 +176,7 @@ class MaintenanceStore:
 
     def save(self) -> bool:
         datum = self._state.to_dict()
+        self._state.revision += 1
         ok = True
         try:
             ok = self._d1.write_app_meta(D1_META_KEY, datum) and ok

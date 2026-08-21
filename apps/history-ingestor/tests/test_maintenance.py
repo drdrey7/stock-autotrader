@@ -68,6 +68,68 @@ class MaintenanceStoreTests(unittest.TestCase):
             store.load()
             self.assertEqual(store.state.symbol_status("NVDA", "metrics"), "done")
 
+    def test_higher_revision_wins_over_stale_d1(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            d1.meta["historyMaintenanceState"] = {
+                "version": 1, "cycle_week": "2026-W33", "revision": 10,
+                "updated_at": "2030-01-02T00:00:02Z",
+                "symbols": {"NVDA": {"splits": "pending", "weekly": "pending", "metrics": "pending"}},
+            }
+            path = Path(tmp) / "maintenance.json"
+            path.write_text(json.dumps({
+                "version": 1, "cycle_week": "2026-W33", "revision": 11,
+                "updated_at": "2030-01-02T00:00:01Z",
+                "symbols": {"NVDA": {"splits": "done", "weekly": "done", "metrics": "done"}},
+            }))
+            store = MaintenanceStore(settings_with(), d1, state_path=path)
+            store.load()
+            self.assertEqual(store.state.symbol_status("NVDA", "metrics"), "done")
+
+    def test_equal_revision_prefers_newer_timestamp(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            d1.meta["historyMaintenanceState"] = {
+                "version": 1, "cycle_week": "2026-W33", "revision": 5,
+                "updated_at": "2030-01-02T00:00:02Z",
+                "symbols": {"NVDA": {"splits": "pending", "weekly": "pending", "metrics": "pending"}},
+            }
+            path = Path(tmp) / "maintenance.json"
+            path.write_text(json.dumps({
+                "version": 1, "cycle_week": "2026-W33", "revision": 5,
+                "updated_at": "2030-01-02T00:00:01Z",
+                "symbols": {"NVDA": {"splits": "done", "weekly": "done", "metrics": "done"}},
+            }))
+            store = MaintenanceStore(settings_with(), d1, state_path=path)
+            store.load()
+            self.assertEqual(store.state.symbol_status("NVDA", "splits"), "pending")
+
+    def test_legacy_checkpoint_without_revision_loads(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            d1.meta["historyMaintenanceState"] = {
+                "version": 1, "cycle_week": "2026-W33",
+                "updated_at": "",
+                "symbols": {"NVDA": {"splits": "done", "weekly": "done", "metrics": "done"}},
+            }
+            path = Path(tmp) / "maintenance.json"
+            store = MaintenanceStore(settings_with(), d1, state_path=path)
+            store.load()
+            self.assertEqual(store.state.symbol_status("NVDA", "metrics"), "done")
+
+    def test_save_increments_revision(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            store = MaintenanceStore(settings_with(), d1, state_path=Path(tmp) / "maintenance.json")
+            store.load()
+            self.assertEqual(store.state.revision, 0)
+            store.state.mark_symbol("NVDA", "splits", "done")
+            store.save()
+            self.assertEqual(store.state.revision, 1)
+            store.state.mark_symbol("NVDA", "weekly", "done")
+            store.save()
+            self.assertEqual(store.state.revision, 2)
+
 
 # --- cycle calendars ---------------------------------------------------------
 MON_1 = dt.datetime(2026, 8, 17, 5, 10, tzinfo=dt.UTC)   # NY Monday, cycle W33

@@ -146,6 +146,83 @@ class StateTests(unittest.TestCase):
             store.load()
             self.assertEqual(store.key_used(0), 2)
 
+    def test_higher_revision_wins_over_stale_d1(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            d1.meta[META_KEY] = {
+                "version": 1, "day": TEST_TODAY, "revision": 10,
+                "keys": [{"index": 0, "used": 1, "status": "ok"}, {"index": 1, "used": 0, "status": "ok"}],
+                "symbols": {}, "started_at": "", "updated_at": "2030-01-02T00:00:02Z",
+            }
+            path = Path(tmp) / "checkpoint.json"
+            path.write_text(json.dumps({
+                "version": 1, "day": TEST_TODAY, "revision": 11,
+                "keys": [{"index": 0, "used": 7, "status": "ok"}, {"index": 1, "used": 0, "status": "ok"}],
+                "symbols": {"NVDA": {"splits": "done", "weekly": "done"}},
+                "started_at": "", "updated_at": "2030-01-02T00:00:01Z",
+            }))
+            store = self._store(d1, tmp)
+            store.load()
+            self.assertEqual(store.key_used(0), 7)
+            self.assertEqual(store.symbol_status("NVDA", "weekly"), "done")
+
+    def test_equal_revision_prefers_newer_timestamp(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            d1.meta[META_KEY] = {
+                "version": 1, "day": TEST_TODAY, "revision": 5,
+                "keys": [{"index": 0, "used": 1, "status": "ok"}, {"index": 1, "used": 0, "status": "ok"}],
+                "symbols": {}, "started_at": "", "updated_at": "2030-01-02T00:00:02Z",
+            }
+            path = Path(tmp) / "checkpoint.json"
+            path.write_text(json.dumps({
+                "version": 1, "day": TEST_TODAY, "revision": 5,
+                "keys": [{"index": 0, "used": 3, "status": "ok"}, {"index": 1, "used": 0, "status": "ok"}],
+                "symbols": {}, "started_at": "", "updated_at": "2030-01-02T00:00:01Z",
+            }))
+            store = self._store(d1, tmp)
+            store.load()
+            self.assertEqual(store.key_used(0), 1)
+
+    def test_legacy_checkpoint_without_revision_loads(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            d1.meta[META_KEY] = {
+                "version": 1, "day": TEST_TODAY,
+                "keys": [{"index": 0, "used": 4, "status": "ok"}, {"index": 1, "used": 0, "status": "ok"}],
+                "symbols": {"NVDA": {"splits": "done", "weekly": "done"}},
+                "started_at": "", "updated_at": "",
+            }
+            store = self._store(d1, tmp)
+            store.load()
+            self.assertEqual(store.key_used(0), 4)
+            self.assertEqual(store.symbol_status("NVDA", "weekly"), "done")
+
+    def test_save_increments_revision(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            store = self._store(d1, tmp)
+            store.load()
+            self.assertEqual(store.state.revision, 0)
+            store.mark_key_used(0, 1)
+            store.save()
+            self.assertEqual(store.state.revision, 1)
+            store.mark_key_used(0, 1)
+            store.save()
+            self.assertEqual(store.state.revision, 2)
+
+    def test_quota_never_goes_backward_after_reload(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            store = self._store(d1, tmp)
+            store.load()
+            store.mark_key_used(0, 5)
+            store.save()
+            self.assertEqual(store.key_used(0), 5)
+            store2 = self._store(d1, tmp)
+            store2.load()
+            self.assertGreaterEqual(store2.key_used(0), 5)
+
     def test_day_rollover_resets_usage_keeps_symbol_status(self):
         with tempfile.TemporaryDirectory() as tmp:
             d1 = FakeD1()

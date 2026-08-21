@@ -21,6 +21,7 @@ from typing import Any
 from .bootstrap import BootstrapRunner
 from .config import ConfigError, Settings, from_env
 from .d1 import D1Client
+from .lock import provider_lock
 from .maintenance import MaintenanceRunner
 from .maintenance_state import MaintenanceStore
 from .provider import AlphaVantageClient
@@ -59,11 +60,12 @@ def _emit(event: str, **fields: Any) -> None:
 def cmd_bootstrap(settings: Settings, args: argparse.Namespace) -> int:
     d1, provider, store = _build(settings)
     runner = BootstrapRunner(settings, d1, provider, store)
-    report = runner.run(
-        dry_run=args.dry_run,
-        limit=args.limit,
-        symbols_filter=args.symbols,
-    )
+    with provider_lock():
+        report = runner.run(
+            dry_run=args.dry_run,
+            limit=args.limit,
+            symbols_filter=args.symbols,
+        )
     _emit("bootstrap_report", **report)
     # Quota exhaustion is NORMAL partial completion (free-tier), NOT a crash:
     # exit 0 so the systemd unit does not Restart=on-failure into a 120s loop.
@@ -79,11 +81,12 @@ def cmd_maintenance(settings: Settings, args: argparse.Namespace) -> int:
     store.load()
     mstore = MaintenanceStore(settings, d1)
     runner = MaintenanceRunner(settings, d1, provider, mstore, key_store=store)
-    report = runner.run(
-        dry_run=args.dry_run,
-        limit=args.limit,
-        symbols_filter=args.symbols,
-    )
+    with provider_lock():
+        report = runner.run(
+            dry_run=args.dry_run,
+            limit=args.limit,
+            symbols_filter=args.symbols,
+        )
     _emit("maintenance_report", **report)
     # Quota / waiting / partial are expected outcomes (free-tier pacing) and
     # exit 0 — no retry loop. Only genuine failures (config/corrupted state)
