@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -29,6 +30,26 @@ def make_runner(d1, provider, tmp, now):
     settings = settings_with()
     store = MaintenanceStore(settings, d1, state_path=Path(tmp) / "maintenance.json")
     return MaintenanceRunner(settings, d1, provider, store, now_fn=lambda: now), store
+
+
+class MaintenanceStoreTests(unittest.TestCase):
+    def test_newer_local_mirror_beats_stale_d1_checkpoint(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            d1.meta["historyMaintenanceState"] = {
+                "version": 1, "cycle_week": "2026-W33",
+                "updated_at": "2030-01-02T00:00:01Z",
+                "symbols": {"NVDA": {"splits": "pending", "weekly": "pending", "metrics": "pending"}},
+            }
+            path = Path(tmp) / "maintenance.json"
+            path.write_text(json.dumps({
+                "version": 1, "cycle_week": "2026-W33",
+                "updated_at": "2030-01-02T00:00:02Z",
+                "symbols": {"NVDA": {"splits": "done", "weekly": "done", "metrics": "done"}},
+            }))
+            store = MaintenanceStore(settings_with(), d1, state_path=path)
+            store.load()
+            self.assertEqual(store.state.symbol_status("NVDA", "metrics"), "done")
 
 
 # --- cycle calendars ---------------------------------------------------------

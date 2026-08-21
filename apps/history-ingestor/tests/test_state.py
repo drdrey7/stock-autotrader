@@ -106,6 +106,27 @@ class StateTests(unittest.TestCase):
             self.assertEqual(store.key_used(0), 7)
             self.assertEqual(store.symbol_status("NVDA", "weekly"), "done")
 
+    def test_newer_local_mirror_beats_stale_d1_checkpoint(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            d1.meta[META_KEY] = {
+                "version": 1, "day": TEST_TODAY,
+                "keys": [{"index": 0, "used": 1, "status": "ok"}, {"index": 1, "used": 0, "status": "ok"}],
+                "symbols": {},
+                "started_at": "", "updated_at": "2030-01-02T00:00:01Z",
+            }
+            path = Path(tmp) / "checkpoint.json"
+            path.write_text(json.dumps({
+                "version": 1, "day": TEST_TODAY,
+                "keys": [{"index": 0, "used": 7, "status": "ok"}, {"index": 1, "used": 0, "status": "ok"}],
+                "symbols": {"NVDA": {"splits": "done", "weekly": "done"}},
+                "started_at": "", "updated_at": "2030-01-02T00:00:02Z",
+            }))
+            store = self._store(d1, tmp)
+            store.load()
+            self.assertEqual(store.key_used(0), 7)
+            self.assertEqual(store.symbol_status("NVDA", "weekly"), "done")
+
     def test_day_rollover_resets_usage_keeps_symbol_status(self):
         with tempfile.TemporaryDirectory() as tmp:
             d1 = FakeD1()

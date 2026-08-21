@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import Settings
+from .state import _payload_updated_at_epoch
 
 ENDPOINTS = ("splits", "weekly", "metrics")
 STATUS_PENDING = "pending"
@@ -126,17 +127,24 @@ class MaintenanceStore:
 
     def load(self) -> MaintenanceState:
         """Load the cycle checkpoint from D1, falling back to the local mirror."""
-        payload: dict | None = None
+        d1_payload: dict | None = None
+        mirror_payload: dict | None = None
         try:
-            payload = self._d1.read_app_meta(D1_META_KEY)
+            d1_payload = self._d1.read_app_meta(D1_META_KEY)
         except Exception:
-            payload = None
-        if payload is None:
-            try:
-                if self._state_path.is_file():
-                    payload = json.loads(self._state_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                payload = None
+            d1_payload = None
+        try:
+            if self._state_path.is_file():
+                mirror_payload = json.loads(self._state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            mirror_payload = None
+        if d1_payload is None or (
+            mirror_payload is not None
+            and _payload_updated_at_epoch(mirror_payload) > _payload_updated_at_epoch(d1_payload)
+        ):
+            payload = mirror_payload
+        else:
+            payload = d1_payload
         self._state = MaintenanceState.from_dict(payload)
         self._loaded = True
         return self._state

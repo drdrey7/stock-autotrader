@@ -11,6 +11,7 @@ duplicate downloads, no double-spending the day quota.
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import time
 from dataclasses import dataclass, field
@@ -76,6 +77,19 @@ def _utc_now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()) + "Z"
 
 
+def _payload_updated_at_epoch(payload: dict | None) -> float:
+    """Return comparable freshness for a persisted checkpoint payload."""
+    if not isinstance(payload, dict):
+        return -1.0
+    raw = payload.get("updated_at", "")
+    if not isinstance(raw, str) or not raw:
+        return -1.0
+    try:
+        return dt.datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
+    except (ValueError, OverflowError):
+        return -1.0
+
+
 def _iso_day_of(iso_timestamp: str) -> str:
     """UTC calendar day of a stored ISO timestamp ('' for unparseable)."""
     try:
@@ -116,17 +130,24 @@ class StateStore:
         A state from a previous day is normalised: per-key usage resets for
         the new day, symbol statuses are kept (completed work stays done).
         """
-        payload: dict | None = None
+        d1_payload: dict | None = None
+        mirror_payload: dict | None = None
         try:
-            payload = self._d1.read_app_meta(D1_META_KEY)
+            d1_payload = self._d1.read_app_meta(D1_META_KEY)
         except Exception:  # D1 unreadable — fall back to the local mirror
-            payload = None
-        if payload is None:
-            try:
-                if self._state_path.is_file():
-                    payload = json.loads(self._state_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                payload = None
+            d1_payload = None
+        try:
+            if self._state_path.is_file():
+                mirror_payload = json.loads(self._state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            mirror_payload = None
+        if d1_payload is None or (
+            mirror_payload is not None
+            and _payload_updated_at_epoch(mirror_payload) > _payload_updated_at_epoch(d1_payload)
+        ):
+            payload = mirror_payload
+        else:
+            payload = d1_payload
         self._state = Checkpoint.from_dict(payload) if payload else Checkpoint()
         today = _utc_date()
         if self._state.day != today:
