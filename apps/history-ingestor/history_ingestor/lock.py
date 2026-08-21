@@ -22,10 +22,13 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+# Default is user-writable for CLI/manual use (no root required).
+# Production systemd services override this to the shared
+# StateDirectory path via Environment=HISTORY_INGESTOR_LOCK_PATH=...
 PROVIDER_LOCK_PATH = Path(
     os.environ.get(
         "HISTORY_INGESTOR_LOCK_PATH",
-        "/var/lib/history-ingestor/provider.lock",
+        str(Path.home() / ".local" / "state" / "history-ingestor" / "provider.lock"),
     )
 )
 

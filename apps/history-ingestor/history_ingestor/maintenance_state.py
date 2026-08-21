@@ -175,8 +175,8 @@ class MaintenanceStore:
         self._state.updated_at = _utc_now_iso()
 
     def save(self) -> bool:
-        datum = self._state.to_dict()
         self._state.revision += 1
+        datum = self._state.to_dict()
         ok = True
         try:
             ok = self._d1.write_app_meta(D1_META_KEY, datum) and ok

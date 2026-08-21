@@ -56,5 +56,5 @@ class ProviderLockTests(unittest.TestCase):
             os.close(fd)
 
     def test_default_lock_path(self):
-        # The default path must be under the writable StateDirectory.
-        self.assertIn("/var/lib/history-ingestor", str(PROVIDER_LOCK_PATH))
+        # The default path must be user-writable for CLI/manual use.
+        self.assertIn(str(Path.home()), str(PROVIDER_LOCK_PATH))

@@ -130,6 +130,20 @@ class MaintenanceStoreTests(unittest.TestCase):
             store.save()
             self.assertEqual(store.state.revision, 2)
 
+    def test_save_persists_new_revision_to_both_copies(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            store = MaintenanceStore(settings_with(), d1, state_path=Path(tmp) / "maintenance.json")
+            store.load()
+            store.state.mark_symbol("NVDA", "splits", "done")
+            store.save()
+            self.assertEqual(store.state.revision, 1)
+            self.assertEqual(d1.meta["historyMaintenanceState"]["revision"], 1)
+            with open(Path(tmp) / "maintenance.json") as f:
+                import json
+                mirror = json.load(f)
+            self.assertEqual(mirror["revision"], 1)
+
 
 # --- cycle calendars ---------------------------------------------------------
 MON_1 = dt.datetime(2026, 8, 17, 5, 10, tzinfo=dt.UTC)   # NY Monday, cycle W33
