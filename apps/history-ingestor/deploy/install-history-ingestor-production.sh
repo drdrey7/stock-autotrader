@@ -61,34 +61,50 @@ fi
 
 # Verify all 4 required variables are present and non-empty after the basic
 # systemd EnvironmentFile quoting rules are applied. Never print values.
+assignment_count() {
+    local var="$1"
+    awk -v name="$var" 'index($0, name "=") == 1 { count++ } END { print count + 0 }' "$CANDIDATE"
+}
+
 candidate_value() {
     local var="$1"
     awk -v name="$var" 'index($0, name "=") == 1 { print substr($0, length(name) + 2); exit }' "$CANDIDATE"
 }
 
-validate_effective_value() {
-    local var="$1"
-    local value inner last
-    value=$(candidate_value "$var")
+normalize_env_value() {
+    local value="$1"
+    local inner last first
     value="${value#"${value%%[![:space:]]*}"}"
     value="${value%"${value##*[![:space:]]}"}"
-    if [[ -z "$value" ]]; then
-        echo "ERROR: Required variable $var missing or empty in vault" >&2
-        return 1
-    fi
+    [[ -n "$value" ]] || return 1
 
+    first="${value:0:1}"
     last="${value: -1}"
-    if [[ "$value" == \"*\" && ${#value} -ge 2 && "$last" == '"' ]]; then
+    if [[ "$first" == '"' && ${#value} -ge 2 && "$last" == '"' ]]; then
         inner="${value:1:${#value}-2}"
-    elif [[ "$value" == \'*\' && ${#value} -ge 2 && "$last" == "'" ]]; then
+    elif [[ "$first" == "'" && ${#value} -ge 2 && "$last" == "'" ]]; then
         inner="${value:1:${#value}-2}"
+    elif [[ "$first" == '"' || "$first" == "'" ]]; then
+        return 1
     else
-        return 0
+        inner="$value"
     fi
 
     inner="${inner#"${inner%%[![:space:]]*}"}"
     inner="${inner%"${inner##*[![:space:]]}"}"
-    if [[ -z "$inner" ]]; then
+    [[ -n "$inner" ]] || return 1
+    printf '%s\n' "$inner"
+}
+
+validate_effective_value() {
+    local var="$1"
+    local raw value
+    if [[ "$(assignment_count "$var")" != "1" ]]; then
+        echo "ERROR: Required variable $var is missing or duplicated in vault" >&2
+        return 1
+    fi
+    raw=$(candidate_value "$var")
+    if ! value=$(normalize_env_value "$raw"); then
         echo "ERROR: Required variable $var missing or empty in vault" >&2
         return 1
     fi
@@ -101,10 +117,14 @@ done
 # Match history_ingestor.config.parse_keys(): comma-separated, non-empty,
 # alphanumeric keys only. Never print the key values.
 validate_alpha_vantage_keys() {
-    local raw key
+    local raw key normalized
     local -a keys
-    raw=$(awk -F= '$1 == "ALPHA_VANTAGE_API_KEYS" { sub(/^[^=]*=/, ""); print; exit }' "$CANDIDATE")
-    IFS=',' read -r -a keys <<< "$raw"
+    raw=$(candidate_value ALPHA_VANTAGE_API_KEYS)
+    if ! normalized=$(normalize_env_value "$raw"); then
+        echo "ERROR: ALPHA_VANTAGE_API_KEYS is empty or malformed" >&2
+        return 1
+    fi
+    IFS=',' read -r -a keys <<< "$normalized"
     if ((${#keys[@]} == 0)); then
         echo "ERROR: ALPHA_VANTAGE_API_KEYS is empty or malformed" >&2
         return 1
