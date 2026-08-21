@@ -1,10 +1,10 @@
 /*
  * Public product typography layer.
  *
- * Keep desktop market-data surfaces comfortably readable at normal monitor
- * distance without changing the compact mobile layout. This file is imported
- * last from main.tsx so feature styles remain locally owned while typography
- * policy stays consistent across the public product.
+ * Desktop market-data surfaces use a readable hierarchy at normal monitor
+ * distance while the compact mobile layout stays unchanged. This file is
+ * imported last from main.tsx so feature styles stay locally owned and the
+ * typography policy remains consistent across the public product.
  */
 
 :root {
@@ -14,340 +14,139 @@
   --type-body: 16px;
 }
 
+/* iOS/WebKit auto-zooms focused form controls below 16px. Keep public search
+ * controls at 16px on every viewport, including wide-phone landscape layouts
+ * whose CSS viewport can exceed the desktop breakpoint. */
+.scr-search,
+.earnings-search input {
+  font-size: 16px;
+}
+
 @media (min-width: 901px) {
   /* Shared shell */
-  .shell-nav-link {
-    font-size: 14px;
-  }
-
-  .brand-logo-fallback-copy strong {
-    font-size: 14px;
-  }
-
-  .brand-logo-fallback-copy small {
-    font-size: 10px;
-  }
+  .shell-nav-link { font-size: 14px; }
+  .brand-logo-fallback-copy strong { font-size: 14px; }
+  .brand-logo-fallback-copy small { font-size: 10px; }
 
   /* Shared public page hierarchy */
-  .mb-demo {
-    font-size: 15px;
-  }
-
-  .mb-demo .page-heading h1 {
-    font-size: 36px;
-  }
-
+  .mb-demo { font-size: 15px; }
+  .mb-demo .page-heading h1 { font-size: 36px; }
   .mb-demo .page-heading p {
     font-size: var(--type-body);
     line-height: 1.6;
   }
-
-  .mb-demo .eyebrow {
-    font-size: 11px;
-  }
-
-  .mb-demo .mb-hero p {
-    font-size: var(--type-body);
-  }
-
+  .mb-demo .eyebrow { font-size: 11px; }
+  .mb-demo .mb-hero p { font-size: var(--type-body); }
   .mb-demo .section-title h2,
-  .mb-demo .widget-head .eyebrow {
-    font-size: 16px;
-  }
-
+  .mb-demo .widget-head .eyebrow { font-size: 16px; }
   .mb-demo .section-title button,
-  .mb-demo .card-subtitle {
-    font-size: var(--type-control);
-  }
-
+  .mb-demo .card-subtitle { font-size: var(--type-control); }
   .mb-demo .section-meta,
   .mb-demo .widget-head .section-meta,
-  .mb-demo .empty-state {
-    font-size: var(--type-meta);
-  }
-
-  .filter-row button {
-    font-size: var(--type-control);
-  }
+  .mb-demo .empty-state { font-size: var(--type-meta); }
+  .filter-row button { font-size: var(--type-control); }
 
   /* X Pulse */
   .post-shell .post-card p {
     font-size: 15px;
     line-height: 1.6;
   }
-
-  .post-shell .post-head strong {
-    font-size: 13px;
-  }
-
+  .post-shell .post-head strong { font-size: 13px; }
   .post-shell .post-head small,
   .post-shell .post-head time,
-  .post-shell .post-meta {
-    font-size: 11px;
-  }
+  .post-shell .post-meta { font-size: 11px; }
 
   /* Earnings */
-  .calendar-head h2 {
-    font-size: 22px;
-  }
-
-  .calendar-head button.today {
-    font-size: 12px;
-  }
-
-  .weekdays span {
-    font-size: 11px;
-  }
-
-  .day-number {
-    font-size: 12px;
-  }
-
-  .calendar-events b {
-    font-size: 11px;
-  }
-
-  .calendar-events small {
-    font-size: 10px;
-  }
-
+  .calendar-head h2 { font-size: 22px; }
+  .calendar-head button.today { font-size: 12px; }
+  .weekdays span { font-size: 11px; }
+  .day-number { font-size: 12px; }
+  .calendar-events b { font-size: 11px; }
+  .calendar-events small { font-size: 10px; }
   .earnings-top-summary span,
-  .earnings-top-summary small {
-    font-size: 11px;
-  }
-
-  .earnings-top-summary strong {
-    font-size: 24px;
-  }
-
-  .earnings-search input {
-    font-size: 14px;
-  }
-
-  .table-head {
-    font-size: 11px;
-  }
-
-  .earnings-table > button {
-    font-size: 13px;
-  }
-
-  .table-company b {
-    font-size: 13px;
-  }
-
+  .earnings-top-summary small { font-size: 11px; }
+  .earnings-top-summary strong { font-size: 24px; }
+  .table-head { font-size: 11px; }
+  .earnings-table > button { font-size: 13px; }
+  .table-company b { font-size: 13px; }
   .table-company small,
-  .table-date-state small {
-    font-size: 11px;
-  }
-
-  .result {
-    font-size: 11px;
-  }
-
+  .table-date-state small { font-size: 11px; }
+  .result { font-size: 11px; }
   .earnings-table > button,
-  .table-head {
-    min-width: 800px;
-  }
-
-  .drawer-head span {
-    font-size: 13px;
-  }
-
-  .drawer-company p {
-    font-size: 12px;
-  }
-
+  .table-head { min-width: 800px; }
+  .drawer-head span { font-size: 13px; }
+  .drawer-company p { font-size: 12px; }
   .report-grid section > span,
-  .earnings-metric > span {
-    font-size: 11px;
-  }
-
+  .earnings-metric > span { font-size: 11px; }
   .report-grid small,
   .metric-row small,
   .drawer-metadata span,
-  .subsection-head small {
-    font-size: 11px;
-  }
-
-  .detail-metrics span {
-    font-size: 11px;
-  }
-
+  .subsection-head small,
+  .detail-metrics span { font-size: 11px; }
   .detail-metrics strong,
-  .drawer-metadata strong {
-    font-size: 13px;
-  }
-
-  .metric-row strong {
-    font-size: 14px;
-  }
-
-  .official-link {
-    font-size: 13px;
-  }
-
+  .drawer-metadata strong { font-size: 13px; }
+  .metric-row strong { font-size: 14px; }
+  .official-link { font-size: 13px; }
   .earnings-glossary summary,
   .earnings-glossary dt,
   .earnings-glossary dd,
   .earnings-glossary .glossary-note,
-  .data-quality-note {
-    font-size: 12px;
-  }
+  .data-quality-note { font-size: 12px; }
 
   /* Screener */
-  .scr-market-badge {
-    font-size: 12px;
-  }
-
+  .scr-market-badge { font-size: 12px; }
   .scr-filters-btn,
-  .scr-filter-option {
-    font-size: var(--type-control);
-  }
-
-  .scr-active-filter-chip {
-    font-size: 12px;
-  }
-
-  .scr-search {
-    font-size: 14px;
-  }
-
+  .scr-filter-option { font-size: var(--type-control); }
+  .scr-active-filter-chip { font-size: 12px; }
   .scr-table-region {
     --scr-company-width: 205px;
     --scr-price-width: 95px;
     --scr-grid-content-width: calc(var(--scr-company-width) + var(--scr-price-width) + 765px);
     --scr-grid-template: var(--scr-company-width) var(--scr-price-width) 90px 80px 95px 105px 95px 75px 75px 75px 75px;
   }
-
-  .scr-head-cell {
-    font-size: 11px;
-  }
-
-  .scr-cell {
-    font-size: var(--type-data);
-  }
-
-  .scr-company-text b {
-    font-size: var(--type-data);
-  }
-
+  .scr-head-cell { font-size: 11px; }
+  .scr-cell { font-size: var(--type-data); }
+  .scr-company-text b { font-size: var(--type-data); }
   .scr-company-text small {
     max-width: 140px;
     font-size: 11px;
   }
-
-  .scr-support-pill {
-    font-size: 13px;
-  }
-
+  .scr-support-pill { font-size: 13px; }
   .scr-empty,
   .scr-message,
   .scr-error,
-  .scr-banner {
-    font-size: 13px;
-  }
+  .scr-banner { font-size: 13px; }
 
   /* Stock Detail. Kept here instead of stock-detail.css so this PR can run in
      parallel with the real-data Stock Detail PR without creating a CSS conflict. */
-  .stock-back-link {
-    font-size: 12px;
-  }
-
-  .stock-company-identity h1 {
-    font-size: 28px;
-  }
-
-  .stock-company-identity p {
-    font-size: 14px;
-  }
-
-  .stock-preview-badge {
-    font-size: 11px;
-  }
-
-  .stock-quote-row > span {
-    font-size: 15px;
-  }
-
-  .stock-market-state {
-    font-size: 13px;
-  }
-
-  .stock-card h2 {
-    font-size: 16px;
-  }
-
-  .stock-scenario-labels small {
-    font-size: 11px;
-  }
-
-  .stock-scenario-labels b {
-    font-size: 12px;
-  }
-
+  .stock-back-link { font-size: 12px; }
+  .stock-company-identity h1 { font-size: 28px; }
+  .stock-company-identity p { font-size: 14px; }
+  .stock-preview-badge { font-size: 11px; }
+  .stock-quote-row > span { font-size: 15px; }
+  .stock-market-state { font-size: 13px; }
+  .stock-card h2 { font-size: 16px; }
+  .stock-scenario-labels small { font-size: 11px; }
+  .stock-scenario-labels b { font-size: 12px; }
   .stock-data-list dt,
-  .stock-data-list dd {
-    font-size: 13px;
-  }
-
-  .stock-data-list dd span {
-    font-size: 11px;
-  }
-
-  .stock-chart-legend {
-    font-size: 11px;
-  }
-
+  .stock-data-list dd { font-size: 13px; }
+  .stock-data-list dd span { font-size: 11px; }
+  .stock-chart-legend { font-size: 11px; }
   .stock-chart-crosshair,
-  .stock-chart-credit {
-    font-size: 10px;
-  }
-
+  .stock-chart-credit { font-size: 10px; }
   .stock-chart-empty,
   .stock-page-message p,
-  .stock-page-message a {
-    font-size: 13px;
-  }
+  .stock-page-message a { font-size: 13px; }
+  .stock-metric small { font-size: 12px; }
+  .stock-metric strong { font-size: 16px; }
 
-  .stock-metric small {
-    font-size: 12px;
-  }
-
-  .stock-metric strong {
-    font-size: 16px;
-  }
-
-  /* Heatmap chrome (TradingView iframe typography is owned by TradingView). */
+  /* Heatmap chrome. TradingView iframe typography is owned by TradingView. */
   .heatmap-context span,
-  .heatmap-context button {
-    font-size: 12px;
-  }
-
-  .tv-stock-heatmap-embed .tradingview-widget-copyright {
-    font-size: 10px;
-  }
-
-  .tv-stock-heatmap-state {
-    font-size: 13px;
-  }
+  .heatmap-context button { font-size: 12px; }
+  .tv-stock-heatmap-embed .tradingview-widget-copyright { font-size: 10px; }
+  .tv-stock-heatmap-state { font-size: 13px; }
 
   /* Public status / information surfaces */
-  .briefing-information-body p:not(.briefing-information-lead) {
-    font-size: 15px;
-  }
-
-  .briefing-footer {
-    font-size: 10px;
-  }
-}
-
-/* iOS/WebKit auto-zooms focused form controls below 16px. Keep the existing
- * mobile visual density everywhere else, but make search fields 16px so focus
- * opens the keyboard without changing the page scale. */
-@media (max-width: 900px) {
-  .scr-search,
-  .earnings-search input {
-    font-size: 16px;
-  }
+  .briefing-information-body p:not(.briefing-information-lead) { font-size: 15px; }
+  .briefing-footer { font-size: 10px; }
 }
