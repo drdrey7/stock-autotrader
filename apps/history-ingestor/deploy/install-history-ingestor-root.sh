@@ -32,6 +32,7 @@ TIMERS=(
 
 command -v systemctl >/dev/null 2>&1 || { echo "ERROR: systemctl not found" >&2; exit 1; }
 command -v install >/dev/null 2>&1 || { echo "ERROR: install not found" >&2; exit 1; }
+command -v flock >/dev/null 2>&1 || { echo "ERROR: flock not found (install util-linux)" >&2; exit 1; }
 
 [ -r "$ALPHA_ENV" ] || {
   echo "ERROR: missing/unreadable $ALPHA_ENV; provision secrets before install" >&2
