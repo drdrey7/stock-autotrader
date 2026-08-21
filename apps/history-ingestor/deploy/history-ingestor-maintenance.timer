@@ -1,14 +1,14 @@
-# Daily maintenance cadence (05:10 UTC = 01:10 ET, before NY market open).
+# Daily maintenance cadence (07:00 UTC, before NY market open).
 #
-# SUNDAY 05:10 UTC -> SPLITS reconciliation pass (the week that closed on
+# SUNDAY 07:00 UTC -> SPLITS reconciliation pass (the week that closed on
 #                    Friday is the cycle target; split history is compared
 #                    and reconciled, changes trigger a historical rewrite).
-# MONDAY 05:10 UTC -> WEEKLY refresh pass (the just-closed week's bucket is
-#                    storable only once Monday begins in New York; 05:10 UTC
-#                    is Sunday night / early-Monday ET inside the new NY
+# MONDAY 07:00 UTC -> WEEKLY refresh pass (the just-closed week's bucket is
+#                    storable only once Monday begins in New York; 07:00 UTC
+#                    is early Monday in the new NY
 #                    week — the deterministic fetch window that keeps the
 #                    in-progress week out).
-# TUE–SAT 05:10 UTC -> catch-up: if Monday's WEEKLY phase did not complete
+# TUE–SAT 07:00 UTC -> catch-up: if Monday's WEEKLY phase did not complete
 #                    (quota exhaustion / transient error), is_weekly_phase_ready
 #                    returns true and the cycle resumes from the checkpoint.
 #                    Idempotent: a complete cycle performs ZERO provider calls.
@@ -21,7 +21,7 @@
 Description=Stock Autotrader history maintenance (daily; Sun SPLITS / Mon-Sat WEEKLY catch-up)
 
 [Timer]
-OnCalendar=*-*-* 05:10:00
+OnCalendar=*-*-* 07:00:00
 RandomizedDelaySec=30m
 Persistent=true
 

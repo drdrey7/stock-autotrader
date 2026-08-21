@@ -1,0 +1,27 @@
+# Daily bootstrap resume cadence (06:00 UTC = 02:00 ET).
+#
+# Runs once per day, BEFORE the permanent maintenance timer (07:00 UTC)
+# so the two never race for provider quota. The random delay spreads
+# load. Persistent=true catches up after an outage.
+#
+# The bootstrap CLI is resumable: it loads the durable D1 checkpoint,
+# skips completed symbols, retries errors/pending, stops at quota
+# exhaustion, and resumes the next day. When 50/50 complete, future
+# runs make ZERO provider calls and exit 0.
+#
+# TEMPORARY TIMER: once bootstrap completes, disable with:
+#   sudo systemctl disable --now history-ingestor-bootstrap.timer
+#
+# We deliberately do NOT auto-disable: a zero-provider daily no-op is
+# harmless and simpler/more robust than shell-level conditionals.
+
+[Unit]
+Description=Stock Autotrader history bootstrap (daily; temporary until 50/50)
+
+[Timer]
+OnCalendar=*-*-* 06:00:00
+RandomizedDelaySec=15m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

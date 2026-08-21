@@ -1,0 +1,49 @@
+# Temporary initial bootstrap — recurring daily until 50/50 complete.
+#
+# Resumes the durable D1 checkpoint (app_meta.historyBootstrapState),
+# skips completed symbols, retries errors/pending, respects per-key
+# 25/day quota, stops cleanly at quota exhaustion, resumes next day.
+#
+# When bootstrap reaches 50/50, future runs detect "complete" and make
+# ZERO provider calls (the CLI's dry-run-free run simply reports status
+# "complete" and exits 0). At that point this timer continues firing
+# daily but costs nothing.
+#
+# This timer is TEMPORARY. Once bootstrap completes, it can be disabled
+# with: sudo systemctl disable --now history-ingestor-bootstrap.timer
+#
+# We do NOT auto-disable here to keep the operational mechanism simple
+# and robust. A zero-provider no-op daily run is harmless.
+
+[Unit]
+Description=Stock Autotrader history bootstrap (daily resume until 50/50)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=hermes
+Group=hermes
+WorkingDirectory=/home/hermes/projects/stock-autotrader/apps/history-ingestor
+EnvironmentFile=/etc/stock-autotrader/alpha-vantage.env
+ExecStart=/usr/bin/python3 -m history_ingestor bootstrap
+# Match the quote-ingestor hardening: no new privileges, read-only home,
+# no capabilities. Provider calls go over HTTPS to Alpha Vantage; D1
+# writes go over HTTPS to the Cloudflare API.
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=true
+NoNewPrivileges=true
+CapabilityBoundingSet=
+# One-shot; timer drives cadence. Restart only on transient glitches.
+# A QUOTA-exhausted run exits 0 (expected partial completion) — never
+# triggers Restart=on-failure, so no retry loop against an exhausted
+# daily quota.
+Restart=on-failure
+RestartSec=120
+# Hard cap: provider pacing ~13s/key × 25 requests × 2 keys ≈ 650s worst
+# case + D1 writes; 1800s leaves margin.
+TimeoutStartSec=1800
+
+[Install]
+WantedBy=multi-user.target

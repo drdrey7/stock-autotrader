@@ -153,16 +153,18 @@ Ship the packaged unit/timer (`deploy/`) to `/etc/systemd/system/`, an
 `ALPHA_VANTAGE_API_KEYS` and the Cloudflare D1 credentials, then:
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now history-ingestor-maintenance.timer
+sudo ./deploy/install-history-ingestor-production.sh
 # or run a manual pass:  sudo systemctl start history-ingestor-maintenance
 ```
 
-`deploy/install-history-ingestor-root.sh` wires the unit + timer + env file in
-one idempotent step. Automatic timer installation is intentionally NOT done
-from this repository (root privileges). The shipped timer is
-`OnCalendar=*-*-* 05:10:00` (daily, before NY market open) with
-`RandomizedDelaySec=30m`:
+`deploy/install-history-ingestor-production.sh` wires the permanent maintenance
+and due-split units plus the temporary resumable bootstrap units and environment
+file in one idempotent step. Automatic timer installation requires root. The
+permanent maintenance timer is `OnCalendar=*-*-* 07:00:00` (daily, before NY
+market open) with `RandomizedDelaySec=30m`; the bootstrap timer runs at
+`OnCalendar=*-*-* 06:00:00` with `RandomizedDelaySec=15m` and `Persistent=true`.
+Bootstrap runs before maintenance while coverage is incomplete, then becomes a
+zero-provider no-op after 50/50 completion:
 
 - **Sunday**: SPLITS reconciliation pass starts the new cycle.
 - **Monday**: WEEKLY refresh pass stores the just-closed week.
