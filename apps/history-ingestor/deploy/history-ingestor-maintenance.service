@@ -13,7 +13,6 @@ WorkingDirectory=/home/hermes/projects/stock-autotrader/apps/history-ingestor
 EnvironmentFile=/etc/stock-autotrader/alpha-vantage.env
 Environment=HISTORY_INGESTOR_STATE=/var/lib/history-ingestor/checkpoint.json
 Environment=HISTORY_INGESTOR_MAINTENANCE_STATE=/var/lib/history-ingestor/maintenance.json
-Environment=HISTORY_INGESTOR_LOCK_PATH=/var/lib/history-ingestor/provider.lock
 StateDirectory=history-ingestor
 ExecStart=/usr/bin/python3 -m history_ingestor maintenance
 # Protect like the quote-ingestor service: no new privileges, read-only home,

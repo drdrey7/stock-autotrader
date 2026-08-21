@@ -210,6 +210,13 @@ echo "Created: $ENV_FILE (mode 0600, owner hermes:hermes)"
 echo "Required vars verified: 4/4"
 
 echo
+echo "=== Step 1.5: Create shared lock/state directory ==="
+mkdir -p /var/lib/history-ingestor
+chown hermes:hermes /var/lib/history-ingestor
+chmod 0755 /var/lib/history-ingestor
+echo "Created: /var/lib/history-ingestor (owner hermes:hermes, mode 0755)"
+
+echo
 echo "=== Step 2: Install systemd units ==="
 install -o root -g root -m 0644 "$APP/deploy/history-ingestor-maintenance.service" /etc/systemd/system/
 install -o root -g root -m 0644 "$APP/deploy/history-ingestor-maintenance.timer" /etc/systemd/system/

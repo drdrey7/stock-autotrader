@@ -22,13 +22,15 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-# Default is user-writable for CLI/manual use (no root required).
-# Production systemd services override this to the shared
-# StateDirectory path via Environment=HISTORY_INGESTOR_LOCK_PATH=...
+# Single logical lock namespace for production AND manual CLI runs.
+# The installer (root) creates /var/lib/history-ingestor with hermes:hermes
+# ownership so hermes can acquire the lock without root. Both systemd and
+# manual CLI default to the same path — manual runs cannot bypass the lock.
+# Tests/overrides may set HISTORY_INGESTOR_LOCK_PATH to a temp path.
 PROVIDER_LOCK_PATH = Path(
     os.environ.get(
         "HISTORY_INGESTOR_LOCK_PATH",
-        str(Path.home() / ".local" / "state" / "history-ingestor" / "provider.lock"),
+        "/var/lib/history-ingestor/provider.lock",
     )
 )
 

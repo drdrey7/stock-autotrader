@@ -99,7 +99,8 @@ def cmd_apply_due_splits(settings: Settings, args: argparse.Namespace) -> int:
     store.load()
     mstore = MaintenanceStore(settings, d1)
     runner = MaintenanceRunner(settings, d1, provider, mstore, key_store=store)
-    report = runner.apply_due_splits(symbols_filter=args.symbols)
+    with provider_lock():
+        report = runner.apply_due_splits(symbols_filter=args.symbols)
     _emit("apply_due_splits_report", **report)
     return 0
 

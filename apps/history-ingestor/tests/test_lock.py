@@ -56,5 +56,14 @@ class ProviderLockTests(unittest.TestCase):
             os.close(fd)
 
     def test_default_lock_path(self):
-        # The default path must be user-writable for CLI/manual use.
-        self.assertIn(str(Path.home()), str(PROVIDER_LOCK_PATH))
+        # The default path must be the shared production lock path.
+        self.assertEqual(str(PROVIDER_LOCK_PATH), "/var/lib/history-ingestor/provider.lock")
+
+    def test_due_split_uses_same_lock(self):
+        # due-split must use the same lock as bootstrap/maintenance.
+        import inspect
+
+        from history_ingestor.cli import cmd_apply_due_splits
+
+        src = inspect.getsource(cmd_apply_due_splits)
+        self.assertIn("provider_lock()", src)
