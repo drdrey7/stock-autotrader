@@ -30,7 +30,12 @@ function formatChange(value: number): string {
 function formatDate(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "—";
-  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(date);
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "America/New_York",
+  }).format(date);
 }
 
 function navigationLogoUrl(state: unknown): string | null {
