@@ -19,9 +19,9 @@
 #   been triggered at least once (stored in /var/lib/systemd/timers/).
 #
 #   Defense in depth:
-#     1. systemctl clean --what=state clears any stale persistent state
-#     2. systemd-analyze calendar verifies next elapse is in the future
-#     3. systemctl start only after verification
+#     1. systemd-analyze calendar verifies next elapse is in a future UTC day
+#     2. active timers are stopped and persistent state is cleared after that check
+#     3. systemctl start runs only after validation and state reset
 #
 #   Schedules verified at install time:
 #     *-*-* 07:00:00       (maintenance)
@@ -95,11 +95,6 @@ systemctl enable history-ingestor-maintenance.timer
 systemctl enable history-ingestor-due-split.timer
 systemctl enable history-ingestor-bootstrap.timer
 
-# Clear any stale persistent timer state (defense in depth)
-systemctl clean --what=state history-ingestor-maintenance.timer 2>/dev/null || true
-systemctl clean --what=state history-ingestor-due-split.timer 2>/dev/null || true
-systemctl clean --what=state history-ingestor-bootstrap.timer 2>/dev/null || true
-
 # Parse the actual ISO timestamp from systemd output. Ignore weekday names;
 # they are presentation text and must not participate in safety decisions.
 calendar_next_timestamp() {
@@ -152,6 +147,22 @@ fi
 echo "  maintenance: $MAINT_NEXT"
 echo "  bootstrap:   $BOOT_NEXT"
 echo "  due-split:    $DUE_NEXT"
+
+# Prevent Persistent=true from catching up a missed occurrence. Stop active
+# timers only after the future-window check, then clear their in-memory/on-disk
+# stamps before the first start.
+stop_active_timer() {
+    local timer="$1"
+    if systemctl is-active --quiet "$timer"; then
+        systemctl stop "$timer"
+    fi
+}
+
+echo "=== Resetting persistent timer state before start ==="
+for timer in history-ingestor-maintenance.timer history-ingestor-due-split.timer history-ingestor-bootstrap.timer; do
+    stop_active_timer "$timer"
+    systemctl clean --what=state "$timer"
+done
 
 # Safe to start timers now
 systemctl start history-ingestor-maintenance.timer
