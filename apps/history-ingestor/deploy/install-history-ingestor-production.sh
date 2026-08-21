@@ -59,12 +59,43 @@ if ! grep -E '^(ALPHA_VANTAGE_API_KEYS|CLOUDFLARE_API_TOKEN|CLOUDFLARE_ACCOUNT_I
     exit 1
 fi
 
-# Verify all 4 required variables are present and non-empty. Never print values.
-for var in ALPHA_VANTAGE_API_KEYS CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_D1_DATABASE_ID; do
-    if ! grep -Eq "^${var}=[^[:space:]].*$" "$CANDIDATE"; then
+# Verify all 4 required variables are present and non-empty after the basic
+# systemd EnvironmentFile quoting rules are applied. Never print values.
+candidate_value() {
+    local var="$1"
+    awk -v name="$var" 'index($0, name "=") == 1 { print substr($0, length(name) + 2); exit }' "$CANDIDATE"
+}
+
+validate_effective_value() {
+    local var="$1"
+    local value inner last
+    value=$(candidate_value "$var")
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    if [[ -z "$value" ]]; then
         echo "ERROR: Required variable $var missing or empty in vault" >&2
-        exit 1
+        return 1
     fi
+
+    last="${value: -1}"
+    if [[ "$value" == \"*\" && ${#value} -ge 2 && "$last" == '"' ]]; then
+        inner="${value:1:${#value}-2}"
+    elif [[ "$value" == \'*\' && ${#value} -ge 2 && "$last" == "'" ]]; then
+        inner="${value:1:${#value}-2}"
+    else
+        return 0
+    fi
+
+    inner="${inner#"${inner%%[![:space:]]*}"}"
+    inner="${inner%"${inner##*[![:space:]]}"}"
+    if [[ -z "$inner" ]]; then
+        echo "ERROR: Required variable $var missing or empty in vault" >&2
+        return 1
+    fi
+}
+
+for var in ALPHA_VANTAGE_API_KEYS CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_D1_DATABASE_ID; do
+    validate_effective_value "$var"
 done
 
 # Match history_ingestor.config.parse_keys(): comma-separated, non-empty,
