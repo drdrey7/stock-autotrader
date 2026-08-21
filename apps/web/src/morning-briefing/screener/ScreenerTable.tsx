@@ -286,7 +286,9 @@ export function ScreenerTable({
                 aria-label="Screener filters"
                 onKeyDown={handleFilterMenuKeyDown}
                 onBlur={(event) => {
-                  if (!event.currentTarget.contains(event.relatedTarget as Node | null)) closeFilters();
+                  const nextTarget = event.relatedTarget as Node | null;
+                  if (nextTarget === filtersButtonRef.current) return;
+                  if (!event.currentTarget.contains(nextTarget)) closeFilters();
                 }}
               >
                 {SCREENER_FILTERS.map(({ value, label }, index) => (

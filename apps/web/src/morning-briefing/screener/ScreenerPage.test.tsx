@@ -428,6 +428,22 @@ describe("ScreenerPage", () => {
     expect(screen.getByRole("menuitemradio", { name: "Gainers" })).toBeInTheDocument();
   });
 
+  it("does not reopen when trigger click follows popover blur", async () => {
+    render(<ScreenerPage />);
+    await screen.findByRole("table");
+    const filtersBtn = screen.getByRole("button", { name: /Filters/i });
+    fireEvent.click(filtersBtn);
+    const all = screen.getByRole("menuitemradio", { name: "All" });
+    await waitFor(() => expect(document.activeElement).toBe(all));
+
+    fireEvent.blur(all, { relatedTarget: filtersBtn });
+    expect(screen.getByRole("menuitemradio", { name: "All" })).toBeInTheDocument();
+
+    fireEvent.click(filtersBtn);
+    await waitFor(() => expect(screen.queryByRole("menuitemradio", { name: "All" })).not.toBeInTheDocument());
+    expect(filtersBtn).toHaveAttribute("aria-expanded", "false");
+  });
+
   it("filter menu supports keyboard navigation and Escape restores trigger focus", async () => {
     render(<ScreenerPage />);
     await screen.findByRole("table");
