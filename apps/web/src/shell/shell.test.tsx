@@ -79,12 +79,18 @@ describe("desktop sidebar navigation", () => {
     expect(sidebarNav()).toBeInTheDocument();
   });
 
+  it("keeps X Pulse out of public navigation while the direct route stays internal", () => {
+    renderShell("/x");
+    expect(within(sidebarNav()).queryByRole("link", { name: "X Pulse" })).not.toBeInTheDocument();
+    fireEvent.click(hamburger());
+    expect(within(drawer()).queryByRole("link", { name: "X Pulse" })).not.toBeInTheDocument();
+  });
+
   it("marks the active destination on direct load", () => {
     renderShell("/earnings");
     expect(sidebarLink("Earnings")).toHaveAttribute("aria-current", "page");
     expect(sidebarLink("Earnings")).toHaveClass("is-active");
     expect(sidebarLink("Dashboard")).not.toHaveAttribute("aria-current");
-    expect(sidebarLink("X Pulse")).not.toHaveAttribute("aria-current");
   });
 
   it("treats the home route as the Dashboard destination", () => {
@@ -97,7 +103,7 @@ describe("desktop sidebar navigation", () => {
     expect(isNavItemActive(dashboard, "/")).toBe(true);
     expect(isNavItemActive(dashboard, "/dashboard")).toBe(true);
     expect(isNavItemActive(dashboard, "/x")).toBe(false);
-    expect(findActiveNavItem("/x")?.label).toBe("X Pulse");
+    expect(findActiveNavItem("/x")).toBeUndefined();
     expect(findActiveNavItem("/earnings")?.label).toBe("Earnings");
     expect(findActiveNavItem("/unknown")).toBeUndefined();
   });
@@ -159,7 +165,6 @@ describe("mobile navigation drawer", () => {
     renderShell();
     fireEvent.click(hamburger());
     expect(screen.getByRole("button", { name: "Close menu" })).toHaveFocus();
-
     fireEvent.keyDown(document, { key: "Escape" });
     expect(hamburger()).toHaveFocus();
   });
@@ -222,6 +227,7 @@ describe("mobile navigation drawer", () => {
 
 describe("theme toggle", () => {
   it("switches light/dark and persists the choice", () => {
+    localStorage.setItem("how-are-the-markets-theme", "light");
     renderShell();
     const toggle = screen.getAllByRole("button", { name: "Switch to dark mode" })[0]!;
     fireEvent.click(toggle);
@@ -240,13 +246,13 @@ describe("theme toggle", () => {
     expect(localStorage.getItem("how-are-the-markets-theme")).toBe("dark");
   });
 
-  it("defaults to light and still renders when localStorage is unavailable", () => {
+  it("defaults to dark and still renders when localStorage is unavailable", () => {
     vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
       throw new Error("storage blocked");
     });
 
     renderShell();
     expect(screen.getByRole("heading", { name: "Shell content" })).toBeInTheDocument();
-    expect(document.documentElement.dataset.theme).toBe("light");
+    expect(document.documentElement.dataset.theme).toBe("dark");
   });
 });

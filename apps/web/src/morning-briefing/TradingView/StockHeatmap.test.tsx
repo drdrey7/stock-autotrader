@@ -49,7 +49,7 @@ describe("StockHeatmap", () => {
       blockSize: "market_cap_basic",
       blockColor: "change",
       grouping: "sector",
-      colorTheme: "light",
+      colorTheme: "dark",
       hasTopBar: false,
       isDataSetEnabled: false,
       isZoomEnabled: true,
@@ -92,11 +92,11 @@ describe("StockHeatmap", () => {
 
   it("rebuilds the iframe widget with the active shell theme", async () => {
     renderHeatmap();
-    await waitFor(() => expect(heatmapConfig().colorTheme).toBe("light"));
-
-    fireEvent.click(screen.getByRole("button", { name: "Switch to dark mode" }));
-
     await waitFor(() => expect(heatmapConfig().colorTheme).toBe("dark"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Switch to light mode" }));
+
+    await waitFor(() => expect(heatmapConfig().colorTheme).toBe("light"));
     expect(document.querySelectorAll("script[data-tv-stock-heatmap='true']")).toHaveLength(1);
   });
 });

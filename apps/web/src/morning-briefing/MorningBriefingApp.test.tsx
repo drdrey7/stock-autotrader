@@ -66,13 +66,9 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe("Morning Briefing frontend demo", () => {
-  it("opens on Morning Briefing and navigates between the three areas via the shell", async () => {
+  it("opens on Morning Briefing and navigates between public areas via the shell", async () => {
     render(<MemoryRouter initialEntries={["/"]}><RoutedApp/></MemoryRouter>);
     expect(screen.getByText(/economic calendar and top stories/)).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("link", { name: "X Pulse" }));
-    expect(await screen.findByRole("heading", { level: 1, name: /X Pulse/ })).toBeInTheDocument();
-    expect(screen.getByRole("status", { name: "Current path" })).toHaveTextContent("/x");
 
     fireEvent.click(screen.getByRole("link", { name: "Earnings" }));
     expect(await screen.findByRole("heading", { name: /Earnings Calendar/ })).toBeInTheDocument();
@@ -149,25 +145,24 @@ describe("Morning Briefing frontend demo", () => {
     const marketOverview = () => document.querySelector("tv-market-overview");
     // The global tape + market overview are web components: the theme updates in
     // place via the official theme attribute (no script remount).
-    await waitFor(() => expect(marketOverview()?.getAttribute("theme")).toBe("light"));
-    expect(ticker()?.getAttribute("theme")).toBe("light");
-
-    fireEvent.click(screen.getAllByRole("button", { name: "Switch to dark mode" })[0]!);
     await waitFor(() => expect(marketOverview()?.getAttribute("theme")).toBe("dark"));
     expect(ticker()?.getAttribute("theme")).toBe("dark");
-    expect(document.documentElement.dataset.theme).toBe("dark");
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Switch to light mode" })[0]!);
+    await waitFor(() => expect(marketOverview()?.getAttribute("theme")).toBe("light"));
+    expect(ticker()?.getAttribute("theme")).toBe("light");
+    expect(document.documentElement.dataset.theme).toBe("light");
 
     // The iframe widgets re-inject their script with the new colorTheme.
     const storiesScript = document.querySelector("script[data-tv-iframe-widget='timeline']");
     expect(storiesScript).not.toBeNull();
     await waitFor(() =>
-      expect(JSON.parse(storiesScript!.textContent ?? "{}").colorTheme).toBe("dark"),
+      expect(JSON.parse(storiesScript!.textContent ?? "{}").colorTheme).toBe("light"),
     );
   });
 
   it("shows one filter per tracked account without technical source badges", async () => {
-    const view = renderApp();
-    fireEvent.click(screen.getByRole("link", { name: "X Pulse" }));
+    const view = renderApp("/x");
     await screen.findByRole("heading", { level: 1, name: /X Pulse/ });
 
     expect(screen.getByRole("button", { name: "All" })).toBeInTheDocument();

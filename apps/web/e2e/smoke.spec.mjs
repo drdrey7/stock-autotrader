@@ -1,10 +1,10 @@
 import { test, expect } from "@playwright/test";
 
 const routes = [
-  { path: "/", label: "Dashboard" },
-  { path: "/x", label: "X Pulse" },
-  { path: "/earnings", label: "Earnings" },
-  { path: "/status", label: "Status" },
+  { path: "/", label: "Dashboard", inNavigation: true },
+  { path: "/x", label: "X Pulse", inNavigation: false },
+  { path: "/earnings", label: "Earnings", inNavigation: true },
+  { path: "/status", label: "Status", inNavigation: true },
 ];
 
 for (const route of routes) {
@@ -19,8 +19,14 @@ for (const route of routes) {
       await expect(page.getByRole("button", { name: /main menu/i })).toBeVisible();
     } else {
       await expect(page.locator(".shell-sidebar .shell-brand")).toBeVisible();
-      await expect(page.getByRole("navigation", { name: "Primary navigation" }).first()).toBeVisible();
-      await expect(page.getByRole("link", { name: route.label }).first()).toHaveAttribute("aria-current", "page");
+      const navigation = page.getByRole("navigation", { name: "Primary navigation" }).first();
+      await expect(navigation).toBeVisible();
+      if (route.inNavigation) {
+        await expect(navigation.getByRole("link", { name: route.label })).toHaveAttribute("aria-current", "page");
+      } else {
+        await expect(navigation.getByRole("link", { name: route.label })).toHaveCount(0);
+        await expect(page.getByRole("heading", { level: 1, name: /X Pulse/ })).toBeVisible();
+      }
     }
 
     await expect(page.locator("body")).not.toContainText("Page unavailable");
@@ -44,13 +50,6 @@ test.describe("desktop shell", () => {
       return box && box.height < 64;
     };
     expect(await compactHeight(), "tape starts compact").toBeTruthy();
-
-    await page.getByRole("link", { name: "X Pulse" }).first().click();
-    await expect(page).toHaveURL(/\/x$/);
-    await expect(page.getByRole("link", { name: "X Pulse" }).first()).toHaveAttribute("aria-current", "page");
-    await expect(tape).toBeVisible();
-    expect(await tapeHandle.evaluate((el) => el.isConnected), "tape element must not remount on route change").toBeTruthy();
-    expect(await compactHeight(), "tape stays compact on X Pulse").toBeTruthy();
 
     await page.getByRole("link", { name: "Earnings" }).first().click();
     await expect(page).toHaveURL(/\/earnings$/);

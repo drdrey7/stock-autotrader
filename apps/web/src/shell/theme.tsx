@@ -34,9 +34,10 @@ function readInitialTheme(): ShellTheme {
     stored = null;
   }
   if (stored === "light" || stored === "dark") return stored;
-  const prefersDark =
-    typeof window.matchMedia === "function" && window.matchMedia("(prefers-color-scheme: dark)").matches;
-  return prefersDark ? "dark" : "light";
+
+  // Product default: first-time visitors start in dark mode. An explicit user
+  // choice is still persisted and always wins on later visits.
+  return "dark";
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
