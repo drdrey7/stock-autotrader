@@ -1,10 +1,11 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useScreener } from "./useScreener";
 import { ScreenerTable } from "./ScreenerTable";
 import {
   applyScreenerQuery,
   DEFAULT_SCREENER_QUERY,
   type ScreenerFilter,
+  type ScreenerQuery,
   type ScreenerSortDirection,
   type ScreenerSortKey,
 } from "./screener-filter";
@@ -12,21 +13,39 @@ import "./screener.css";
 
 const marketOpen = (state: string): boolean => state === "regular";
 
+interface ScreenerPageProps {
+  initialQuery?: ScreenerQuery;
+  onQueryChange?: (query: ScreenerQuery) => void;
+}
+
 /**
- * Lazy-loaded Screener route. Owns the search/filter/sort state;
- * the table is presentational and reads from pure screener-filter logic.
+ * Screener surface. Owns search/filter/sort state while remaining independent
+ * of router context so it stays reusable/testable in isolation. The route
+ * shell may provide and persist navigation query state.
  */
-export default function ScreenerPage() {
+export default function ScreenerPage({
+  initialQuery = DEFAULT_SCREENER_QUERY,
+  onQueryChange,
+}: ScreenerPageProps = {}) {
   const { data, loading, error } = useScreener();
-  const [filter, setFilter] = useState<ScreenerFilter>(DEFAULT_SCREENER_QUERY.filter);
-  const [search, setSearch] = useState(DEFAULT_SCREENER_QUERY.search);
-  const [sortKey, setSortKey] = useState<ScreenerSortKey>(DEFAULT_SCREENER_QUERY.sortKey);
+  const [filter, setFilter] = useState<ScreenerFilter>(() => initialQuery.filter);
+  const [search, setSearch] = useState(() => initialQuery.search);
+  const [sortKey, setSortKey] = useState<ScreenerSortKey>(() => initialQuery.sortKey);
   const [sortDirection, setSortDirection] =
-    useState<ScreenerSortDirection>(DEFAULT_SCREENER_QUERY.direction);
+    useState<ScreenerSortDirection>(() => initialQuery.direction);
+
+  const query = useMemo<ScreenerQuery>(
+    () => ({ filter, search, sortKey, direction: sortDirection }),
+    [filter, search, sortKey, sortDirection],
+  );
+
+  useEffect(() => {
+    onQueryChange?.(query);
+  }, [onQueryChange, query]);
 
   const rows = useMemo(
-    () => (data ? applyScreenerQuery(data.rows, { filter, search, sortKey, direction: sortDirection }) : []),
-    [data, filter, search, sortKey, sortDirection],
+    () => (data ? applyScreenerQuery(data.rows, query) : []),
+    [data, query],
   );
 
   const onSort = (key: ScreenerSortKey) => {
@@ -85,6 +104,7 @@ export default function ScreenerPage() {
           sortKey={sortKey}
           sortDirection={sortDirection}
           onSort={onSort}
+          returnQuery={query}
         />
       )}
     </div>

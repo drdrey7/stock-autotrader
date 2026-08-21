@@ -1,0 +1,285 @@
+import { useEffect, useState, type CSSProperties } from "react";
+import { Link, useLocation, useParams } from "react-router-dom";
+import { CompanyLogo } from "../EarningsLogo";
+import { screenerQueryFromNavigationState, type ScreenerQuery } from "../screener/screener-filter";
+import PriceAndKeyLevelsChart from "./PriceAndKeyLevelsChart";
+import { mockStockDetailDataSource } from "./stock-detail.mock";
+import type { StockDetail, StockDetailDataSource } from "./stock-detail.types";
+import "./stock-detail.css";
+
+const moneyFormatter = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+function formatMoney(value: number | null): string {
+  return value === null ? "—" : moneyFormatter.format(value);
+}
+
+function formatNumber(value: number | null, suffix = "", digits = 1): string {
+  return value === null ? "—" : `${value.toFixed(digits)}${suffix}`;
+}
+
+function formatChange(value: number): string {
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${value.toFixed(2)}`;
+}
+
+function formatDate(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "—";
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "America/New_York",
+  }).format(date);
+}
+
+function navigationLogoUrl(state: unknown): string | null {
+  if (typeof state !== "object" || state === null || !("logoUrl" in state)) return null;
+  const value = (state as { logoUrl?: unknown }).logoUrl;
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function IntrinsicValueCard({ detail }: { detail: StockDetail }) {
+  const { intrinsicValue, upsidePct, scenarios } = detail.valuation;
+  const hasValidScenarioRange = scenarios.bear !== null
+    && scenarios.base !== null
+    && scenarios.bull !== null
+    && scenarios.bull > scenarios.bear
+    && scenarios.base >= scenarios.bear
+    && scenarios.base <= scenarios.bull;
+  const spread = hasValidScenarioRange ? scenarios.bull! - scenarios.bear! : 0;
+  const basePosition = hasValidScenarioRange
+    ? ((scenarios.base! - scenarios.bear!) / spread) * 100
+    : 50;
+  const scenarioStyle = { "--stock-base-position": `${basePosition}%` } as CSSProperties;
+  const upsideClass = upsidePct === null ? "stock-neutral" : upsidePct >= 0 ? "stock-positive" : "stock-negative";
+
+  return (
+    <section className="stock-card stock-iv-card" aria-labelledby="stock-iv-title">
+      <h2 id="stock-iv-title">Our Intrinsic Value</h2>
+      <div className="stock-iv-value">{formatMoney(intrinsicValue)}</div>
+      <div className={`stock-iv-upside ${upsideClass}`}>
+        {upsidePct === null ? "—" : `${upsidePct > 0 ? "▲ " : upsidePct < 0 ? "▼ " : ""}${formatChange(upsidePct)}%`}
+        {upsidePct !== null && <span>{upsidePct >= 0 ? " Upside" : " Downside"}</span>}
+      </div>
+      {hasValidScenarioRange ? (
+        <div className="stock-scenario" style={scenarioStyle}>
+          <div className="stock-scenario-track" aria-hidden="true">
+            <span className="stock-scenario-bear-segment" />
+            <span className="stock-scenario-base-segment" />
+            <span className="stock-scenario-bull-segment" />
+            <i className="stock-scenario-marker" />
+          </div>
+          <div className="stock-scenario-labels">
+            <span><small>Bear</small><b>{formatMoney(scenarios.bear)}</b></span>
+            <span className="stock-scenario-base"><small>Base</small><b>{formatMoney(scenarios.base)}</b></span>
+            <span><small>Bull</small><b>{formatMoney(scenarios.bull)}</b></span>
+          </div>
+        </div>
+      ) : (
+        <div className="stock-scenario stock-scenario-unavailable" role="status">
+          Scenario range unavailable
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ValuationMethodsCard({ detail }: { detail: StockDetail }) {
+  const { methods } = detail.valuation;
+  const rows = [
+    ["DCF", methods.dcf],
+    ["Multiples", methods.multiples],
+    ["Manual", methods.manual],
+  ] as const;
+  return (
+    <section className="stock-card" aria-labelledby="stock-methods-title">
+      <h2 id="stock-methods-title">Valuation Methods</h2>
+      <dl className="stock-data-list">
+        {rows.map(([label, value]) => (
+          <div key={label}><dt>{label}</dt><dd>{formatMoney(value)}</dd></div>
+        ))}
+        <div className="stock-data-selected">
+          <dt>Selected{methods.selectedMethod ? ` (${methods.selectedMethod})` : ""}</dt>
+          <dd>{formatMoney(methods.selected)}</dd>
+        </div>
+      </dl>
+    </section>
+  );
+}
+
+function KeyLevelsCard({ detail }: { detail: StockDetail }) {
+  return (
+    <section className="stock-card" aria-labelledby="stock-levels-title">
+      <h2 id="stock-levels-title">Key Levels</h2>
+      <dl className="stock-data-list stock-levels-list">
+        <div>
+          <dt>200W SMA</dt>
+          <dd>
+            {formatMoney(detail.technical.sma200w)}
+            {detail.technical.smaDistancePct !== null && (
+              <span className={detail.technical.smaDistancePct >= 0 ? "stock-positive" : "stock-negative"}>
+                {detail.technical.smaDistancePct > 0 ? "▲ " : detail.technical.smaDistancePct < 0 ? "▼ " : ""}
+                {formatChange(detail.technical.smaDistancePct)}%
+              </span>
+            )}
+          </dd>
+        </div>
+        {[1, 2, 3, 4].map((level) => {
+          const support = detail.technical.supports.find((entry) => entry.level === level);
+          return <div key={level}><dt>Support {level} (S{level})</dt><dd>{formatMoney(support?.price ?? null)}</dd></div>;
+        })}
+      </dl>
+    </section>
+  );
+}
+
+function StockMetrics({ detail }: { detail: StockDetail }) {
+  const metrics = [
+    ["Market Cap", detail.metrics.marketCap ?? "—"],
+    ["P/E (TTM)", formatNumber(detail.metrics.peTtm, "", 1)],
+    ["ROIC", formatNumber(detail.metrics.roicPct, "%", 1)],
+    ["FCF Margin", formatNumber(detail.metrics.fcfMarginPct, "%", 1)],
+    ["Debt / Equity", formatNumber(detail.metrics.debtToEquity, "", 2)],
+  ];
+  return (
+    <section className="stock-metrics" aria-label="Stock metrics">
+      {metrics.map(([label, value]) => (
+        <div className="stock-metric" key={label}><small>{label}</small><strong>{value}</strong></div>
+      ))}
+    </section>
+  );
+}
+
+function StockOverview({ detail }: { detail: StockDetail }) {
+  return (
+    <div className="stock-overview">
+      <div className="stock-overview-top">
+        <IntrinsicValueCard detail={detail} />
+        <ValuationMethodsCard detail={detail} />
+      </div>
+      <div className="stock-overview-middle">
+        <KeyLevelsCard detail={detail} />
+        <section className="stock-card stock-chart-card" aria-labelledby="stock-chart-title">
+          <h2 id="stock-chart-title">Price &amp; Key Levels</h2>
+          <PriceAndKeyLevelsChart
+            symbol={detail.symbol}
+            priceHistory={detail.chart.priceHistory}
+            intrinsicValue={detail.valuation.intrinsicValue}
+            intrinsicValueHistory={detail.chart.intrinsicValueHistory}
+            sma200wHistory={detail.technical.sma200wHistory}
+            supports={detail.technical.supports}
+          />
+        </section>
+      </div>
+      <StockMetrics detail={detail} />
+    </div>
+  );
+}
+
+function StockDetailReady({
+  detail,
+  logoUrl,
+  returnQuery,
+}: {
+  detail: StockDetail;
+  logoUrl: string | null;
+  returnQuery: ScreenerQuery | null;
+}) {
+  const quoteDirection = detail.quote.changePct > 0 ? "stock-positive" : detail.quote.changePct < 0 ? "stock-negative" : "stock-neutral";
+  const exchangeLine = [detail.symbol, detail.exchange, detail.sector].filter(Boolean).join(" · ");
+  const backState = returnQuery ? { screenerQuery: returnQuery } : undefined;
+
+  return (
+    <div className="page-content inner-page stock-detail-page">
+      <Link className="stock-back-link" to="/screener" state={backState} aria-label="Back to Screener">
+        <span aria-hidden="true">←</span>
+        <span>Back to Screener</span>
+      </Link>
+
+      <header className="stock-detail-header">
+        <div className="stock-company-row">
+          <div className="stock-company-identity">
+            <CompanyLogo symbol={detail.symbol} logoUrl={logoUrl} className="stock-company-logo" size={48} />
+            <div>
+              <h1>{detail.companyName}</h1>
+              <p>{exchangeLine || detail.symbol}</p>
+            </div>
+          </div>
+          <span className="stock-preview-badge">Preview data</span>
+        </div>
+        <div className="stock-quote-row">
+          <strong>{formatMoney(detail.quote.price)}</strong>
+          <span className={quoteDirection}>
+            {detail.quote.changePct > 0 ? "▲ " : detail.quote.changePct < 0 ? "▼ " : ""}
+            {formatChange(detail.quote.changePct)}% ({formatChange(detail.quote.change)})
+          </span>
+        </div>
+        <p className="stock-market-state">
+          Market {detail.quote.marketState === "open" ? "Open" : "Closed"} · {formatDate(detail.quote.asOf)}
+        </p>
+      </header>
+
+      <StockOverview detail={detail} />
+    </div>
+  );
+}
+
+interface StockDetailPageProps {
+  dataSource?: StockDetailDataSource;
+}
+
+export default function StockDetailPage({ dataSource = mockStockDetailDataSource }: StockDetailPageProps = {}) {
+  const { symbol: rawSymbol = "" } = useParams<{ symbol: string }>();
+  const location = useLocation();
+  const symbol = rawSymbol.trim().toUpperCase();
+  const routedLogoUrl = navigationLogoUrl(location.state);
+  const returnQuery = screenerQueryFromNavigationState(location.state);
+  const backState = returnQuery ? { screenerQuery: returnQuery } : undefined;
+  const [state, setState] = useState<
+    | { status: "loading" }
+    | { status: "ready"; detail: StockDetail }
+    | { status: "not-found" }
+    | { status: "error" }
+  >({ status: "loading" });
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  }, [symbol]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setState({ status: "loading" });
+    dataSource.getStockDetail(symbol)
+      .then((detail) => {
+        if (cancelled) return;
+        setState(detail ? { status: "ready", detail } : { status: "not-found" });
+      })
+      .catch(() => {
+        if (!cancelled) setState({ status: "error" });
+      });
+    return () => { cancelled = true; };
+  }, [dataSource, symbol]);
+
+  if (state.status === "loading") {
+    return <div className="page-content inner-page stock-detail-page" role="status" aria-live="polite"><p className="stock-page-message">Loading stock details…</p></div>;
+  }
+  if (state.status === "not-found") {
+    return <div className="page-content inner-page stock-detail-page"><div className="stock-page-message"><span className="eyebrow">SCREENER</span><h1>Stock not found</h1><p>{symbol || "This symbol"} is not part of the current Core Universe.</p><Link to="/screener" state={backState}>Back to Screener</Link></div></div>;
+  }
+  if (state.status === "error") {
+    return <div className="page-content inner-page stock-detail-page" role="alert"><div className="stock-page-message"><h1>Stock detail unavailable</h1><p>We couldn’t load this stock right now.</p></div></div>;
+  }
+  return (
+    <StockDetailReady
+      detail={state.detail}
+      logoUrl={routedLogoUrl ?? state.detail.logoUrl}
+      returnQuery={returnQuery}
+    />
+  );
+}

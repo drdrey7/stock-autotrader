@@ -96,6 +96,7 @@ const frontendPaths = [
   "/x",
   "/earnings",
   "/screener",
+  "/stocks/MSFT",
   "/dashboard",
   "/status",
   "/index.html",
