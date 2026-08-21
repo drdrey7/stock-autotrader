@@ -148,28 +148,48 @@ policies, so a full pass can spread across days under free-tier limits.
 
 ### systemd deployment (documented — install requires root)
 
-Ship the packaged unit/timer (`deploy/`) to `/etc/systemd/system/`, an
-`EnvironmentFile=/etc/stock-autotrader/alpha-vantage.env` (0600) with
-`ALPHA_VANTAGE_API_KEYS` and the Cloudflare D1 credentials, then:
+Production uses three timers, all explicitly UTC:
+
+- bootstrap: `06:00 UTC` daily, temporary until initial coverage completes;
+- maintenance: `07:00 UTC` daily, permanent long-term path;
+- due-split: `13:10 UTC` Tue-Sat, zero-provider reconciliation.
+
+Provision the existing secret files first:
+
+- `/etc/stock-autotrader/alpha-vantage.env`
+- `/etc/stock-autotrader/cloudflare.env`
+
+They remain outside Git and are never modified by the installer. Then stop any
+currently active history-ingestor timers in a planned maintenance window and
+install the packaged units:
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now history-ingestor-maintenance.timer
-# or run a manual pass:  sudo systemctl start history-ingestor-maintenance
+sudo systemctl stop history-ingestor-bootstrap.timer history-ingestor-maintenance.timer history-ingestor-due-split.timer
+sudo ./deploy/install-history-ingestor-root.sh
 ```
 
-`deploy/install-history-ingestor-root.sh` wires the unit + timer + env file in
-one idempotent step. Automatic timer installation is intentionally NOT done
-from this repository (root privileges). The shipped timer is
-`OnCalendar=*-*-* 05:10:00` (daily, before NY market open) with
-`RandomizedDelaySec=30m`:
+The installer only validates prerequisites, installs the six systemd unit files
+and runs `daemon-reload`. It deliberately does **not** enable or start timers,
+so installation itself cannot consume Alpha Vantage quota. Activate explicitly
+when ready:
 
-- **Sunday**: SPLITS reconciliation pass starts the new cycle.
-- **Monday**: WEEKLY refresh pass stores the just-closed week.
-- **Tue–Sat**: safe catch-up — if Monday's WEEKLY phase didn't complete
-  (quota exhaustion / transient error), `is_weekly_phase_ready` returns true
-  and the cycle resumes from the checkpoint. Completed/idempotent work
-  performs ZERO provider calls.
+```bash
+sudo systemctl enable history-ingestor-bootstrap.timer history-ingestor-maintenance.timer history-ingestor-due-split.timer
+sudo systemctl start history-ingestor-bootstrap.timer history-ingestor-maintenance.timer history-ingestor-due-split.timer
+sudo systemctl list-timers --all | grep history-ingestor
+```
+
+Bootstrap is resumable and becomes a zero-provider no-op once complete; at that
+point disable its temporary timer with:
+
+```bash
+sudo systemctl disable --now history-ingestor-bootstrap.timer
+```
+
+Service ordering serializes bootstrap → maintenance → due-split when persistent
+timers catch up together after an outage. For production manual runs, prefer
+`systemctl start history-ingestor-<service>` rather than invoking the Python
+module directly so the same ordering rules apply.
 
 ## Tests
 
