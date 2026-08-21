@@ -1,0 +1,34 @@
+# Temporary initial bootstrap — recurring daily until core-universe coverage completes.
+#
+# Resumes the durable D1 checkpoint, skips completed symbols, respects the
+# per-key daily Alpha Vantage quota and exits cleanly when quota is exhausted.
+# Once bootstrap is complete, future runs are zero-provider no-ops and the
+# timer can be disabled.
+
+[Unit]
+Description=Stock Autotrader history bootstrap (daily resume until complete)
+After=network-online.target
+Wants=network-online.target
+Before=history-ingestor-maintenance.service history-ingestor-due-split.service
+
+[Service]
+Type=oneshot
+User=hermes
+Group=hermes
+WorkingDirectory=/home/hermes/projects/stock-autotrader/apps/history-ingestor
+EnvironmentFile=/etc/stock-autotrader/alpha-vantage.env
+EnvironmentFile=/etc/stock-autotrader/cloudflare.env
+Environment=HISTORY_INGESTOR_STATE=/var/lib/history-ingestor/checkpoint.json
+StateDirectory=history-ingestor
+ExecStart=/usr/bin/flock /var/lib/history-ingestor/run.lock /usr/bin/python3 -m history_ingestor bootstrap
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=true
+NoNewPrivileges=true
+CapabilityBoundingSet=
+Restart=on-failure
+RestartSec=120
+TimeoutStartSec=1800
+
+[Install]
+WantedBy=multi-user.target

@@ -10,7 +10,7 @@
 Description=Daily due-split reconciliation (zero provider)
 
 [Timer]
-OnCalendar=Tue..Sat *-*-* 13:10:00
+OnCalendar=Tue..Sat *-*-* 13:10:00 UTC
 RandomizedDelaySec=15m
 Persistent=true
 

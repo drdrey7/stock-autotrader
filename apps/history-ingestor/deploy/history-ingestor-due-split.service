@@ -9,7 +9,7 @@
 # Normally a no-op (no writes). Idempotent. Does not affect Finnhub service.
 [Unit]
 Description=Stock Autotrader daily due-split reconciliation (zero provider)
-After=network-online.target
+After=network-online.target history-ingestor-bootstrap.service history-ingestor-maintenance.service
 Wants=network-online.target
 
 [Service]
@@ -19,7 +19,10 @@ Group=hermes
 WorkingDirectory=/home/hermes/projects/stock-autotrader/apps/history-ingestor
 EnvironmentFile=/etc/stock-autotrader/cloudflare.env
 EnvironmentFile=/etc/stock-autotrader/alpha-vantage.env
-ExecStart=/usr/bin/python3 -m history_ingestor apply-due-splits
+Environment=HISTORY_INGESTOR_STATE=/var/lib/history-ingestor/checkpoint.json
+Environment=HISTORY_INGESTOR_MAINTENANCE_STATE=/var/lib/history-ingestor/maintenance.json
+StateDirectory=history-ingestor
+ExecStart=/usr/bin/flock /var/lib/history-ingestor/run.lock /usr/bin/python3 -m history_ingestor apply-due-splits
 # Same protection as the weekly maintenance service.
 ProtectSystem=full
 ProtectHome=read-only
