@@ -19,6 +19,11 @@ UNITS=(
   history-ingestor-due-split.service
   history-ingestor-due-split.timer
 )
+SERVICES=(
+  history-ingestor-bootstrap.service
+  history-ingestor-maintenance.service
+  history-ingestor-due-split.service
+)
 TIMERS=(
   history-ingestor-bootstrap.timer
   history-ingestor-maintenance.timer
@@ -44,12 +49,12 @@ for unit in "${UNITS[@]}"; do
   }
 done
 
-# Keep deployment deliberately simple and safe: never mutate unit files while
-# a managed timer is active. Stop the timers first in a planned maintenance
-# window, then re-run this installer.
-for timer in "${TIMERS[@]}"; do
-  if systemctl is-active --quiet "$timer" 2>/dev/null; then
-    echo "ERROR: $timer is active; stop managed timers before reinstalling" >&2
+# Keep deployment deliberately simple and safe: never replace unit files while
+# a managed timer or service is active. Quiesce the history-ingestor first in a
+# planned maintenance window, then re-run this installer.
+for unit in "${TIMERS[@]}" "${SERVICES[@]}"; do
+  if systemctl is-active --quiet "$unit" 2>/dev/null; then
+    echo "ERROR: $unit is active; stop history-ingestor units before reinstalling" >&2
     exit 1
   fi
 done
