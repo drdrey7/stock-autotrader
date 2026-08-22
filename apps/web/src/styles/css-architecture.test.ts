@@ -1,12 +1,16 @@
 import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const mainSource = readFileSync(new URL("../main.tsx", import.meta.url), "utf8");
-const appSource = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
-const briefingSource = readFileSync(new URL("../morning-briefing/MorningBriefingApp.tsx", import.meta.url), "utf8");
-const shellSource = readFileSync(new URL("../shell/AppShell.tsx", import.meta.url), "utf8");
-const stockSource = readFileSync(new URL("../morning-briefing/stock-detail/StockDetailPage.tsx", import.meta.url), "utf8");
-const informationSource = readFileSync(new URL("../information/InformationPages.tsx", import.meta.url), "utf8");
+const sourceRoot = resolve(process.cwd(), "src");
+const readSource = (path: string) => readFileSync(resolve(sourceRoot, path), "utf8");
+
+const mainSource = readSource("main.tsx");
+const appSource = readSource("App.tsx");
+const briefingSource = readSource("morning-briefing/MorningBriefingApp.tsx");
+const shellSource = readSource("shell/AppShell.tsx");
+const stockSource = readSource("morning-briefing/stock-detail/StockDetailPage.tsx");
+const informationSource = readSource("information/InformationPages.tsx");
 
 describe("CSS runtime boundaries", () => {
   it("keeps the entrypoint foundation-only", () => {
@@ -31,9 +35,9 @@ describe("CSS runtime boundaries", () => {
   });
 
   it("does not keep retired global CSS generations in src", () => {
-    expect(existsSync(new URL("../styles.css", import.meta.url))).toBe(false);
-    expect(existsSync(new URL("../daily-briefing.css", import.meta.url))).toBe(false);
-    expect(existsSync(new URL("../typography.css", import.meta.url))).toBe(false);
+    expect(existsSync(resolve(sourceRoot, "styles.css"))).toBe(false);
+    expect(existsSync(resolve(sourceRoot, "daily-briefing.css"))).toBe(false);
+    expect(existsSync(resolve(sourceRoot, "typography.css"))).toBe(false);
   });
 
   it("routes active information pages through their dedicated owner", () => {
