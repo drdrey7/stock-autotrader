@@ -4,8 +4,6 @@ import { BrowserRouter } from "react-router-dom";
 import App from "./App";
 import "./branding/tokens.css";
 import "./styles/base.css";
-import "./morning-briefing/morning-briefing.css";
-import "./typography.css";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
