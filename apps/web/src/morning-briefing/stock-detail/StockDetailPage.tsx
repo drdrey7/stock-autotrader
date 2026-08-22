@@ -6,6 +6,7 @@ import PriceAndKeyLevelsChart from "./PriceAndKeyLevelsChart";
 import { apiStockDetailDataSource } from "./stock-detail.api";
 import type { StockDetail, StockDetailDataSource } from "./stock-detail.types";
 import "./stock-detail.css";
+import "./typography.css";
 
 const moneyFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
