@@ -9,6 +9,8 @@ interface BrandLogoProps {
   compact?: boolean;
   /** Render only the approved brand mark when space is extremely constrained. */
   markOnly?: boolean;
+  /** Use the deliberate two-line desktop wordmark instead of clipping it. */
+  stacked?: boolean;
   className?: string;
 }
 
@@ -19,13 +21,20 @@ interface BrandLogoProps {
  * normal HTML instead of being embedded inside the SVG, so the sidebar/mobile
  * wordmark cannot disappear because of SVG text sizing/loading behaviour.
  */
-export function BrandLogo({ compact = false, markOnly = false, className = "" }: BrandLogoProps) {
+export function BrandLogo({
+  compact = false,
+  markOnly = false,
+  stacked = false,
+  className = "",
+}: BrandLogoProps) {
   const { theme } = useShellTheme();
   const [assetReady, setAssetReady] = useState(false);
   const assetPath = `/brand/logo-mark-${theme}.svg`;
 
   return (
-    <span className={`brand-logo${compact ? " is-compact" : ""}${markOnly ? " is-mark-only" : ""}${className ? ` ${className}` : ""}`}>
+    <span
+      className={`brand-logo${compact ? " is-compact" : ""}${markOnly ? " is-mark-only" : ""}${stacked ? " is-stacked" : ""}${className ? ` ${className}` : ""}`}
+    >
       <span className="brand-logo-fallback">
         <img
           className={`brand-logo-asset${assetReady ? " is-ready" : ""}`}
@@ -41,9 +50,10 @@ export function BrandLogo({ compact = false, markOnly = false, className = "" }:
         {!markOnly && (
           <span className="brand-logo-fallback-copy">
             <strong>
-              HOW ARE <em>THE</em> MARKETS
+              <span className="brand-logo-wordmark-line">HOW ARE</span>
+              <span className="brand-logo-wordmark-line"><em>THE</em> MARKETS</span>
             </strong>
-            {!compact && <small>Market intelligence</small>}
+            {!compact && !stacked && <small>Market intelligence</small>}
           </span>
         )}
       </span>
