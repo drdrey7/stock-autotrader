@@ -1,6 +1,6 @@
 import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
-import { DailyBriefingNotFoundPage, DailyBriefingStatusPage } from "./daily-briefing-pages";
+import { DailyBriefingNotFoundPage, DailyBriefingStatusPage } from "./information-pages";
 import MorningBriefingApp from "./morning-briefing/MorningBriefingApp";
 import { LazyPageErrorBoundary, PageLoadingFallback } from "./morning-briefing/shared";
 import { AppShell } from "./shell/AppShell";
