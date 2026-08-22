@@ -62,15 +62,18 @@ class RefreshTests(unittest.TestCase):
         return Settings("key", "token", "account", "database", "identity", Path("unused"))
 
     def test_same_accession_reuses_snapshot_without_statement_refresh(self):
+        d1_instance = FakeD1()
         with (
             patch("fundamentals_ingestor.main.load_universe", return_value=["MSFT"]),
             patch("fundamentals_ingestor.main.FinnhubClient", FakeFinnhub),
-            patch("fundamentals_ingestor.main.D1Client", FakeD1),
+            patch("fundamentals_ingestor.main.D1Client", return_value=d1_instance),
             patch("fundamentals_ingestor.main.fetch_latest_filing_metadata", return_value=FilingMetadata("0000000000-26-000001", "2026-06-30")),
             patch("fundamentals_ingestor.main.fetch_accounting_inputs", side_effect=AssertionError("statement refresh must be skipped")),
         ):
             result = run(self.settings())
         self.assertEqual(result, {"complete": 1, "partial": 0, "missing": 0, "failed": 0, "written": 1})
+        self.assertEqual(len(d1_instance.writes), 1)
+        self.assertNotEqual(d1_instance.writes[0][SNAPSHOT_COLUMNS.index("updated_at")], "old")
 
     def test_new_accession_refreshes_statements(self):
         refreshed = AccountingInputs(
