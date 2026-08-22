@@ -49,10 +49,6 @@ export function deriveDiscreteQuarter(
     return { value: null, derived: true, derivation: null, blockers };
   }
   const value = accumulated - priorAccumulated;
-  if (value < 0) {
-    blockers.push(`derived negative value: ${value}`);
-    return { value: null, derived: true, derivation: null, blockers };
-  }
   return {
     value,
     derived: true,
@@ -77,13 +73,39 @@ export function buildTtmFromQuarters(
       blockers: [`TTM requires 4 discrete quarters, found ${valid.length}`],
     };
   }
-  // Check consecutive quarters (Q4→Q3→Q2→Q1 or fiscal year ordering)
-  const sorted = [...valid].sort((a, b) => {
-    const aOrder = periodOrder(a.period);
-    const bOrder = periodOrder(b.period);
-    return bOrder - aOrder; // newest first
-  });
-  const value = sorted.slice(0, 4).reduce((sum, q) => sum + q.value, 0);
+  const sorted = [...valid].sort((a, b) => periodOrder(b.period) - periodOrder(a.period));
+  const runs: Array<{ value: number; period: FiscalPeriod }>[] = [];
+  for (const candidate of sorted) {
+    const existing = runs.find((run) => periodOrder(run[0]!.period) === periodOrder(candidate.period));
+    if (existing) {
+      return {
+        value: null,
+        derived: true,
+        derivation: null,
+        blockers: [`duplicate discrete quarter ${candidate.period.fiscalYear} ${candidate.period.fiscalPeriod}`],
+      };
+    }
+    runs.push([candidate]);
+  }
+  let selected: Array<{ value: number; period: FiscalPeriod }> | null = null;
+  for (let start = 0; start <= sorted.length - 4; start += 1) {
+    const window = sorted.slice(start, start + 4);
+    const consecutive = window.every((quarter, index) => index === 0
+      || periodOrder(window[index - 1]!.period) - periodOrder(quarter.period) === 1);
+    if (consecutive) {
+      selected = window;
+      break;
+    }
+  }
+  if (!selected) {
+    return {
+      value: null,
+      derived: true,
+      derivation: null,
+      blockers: ["TTM requires 4 consecutive discrete quarters"],
+    };
+  }
+  const value = selected.reduce((sum, q) => sum + q.value, 0);
   return {
     value,
     derived: true,
@@ -94,7 +116,7 @@ export function buildTtmFromQuarters(
 
 function periodOrder(p: FiscalPeriod): number {
   const periodRank: Record<string, number> = { Q1: 1, Q2: 2, H1: 2, Q3: 3, "9M": 3, Q4: 4, FY: 4 };
-  return (p.fiscalYear * 10) + (periodRank[p.fiscalPeriod] ?? 0);
+  return (p.fiscalYear * 4) + (periodRank[p.fiscalPeriod] ?? 0) - 1;
 }
 
 /**

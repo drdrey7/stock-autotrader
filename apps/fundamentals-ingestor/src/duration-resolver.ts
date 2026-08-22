@@ -13,12 +13,14 @@ import {
   fetchCompanyFacts,
   fetchTickerCikMap,
   SEC_DEFAULT_USER_AGENT,
+  acceptedFormsForTaxonomy,
+  normalizedForm,
   type CompanyFacts,
   type FiscalIdentity,
   type XbrlFactInstance,
 } from "../../web/worker/earnings/sec-xbrl";
 import { resolveFact } from "./sec-client";
-import type { ConceptMapping } from "./concepts";
+import { unitMatchesMapping, type ConceptMapping } from "./concepts";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -67,8 +69,14 @@ export function resolveDurationFact(
   }
 
   // Get all raw facts for this concept+unit+fy
+  const acceptedForms = new Set(acceptedFormsForTaxonomy(mapping.taxonomy).map((form) => normalizedForm(form)));
   const allFacts: XbrlFactInstance[] = (facts.facts as XbrlFactInstance[]).filter(
-    (f) => f.concept === mapping.concept && f.unit === mapping.unit && f.fy === identity.fiscalYear
+    (f) => f.concept === mapping.concept
+      && f.taxonomy === mapping.taxonomy
+      && unitMatchesMapping(mapping, f.unit)
+      && f.fy === identity.fiscalYear
+      && normalizedForm(f.form) !== null
+      && acceptedForms.has(normalizedForm(f.form))
   );
 
   if (allFacts.length === 0) {
@@ -88,17 +96,21 @@ export function resolveDurationFact(
   const quarter = identity.fiscalQuarter;
 
   // Helper: get the most recent fact from a period bucket
-  const getLatest = (fp: string): XbrlFactInstance | null => {
-    const bucket = byPeriod.get(fp);
-    if (!bucket || bucket.length === 0) return null;
-    return bucket.sort((a, b) => (b.filed ?? "").localeCompare(a.filed ?? ""))[0] ?? null;
+  const getLatest = (...fps: string[]): XbrlFactInstance | null => {
+    const bucket = fps.flatMap((fp) => byPeriod.get(fp) ?? []);
+    const periodMatched = identity.fiscalPeriodEnd
+      ? bucket.filter((fact) => fact.end === identity.fiscalPeriodEnd)
+      : bucket;
+    const candidates = periodMatched.length > 0 ? periodMatched : bucket;
+    if (candidates.length === 0) return null;
+    return [...candidates].sort((a, b) => (b.filed ?? "").localeCompare(a.filed ?? ""))[0] ?? null;
   };
 
   if (quarter === 2) {
     // Q2 = H1 − Q1
-    const h1 = getLatest("H1") || getLatest("Q2");
+    const h1 = getLatest("H1", "Q2");
     const q1 = getLatest("Q1");
-    if (h1 && q1 && h1.val !== null && q1.val !== null) {
+    if (h1 && q1 && h1.val !== null && q1.val !== null && h1.unit === q1.unit) {
       const h1Days = daysBetween(h1.start, h1.end);
       const q1Days = daysBetween(q1.start, q1.end);
       if (h1Days > 120 && q1Days <= 120) {
@@ -118,9 +130,9 @@ export function resolveDurationFact(
 
   if (quarter === 3) {
     // Q3 = 9M − H1
-    const nineM = getLatest("9M") || getLatest("Q3");
-    const h1 = getLatest("H1") || getLatest("Q2");
-    if (nineM && h1 && nineM.val !== null && h1.val !== null) {
+    const nineM = getLatest("9M", "Q3");
+    const h1 = getLatest("H1", "Q2");
+    if (nineM && h1 && nineM.val !== null && h1.val !== null && nineM.unit === h1.unit) {
       const nineMDays = daysBetween(nineM.start, nineM.end);
       const h1Days = daysBetween(h1.start, h1.end);
       if (nineMDays > 180 && h1Days > 120) {
@@ -141,8 +153,8 @@ export function resolveDurationFact(
   if (quarter === 4) {
     // Q4 = FY − 9M
     const fy = getLatest("FY");
-    const nineM = getLatest("9M") || getLatest("Q3");
-    if (fy && nineM && fy.val !== null && nineM.val !== null) {
+    const nineM = getLatest("9M", "Q3");
+    if (fy && nineM && fy.val !== null && nineM.val !== null && fy.unit === nineM.unit) {
       const fyDays = daysBetween(fy.start, fy.end);
       const nineMDays = daysBetween(nineM.start, nineM.end);
       if (fyDays > 300 && nineMDays > 180) {

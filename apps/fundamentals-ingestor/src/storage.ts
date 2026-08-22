@@ -94,9 +94,14 @@ export function periodToRow(
       provenance[key] = {
         taxonomy: val.taxonomy,
         concept: val.concept,
+        unit: val.unit,
         form: val.form,
         accession: val.accn,
-        derived: false,
+        filed: val.filed,
+        periodStart: val.periodStart,
+        periodEnd: val.periodEnd,
+        derived: val.derived,
+        derivation: val.derivation ?? null,
       };
     }
   }
@@ -155,10 +160,13 @@ export async function upsertPeriod(db: Database, row: D1FundamentalPeriodRow): P
     shares_outstanding, source, quality, provenance_json, updated_at
   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(symbol, fiscal_year, fiscal_period) DO UPDATE SET
+    period_start = excluded.period_start,
+    period_end = excluded.period_end,
     filing_date = excluded.filing_date,
     form = excluded.form,
     accession = excluded.accession,
     taxonomy = excluded.taxonomy,
+    currency = excluded.currency,
     revenue = excluded.revenue,
     gross_profit = excluded.gross_profit,
     operating_income = excluded.operating_income,

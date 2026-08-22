@@ -138,10 +138,10 @@ describe("periods — deriveDiscreteQuarter", () => {
     expect(result.blockers[0]).toContain("fiscal year mismatch");
   });
 
-  it("returns null when derived value is negative", () => {
+  it("preserves a legitimate negative derived quarter", () => {
     const result = deriveDiscreteQuarter(80, 200, mk(2025, "H1"), mk(2025, "Q1"));
-    expect(result.value).toBeNull();
-    expect(result.blockers[0]).toContain("negative");
+    expect(result.value).toBe(-120);
+    expect(result.derived).toBe(true);
   });
 });
 

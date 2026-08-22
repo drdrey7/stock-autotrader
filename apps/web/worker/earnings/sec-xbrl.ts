@@ -31,10 +31,20 @@ export const QUARTER_DURATION_MAX_DAYS = 120;
 
 /** Accepted filing forms for quarterly GAAP facts. 8-K is a last resort. */
 export const ACCEPTED_FORMS = ["10-Q", "10-K", "8-K"] as const;
+/** Accepted forms used by foreign IFRS filers in companyfacts. */
+export const FOREIGN_ACCEPTED_FORMS = [
+  ...ACCEPTED_FORMS,
+  "20-F",
+  "40-F",
+  "6-K",
+] as const;
 const FORM_PREFERENCE = new Map<string, number>([
   ["10-Q", 0],
   ["10-K", 1],
   ["8-K", 2],
+  ["20-F", 3],
+  ["40-F", 4],
+  ["6-K", 5],
 ]);
 
 export const EPS_DILUTED_CONCEPTS = ["EarningsPerShareDiluted"] as const;
@@ -69,6 +79,8 @@ export interface CompanyFacts {
 export interface FiscalIdentity {
   fiscalYear: number | null;
   fiscalQuarter: number | null;
+  /** Normalized fiscal period label, including Q4 for an annual FY fact. */
+  fiscalPeriod?: string | null;
   /** Scheduled earnings release date (YYYY-MM-DD); used for period-end sanity. */
   scheduledDate: string | null;
   /** Expected fiscal period end (YYYY-MM-DD) when the provider exposed it. */
@@ -116,9 +128,17 @@ function daysBetween(start: string, end: string): number {
   return (to - from) / DAY_MS;
 }
 
-function baseForm(form: string | null): string | null {
+export function normalizedForm(form: string | null): string | null {
   if (!form) return null;
   return form.replace(/\/A$/, "").trim().toUpperCase();
+}
+
+export function acceptedFormsForTaxonomy(taxonomy: string | null): readonly string[] {
+  // Filing form is issuer-specific, not taxonomy-specific: a foreign issuer
+  // can report SEC us-gaap facts in a 20-F/6-K just as it can report IFRS.
+  // Taxonomy isolation remains a separate hard filter.
+  void taxonomy;
+  return FOREIGN_ACCEPTED_FORMS;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -208,6 +228,16 @@ export function parseCompanyFacts(payload: unknown): CompanyFacts {
 export interface SelectOptions {
   /** Require at least one candidate to pass every hard validation step. */
   strict?: boolean;
+  /** Keep US-GAAP, IFRS, and DEI candidates isolated at resolution time. */
+  taxonomy?: string | null;
+  /** Override accepted filing forms for a taxonomy-specific resolver. */
+  acceptedForms?: readonly string[];
+  /** Match a reporting-currency unit while retaining the actual unit. */
+  unitMatches?: (unit: string | null) => boolean;
+  /** Select a quarterly or accumulated duration (H1/9M/FY) fact. */
+  durationKind?: "quarter" | "accumulated";
+  /** Raw fp labels accepted for the requested duration. */
+  acceptedFiscalPeriods?: readonly string[];
 }
 
 const isQuarterlyDuration = (start: string | null, end: string | null): boolean => {
@@ -218,10 +248,28 @@ const isQuarterlyDuration = (start: string | null, end: string | null): boolean 
     && duration <= QUARTER_DURATION_MAX_DAYS;
 };
 
+const isAccumulatedDuration = (
+  start: string | null,
+  end: string | null,
+  fiscalPeriod: string | null,
+): boolean => {
+  if (!start || !end) return false;
+  const duration = daysBetween(start, end);
+  if (!Number.isFinite(duration) || duration <= 0) return false;
+  if (fiscalPeriod === "Q1") return isQuarterlyDuration(start, end);
+  if (fiscalPeriod === "H1" || fiscalPeriod === "Q2") return duration >= 150 && duration <= 220;
+  if (fiscalPeriod === "9M" || fiscalPeriod === "Q3") return duration >= 230 && duration <= 320;
+  if (fiscalPeriod === "FY" || fiscalPeriod === "Q4") return duration >= 300 && duration <= 430;
+  return false;
+};
+
 const isWithinPeriodEndSanity = (end: string | null, identity: FiscalIdentity): boolean => {
   if (!end) return false;
   if (identity.fiscalPeriodEnd) {
     const expected = daysBetween(end, identity.fiscalPeriodEnd);
+    if (Number.isFinite(expected) && Math.abs(expected) === 0) return true;
+    // Provider fiscal-period metadata can occasionally be off by a few days;
+    // use the tolerance only when no exact context is available.
     if (Number.isFinite(expected) && Math.abs(expected) <= 7) return true;
     return false;
   }
@@ -274,22 +322,27 @@ function selectForConcept(
   options: SelectOptions,
 ): OfficialMetricSelection {
   const blockers: string[] = [];
-  const candidates = facts.facts.filter((fact) => fact.concept === concept);
+  const candidates = facts.facts.filter((fact) => fact.concept === concept
+    && (options.taxonomy === undefined || fact.taxonomy === options.taxonomy));
   if (candidates.length === 0) {
     blockers.push(`no ${concept} facts in companyfacts`);
     return emptySelection(blockers);
   }
 
   // 1. unit
-  const pool = candidates.filter((fact) => fact.unit === unit);
+  const unitMatches = options.unitMatches ?? ((candidate: string | null) => candidate === unit);
+  const pool = candidates.filter((fact) => unitMatches(fact.unit));
   if (pool.length === 0) {
     blockers.push(`no ${concept} facts with unit ${unit}`);
     return emptySelection(blockers);
   }
 
   // 2. fiscal identity
+  const acceptedFiscalPeriods = options.acceptedFiscalPeriods
+    ?? [`Q${identity.fiscalQuarter}`];
   const withFiscal = pool.filter((fact) => fact.fy === identity.fiscalYear
-    && fact.fp === `Q${identity.fiscalQuarter}`);
+    && fact.fp !== null
+    && acceptedFiscalPeriods.includes(fact.fp));
   if (withFiscal.length === 0) {
     blockers.push(
       `no ${concept} facts matching fiscal identity ${identity.fiscalYear} Q${identity.fiscalQuarter}`
@@ -299,14 +352,24 @@ function selectForConcept(
   }
 
   // 3. quarterly duration (quarter-only, never YTD / annual / H1)
-  const quarterly = withFiscal.filter((fact) => isQuarterlyDuration(fact.start, fact.end));
+  const durationKind = options.durationKind ?? "quarter";
+  const quarterly = withFiscal.filter((fact) => durationKind === "quarter"
+    ? isQuarterlyDuration(fact.start, fact.end)
+    : isAccumulatedDuration(fact.start, fact.end, fact.fp));
   if (quarterly.length === 0) {
-    blockers.push(`only ${concept} non-quarterly durations present (annual/YTD/H1); quarterly GAAP value not resolvable`);
+    blockers.push(durationKind === "quarter"
+      ? `only ${concept} non-quarterly durations present (annual/YTD/H1); quarterly GAAP value not resolvable`
+      : `only ${concept} durations outside the requested accumulated period are present`);
     return emptySelection(blockers);
   }
 
   // 4. period-end sanity
-  const inWindow = quarterly.filter((fact) => isWithinPeriodEndSanity(fact.end, identity));
+  const exactPeriod = identity.fiscalPeriodEnd
+    ? quarterly.filter((fact) => fact.end === identity.fiscalPeriodEnd)
+    : [];
+  const inWindow = exactPeriod.length > 0
+    ? exactPeriod
+    : quarterly.filter((fact) => isWithinPeriodEndSanity(fact.end, identity));
   if (inWindow.length === 0 && identity.fiscalPeriodEnd) {
     blockers.push(`no ${concept} facts whose period end matches fiscalPeriodEnd ${identity.fiscalPeriodEnd}`);
     return emptySelection(blockers);
@@ -314,13 +377,16 @@ function selectForConcept(
   const windowed = inWindow.length > 0 ? inWindow : quarterly;
 
   // 5. form acceptance (must carry real form metadata ∈ {10-Q, 10-K, 8-K})
-  const withForm = windowed.filter((fact) => baseForm(fact.form) !== null
-    && ACCEPTED_FORMS.includes(baseForm(fact.form) as (typeof ACCEPTED_FORMS)[number]));
+  const acceptedForms = new Set((options.acceptedForms ?? ACCEPTED_FORMS).map((form) => normalizedForm(form)));
+  const withForm = windowed.filter((fact) => {
+    const form = normalizedForm(fact.form);
+    return form !== null && acceptedForms.has(form);
+  });
   if (withForm.length === 0) {
     blockers.push(`${concept} facts exist only without accepted form metadata (${[...new Set(windowed.map((f) => f.form ?? "?"))].join(", ")})`);
     return emptySelection(blockers);
   }
-  const formScore = (fact: XbrlFactInstance): number => FORM_PREFERENCE.get(baseForm(fact.form) as string) ?? 99;
+  const formScore = (fact: XbrlFactInstance): number => FORM_PREFERENCE.get(normalizedForm(fact.form) as string) ?? 99;
   const bestFormScore = Math.min(...withForm.map(formScore));
   const bestForm = withForm.filter((fact) => formScore(fact) === bestFormScore);
 

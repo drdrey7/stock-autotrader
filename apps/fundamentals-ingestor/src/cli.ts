@@ -13,14 +13,15 @@
 
 import { spawnSync } from "node:child_process";
 import { writeFileSync, unlinkSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import {
   fetchCompanyFacts,
   fetchTickerCikMap,
   SEC_DEFAULT_USER_AGENT,
   type CompanyFacts,
-  type FiscalIdentity,
 } from "../../web/worker/earnings/sec-xbrl";
 import { type CanonicalField } from "./concepts";
+import { extractFiscalIdentities } from "./identities";
 import { normalizePeriod, type NormalizedPeriod } from "./normalize";
 import {
   computeDerivedMetrics,
@@ -29,6 +30,7 @@ import {
   periodToRow,
   type D1FundamentalSnapshotRow,
 } from "./storage";
+import { aggregateTtm, type TtmAggregation, type TtmDurationField } from "./ttm";
 import { CORE_UNIVERSE } from "@stock-autotrader/contracts";
 
 interface CliOptions {
@@ -166,12 +168,14 @@ async function processSymbol(symbol: string, facts: CompanyFacts, options: CliOp
     periods.push(period);
   }
 
-  // Compute derived metrics from the most recent period
+  // Compute derived metrics from true TTM duration values plus the latest
+  // point-in-time balance sheet values.
   const latest = periods[0]!;
-  const derived = computeDerivedMetrics(extractTtmInputs(latest));
+  const ttm = aggregateTtm(facts, periods);
+  const derived = computeDerivedMetrics(extractTtmInputs(latest, ttm.values));
 
   if (options.command === "audit") {
-    printAudit(symbol, latest, derived, periods);
+    printAudit(symbol, latest, derived, periods, ttm);
     return { quality: latest.missingFields.length === 0 ? "complete" : latest.missingFields.length < 10 ? "partial" : "none" };
   }
 
@@ -180,23 +184,29 @@ async function processSymbol(symbol: string, facts: CompanyFacts, options: CliOp
     for (const period of periods) {
       await writePeriodToD1(period, options);
     }
-    const snapshot = buildSnapshot(symbol, periods);
+    const snapshot = buildSnapshot(symbol, periods, ttm);
     await writeSnapshotToD1(snapshot, options);
   }
 
   return { quality: latest.missingFields.length === 0 ? "complete" : "partial" };
 }
 
-function extractTtmInputs(period: NormalizedPeriod) {
+function extractTtmInputs(
+  period: NormalizedPeriod,
+  ttmValues?: Partial<Record<TtmDurationField, number | null>>,
+) {
+  const durationValue = (field: TtmDurationField): number | null => ttmValues
+    ? ttmValues[field] ?? null
+    : period.fields[field]?.value ?? null;
   return {
-    revenue: period.fields.revenue?.value ?? null,
-    operatingIncome: period.fields.operating_income?.value ?? null,
-    pretaxIncome: period.fields.pretax_income?.value ?? null,
-    incomeTax: period.fields.income_tax?.value ?? null,
-    netIncome: period.fields.net_income?.value ?? null,
-    dilutedEps: period.fields.diluted_eps?.value ?? null,
-    operatingCashFlow: period.fields.operating_cash_flow?.value ?? null,
-    capex: period.fields.capex?.value ?? null,
+    revenue: durationValue("revenue"),
+    operatingIncome: durationValue("operating_income"),
+    pretaxIncome: durationValue("pretax_income"),
+    incomeTax: durationValue("income_tax"),
+    netIncome: durationValue("net_income"),
+    dilutedEps: durationValue("diluted_eps"),
+    operatingCashFlow: durationValue("operating_cash_flow"),
+    capex: durationValue("capex"),
     cash: period.fields.cash?.value ?? null,
     shortTermInvestments: period.fields.short_term_investments?.value ?? null,
     totalDebt: period.fields.total_debt?.value ?? null,
@@ -210,7 +220,13 @@ function extractTtmInputs(period: NormalizedPeriod) {
   };
 }
 
-function printAudit(symbol: string, latest: NormalizedPeriod, derived: ReturnType<typeof computeDerivedMetrics>, periods: NormalizedPeriod[]): void {
+function printAudit(
+  symbol: string,
+  latest: NormalizedPeriod,
+  derived: ReturnType<typeof computeDerivedMetrics>,
+  periods: NormalizedPeriod[],
+  ttm: TtmAggregation,
+): void {
   console.error(`\n=== ${symbol} -- Audit (${periods.length} periods) ===`);
   console.error(`  Fiscal: FY${latest.fiscalYear} ${latest.fiscalPeriod}  (${latest.periodStart} -> ${latest.periodEnd})`);
   console.error(`  Filing: ${latest.form}  accession: ${latest.accession}  filed: ${latest.filingDate}`);
@@ -233,6 +249,7 @@ function printAudit(symbol: string, latest: NormalizedPeriod, derived: ReturnTyp
   console.error(`    FCF Margin: ${derived.fcfMarginPct?.toFixed(2) ?? "NULL"}%`);
   console.error(`    Debt/Equity: ${derived.debtToEquity?.toFixed(4) ?? "NULL"}`);
   console.error(`    ROIC: ${derived.roicPct?.toFixed(2) ?? "NULL"}%`);
+  if (ttm.blockers.length > 0) console.error(`    TTM blockers: ${ttm.blockers.join("; ")}`);
   if (derived.blockers.length > 0) console.error(`    Blockers: ${derived.blockers.join("; ")}`);
 }
 
@@ -244,22 +261,28 @@ async function writePeriodToD1(period: NormalizedPeriod, options: CliOptions): P
   runWrangler(sql, options);
 }
 
-function buildSnapshot(symbol: string, periods: NormalizedPeriod[]): D1FundamentalSnapshotRow {
+function buildSnapshot(
+  symbol: string,
+  periods: NormalizedPeriod[],
+  ttm: TtmAggregation,
+): D1FundamentalSnapshotRow {
   const latest = periods[0]!;
   const updatedAt = new Date().toISOString();
-  const derived = computeDerivedMetrics(extractTtmInputs(latest));
+  const derived = computeDerivedMetrics(extractTtmInputs(latest, ttm.values));
+  const missing = [...latest.missingFields, ...ttm.blockers];
+  const ttmValue = (field: TtmDurationField): number | null => ttm.values[field] ?? null;
 
   return {
     symbol,
     latest_period_end: latest.periodEnd,
-    revenue_ttm: latest.fields.revenue?.value ?? null,
-    operating_income_ttm: latest.fields.operating_income?.value ?? null,
-    pretax_income_ttm: latest.fields.pretax_income?.value ?? null,
-    income_tax_ttm: latest.fields.income_tax?.value ?? null,
-    net_income_ttm: latest.fields.net_income?.value ?? null,
-    diluted_eps_ttm: latest.fields.diluted_eps?.value ?? null,
-    operating_cash_flow_ttm: latest.fields.operating_cash_flow?.value ?? null,
-    capex_ttm: latest.fields.capex?.value ?? null,
+    revenue_ttm: ttmValue("revenue"),
+    operating_income_ttm: ttmValue("operating_income"),
+    pretax_income_ttm: ttmValue("pretax_income"),
+    income_tax_ttm: ttmValue("income_tax"),
+    net_income_ttm: ttmValue("net_income"),
+    diluted_eps_ttm: ttmValue("diluted_eps"),
+    operating_cash_flow_ttm: ttmValue("operating_cash_flow"),
+    capex_ttm: ttmValue("capex"),
     free_cash_flow_ttm: derived.freeCashFlow,
     cash: latest.fields.cash?.value ?? null,
     short_term_investments: latest.fields.short_term_investments?.value ?? null,
@@ -271,8 +294,8 @@ function buildSnapshot(symbol: string, periods: NormalizedPeriod[]): D1Fundament
     roic_ttm: derived.roicPct,
     fcf_margin_ttm: derived.fcfMarginPct,
     debt_to_equity: derived.debtToEquity,
-    coverage_status: latest.missingFields.length === 0 ? "complete" : "partial",
-    blockers_json: JSON.stringify(latest.missingFields),
+    coverage_status: missing.length === 0 ? "complete" : "partial",
+    blockers_json: JSON.stringify(missing),
     source: "sec-xbrl",
     updated_at: updatedAt,
   };
@@ -289,7 +312,7 @@ function buildUpsertSql(row: ReturnType<typeof periodToRow>): string {
     if (typeof val === "number") return Number.isFinite(val) ? String(val) : "NULL";
     return `'${String(val).replace(/'/g, "''")}'`;
   };
-  return `INSERT INTO stock_fundamental_periods (symbol, fiscal_year, fiscal_period, period_start, period_end, filing_date, form, accession, taxonomy, currency, revenue, gross_profit, operating_income, pretax_income, income_tax, net_income, diluted_eps, operating_cash_flow, capex, depreciation_amortization, free_cash_flow, cash, short_term_investments, total_debt, total_assets, total_liabilities, shareholders_equity, current_assets, current_liabilities, weighted_avg_diluted_shares, shares_outstanding, source, quality, provenance_json, updated_at) VALUES (${v(row.symbol)}, ${v(row.fiscal_year)}, ${v(row.fiscal_period)}, ${v(row.period_start)}, ${v(row.period_end)}, ${v(row.filing_date)}, ${v(row.form)}, ${v(row.accession)}, ${v(row.taxonomy)}, ${v(row.currency)}, ${v(row.revenue)}, ${v(row.gross_profit)}, ${v(row.operating_income)}, ${v(row.pretax_income)}, ${v(row.income_tax)}, ${v(row.net_income)}, ${v(row.diluted_eps)}, ${v(row.operating_cash_flow)}, ${v(row.capex)}, ${v(row.depreciation_amortization)}, ${v(row.free_cash_flow)}, ${v(row.cash)}, ${v(row.short_term_investments)}, ${v(row.total_debt)}, ${v(row.total_assets)}, ${v(row.total_liabilities)}, ${v(row.shareholders_equity)}, ${v(row.current_assets)}, ${v(row.current_liabilities)}, ${v(row.weighted_avg_diluted_shares)}, ${v(row.shares_outstanding)}, ${v(row.source)}, ${v(row.quality)}, ${v(row.provenance_json)}, ${v(row.updated_at)}) ON CONFLICT(symbol, fiscal_year, fiscal_period) DO UPDATE SET filing_date = excluded.filing_date, form = excluded.form, accession = excluded.accession, taxonomy = excluded.taxonomy, revenue = excluded.revenue, gross_profit = excluded.gross_profit, operating_income = excluded.operating_income, pretax_income = excluded.pretax_income, income_tax = excluded.income_tax, net_income = excluded.net_income, diluted_eps = excluded.diluted_eps, operating_cash_flow = excluded.operating_cash_flow, capex = excluded.capex, depreciation_amortization = excluded.depreciation_amortization, free_cash_flow = excluded.free_cash_flow, cash = excluded.cash, short_term_investments = excluded.short_term_investments, total_debt = excluded.total_debt, total_assets = excluded.total_assets, total_liabilities = excluded.total_liabilities, shareholders_equity = excluded.shareholders_equity, current_assets = excluded.current_assets, current_liabilities = excluded.current_liabilities, weighted_avg_diluted_shares = excluded.weighted_avg_diluted_shares, shares_outstanding = excluded.shares_outstanding, source = excluded.source, quality = excluded.quality, provenance_json = excluded.provenance_json, updated_at = excluded.updated_at WHERE excluded.filing_date IS NULL OR stock_fundamental_periods.filing_date IS NULL OR excluded.filing_date >= stock_fundamental_periods.filing_date;`;
+  return `INSERT INTO stock_fundamental_periods (symbol, fiscal_year, fiscal_period, period_start, period_end, filing_date, form, accession, taxonomy, currency, revenue, gross_profit, operating_income, pretax_income, income_tax, net_income, diluted_eps, operating_cash_flow, capex, depreciation_amortization, free_cash_flow, cash, short_term_investments, total_debt, total_assets, total_liabilities, shareholders_equity, current_assets, current_liabilities, weighted_avg_diluted_shares, shares_outstanding, source, quality, provenance_json, updated_at) VALUES (${v(row.symbol)}, ${v(row.fiscal_year)}, ${v(row.fiscal_period)}, ${v(row.period_start)}, ${v(row.period_end)}, ${v(row.filing_date)}, ${v(row.form)}, ${v(row.accession)}, ${v(row.taxonomy)}, ${v(row.currency)}, ${v(row.revenue)}, ${v(row.gross_profit)}, ${v(row.operating_income)}, ${v(row.pretax_income)}, ${v(row.income_tax)}, ${v(row.net_income)}, ${v(row.diluted_eps)}, ${v(row.operating_cash_flow)}, ${v(row.capex)}, ${v(row.depreciation_amortization)}, ${v(row.free_cash_flow)}, ${v(row.cash)}, ${v(row.short_term_investments)}, ${v(row.total_debt)}, ${v(row.total_assets)}, ${v(row.total_liabilities)}, ${v(row.shareholders_equity)}, ${v(row.current_assets)}, ${v(row.current_liabilities)}, ${v(row.weighted_avg_diluted_shares)}, ${v(row.shares_outstanding)}, ${v(row.source)}, ${v(row.quality)}, ${v(row.provenance_json)}, ${v(row.updated_at)}) ON CONFLICT(symbol, fiscal_year, fiscal_period) DO UPDATE SET period_start = excluded.period_start, period_end = excluded.period_end, filing_date = excluded.filing_date, form = excluded.form, accession = excluded.accession, taxonomy = excluded.taxonomy, currency = excluded.currency, revenue = excluded.revenue, gross_profit = excluded.gross_profit, operating_income = excluded.operating_income, pretax_income = excluded.pretax_income, income_tax = excluded.income_tax, net_income = excluded.net_income, diluted_eps = excluded.diluted_eps, operating_cash_flow = excluded.operating_cash_flow, capex = excluded.capex, depreciation_amortization = excluded.depreciation_amortization, free_cash_flow = excluded.free_cash_flow, cash = excluded.cash, short_term_investments = excluded.short_term_investments, total_debt = excluded.total_debt, total_assets = excluded.total_assets, total_liabilities = excluded.total_liabilities, shareholders_equity = excluded.shareholders_equity, current_assets = excluded.current_assets, current_liabilities = excluded.current_liabilities, weighted_avg_diluted_shares = excluded.weighted_avg_diluted_shares, shares_outstanding = excluded.shares_outstanding, source = excluded.source, quality = excluded.quality, provenance_json = excluded.provenance_json, updated_at = excluded.updated_at WHERE excluded.filing_date IS NULL OR stock_fundamental_periods.filing_date IS NULL OR excluded.filing_date >= stock_fundamental_periods.filing_date;`;
 }
 
 function buildSnapshotUpsertSql(row: D1FundamentalSnapshotRow): string {
@@ -301,10 +324,10 @@ function buildSnapshotUpsertSql(row: D1FundamentalSnapshotRow): string {
   return `INSERT INTO stock_fundamental_snapshots (symbol, latest_period_end, revenue_ttm, operating_income_ttm, pretax_income_ttm, income_tax_ttm, net_income_ttm, diluted_eps_ttm, operating_cash_flow_ttm, capex_ttm, free_cash_flow_ttm, cash, short_term_investments, total_debt, shareholders_equity, current_assets, current_liabilities, shares_outstanding, roic_ttm, fcf_margin_ttm, debt_to_equity, coverage_status, blockers_json, source, updated_at) VALUES (${v(row.symbol)}, ${v(row.latest_period_end)}, ${v(row.revenue_ttm)}, ${v(row.operating_income_ttm)}, ${v(row.pretax_income_ttm)}, ${v(row.income_tax_ttm)}, ${v(row.net_income_ttm)}, ${v(row.diluted_eps_ttm)}, ${v(row.operating_cash_flow_ttm)}, ${v(row.capex_ttm)}, ${v(row.free_cash_flow_ttm)}, ${v(row.cash)}, ${v(row.short_term_investments)}, ${v(row.total_debt)}, ${v(row.shareholders_equity)}, ${v(row.current_assets)}, ${v(row.current_liabilities)}, ${v(row.shares_outstanding)}, ${v(row.roic_ttm)}, ${v(row.fcf_margin_ttm)}, ${v(row.debt_to_equity)}, ${v(row.coverage_status)}, ${v(row.blockers_json)}, ${v(row.source)}, ${v(row.updated_at)}) ON CONFLICT(symbol) DO UPDATE SET latest_period_end = excluded.latest_period_end, revenue_ttm = excluded.revenue_ttm, operating_income_ttm = excluded.operating_income_ttm, pretax_income_ttm = excluded.pretax_income_ttm, income_tax_ttm = excluded.income_tax_ttm, net_income_ttm = excluded.net_income_ttm, diluted_eps_ttm = excluded.diluted_eps_ttm, operating_cash_flow_ttm = excluded.operating_cash_flow_ttm, capex_ttm = excluded.capex_ttm, free_cash_flow_ttm = excluded.free_cash_flow_ttm, cash = excluded.cash, short_term_investments = excluded.short_term_investments, total_debt = excluded.total_debt, shareholders_equity = excluded.shareholders_equity, current_assets = excluded.current_assets, current_liabilities = excluded.current_liabilities, shares_outstanding = excluded.shares_outstanding, roic_ttm = excluded.roic_ttm, fcf_margin_ttm = excluded.fcf_margin_ttm, debt_to_equity = excluded.debt_to_equity, coverage_status = excluded.coverage_status, blockers_json = excluded.blockers_json, source = excluded.source, updated_at = excluded.updated_at;`;
 }
 
-function runWrangler(command: string, options: CliOptions): void {
+function runWrangler(command: string, options: CliOptions): unknown {
   const args = ["d1", "execute", options.db, "--config", "wrangler.jsonc"];
   if (options.remote) args.push("--remote"); else args.push("--local");
-  const cwd = new URL("../../apps/web", import.meta.url).pathname;
+  const cwd = fileURLToPath(new URL("../../web", import.meta.url));
   const tmpFile = `/tmp/fundamentals-sql-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.sql`;
   writeFileSync(tmpFile, command, "utf8");
   args.push("--file", tmpFile, "--json");
@@ -312,12 +335,50 @@ function runWrangler(command: string, options: CliOptions): void {
     encoding: "utf8", maxBuffer: 64 * 1024 * 1024, cwd,
   });
   try { unlinkSync(tmpFile); } catch { /* cleanup - file may not exist */ }
-  if (result.status !== 0) {
+  if (result.error || result.status !== 0) {
     const out = result.stdout?.slice(0, 2000) || "";
     const err = result.stderr?.slice(0, 2000) || "";
     const combined = out + (out && err ? "\n" : "") + err || "(no output)";
-    throw new Error(`D1 write failed (exit ${result.status}): ${combined}`);
+    throw new Error(`D1 write failed (exit ${result.status}): ${result.error?.message ?? combined}`);
   }
+  return parseWranglerJson(result.stdout ?? "");
+}
+
+function parseWranglerJson(output: string): unknown {
+  const trimmed = output.trim();
+  if (!trimmed) return null;
+  try {
+    return JSON.parse(trimmed) as unknown;
+  } catch {
+    for (const line of trimmed.split("\n").reverse()) {
+      try {
+        return JSON.parse(line) as unknown;
+      } catch {
+        // Wrangler may print human-readable notices around its JSON result.
+      }
+    }
+    return null;
+  }
+}
+
+function findNumericField(value: unknown, field: string): number | null {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findNumericField(item, field);
+      if (found !== null) return found;
+    }
+    return null;
+  }
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const direct = record[field];
+  if (typeof direct === "number" && Number.isFinite(direct)) return direct;
+  if (typeof direct === "string" && Number.isFinite(Number(direct))) return Number(direct);
+  for (const child of Object.values(record)) {
+    const found = findNumericField(child, field);
+    if (found !== null) return found;
+  }
+  return null;
 }
 
 /**
@@ -342,10 +403,12 @@ function getLatestAccession(facts: CompanyFacts): string | null {
  */
 async function checkAlreadyProcessed(symbol: string, accession: string | null, options: CliOptions): Promise<boolean> {
   if (!accession) return false;
-  const sql = `SELECT COUNT(*) as cnt FROM stock_fundamental_periods WHERE symbol = '${symbol}' AND accession = '${accession}';`;
+  const safeSymbol = symbol.replace(/'/g, "''");
+  const safeAccession = accession.replace(/'/g, "''");
+  const sql = `SELECT CASE WHEN COUNT(*) > 0 AND (SELECT updated_at FROM stock_fundamental_snapshots WHERE symbol = '${safeSymbol}' LIMIT 1) >= MAX(updated_at) THEN 1 ELSE 0 END AS processed FROM stock_fundamental_periods WHERE symbol = '${safeSymbol}' AND accession = '${safeAccession}';`;
   try {
-    runWrangler(sql, options);
-    return false; // If we got here, query succeeded — parse output for actual count
+    const result = runWrangler(sql, options);
+    return findNumericField(result, "processed") === 1;
   } catch {
     return false; // If query fails, assume not processed
   }
@@ -355,28 +418,6 @@ async function checkAlreadyProcessed(symbol: string, accession: string | null, o
  * Extract fiscal identities from a parsed CompanyFacts payload.
  * Returns unique (fy, fp) pairs sorted newest-first.
  */
-function extractFiscalIdentities(facts: CompanyFacts): FiscalIdentity[] {
-  const seen = new Set<string>();
-  const identities: FiscalIdentity[] = [];
-  for (const fact of facts.facts) {
-    const key = `${fact.fy}-${fact.fp}`;
-    if (fact.fy && fact.fp && !seen.has(key)) {
-      seen.add(key);
-      identities.push({
-        fiscalYear: fact.fy,
-        fiscalQuarter: fact.fp.startsWith("Q") ? Number(fact.fp.slice(1)) : null,
-        scheduledDate: null,
-        fiscalPeriodEnd: null,
-      });
-    }
-  }
-  identities.sort((a, b) => {
-    if (a.fiscalYear !== b.fiscalYear) return (b.fiscalYear ?? 0) - (a.fiscalYear ?? 0);
-    return (b.fiscalQuarter ?? 0) - (a.fiscalQuarter ?? 0);
-  });
-  return identities;
-}
-
 main().catch((err) => {
   console.error(`[fundamentals] fatal: ${err instanceof Error ? err.stack ?? err.message : String(err)}`);
   process.exit(1);

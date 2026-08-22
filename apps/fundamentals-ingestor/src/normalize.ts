@@ -5,7 +5,7 @@
  * and resolveFact for instant concepts (balance sheet).
  */
 
-import { CONCEPT_MAPPINGS, type CanonicalField, type ConceptMapping } from "./concepts";
+import { CONCEPT_MAPPINGS, currencyFromUnit, type CanonicalField, type ConceptMapping } from "./concepts";
 import { resolveFact } from "./sec-client";
 import { resolveDurationFact } from "./duration-resolver";
 import type { CompanyFacts, FiscalIdentity } from "./sec-client";
@@ -143,13 +143,21 @@ export function normalizePeriod(
   const taxonomy = firstResolved?.taxonomy ?? null;
   const periodEnd = firstResolved?.periodEnd ?? null;
   const periodStart = firstResolved?.periodStart ?? null;
+  const inferredCurrency = Object.values(fields)
+    .map((field) => currencyFromUnit(field?.unit ?? null))
+    .find((currency): currency is string => currency !== null)
+    ?? facts.facts
+      .filter((fact) => fact.fy === identity.fiscalYear && fact.end === identity.fiscalPeriodEnd)
+      .map((fact) => currencyFromUnit(fact.unit))
+      .find((currency): currency is string => currency !== null)
+    ?? "USD";
 
   return {
     symbol,
     fiscalYear: identity.fiscalYear ?? 0,
-    fiscalPeriod: identity.fiscalQuarter ? `Q${identity.fiscalQuarter}` : "FY",
+    fiscalPeriod: identity.fiscalPeriod ?? (identity.fiscalQuarter ? `Q${identity.fiscalQuarter}` : "FY"),
     periodStart, periodEnd, filingDate, form, accession, taxonomy,
-    currency: options.currency ?? "USD",
+    currency: options.currency ?? inferredCurrency,
     fields, missingFields, blockers: allBlockers,
   };
 }

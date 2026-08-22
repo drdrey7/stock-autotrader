@@ -12,7 +12,7 @@ import {
 import { isoWeekOfDateKey, weekDiffDays } from "../sma/weeks";
 import { buildIntrinsicValue, buildSupportLevels } from "../stocks/derived";
 import { nyDateKeyOf, quoteState, quotesMarketState } from "../quotes/freshness";
-import { computeMarketCap, computePeTtm } from "./fundamentals";
+import { computeMarketCap, computePeTtm, splitAdjustmentFactorForPeriod } from "./fundamentals";
 import type { Env } from "../index";
 import {
   readStockDetailStorageSnapshot,
@@ -364,9 +364,25 @@ export async function readStockDetailApi(
     ? latestWeeklyRow.source_fetched_at
     : null;
 
-  // Price-sensitive derived metrics (Market Cap, P/E) use current quote
-  const marketCap = computeMarketCap(currentPrice, fundamentalSnapshot?.shares_outstanding ?? null);
-  const peTtm = computePeTtm(currentPrice, fundamentalSnapshot?.diluted_eps_ttm ?? null);
+  // Price-sensitive derived metrics use current quote and reconcile the
+  // fundamental period's per-share scale through all effective splits since
+  // that period. Without a period end or a valid factor, fail closed.
+  const fundamentalSplitFactor = splitAdjustmentFactorForPeriod(
+    fundamentalSnapshot?.latest_period_end ?? null,
+    effectiveSplitEvents,
+  );
+  const sharesOnQuoteScale = fundamentalSnapshot && fundamentalSplitFactor !== null
+    ? (fundamentalSnapshot.shares_outstanding === null
+      ? null
+      : fundamentalSnapshot.shares_outstanding * fundamentalSplitFactor)
+    : null;
+  const epsOnQuoteScale = fundamentalSnapshot && fundamentalSplitFactor !== null
+    ? (fundamentalSnapshot.diluted_eps_ttm === null
+      ? null
+      : fundamentalSnapshot.diluted_eps_ttm / fundamentalSplitFactor)
+    : null;
+  const marketCap = computeMarketCap(currentPrice, sharesOnQuoteScale);
+  const peTtm = computePeTtm(currentPrice, epsOnQuoteScale);
 
   return stockDetailApiResponseSchema.parse({
     schemaVersion: 2,

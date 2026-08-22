@@ -146,9 +146,32 @@ export const CONCEPT_MAPPINGS: Readonly<Record<CanonicalField, readonly ConceptM
     { taxonomy: "us-gaap", concept: "EntityCommonStockSharesOutstanding", unit: "shares", duration: "instant", priority: 1 },
     { taxonomy: "dei", concept: "EntityCommonStockSharesOutstanding", unit: "shares", duration: "instant", priority: 2 },
     { taxonomy: "ifrs-full", concept: "NumberOfSharesOutstanding", unit: "shares", duration: "instant", priority: 3 },
-    // Weighted average as last resort (NOT for Market Cap, only for per-share calcs)
-    { taxonomy: "us-gaap", concept: "WeightedAverageNumberOfSharesOutstandingBasic", unit: "shares", duration: "duration", priority: 10 },
   ],
 };
 
 export const ALL_CANONICAL_FIELDS = Object.keys(CONCEPT_MAPPINGS) as CanonicalField[];
+
+/**
+ * Companyfacts uses the reporting currency as the XBRL unit for IFRS
+ * monetary facts.  The mapping keeps USD as its canonical family name, but
+ * foreign issuers must be allowed to retain their own currency (EUR, DKK,
+ * TWD, ...); no FX conversion is safe without an explicitly sourced rate.
+ */
+export function isReportingCurrencyUnit(unit: string | null): boolean {
+  return unit !== null && /^[A-Z]{3}$/.test(unit);
+}
+
+export function currencyFromUnit(unit: string | null): string | null {
+  if (isReportingCurrencyUnit(unit)) return unit;
+  const perShare = unit?.match(/^([A-Z]{3})\/shares$/);
+  return perShare?.[1] ?? null;
+}
+
+/** Match a fact unit while keeping the source taxonomy and actual currency. */
+export function unitMatchesMapping(mapping: ConceptMapping, unit: string | null): boolean {
+  if (unit === mapping.unit) return true;
+  if (unit === null) return false;
+  if (mapping.unit === "USD") return isReportingCurrencyUnit(unit);
+  if (mapping.unit === "USD/shares") return /^[A-Z]{3}\/shares$/.test(unit);
+  return false;
+}

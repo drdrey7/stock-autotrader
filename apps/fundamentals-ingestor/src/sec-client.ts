@@ -13,6 +13,8 @@ import {
   fetchTickerCikMap,
   parseCompanyFacts,
   selectOfficialMetric,
+  acceptedFormsForTaxonomy,
+  normalizedForm,
   secFilingUrl,
   SEC_DEFAULT_USER_AGENT,
   type CompanyFacts,
@@ -20,7 +22,7 @@ import {
   type OfficialMetricSelection,
   type XbrlFactInstance,
 } from "../../web/worker/earnings/sec-xbrl";
-import type { ConceptMapping, Taxonomy } from "./concepts";
+import { unitMatchesMapping, type ConceptMapping, type Taxonomy } from "./concepts";
 
 export interface SecFactMatch {
   readonly value: number | null;
@@ -57,50 +59,70 @@ export function selectInstantFact(
     };
   }
 
-  const candidates = facts.facts.filter((fact) => fact.concept === mapping.concept);
+  const candidates = facts.facts.filter((fact) => fact.concept === mapping.concept
+    && fact.taxonomy === mapping.taxonomy);
   if (candidates.length === 0) {
     return nullMatch(mapping, [`no ${mapping.concept} facts in companyfacts`]);
   }
 
   // 1. unit
-  const pool = candidates.filter((fact) => fact.unit === mapping.unit);
+  const pool = candidates.filter((fact) => unitMatchesMapping(mapping, fact.unit));
   if (pool.length === 0) {
     return nullMatch(mapping, [`no ${mapping.concept} facts with unit ${mapping.unit}`]);
   }
 
-  // 2. fiscal identity — match by fiscal year (instant facts don't have quarters in the same way)
-  // For instant facts, match by fiscal year and prefer the most recent period-end
-  const withFiscal = pool.filter((fact) => fact.fy === identity.fiscalYear);
+  // 2. Match the requested fiscal identity and exact period context. Choosing
+  // the latest balance in a fiscal year would attach a later Q3/FY balance to
+  // an older Q1 period row.
+  const withFiscal = pool.filter((fact) => fact.fy === identity.fiscalYear || fact.fy === null);
   if (withFiscal.length === 0) {
-    // Try previous fiscal year as fallback
-    const withPrevFiscal = pool.filter((fact) => fact.fy === identity.fiscalYear! - 1);
-    if (withPrevFiscal.length === 0) {
-      return nullMatch(mapping, [
-        `no ${mapping.concept} facts matching fiscal year ${identity.fiscalYear} (facts span ${describeFiscalRange(pool)})`,
-      ]);
-    }
-    // Use the most recent fact from prior fiscal year
-    const sorted = [...withPrevFiscal].sort((a, b) => (b.end ?? "").localeCompare(a.end ?? ""));
-    const winner = sorted[0]!;
-    return {
-      value: winner.val, concept: winner.concept, unit: winner.unit,
-      accn: winner.accn, form: winner.form, filed: winner.filed,
-      periodEnd: winner.end, periodStart: winner.start,
-      fiscalYear: winner.fy, fiscalPeriod: winner.fp,
-      taxonomy: mapping.taxonomy, blockers: [`resolved from prior fiscal year ${winner.fy}`],
-    };
+    return nullMatch(mapping, [
+      `no ${mapping.concept} facts matching fiscal year ${identity.fiscalYear} (facts span ${describeFiscalRange(pool)})`,
+    ]);
   }
 
-  // 3. For instant facts, pick the one with the latest period-end date (most recent balance)
-  const sorted = [...withFiscal].sort((a, b) => (b.end ?? "").localeCompare(a.end ?? ""));
+  const periodCandidates = identity.fiscalPeriodEnd
+    ? withFiscal.filter((fact) => fact.end === identity.fiscalPeriodEnd)
+    : withFiscal.filter((fact) => fact.fp === (identity.fiscalQuarter === 4 ? "FY" : `Q${identity.fiscalQuarter}`));
+  if (periodCandidates.length === 0) {
+    return nullMatch(mapping, [
+      `no ${mapping.concept} facts matching period end ${identity.fiscalPeriodEnd ?? `Q${identity.fiscalQuarter}`}`,
+    ]);
+  }
+
+  // 3. Forms are explicit for both domestic and foreign issuers.
+  const acceptedForms = new Set(acceptedFormsForTaxonomy(mapping.taxonomy).map((form) => normalizedForm(form)));
+  const withForm = periodCandidates.filter((fact) => {
+    const form = normalizedForm(fact.form);
+    return form !== null && acceptedForms.has(form);
+  });
+  if (withForm.length === 0) {
+    return nullMatch(mapping, [`${mapping.concept} facts have no accepted filing form`]);
+  }
+
+  // 4. A conflicting same-period set is unresolved unless an amendment
+  // provides the operative restatement.
+  const isAmendment = (fact: XbrlFactInstance): boolean => fact.form?.toUpperCase().endsWith("/A") ?? false;
+  const nonAmendmentValues = new Set(withForm.filter((fact) => !isAmendment(fact)).map((fact) => fact.val));
+  if (nonAmendmentValues.size > 1 && !withForm.some(isAmendment)) {
+    return nullMatch(mapping, [`conflicting ${mapping.concept} values for period end ${identity.fiscalPeriodEnd}`]);
+  }
+  const amendments = withForm.filter(isAmendment);
+  const candidatesToRank = amendments.length > 0 ? amendments : withForm;
+  const sorted = [...candidatesToRank].sort((a, b) => {
+    const filed = (b.filed ?? "").localeCompare(a.filed ?? "");
+    return filed !== 0 ? filed : (b.accn ?? "").localeCompare(a.accn ?? "");
+  });
   const winner = sorted[0]!;
+  const restated = isAmendment(winner) && nonAmendmentValues.size > 0;
 
   return {
     value: winner.val, concept: winner.concept, unit: winner.unit,
     accn: winner.accn, form: winner.form, filed: winner.filed,
     periodEnd: winner.end, periodStart: winner.start,
     fiscalYear: winner.fy, fiscalPeriod: winner.fp,
-    taxonomy: mapping.taxonomy, blockers: [],
+    taxonomy: mapping.taxonomy,
+    blockers: restated ? [`resolved from amended/restated filing (${winner.form})`] : [],
   };
 }
 
@@ -129,7 +151,56 @@ export function resolveFact(
     return selectInstantFact(facts, mapping, identity);
   }
   // Duration facts use the existing official selector
-  const result = selectOfficialMetric(facts, [mapping.concept], mapping.unit, identity);
+  return durationSelectionToMatch(selectOfficialMetric(
+    facts,
+    [mapping.concept],
+    mapping.unit,
+    identity,
+    {
+      taxonomy: mapping.taxonomy,
+      acceptedForms: acceptedFormsForTaxonomy(mapping.taxonomy),
+      unitMatches: (unit) => unitMatchesMapping(mapping, unit),
+    },
+  ), mapping);
+}
+
+export type AccumulatedPeriod = "Q1" | "H1" | "9M" | "FY";
+
+/** Resolve a cumulative duration for an honest FY+YTD TTM fallback. */
+export function resolveAccumulatedFact(
+  facts: CompanyFacts,
+  mapping: ConceptMapping,
+  fiscalYear: number,
+  period: AccumulatedPeriod,
+  periodEnd: string | null,
+): SecFactMatch {
+  const fiscalQuarter = period === "Q1" ? 1 : period === "H1" ? 2 : period === "9M" ? 3 : 4;
+  const acceptedFiscalPeriods = period === "Q1"
+    ? ["Q1"]
+    : period === "H1"
+      ? ["H1", "Q2"]
+      : period === "9M"
+        ? ["9M", "Q3"]
+        : ["FY", "Q4"];
+  return durationSelectionToMatch(selectOfficialMetric(
+    facts,
+    [mapping.concept],
+    mapping.unit,
+    { fiscalYear, fiscalQuarter, fiscalPeriod: period, scheduledDate: null, fiscalPeriodEnd: periodEnd },
+    {
+      taxonomy: mapping.taxonomy,
+      acceptedForms: acceptedFormsForTaxonomy(mapping.taxonomy),
+      unitMatches: (unit) => unitMatchesMapping(mapping, unit),
+      durationKind: "accumulated",
+      acceptedFiscalPeriods,
+    },
+  ), mapping);
+}
+
+function durationSelectionToMatch(
+  result: OfficialMetricSelection,
+  mapping: ConceptMapping,
+): SecFactMatch {
   return {
     value: result.value,
     concept: result.concept,
