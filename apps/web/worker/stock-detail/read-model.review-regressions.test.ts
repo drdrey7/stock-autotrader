@@ -94,7 +94,7 @@ beforeEach(() => {
 });
 
 describe("Stock Detail review regressions", () => {
-  it("serves the same latest_quotes price as Screener while unsafe split history stays suppressed", async () => {
+  it("serves latest_quotes unchanged while unsafe split history stays suppressed", async () => {
     const rows = splitReconciledHistory();
     const staleIndex = rows.findIndex((row) => row.week_end_date < "2026-08-10");
     rows[staleIndex] = {
