@@ -1,17 +1,9 @@
 import {
-  screenerApiResponseSchema,
   stockDetailApiResponseSchema,
-  type ScreenerApiResponse,
-  type ScreenerRow,
   type StockDetailApiResponse,
 } from "@stock-autotrader/contracts";
 import { requestJson } from "../api-client";
 import type { StockDetail, StockDetailDataSource } from "./stock-detail.types";
-
-interface ScreenerSummary {
-  row: ScreenerRow;
-  marketState: ScreenerApiResponse["marketState"];
-}
 
 /**
  * Daily change is only presentation-safe when the regular session is active
@@ -27,72 +19,53 @@ interface ScreenerSummary {
  * returned together by one provider response, so a Live regular-session row
  * from that source can safely expose the daily move.
  */
-function canShowDailyChange(api: StockDetailApiResponse, screener: ScreenerSummary | null): boolean {
-  const marketState = screener?.marketState ?? api.quote.marketState;
-  const quoteState = screener?.row.state ?? api.quote.state;
-  return marketState === "regular"
-    && quoteState === "Live"
+function canShowDailyChange(api: StockDetailApiResponse): boolean {
+  return api.quote.marketState === "regular"
+    && api.quote.state === "Live"
     && api.quote.scaleState === "safe"
     && api.quote.provider === "finnhub-quote";
 }
 
-/**
- * Screener is the canonical source for values already shown in its row.
- * Stock Detail only adds detail-only data (history/chart/freshness metadata).
- * This guarantees that clicking a stock cannot change its visible price, IV,
- * SMA or support values just because the detail read model is stricter.
- */
-function toUiModel(api: StockDetailApiResponse, screener: ScreenerSummary | null): StockDetail {
-  const row = screener?.row ?? null;
-  const price = row ? row.price : api.quote.price;
-  const intrinsicValue = row ? row.intrinsicValue : api.valuation.intrinsicValue;
-  const showDailyChange = canShowDailyChange(api, screener);
-  const marketState = screener?.marketState ?? api.quote.marketState;
-  const quoteState = row?.state ?? api.quote.state;
-  const changeAbs = row ? row.changeAbs : api.quote.changeAbs;
-  const changePct = row ? row.changePct : api.quote.changePct;
-  const ivUpsidePct = intrinsicValue && price !== null && price > 0
-    ? (intrinsicValue.base / price - 1) * 100
-    : null;
-
-  const supports = row ? row.supportLevels : api.technical.supports;
+function toUiModel(api: StockDetailApiResponse): StockDetail {
+  const iv = api.valuation.intrinsicValue;
+  const showDailyChange = canShowDailyChange(api);
   return {
     source: "api",
     symbol: api.symbol,
-    companyName: row?.company ?? api.company.name ?? api.symbol,
+    companyName: api.company.name ?? api.symbol,
     exchange: api.company.exchange,
     sector: api.company.sector,
-    logoUrl: row?.logoUrl ?? api.company.logoUrl,
+    logoUrl: api.company.logoUrl,
     quote: {
-      price,
-      change: showDailyChange ? changeAbs : null,
-      changePct: showDailyChange ? changePct : null,
-      state: quoteState,
+      price: api.quote.price,
+      change: showDailyChange ? api.quote.changeAbs : null,
+      changePct: showDailyChange ? api.quote.changePct : null,
+      state: api.quote.state,
       scaleState: api.quote.scaleState,
-      marketState: marketState === "regular" ? "open" : "closed",
-      asOf: row ? row.asOf : api.quote.asOf,
+      marketState: api.quote.marketState === "regular" ? "open" : "closed",
+      asOf: api.quote.asOf,
     },
     valuation: {
-      intrinsicValue: intrinsicValue?.base ?? null,
-      upsidePct: ivUpsidePct,
+      intrinsicValue: iv?.base ?? null,
+      upsidePct: iv?.upsidePct ?? null,
       scenarios: {
-        bear: intrinsicValue?.low ?? null,
-        base: intrinsicValue?.base ?? null,
-        bull: intrinsicValue?.high ?? null,
+        bear: iv?.low ?? null,
+        base: iv?.base ?? null,
+        bull: iv?.high ?? null,
       },
       methods: {
         dcf: null,
         multiples: null,
-        manual: intrinsicValue?.base ?? null,
-        selected: intrinsicValue?.base ?? null,
-        selectedMethod: intrinsicValue?.method ?? null,
+        manual: iv?.base ?? null,
+        selected: iv?.base ?? null,
+        selectedMethod: iv?.method ?? null,
       },
     },
     technical: {
-      sma200w: row ? row.sma200w : api.technical.sma200w,
-      smaDistancePct: row ? row.distanceToSma200wPct : api.technical.distanceToSma200wPct,
+      sma200w: api.technical.sma200w,
+      smaDistancePct: api.technical.distanceToSma200wPct,
       sma200wHistory: api.technical.sma200wHistory,
-      supports: supports.map((support) => ({
+      supports: api.technical.supports.map((support) => ({
         level: support.level,
         price: support.price,
         method: support.method,
@@ -117,27 +90,13 @@ function toUiModel(api: StockDetailApiResponse, screener: ScreenerSummary | null
 export class ApiStockDetailDataSource implements StockDetailDataSource {
   async getStockDetail(rawSymbol: string): Promise<StockDetail | null> {
     const symbol = rawSymbol.trim().toUpperCase();
-    const [detailResponse, screenerResponse] = await Promise.all([
-      requestJson(`/api/stocks/${encodeURIComponent(symbol)}/detail`),
-      requestJson("/api/screener"),
-    ]);
+    const response = await requestJson(`/api/stocks/${encodeURIComponent(symbol)}/detail`);
+    if (response.status === 404) return null;
+    if (!response.ok) throw new Error(`stock_detail_http_${response.status}`);
 
-    if (detailResponse.status === 404) return null;
-    if (!detailResponse.ok) throw new Error(`stock_detail_http_${detailResponse.status}`);
-
-    const parsedDetail = stockDetailApiResponseSchema.safeParse(detailResponse.body);
-    if (!parsedDetail.success) throw new Error("stock_detail_invalid_response");
-
-    let screener: ScreenerSummary | null = null;
-    if (screenerResponse.ok) {
-      const parsedScreener = screenerApiResponseSchema.safeParse(screenerResponse.body);
-      if (parsedScreener.success) {
-        const row = parsedScreener.data.rows.find((candidate) => candidate.symbol === symbol) ?? null;
-        if (row) screener = { row, marketState: parsedScreener.data.marketState };
-      }
-    }
-
-    return toUiModel(parsedDetail.data, screener);
+    const parsed = stockDetailApiResponseSchema.safeParse(response.body);
+    if (!parsed.success) throw new Error("stock_detail_invalid_response");
+    return toUiModel(parsed.data);
   }
 }
 
