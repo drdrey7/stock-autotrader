@@ -31,6 +31,20 @@ export function BrandLogo({
   const [assetReady, setAssetReady] = useState(false);
   const assetPath = `/brand/logo-mark-${theme}.svg`;
 
+  const wordmarkStyle = stacked
+    ? {
+        overflow: "visible",
+        textOverflow: "clip",
+        whiteSpace: "normal" as const,
+      }
+    : compact
+      ? {
+          overflow: "visible",
+          textOverflow: "clip",
+          whiteSpace: "nowrap" as const,
+        }
+      : undefined;
+
   return (
     <span
       className={`brand-logo${compact ? " is-compact" : ""}${markOnly ? " is-mark-only" : ""}${stacked ? " is-stacked" : ""}${className ? ` ${className}` : ""}`}
@@ -48,14 +62,11 @@ export function BrandLogo({
         />
         {!assetReady && <span className="brand-logo-fallback-mark" aria-hidden="true" />}
         {!markOnly && (
-          <span className="brand-logo-fallback-copy">
-            <strong
-              style={stacked ? {
-                overflow: "visible",
-                textOverflow: "clip",
-                whiteSpace: "normal",
-              } : undefined}
-            >
+          <span
+            className="brand-logo-fallback-copy"
+            style={compact ? { minWidth: "max-content" } : undefined}
+          >
+            <strong style={wordmarkStyle}>
               {stacked ? (
                 <>
                   HOW ARE
