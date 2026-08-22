@@ -1,0 +1,6 @@
+/* Desktop-only readability policy for application chrome. */
+@media (min-width: 901px) {
+  .shell-nav-link { font-size: 14px; }
+  .brand-logo-fallback-copy strong { font-size: 14px; }
+  .brand-logo-fallback-copy small { font-size: 10px; }
+}
