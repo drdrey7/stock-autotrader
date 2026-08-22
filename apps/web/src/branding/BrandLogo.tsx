@@ -49,7 +49,13 @@ export function BrandLogo({
         {!assetReady && <span className="brand-logo-fallback-mark" aria-hidden="true" />}
         {!markOnly && (
           <span className="brand-logo-fallback-copy">
-            <strong>
+            <strong
+              style={stacked ? {
+                overflow: "visible",
+                textOverflow: "clip",
+                whiteSpace: "normal",
+              } : undefined}
+            >
               {stacked ? (
                 <>
                   HOW ARE
