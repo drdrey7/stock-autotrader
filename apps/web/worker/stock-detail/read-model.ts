@@ -268,7 +268,7 @@ export function servedSplitScaleState(
 
 /**
  * One-stock serving read model. Every external/provider action happens before
- * this request path. D1 serving uses one batch snapshot so the seven
+ * this request path. D1 serving uses one batch snapshot so the eight
  * symbol-scoped reads do not exceed Cloudflare's simultaneous-connection cap.
  */
 export async function readStockDetailApi(
@@ -287,7 +287,17 @@ export async function readStockDetailApi(
     intrinsicValue: intrinsicRaw,
     weeklyRows,
     splitEvents,
+    fundamentals,
   } = await readStockDetailStorageSnapshot(env.DB, symbol);
+
+  const marketCap = fundamentals?.market_cap ?? null;
+  const formattedMarketCap = marketCap === null
+    ? null
+    : marketCap >= 1_000_000_000_000
+      ? `$${(marketCap / 1_000_000_000_000).toFixed(2)}T`
+      : marketCap >= 1_000_000_000
+        ? `$${(marketCap / 1_000_000_000).toFixed(1)}B`
+        : `$${(marketCap / 1_000_000).toFixed(0)}M`;
 
   const validSplitEvents = splitEvents.filter((event) => isoWeekOfDateKey(event.effective_date) !== null);
   const effectiveSplitEvents = validSplitEvents.filter((event) => event.effective_date <= currentMarketDate);
@@ -384,6 +394,13 @@ export async function readStockDetailApi(
       scaleState,
     },
     valuation: { intrinsicValue },
+    fundamentals: {
+      marketCap: formattedMarketCap,
+      peTtm: fundamentals?.pe_ttm ?? null,
+      roicPct: fundamentals?.roic_pct ?? null,
+      fcfMarginPct: fundamentals?.fcf_margin_pct ?? null,
+      debtToEquity: fundamentals?.debt_to_equity ?? null,
+    },
     technical: {
       sma200w: liveSma.sma200w,
       distanceToSma200wPct: liveSma.distanceToSma200wPct,

@@ -1,0 +1,98 @@
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from fundamentals_ingestor.config import Settings
+from fundamentals_ingestor.edgar import FilingMetadata
+from fundamentals_ingestor.finnhub import MarketData
+from fundamentals_ingestor.main import run
+from fundamentals_ingestor.metrics import AccountingInputs
+
+
+def existing_snapshot():
+    return {
+        "symbol": "MSFT",
+        "market_cap": 100.0,
+        "pe_ttm": 20.0,
+        "revenue_ttm": 100.0,
+        "operating_income_ttm": 20.0,
+        "pretax_income_ttm": 20.0,
+        "income_tax_ttm": 4.0,
+        "operating_cash_flow_ttm": 30.0,
+        "capex_ttm": 5.0,
+        "free_cash_flow_ttm": 25.0,
+        "cash": 10.0,
+        "short_term_investments": 5.0,
+        "total_debt": 20.0,
+        "shareholders_equity": 50.0,
+        "roic_pct": 20.0,
+        "fcf_margin_pct": 25.0,
+        "debt_to_equity": 0.4,
+        "accounting_as_of": "2026-06-30",
+        "market_as_of": "2026-08-21T20:00:00Z",
+        "accounting_source": "edgartools",
+        "market_source": "finnhub",
+        "accounting_filing_accession": "0000000000-26-000001",
+        "updated_at": "old",
+    }
+
+
+class FakeFinnhub:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def fetch(self, symbol):
+        return MarketData(100.0, 20.0, "2026-08-21T20:00:00Z")
+
+
+class FakeD1:
+    def __init__(self, *args, **kwargs):
+        self.writes = []
+
+    def get_snapshot(self, symbol):
+        return existing_snapshot()
+
+    def upsert(self, values):
+        self.writes.append(values)
+
+
+class RefreshTests(unittest.TestCase):
+    def settings(self):
+        return Settings("key", "token", "account", "database", "identity", Path("unused"))
+
+    def test_same_accession_reuses_snapshot_without_statement_refresh(self):
+        with (
+            patch("fundamentals_ingestor.main.load_universe", return_value=["MSFT"]),
+            patch("fundamentals_ingestor.main.FinnhubClient", FakeFinnhub),
+            patch("fundamentals_ingestor.main.D1Client", FakeD1),
+            patch("fundamentals_ingestor.main.fetch_latest_filing_metadata", return_value=FilingMetadata("0000000000-26-000001", "2026-06-30")),
+            patch("fundamentals_ingestor.main.fetch_accounting_inputs", side_effect=AssertionError("statement refresh must be skipped")),
+        ):
+            result = run(self.settings())
+        self.assertEqual(result, {"complete": 1, "partial": 0, "missing": 0, "failed": 0, "written": 0})
+
+    def test_new_accession_refreshes_statements(self):
+        refreshed = AccountingInputs(
+            revenue_ttm=100,
+            operating_income_ttm=20,
+            pretax_income_ttm=20,
+            income_tax_ttm=4,
+            operating_cash_flow_ttm=30,
+            capex_ttm=5,
+            cash=10,
+            short_term_investments=5,
+            total_debt=20,
+            shareholders_equity=50,
+            accounting_as_of="2026-06-30",
+            periods_compatible=True,
+        )
+        with (
+            patch("fundamentals_ingestor.main.load_universe", return_value=["MSFT"]),
+            patch("fundamentals_ingestor.main.FinnhubClient", FakeFinnhub),
+            patch("fundamentals_ingestor.main.D1Client", FakeD1),
+            patch("fundamentals_ingestor.main.fetch_latest_filing_metadata", return_value=FilingMetadata("new-accession", "2026-06-30")),
+            patch("fundamentals_ingestor.main.fetch_accounting_inputs", return_value=refreshed) as fetch,
+        ):
+            result = run(self.settings())
+        fetch.assert_called_once()
+        self.assertEqual(result["written"], 1)

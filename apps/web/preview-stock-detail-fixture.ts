@@ -112,6 +112,13 @@ export function previewStockDetailFixture(rawSymbol: string): StockDetailApiResp
         upsidePct: (ivBase / quotePrice - 1) * 100,
       },
     },
+    fundamentals: {
+      marketCap: null,
+      peTtm: null,
+      roicPct: null,
+      fcfMarginPct: null,
+      debtToEquity: null,
+    },
     technical: {
       sma200w: currentSma,
       distanceToSma200wPct: currentSma === null ? null : (quotePrice / currentSma - 1) * 100,

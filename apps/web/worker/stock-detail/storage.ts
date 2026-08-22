@@ -45,6 +45,15 @@ const SPLIT_EVENTS_SQL = `SELECT effective_date, split_factor
   FROM split_events
   WHERE symbol = ?
   ORDER BY effective_date ASC`;
+const FUNDAMENTALS_SQL = `SELECT symbol, market_cap, pe_ttm, revenue_ttm,
+  operating_income_ttm, pretax_income_ttm, income_tax_ttm,
+  operating_cash_flow_ttm, capex_ttm, free_cash_flow_ttm, cash,
+  short_term_investments, total_debt, shareholders_equity, roic_pct,
+  fcf_margin_pct, debt_to_equity, accounting_as_of, market_as_of,
+  accounting_source, market_source, updated_at
+  FROM stock_fundamentals_snapshot
+  WHERE symbol = ?
+  LIMIT 1`;
 
 export interface StockDetailCompanyRow {
   symbol: string;
@@ -73,6 +82,31 @@ export interface StockDetailSplitEventRow {
   split_factor: number;
 }
 
+export interface StockFundamentalsSnapshotRow {
+  symbol: string;
+  market_cap: number | null;
+  pe_ttm: number | null;
+  revenue_ttm: number | null;
+  operating_income_ttm: number | null;
+  pretax_income_ttm: number | null;
+  income_tax_ttm: number | null;
+  operating_cash_flow_ttm: number | null;
+  capex_ttm: number | null;
+  free_cash_flow_ttm: number | null;
+  cash: number | null;
+  short_term_investments: number | null;
+  total_debt: number | null;
+  shareholders_equity: number | null;
+  roic_pct: number | null;
+  fcf_margin_pct: number | null;
+  debt_to_equity: number | null;
+  accounting_as_of: string | null;
+  market_as_of: string | null;
+  accounting_source: string;
+  market_source: string;
+  updated_at: string;
+}
+
 export interface StockDetailStorageSnapshot {
   company: StockDetailCompanyRow | null;
   quote: LatestQuoteRow | null;
@@ -81,6 +115,7 @@ export interface StockDetailStorageSnapshot {
   intrinsicValue: IntrinsicValuesForSymbol | undefined;
   weeklyRows: WeeklyPriceRow[];
   splitEvents: StockDetailSplitEventRow[];
+  fundamentals: StockFundamentalsSnapshotRow | null;
 }
 
 function isFiniteNumber(value: unknown): value is number {
@@ -148,6 +183,20 @@ function parseSplitEvents(rows: readonly unknown[]): StockDetailSplitEventRow[] 
     ));
 }
 
+function parseFundamentals(row: unknown): StockFundamentalsSnapshotRow | null {
+  if (!row || typeof row !== "object") return null;
+  const value = row as Record<string, unknown>;
+  const numericFields = [
+    "market_cap", "pe_ttm", "revenue_ttm", "operating_income_ttm", "pretax_income_ttm",
+    "income_tax_ttm", "operating_cash_flow_ttm", "capex_ttm", "free_cash_flow_ttm", "cash",
+    "short_term_investments", "total_debt", "shareholders_equity", "roic_pct", "fcf_margin_pct",
+    "debt_to_equity",
+  ];
+  if (typeof value.symbol !== "string" || !numericFields.every((field) => value[field] === null || isFiniteNumber(value[field]))) return null;
+  if (!["accounting_source", "market_source", "updated_at"].every((field) => typeof value[field] === "string" && value[field])) return null;
+  return value as unknown as StockFundamentalsSnapshotRow;
+}
+
 /**
  * Canonical Stock Detail serving read. D1 documents at most six simultaneous
  * connections per Worker invocation, while this read model needs seven
@@ -172,6 +221,7 @@ export async function readStockDetailStorageSnapshot(
     db.prepare(INTRINSIC_VALUE_SQL).bind(symbol),
     db.prepare(WEEKLY_HISTORY_SQL).bind(symbol, historyLimit),
     db.prepare(SPLIT_EVENTS_SQL).bind(symbol),
+    db.prepare(FUNDAMENTALS_SQL).bind(symbol),
   ]);
 
   const rows = results.map((result) => (result.results ?? []) as unknown[]);
@@ -186,6 +236,7 @@ export async function readStockDetailStorageSnapshot(
     intrinsicValue: parseIntrinsicValue(symbol, firstRow(rows[4])),
     weeklyRows: parseWeeklyRows(rows[5] ?? []),
     splitEvents: parseSplitEvents(rows[6] ?? []),
+    fundamentals: parseFundamentals(firstRow(rows[7])),
   };
 }
 

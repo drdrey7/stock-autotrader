@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily Stock Autotrader simple fundamentals snapshot
+
+[Timer]
+OnCalendar=*-*-* 07:00:00 UTC
+Persistent=true
+Unit=fundamentals-ingestor.service
+
+[Install]
+WantedBy=timers.target

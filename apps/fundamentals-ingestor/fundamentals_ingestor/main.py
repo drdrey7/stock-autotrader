@@ -1,0 +1,127 @@
+"""Daily Finnhub + EdgarTools -> D1 snapshot job."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+from datetime import UTC, datetime
+from pathlib import Path
+
+from .config import Settings, from_env
+from .d1 import SNAPSHOT_COLUMNS, D1Client, snapshot_values
+from .edgar import fetch_accounting_inputs, fetch_latest_filing_metadata
+from .finnhub import FinnhubClient
+from .metrics import CalculatedMetrics, accounting_inputs_from_snapshot, calculate_metrics
+
+logger = logging.getLogger("fundamentals_ingestor")
+
+
+def load_universe(path: Path) -> list[str]:
+    with path.open(encoding="utf-8") as handle:
+        payload = json.load(handle)
+    symbols = payload.get("symbols") if isinstance(payload, dict) else None
+    if not isinstance(symbols, list) or not symbols or any(not isinstance(symbol, str) for symbol in symbols):
+        raise RuntimeError("invalid_core_universe")
+    normalized = [symbol.strip().upper() for symbol in symbols]
+    if len(normalized) != len(set(normalized)) or normalized != sorted(normalized):
+        raise RuntimeError("invalid_core_universe")
+    return normalized
+
+
+def _stored_number(row: dict[str, object], name: str) -> float | None:
+    value = row.get(name)
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def _stored_metrics(row: dict[str, object]) -> CalculatedMetrics:
+    return CalculatedMetrics(
+        free_cash_flow_ttm=_stored_number(row, "free_cash_flow_ttm"),
+        roic_pct=_stored_number(row, "roic_pct"),
+        fcf_margin_pct=_stored_number(row, "fcf_margin_pct"),
+        debt_to_equity=_stored_number(row, "debt_to_equity"),
+    )
+
+
+def _snapshot_changed(existing: dict[str, object] | None, values: list[object]) -> bool:
+    if existing is None:
+        return True
+    candidate = dict(zip(SNAPSHOT_COLUMNS, values))
+    return any(existing.get(column) != candidate.get(column) for column in SNAPSHOT_COLUMNS[:-1])
+
+
+def run(settings: Settings, dry_run: bool = False) -> dict[str, int]:
+    symbols = load_universe(settings.universe_path)
+    finnhub = FinnhubClient(
+        settings.finnhub_api_key,
+        settings.request_timeout_seconds,
+        min_interval_seconds=settings.finnhub_min_interval_seconds,
+    )
+    d1 = D1Client(
+        settings.cloudflare_api_token,
+        settings.cloudflare_account_id,
+        settings.cloudflare_d1_database_id,
+        settings.request_timeout_seconds,
+    )
+    updated_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    counts = {"complete": 0, "partial": 0, "missing": 0, "failed": 0, "written": 0}
+    for symbol in symbols:
+        try:
+            market = finnhub.fetch(symbol)
+            existing = d1.get_snapshot(symbol) if not dry_run else None
+            filing = fetch_latest_filing_metadata(symbol, settings.edgar_identity) if not dry_run else None
+            can_reuse = bool(
+                existing
+                and filing
+                and filing.accession
+                and existing.get("accounting_filing_accession") == filing.accession
+            )
+            if can_reuse:
+                accounting = accounting_inputs_from_snapshot(existing)
+                calculated = _stored_metrics(existing)
+            else:
+                accounting = fetch_accounting_inputs(symbol, settings.edgar_identity, filing)
+                calculated = calculate_metrics(accounting)
+            card_values = [market.market_cap, market.pe_ttm, calculated.roic_pct, calculated.fcf_margin_pct, calculated.debt_to_equity]
+            available = sum(value is not None for value in card_values)
+            if available == 5:
+                counts["complete"] += 1
+            elif available == 0:
+                counts["missing"] += 1
+            else:
+                counts["partial"] += 1
+            values = snapshot_values(
+                symbol,
+                market,
+                accounting,
+                calculated,
+                updated_at,
+                filing.accession if filing else None,
+            )
+            if not dry_run and _snapshot_changed(existing, values):
+                d1.upsert(values)
+                counts["written"] += 1
+            logger.info("snapshot symbol=%s cards=%d reused=%s dry_run=%s", symbol, available, can_reuse, dry_run)
+        except Exception as exc:
+            counts["failed"] += 1
+            logger.error("snapshot failed symbol=%s reason=%s", symbol, type(exc).__name__)
+    return counts
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dry-run", action="store_true", help="fetch and calculate without D1 writes")
+    args = parser.parse_args()
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    try:
+        settings = from_env()
+        counts = run(settings, dry_run=args.dry_run)
+        logger.info("run complete complete=%d partial=%d missing=%d failed=%d written=%d", *(counts[key] for key in ("complete", "partial", "missing", "failed", "written")))
+        return 1 if counts["failed"] else 0
+    except Exception as exc:
+        logger.error("run failed reason=%s", type(exc).__name__)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
