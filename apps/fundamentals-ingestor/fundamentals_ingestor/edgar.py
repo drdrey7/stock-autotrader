@@ -437,12 +437,16 @@ def _statement_value(rows: list[dict[str, Any]], labels: tuple[str, ...], period
 def _annual_years(statement: Any) -> list[int]:
     years: list[int] = []
     for raw in getattr(statement, "periods", None) or []:
-        text = str(raw).upper().replace("FY ", "FY ")
-        parts = text.split()
-        if len(parts) == 2 and parts[0] == "FY":
+        if isinstance(raw, (tuple, list)) and len(raw) >= 2:
+            year_value, period_value = raw[0], str(raw[1]).upper()
+            year = int(year_value) if str(year_value).isdigit() and period_value == "FY" else None
+        else:
+            parts = str(raw).upper().split()
+            year = int(parts[1]) if len(parts) == 2 and parts[0] == "FY" and parts[1].isdigit() else None
+        if year is not None:
             try:
-                year = int(parts[1])
-            except ValueError:
+                year = int(year)
+            except (TypeError, ValueError):
                 continue
             if year not in years:
                 years.append(year)

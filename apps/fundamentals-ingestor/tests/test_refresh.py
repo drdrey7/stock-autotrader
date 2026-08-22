@@ -80,6 +80,7 @@ class RefreshTests(unittest.TestCase):
         self.assertNotEqual(d1_instance.writes[0][SNAPSHOT_COLUMNS.index("updated_at")], "old")
 
     def test_new_accession_refreshes_statements(self):
+        d1_instance = FakeD1()
         refreshed = AccountingInputs(
             revenue_ttm=100,
             operating_income_ttm=20,
@@ -97,13 +98,14 @@ class RefreshTests(unittest.TestCase):
         with (
             patch("fundamentals_ingestor.main.load_universe", return_value=["MSFT"]),
             patch("fundamentals_ingestor.main.FinnhubClient", FakeFinnhub),
-            patch("fundamentals_ingestor.main.D1Client", FakeD1),
+            patch("fundamentals_ingestor.main.D1Client", return_value=d1_instance),
             patch("fundamentals_ingestor.main.fetch_latest_filing_metadata", return_value=FilingMetadata("new-accession", "2026-06-30")),
             patch("fundamentals_ingestor.main.fetch_accounting_inputs", return_value=refreshed) as fetch,
         ):
             result = run(self.settings())
         fetch.assert_called_once()
         self.assertEqual(result["written"], 1)
+        self.assertIsNone(d1_instance.writes[0][SNAPSHOT_COLUMNS.index("market_cap")])
 
     def test_same_accession_retries_incomplete_snapshot(self):
         partial = existing_snapshot()

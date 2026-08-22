@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from fundamentals_ingestor.edgar import (
     FilingLookupError,
+    _annual_years,
     _balance_value,
     _fact_ttm_value,
     _fact_value,
@@ -69,6 +70,9 @@ class FakeHttpResponse:
 
 
 class NormalizationTests(unittest.TestCase):
+    def test_annual_periods_accept_tuple_form(self):
+        self.assertEqual(_annual_years(FakeStatement([], [(2026, "FY"), (2025, "FY"), "FY 2024"])), [2026, 2025, 2024])
+
     def test_finnhub_direct_fields_and_timestamp(self):
         self.assertEqual(normalize_quote({"t": 1_700_000_000}), "2023-11-14T22:13:20Z")
         value = normalize_metric({"metric": {"marketCapitalization": 123.4, "peTTM": 21.5}}, "2023-11-14T22:13:20Z")

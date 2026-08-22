@@ -116,6 +116,7 @@ def run(settings: Settings, dry_run: bool = False) -> dict[str, int]:
                 and existing.get("accounting_filing_accession") == filing.accession
                 and _accounting_snapshot_complete(existing)
             )
+            market_fallback_allowed = can_reuse
             if can_reuse:
                 accounting = accounting_inputs_from_snapshot(existing)
                 calculated = _stored_metrics(existing)
@@ -147,12 +148,13 @@ def run(settings: Settings, dry_run: bool = False) -> dict[str, int]:
                         existing.get("accounting_as_of") if isinstance(existing.get("accounting_as_of"), str) else None,
                         existing.get("accounting_filing_form") if isinstance(existing.get("accounting_filing_form"), str) else None,
                     )
+                    market_fallback_allowed = True
                     counts["failed"] += 1
                     logger.error("accounting refresh failed symbol=%s; market refresh preserved", symbol)
             fallback_market = MarketData(
-                _stored_number(existing, "market_cap") if existing else None,
-                _stored_number(existing, "pe_ttm") if existing else None,
-                existing.get("market_as_of") if existing and isinstance(existing.get("market_as_of"), str) else None,
+                _stored_number(existing, "market_cap") if market_fallback_allowed and existing else None,
+                _stored_number(existing, "pe_ttm") if market_fallback_allowed and existing else None,
+                existing.get("market_as_of") if market_fallback_allowed and existing and isinstance(existing.get("market_as_of"), str) else None,
             )
             if not dry_run and hasattr(d1, "get_latest_quote"):
                 quote_data = d1.get_latest_quote(symbol, accounting.accounting_as_of)
