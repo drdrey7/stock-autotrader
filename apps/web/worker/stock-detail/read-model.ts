@@ -12,6 +12,7 @@ import {
 import { isoWeekOfDateKey, weekDiffDays } from "../sma/weeks";
 import { buildIntrinsicValue, buildSupportLevels } from "../stocks/derived";
 import { nyDateKeyOf, quoteState, quotesMarketState } from "../quotes/freshness";
+import { computeMarketCap, computePeTtm } from "./fundamentals";
 import type { Env } from "../index";
 import {
   readStockDetailStorageSnapshot,
@@ -287,6 +288,7 @@ export async function readStockDetailApi(
     intrinsicValue: intrinsicRaw,
     weeklyRows,
     splitEvents,
+    fundamentalSnapshot,
   } = await readStockDetailStorageSnapshot(env.DB, symbol);
 
   const validSplitEvents = splitEvents.filter((event) => isoWeekOfDateKey(event.effective_date) !== null);
@@ -362,8 +364,12 @@ export async function readStockDetailApi(
     ? latestWeeklyRow.source_fetched_at
     : null;
 
+  // Price-sensitive derived metrics (Market Cap, P/E) use current quote
+  const marketCap = computeMarketCap(currentPrice, fundamentalSnapshot?.shares_outstanding ?? null);
+  const peTtm = computePeTtm(currentPrice, fundamentalSnapshot?.diluted_eps_ttm ?? null);
+
   return stockDetailApiResponseSchema.parse({
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt: now.toISOString(),
     symbol,
     company: {
@@ -384,6 +390,15 @@ export async function readStockDetailApi(
       scaleState,
     },
     valuation: { intrinsicValue },
+    fundamentals: {
+      marketCap,
+      peTtm,
+      roicPct: fundamentalSnapshot?.roic_ttm ?? null,
+      fcfMarginPct: fundamentalSnapshot?.fcf_margin_ttm ?? null,
+      debtToEquity: fundamentalSnapshot?.debt_to_equity ?? null,
+      coverageStatus: fundamentalSnapshot?.coverage_status ?? "none",
+      asOf: fundamentalSnapshot?.latest_period_end ?? null,
+    },
     technical: {
       sma200w: liveSma.sma200w,
       distanceToSma200wPct: liveSma.distanceToSma200wPct,
@@ -403,6 +418,7 @@ export async function readStockDetailApi(
       historyAsOf,
       valuationAsOf: intrinsicValue?.asOf ?? null,
       technicalAsOf: metric?.calculated_at ?? null,
+      fundamentalsAsOf: fundamentalSnapshot?.latest_period_end ?? null,
     },
   });
 }

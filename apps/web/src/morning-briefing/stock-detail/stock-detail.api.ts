@@ -26,7 +26,15 @@ function canShowDailyChange(api: StockDetailApiResponse): boolean {
     && api.quote.provider === "finnhub-quote";
 }
 
-function toUiModel(api: StockDetailApiResponse): StockDetail {
+function formatMarketCap(value: number | null): string | null {
+  if (value === null || !Number.isFinite(value)) return null;
+  if (value >= 1e12) return `$${(value / 1e12).toFixed(1)}T`;
+  if (value >= 1e9) return `$${(value / 1e9).toFixed(1)}B`;
+  if (value >= 1e6) return `$${(value / 1e6).toFixed(1)}M`;
+  return `$${value.toLocaleString("en-US")}`;
+}
+
+export function toUiModel(api: StockDetailApiResponse): StockDetail {
   const iv = api.valuation.intrinsicValue;
   const showDailyChange = canShowDailyChange(api);
   return {
@@ -74,11 +82,12 @@ function toUiModel(api: StockDetailApiResponse): StockDetail {
       })),
     },
     metrics: {
-      marketCap: null,
-      peTtm: null,
-      roicPct: null,
-      fcfMarginPct: null,
-      debtToEquity: null,
+      marketCap: formatMarketCap(api.fundamentals.marketCap),
+      peTtm: api.fundamentals.peTtm,
+      roicPct: api.fundamentals.roicPct,
+      fcfMarginPct: api.fundamentals.fcfMarginPct,
+      debtToEquity: api.fundamentals.debtToEquity,
+      fundamentalsAsOf: api.fundamentals.asOf,
     },
     chart: {
       priceHistory: api.chart.priceHistory,

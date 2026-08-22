@@ -45,6 +45,14 @@ const SPLIT_EVENTS_SQL = `SELECT effective_date, split_factor
   FROM split_events
   WHERE symbol = ?
   ORDER BY effective_date ASC`;
+const FUNDAMENTAL_SNAPSHOT_SQL = `SELECT symbol, latest_period_end, revenue_ttm, operating_income_ttm,
+  pretax_income_ttm, income_tax_ttm, net_income_ttm, diluted_eps_ttm, operating_cash_flow_ttm,
+  capex_ttm, free_cash_flow_ttm, cash, short_term_investments, total_debt, shareholders_equity,
+  current_assets, current_liabilities, shares_outstanding, roic_ttm, fcf_margin_ttm,
+  debt_to_equity, coverage_status, blockers_json, source, updated_at
+  FROM stock_fundamental_snapshots
+  WHERE symbol = ?
+  LIMIT 1`;
 
 export interface StockDetailCompanyRow {
   symbol: string;
@@ -73,6 +81,34 @@ export interface StockDetailSplitEventRow {
   split_factor: number;
 }
 
+export interface StockDetailFundamentalSnapshotRow {
+  symbol: string;
+  latest_period_end: string | null;
+  revenue_ttm: number | null;
+  operating_income_ttm: number | null;
+  pretax_income_ttm: number | null;
+  income_tax_ttm: number | null;
+  net_income_ttm: number | null;
+  diluted_eps_ttm: number | null;
+  operating_cash_flow_ttm: number | null;
+  capex_ttm: number | null;
+  free_cash_flow_ttm: number | null;
+  cash: number | null;
+  short_term_investments: number | null;
+  total_debt: number | null;
+  shareholders_equity: number | null;
+  current_assets: number | null;
+  current_liabilities: number | null;
+  shares_outstanding: number | null;
+  roic_ttm: number | null;
+  fcf_margin_ttm: number | null;
+  debt_to_equity: number | null;
+  coverage_status: string;
+  blockers_json: string;
+  source: string;
+  updated_at: string;
+}
+
 export interface StockDetailStorageSnapshot {
   company: StockDetailCompanyRow | null;
   quote: LatestQuoteRow | null;
@@ -81,6 +117,7 @@ export interface StockDetailStorageSnapshot {
   intrinsicValue: IntrinsicValuesForSymbol | undefined;
   weeklyRows: WeeklyPriceRow[];
   splitEvents: StockDetailSplitEventRow[];
+  fundamentalSnapshot: StockDetailFundamentalSnapshotRow | null;
 }
 
 function isFiniteNumber(value: unknown): value is number {
@@ -148,6 +185,39 @@ function parseSplitEvents(rows: readonly unknown[]): StockDetailSplitEventRow[] 
     ));
 }
 
+function parseFundamentalSnapshot(raw: unknown): StockDetailFundamentalSnapshotRow | null {
+  if (!raw || typeof raw !== "object") return null;
+  const row = raw as Record<string, unknown>;
+  if (typeof row.symbol !== "string") return null;
+  return {
+    symbol: row.symbol,
+    latest_period_end: typeof row.latest_period_end === "string" ? row.latest_period_end : null,
+    revenue_ttm: isFiniteNumber(row.revenue_ttm) ? row.revenue_ttm : null,
+    operating_income_ttm: isFiniteNumber(row.operating_income_ttm) ? row.operating_income_ttm : null,
+    pretax_income_ttm: isFiniteNumber(row.pretax_income_ttm) ? row.pretax_income_ttm : null,
+    income_tax_ttm: isFiniteNumber(row.income_tax_ttm) ? row.income_tax_ttm : null,
+    net_income_ttm: isFiniteNumber(row.net_income_ttm) ? row.net_income_ttm : null,
+    diluted_eps_ttm: isFiniteNumber(row.diluted_eps_ttm) ? row.diluted_eps_ttm : null,
+    operating_cash_flow_ttm: isFiniteNumber(row.operating_cash_flow_ttm) ? row.operating_cash_flow_ttm : null,
+    capex_ttm: isFiniteNumber(row.capex_ttm) ? row.capex_ttm : null,
+    free_cash_flow_ttm: isFiniteNumber(row.free_cash_flow_ttm) ? row.free_cash_flow_ttm : null,
+    cash: isFiniteNumber(row.cash) ? row.cash : null,
+    short_term_investments: isFiniteNumber(row.short_term_investments) ? row.short_term_investments : null,
+    total_debt: isFiniteNumber(row.total_debt) ? row.total_debt : null,
+    shareholders_equity: isFiniteNumber(row.shareholders_equity) ? row.shareholders_equity : null,
+    current_assets: isFiniteNumber(row.current_assets) ? row.current_assets : null,
+    current_liabilities: isFiniteNumber(row.current_liabilities) ? row.current_liabilities : null,
+    shares_outstanding: isFiniteNumber(row.shares_outstanding) ? row.shares_outstanding : null,
+    roic_ttm: isFiniteNumber(row.roic_ttm) ? row.roic_ttm : null,
+    fcf_margin_ttm: isFiniteNumber(row.fcf_margin_ttm) ? row.fcf_margin_ttm : null,
+    debt_to_equity: isFiniteNumber(row.debt_to_equity) ? row.debt_to_equity : null,
+    coverage_status: typeof row.coverage_status === "string" ? row.coverage_status : "none",
+    blockers_json: typeof row.blockers_json === "string" ? row.blockers_json : "[]",
+    source: typeof row.source === "string" ? row.source : "sec-xbrl",
+    updated_at: typeof row.updated_at === "string" ? row.updated_at : "",
+  };
+}
+
 /**
  * Canonical Stock Detail serving read. D1 documents at most six simultaneous
  * connections per Worker invocation, while this read model needs seven
@@ -172,6 +242,7 @@ export async function readStockDetailStorageSnapshot(
     db.prepare(INTRINSIC_VALUE_SQL).bind(symbol),
     db.prepare(WEEKLY_HISTORY_SQL).bind(symbol, historyLimit),
     db.prepare(SPLIT_EVENTS_SQL).bind(symbol),
+    db.prepare(FUNDAMENTAL_SNAPSHOT_SQL).bind(symbol),
   ]);
 
   const rows = results.map((result) => (result.results ?? []) as unknown[]);
@@ -186,6 +257,7 @@ export async function readStockDetailStorageSnapshot(
     intrinsicValue: parseIntrinsicValue(symbol, firstRow(rows[4])),
     weeklyRows: parseWeeklyRows(rows[5] ?? []),
     splitEvents: parseSplitEvents(rows[6] ?? []),
+    fundamentalSnapshot: parseFundamentalSnapshot(firstRow(rows[7])),
   };
 }
 
