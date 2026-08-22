@@ -117,6 +117,7 @@ function baseSnapshot(overrides: Partial<StockDetailStorageSnapshot> = {}): Stoc
         as_of_date: "2026-08-03",
       },
     },
+    fundamentals: null,
     weeklyRows: weeklyHistory(459),
     splitEvents: [],
     ...overrides,
@@ -216,6 +217,115 @@ describe("split scale safety", () => {
 });
 
 describe("Stock Detail D1 read model", () => {
+  it("expires only market-dependent fundamentals while retaining accounting cards", async () => {
+    storageMock.readStockDetailStorageSnapshot.mockResolvedValue(baseSnapshot({
+      fundamentals: {
+        symbol: "MSFT",
+        market_cap: 3_000_000_000_000,
+        pe_ttm: 35.5,
+        revenue_ttm: 250_000,
+        operating_income_ttm: 100_000,
+        pretax_income_ttm: 98_000,
+        income_tax_ttm: 18_000,
+        operating_cash_flow_ttm: 110_000,
+        capex_ttm: 20_000,
+        free_cash_flow_ttm: 90_000,
+        cash: 50_000,
+        short_term_investments: 10_000,
+        total_debt: 40_000,
+        shareholders_equity: 200_000,
+        roic_pct: 27.5,
+        fcf_margin_pct: 36,
+        debt_to_equity: 0.2,
+        accounting_as_of: "2026-08-17",
+        market_as_of: "2026-08-17T15:00:00.000Z",
+        accounting_source: "edgartools",
+        market_source: "finnhub",
+        updated_at: "2026-08-17T15:01:00.000Z",
+      },
+    }));
+
+    const detail = await readStockDetailApi(env, "MSFT", NOW);
+    expect(detail.fundamentals).toEqual({
+      marketCap: null,
+      peTtm: null,
+      roicPct: 27.5,
+      fcfMarginPct: 36,
+      debtToEquity: 0.2,
+    });
+  });
+
+  it("serves the five persisted fundamentals cards without provider calls", async () => {
+    storageMock.readStockDetailStorageSnapshot.mockResolvedValue(baseSnapshot({
+      fundamentals: {
+        symbol: "MSFT",
+        market_cap: 3_000_000_000_000,
+        pe_ttm: 35.5,
+        revenue_ttm: 250_000,
+        operating_income_ttm: 100_000,
+        pretax_income_ttm: 98_000,
+        income_tax_ttm: 18_000,
+        operating_cash_flow_ttm: 110_000,
+        capex_ttm: 20_000,
+        free_cash_flow_ttm: 90_000,
+        cash: 50_000,
+        short_term_investments: 10_000,
+        total_debt: 40_000,
+        shareholders_equity: 200_000,
+        roic_pct: 27.5,
+        fcf_margin_pct: 36,
+        debt_to_equity: 0.2,
+        accounting_as_of: "2026-06-30",
+        market_as_of: "2026-08-21T15:00:00.000Z",
+        accounting_source: "edgartools",
+        market_source: "finnhub",
+        updated_at: "2026-08-21T15:01:00.000Z",
+      },
+    }));
+
+    const detail = await readStockDetailApi(env, "MSFT", NOW);
+    expect(detail.fundamentals).toEqual({
+      marketCap: "$3.00T",
+      peTtm: 35.5,
+      roicPct: 27.5,
+      fcfMarginPct: 36,
+      debtToEquity: 0.2,
+    });
+  });
+
+  it("fails closed when market metrics have no known as-of timestamp", async () => {
+    storageMock.readStockDetailStorageSnapshot.mockResolvedValue(baseSnapshot({
+      fundamentals: {
+        symbol: "MSFT",
+        market_cap: 3_000_000_000_000,
+        pe_ttm: 35.5,
+        revenue_ttm: 250_000,
+        operating_income_ttm: 100_000,
+        pretax_income_ttm: 98_000,
+        income_tax_ttm: 18_000,
+        operating_cash_flow_ttm: 110_000,
+        capex_ttm: 20_000,
+        free_cash_flow_ttm: 90_000,
+        cash: 50_000,
+        short_term_investments: 10_000,
+        total_debt: 40_000,
+        shareholders_equity: 200_000,
+        roic_pct: 27.5,
+        fcf_margin_pct: 36,
+        debt_to_equity: 0.2,
+        accounting_as_of: "2026-06-30",
+        market_as_of: null,
+        accounting_source: "edgartools",
+        market_source: "finnhub",
+        updated_at: "2026-08-21T14:59:00.000Z",
+      },
+    }));
+
+    const detail = await readStockDetailApi(env, "MSFT", NOW);
+    expect(detail.fundamentals?.marketCap).toBeNull();
+    expect(detail.fundamentals?.peTtm).toBeNull();
+  });
+
   it("composes company, quote, manual IV, supports, live SMA and weekly history", async () => {
     const detail = await readStockDetailApi(env, "MSFT", NOW);
     expect(detail.company).toEqual({

@@ -17,6 +17,13 @@ const COMPANY_SQL = `SELECT u.symbol, u.company, u.logo_url, u.exchange, u.indus
   FROM earnings_universe AS u
   WHERE u.symbol = ? AND ${ACTIVE_UNIVERSE_PREDICATE}
   LIMIT 1`;
+// Branch Preview is intentionally seeded only with fundamentals rows. This
+// path is never selected by production, which keeps the runtime membership
+// gate above authoritative for real serving traffic.
+const PREVIEW_COMPANY_SQL = `SELECT symbol, symbol AS company, NULL AS logo_url, NULL AS exchange, NULL AS industry
+  FROM stock_fundamentals_snapshot
+  WHERE symbol = ?
+  LIMIT 1`;
 const QUOTE_SQL = `SELECT symbol, price, change_abs, change_pct, day_high, day_low, day_open,
   previous_close, provider, provider_timestamp, updated_at
   FROM latest_quotes
@@ -45,6 +52,15 @@ const SPLIT_EVENTS_SQL = `SELECT effective_date, split_factor
   FROM split_events
   WHERE symbol = ?
   ORDER BY effective_date ASC`;
+const FUNDAMENTALS_SQL = `SELECT symbol, market_cap, pe_ttm, revenue_ttm,
+  operating_income_ttm, pretax_income_ttm, income_tax_ttm,
+  operating_cash_flow_ttm, capex_ttm, free_cash_flow_ttm, cash,
+  short_term_investments, total_debt, shareholders_equity, roic_pct,
+  fcf_margin_pct, debt_to_equity, accounting_as_of, market_as_of,
+  accounting_source, market_source, updated_at
+  FROM stock_fundamentals_snapshot
+  WHERE symbol = ?
+  LIMIT 1`;
 
 export interface StockDetailCompanyRow {
   symbol: string;
@@ -73,6 +89,31 @@ export interface StockDetailSplitEventRow {
   split_factor: number;
 }
 
+export interface StockFundamentalsSnapshotRow {
+  symbol: string;
+  market_cap: number | null;
+  pe_ttm: number | null;
+  revenue_ttm: number | null;
+  operating_income_ttm: number | null;
+  pretax_income_ttm: number | null;
+  income_tax_ttm: number | null;
+  operating_cash_flow_ttm: number | null;
+  capex_ttm: number | null;
+  free_cash_flow_ttm: number | null;
+  cash: number | null;
+  short_term_investments: number | null;
+  total_debt: number | null;
+  shareholders_equity: number | null;
+  roic_pct: number | null;
+  fcf_margin_pct: number | null;
+  debt_to_equity: number | null;
+  accounting_as_of: string | null;
+  market_as_of: string | null;
+  accounting_source: string;
+  market_source: string;
+  updated_at: string;
+}
+
 export interface StockDetailStorageSnapshot {
   company: StockDetailCompanyRow | null;
   quote: LatestQuoteRow | null;
@@ -81,6 +122,7 @@ export interface StockDetailStorageSnapshot {
   intrinsicValue: IntrinsicValuesForSymbol | undefined;
   weeklyRows: WeeklyPriceRow[];
   splitEvents: StockDetailSplitEventRow[];
+  fundamentals: StockFundamentalsSnapshotRow | null;
 }
 
 function isFiniteNumber(value: unknown): value is number {
@@ -148,6 +190,20 @@ function parseSplitEvents(rows: readonly unknown[]): StockDetailSplitEventRow[] 
     ));
 }
 
+function parseFundamentals(row: unknown): StockFundamentalsSnapshotRow | null {
+  if (!row || typeof row !== "object") return null;
+  const value = row as Record<string, unknown>;
+  const numericFields = [
+    "market_cap", "pe_ttm", "revenue_ttm", "operating_income_ttm", "pretax_income_ttm",
+    "income_tax_ttm", "operating_cash_flow_ttm", "capex_ttm", "free_cash_flow_ttm", "cash",
+    "short_term_investments", "total_debt", "shareholders_equity", "roic_pct", "fcf_margin_pct",
+    "debt_to_equity",
+  ];
+  if (typeof value.symbol !== "string" || !numericFields.every((field) => value[field] === null || isFiniteNumber(value[field]))) return null;
+  if (!["accounting_source", "market_source", "updated_at"].every((field) => typeof value[field] === "string" && value[field])) return null;
+  return value as unknown as StockFundamentalsSnapshotRow;
+}
+
 /**
  * Canonical Stock Detail serving read. D1 documents at most six simultaneous
  * connections per Worker invocation, while this read model needs seven
@@ -163,15 +219,18 @@ export async function readStockDetailStorageSnapshot(
   db: D1Database,
   symbol: string,
   historyLimit = STOCK_DETAIL_HISTORY_LIMIT,
+  environment = "production",
 ): Promise<StockDetailStorageSnapshot> {
+  const companySql = environment === "preview" ? PREVIEW_COMPANY_SQL : COMPANY_SQL;
   const results = await db.batch([
-    db.prepare(COMPANY_SQL).bind(symbol),
+    db.prepare(companySql).bind(symbol),
     db.prepare(QUOTE_SQL).bind(symbol),
     db.prepare(TECHNICAL_SQL).bind(symbol),
     db.prepare(SUPPORTS_SQL).bind(symbol),
     db.prepare(INTRINSIC_VALUE_SQL).bind(symbol),
     db.prepare(WEEKLY_HISTORY_SQL).bind(symbol, historyLimit),
     db.prepare(SPLIT_EVENTS_SQL).bind(symbol),
+    db.prepare(FUNDAMENTALS_SQL).bind(symbol),
   ]);
 
   const rows = results.map((result) => (result.results ?? []) as unknown[]);
@@ -186,12 +245,14 @@ export async function readStockDetailStorageSnapshot(
     intrinsicValue: parseIntrinsicValue(symbol, firstRow(rows[4])),
     weeklyRows: parseWeeklyRows(rows[5] ?? []),
     splitEvents: parseSplitEvents(rows[6] ?? []),
+    fundamentals: parseFundamentals(firstRow(rows[7])),
   };
 }
 
 /** Individual strict reads are retained for focused storage tests/reuse. */
-export async function readStockDetailCompany(db: D1Database, symbol: string): Promise<StockDetailCompanyRow | null> {
-  return parseCompany(await db.prepare(COMPANY_SQL).bind(symbol).first<StockDetailCompanyRow>());
+export async function readStockDetailCompany(db: D1Database, symbol: string, environment = "production"): Promise<StockDetailCompanyRow | null> {
+  const companySql = environment === "preview" ? PREVIEW_COMPANY_SQL : COMPANY_SQL;
+  return parseCompany(await db.prepare(companySql).bind(symbol).first<StockDetailCompanyRow>());
 }
 
 export async function readStockDetailQuote(db: D1Database, symbol: string): Promise<LatestQuoteRow | null> {

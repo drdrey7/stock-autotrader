@@ -15,14 +15,17 @@ import { nyDateKeyOf, quoteState, quotesMarketState } from "../quotes/freshness"
 import type { Env } from "../index";
 import {
   readStockDetailStorageSnapshot,
+  STOCK_DETAIL_HISTORY_LIMIT,
   STOCK_DETAIL_VISIBLE_WEEKS,
   type StockDetailSplitEventRow,
+  type StockDetailStorageSnapshot,
   type WeeklyPriceRow,
 } from "./storage";
 
 const SMA_WINDOW_WEEKS = 200;
 const CLOSE_CROSSCHECK_RELATIVE_TOLERANCE = 1e-6;
 const CLOSE_CROSSCHECK_ABSOLUTE_TOLERANCE = 1e-8;
+export const FUNDAMENTALS_MARKET_STALE_AFTER_SECONDS = 3 * 24 * 60 * 60;
 
 interface AdjustedClosePoint {
   time: string;
@@ -153,6 +156,19 @@ function approximatelyEqual(left: number, right: number): boolean {
   return Math.abs(left - right) <= tolerance;
 }
 
+function marketFundamentalsAreFresh(
+  fundamentals: StockDetailStorageSnapshot["fundamentals"],
+  now: Date,
+): boolean {
+  if (!fundamentals) return false;
+  const updatedMs = Date.parse(fundamentals.updated_at);
+  const marketAsOfMs = Date.parse(fundamentals.market_as_of ?? "");
+  if (!Number.isFinite(updatedMs) || !Number.isFinite(marketAsOfMs)) return false;
+  const oldestTimestamp = Math.min(marketAsOfMs, updatedMs);
+  const ageSeconds = (now.getTime() - oldestTimestamp) / 1000;
+  return ageSeconds >= 0 && ageSeconds <= FUNDAMENTALS_MARKET_STALE_AFTER_SECONDS;
+}
+
 function expectedSplitFactorForWeek(
   weekEndDate: string,
   effectiveSplits: readonly StockDetailSplitEventRow[],
@@ -268,7 +284,7 @@ export function servedSplitScaleState(
 
 /**
  * One-stock serving read model. Every external/provider action happens before
- * this request path. D1 serving uses one batch snapshot so the seven
+ * this request path. D1 serving uses one batch snapshot so the eight
  * symbol-scoped reads do not exceed Cloudflare's simultaneous-connection cap.
  */
 export async function readStockDetailApi(
@@ -287,7 +303,20 @@ export async function readStockDetailApi(
     intrinsicValue: intrinsicRaw,
     weeklyRows,
     splitEvents,
-  } = await readStockDetailStorageSnapshot(env.DB, symbol);
+    fundamentals,
+  } = env.ENVIRONMENT === "preview"
+    ? await readStockDetailStorageSnapshot(env.DB, symbol, STOCK_DETAIL_HISTORY_LIMIT, "preview")
+    : await readStockDetailStorageSnapshot(env.DB, symbol);
+
+  const marketFundamentalsFresh = marketFundamentalsAreFresh(fundamentals, now);
+  const marketCap = marketFundamentalsFresh ? fundamentals?.market_cap ?? null : null;
+  const formattedMarketCap = marketCap === null
+    ? null
+    : marketCap >= 1_000_000_000_000
+      ? `$${(marketCap / 1_000_000_000_000).toFixed(2)}T`
+      : marketCap >= 1_000_000_000
+        ? `$${(marketCap / 1_000_000_000).toFixed(1)}B`
+        : `$${(marketCap / 1_000_000).toFixed(0)}M`;
 
   const validSplitEvents = splitEvents.filter((event) => isoWeekOfDateKey(event.effective_date) !== null);
   const effectiveSplitEvents = validSplitEvents.filter((event) => event.effective_date <= currentMarketDate);
@@ -384,6 +413,13 @@ export async function readStockDetailApi(
       scaleState,
     },
     valuation: { intrinsicValue },
+    fundamentals: {
+      marketCap: formattedMarketCap,
+      peTtm: marketFundamentalsFresh ? fundamentals?.pe_ttm ?? null : null,
+      roicPct: fundamentals?.roic_pct ?? null,
+      fcfMarginPct: fundamentals?.fcf_margin_pct ?? null,
+      debtToEquity: fundamentals?.debt_to_equity ?? null,
+    },
     technical: {
       sma200w: liveSma.sma200w,
       distanceToSma200wPct: liveSma.distanceToSma200wPct,

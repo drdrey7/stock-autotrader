@@ -111,6 +111,7 @@ describe("Stock Detail symbol-specific storage", () => {
     expect(calls.sql[0]).toContain("FROM earnings_universe AS u");
     expect(calls.sql[0]).toContain("u.active = 1");
     expect(calls.sql[0]).toContain("u.source = 'core'");
+    expect(calls.binds[0]).toEqual(["MSFT"]);
   });
 
   it("treats a malformed/negative persisted quote as absent, never as $0 or mock data", async () => {
@@ -126,6 +127,13 @@ describe("Stock Detail symbol-specific storage", () => {
       },
     });
     await expect(readStockDetailQuote(db, "MSFT")).resolves.toBeNull();
+  });
+
+  it("uses the fundamentals-only company fallback only for preview validation", async () => {
+    const { db, calls } = createDb({ first: { symbol: "AMZN", company: "AMZN", logo_url: null } });
+    await expect(readStockDetailCompany(db, "AMZN", "preview")).resolves.toMatchObject({ symbol: "AMZN" });
+    expect(calls.sql[0]).toContain("FROM stock_fundamentals_snapshot");
+    expect(calls.sql[0]).not.toContain("earnings_universe");
   });
 
   it("returns partial support rows and discards malformed levels", async () => {

@@ -39,6 +39,20 @@ function installFixtures() {
 UPDATE earnings_universe
    SET company = 'Microsoft Corporation', active = 1, source = 'core', logo_url = 'https://example.com/msft.png'
  WHERE symbol = 'MSFT';
+UPDATE earnings_universe
+   SET company = 'Adobe Inc.', active = 1, source = 'core'
+ WHERE symbol = 'ADBE';
+INSERT OR REPLACE INTO stock_fundamentals_snapshot
+(symbol, market_cap, pe_ttm, revenue_ttm, operating_income_ttm, pretax_income_ttm,
+ income_tax_ttm, operating_cash_flow_ttm, capex_ttm, free_cash_flow_ttm, cash,
+ short_term_investments, total_debt, shareholders_equity, roic_pct, fcf_margin_pct,
+ debt_to_equity, accounting_as_of, market_as_of, accounting_source, market_source,
+ accounting_filing_accession, updated_at)
+VALUES ('ADBE', 109431750000, 15.1379, 25198000000, 9090000000, 9111000000,
+ 1882000000, 10481000000, 201000000, 10280000000, 4919000000,
+ 707000000, NULL, 11518000000, NULL, 40.79688864195571,
+ NULL, '2026-05-29', '2026-08-21T20:00:00Z', 'edgartools', 'finnhub',
+ '0000796343-26-000112', '2026-08-21T20:01:00Z');
 DELETE FROM split_events WHERE symbol = 'MSFT';
 DELETE FROM weekly_prices WHERE symbol = 'MSFT';
 INSERT OR REPLACE INTO latest_quotes
@@ -169,6 +183,15 @@ async function main() {
     assert(Math.abs(detail.technical.sma200wHistory.at(-1).value - 359.5) < 1e-9, "historical SMA math is wrong");
     assert(detail.chart.intrinsicValueHistory?.length === 0, "historical IV must not be fabricated");
     assert(!detail.chart.priceHistory.some((point) => point.time === "2026-08-21"), "current week candle was fabricated");
+
+    const adbeResponse = await fetchWithTimeout(`${ORIGIN}/api/stocks/ADBE/detail`);
+    assert(adbeResponse.status === 200, `ADBE detail returned ${adbeResponse.status}`);
+    const adbe = await adbeResponse.json();
+    assert(adbe.fundamentals?.marketCap === "$109.4B", "ADBE market cap card was not served from D1");
+    assert(adbe.fundamentals?.peTtm === 15.1379, "ADBE P/E card was not served from D1");
+    assert(adbe.fundamentals?.roicPct === null, "ADBE ROIC must remain unavailable with missing debt");
+    assert(Math.abs(adbe.fundamentals?.fcfMarginPct - 40.79688864195571) < 1e-9, "ADBE FCF margin card was not served from D1");
+    assert(adbe.fundamentals?.debtToEquity === null, "ADBE debt/equity must remain unavailable with missing debt");
 
     const lowercase = await fetchWithTimeout(`${ORIGIN}/api/stocks/msft/detail`);
     assert(lowercase.status === 200, `lowercase ticker returned ${lowercase.status}`);
