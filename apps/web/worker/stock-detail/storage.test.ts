@@ -112,6 +112,8 @@ describe("Stock Detail symbol-specific storage", () => {
     expect(calls.sql[0]).toContain("FROM earnings_universe AS u");
     expect(calls.sql[0]).toContain("u.active = 1");
     expect(calls.sql[0]).toContain("u.source = 'core'");
+    expect(calls.sql[0]).toContain("active_core.active = 1");
+    expect(calls.sql[0]).toContain("active_core.source = 'core'");
   });
 
   it("treats a malformed/negative persisted quote as absent, never as $0 or mock data", async () => {

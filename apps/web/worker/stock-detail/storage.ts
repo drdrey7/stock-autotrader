@@ -20,6 +20,13 @@ UNION ALL
 SELECT f.symbol, f.symbol AS company, NULL AS logo_url, NULL AS exchange, NULL AS industry
   FROM stock_fundamentals_snapshot AS f
   WHERE f.symbol = ?
+    AND EXISTS (
+      SELECT 1
+      FROM earnings_universe AS active_core
+      WHERE active_core.symbol = f.symbol
+        AND active_core.active = 1
+        AND active_core.source = 'core'
+    )
   LIMIT 1`;
 const QUOTE_SQL = `SELECT symbol, price, change_abs, change_pct, day_high, day_low, day_open,
   previous_close, provider, provider_timestamp, updated_at
