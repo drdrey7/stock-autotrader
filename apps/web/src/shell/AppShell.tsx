@@ -6,6 +6,7 @@ import { MobileHeader } from "./MobileHeader";
 import { MobileNavigationDrawer } from "./MobileNavigationDrawer";
 import { GlobalTicker } from "./GlobalTicker";
 import "./shell.css";
+import "./typography.css";
 
 /**
  * Responsive dashboard shell wrapping every routed page.

@@ -1,0 +1,115 @@
+/* Typography owned by the Morning Briefing product surface.
+ *
+ * Dashboard, X Pulse, Earnings, Screener and Heatmap all render inside
+ * `.mb-demo`, so their desktop readability policy belongs here rather than in
+ * a global stylesheet. Mobile defaults remain defined by morning-briefing.css.
+ */
+
+.mb-demo {
+  --type-meta: 12px;
+  --type-control: 13px;
+  --type-data: 14px;
+  --type-body: 16px;
+}
+
+/* iOS/WebKit auto-zooms focused form controls below 16px. */
+.mb-demo .scr-search,
+.mb-demo .earnings-search input {
+  font-size: 16px;
+}
+
+@media (min-width: 901px) {
+  .mb-demo { font-size: 15px; }
+  .mb-demo .page-heading h1 { font-size: 36px; }
+  .mb-demo .page-heading p {
+    font-size: var(--type-body);
+    line-height: 1.6;
+  }
+  .mb-demo .eyebrow { font-size: 11px; }
+  .mb-demo .mb-hero p { font-size: var(--type-body); }
+  .mb-demo .section-title h2,
+  .mb-demo .widget-head .eyebrow { font-size: 16px; }
+  .mb-demo .section-title button,
+  .mb-demo .card-subtitle { font-size: var(--type-control); }
+  .mb-demo .section-meta,
+  .mb-demo .widget-head .section-meta,
+  .mb-demo .empty-state { font-size: var(--type-meta); }
+  .mb-demo .filter-row button { font-size: var(--type-control); }
+
+  /* X Pulse */
+  .mb-demo .post-shell .post-card p {
+    font-size: 15px;
+    line-height: 1.6;
+  }
+  .mb-demo .post-shell .post-head strong { font-size: 13px; }
+  .mb-demo .post-shell .post-head small,
+  .mb-demo .post-shell .post-head time,
+  .mb-demo .post-shell .post-meta { font-size: 11px; }
+
+  /* Earnings */
+  .mb-demo .calendar-head h2 { font-size: 22px; }
+  .mb-demo .calendar-head button.today { font-size: 12px; }
+  .mb-demo .weekdays span { font-size: 11px; }
+  .mb-demo .day-number { font-size: 12px; }
+  .mb-demo .calendar-events b { font-size: 11px; }
+  .mb-demo .calendar-events small { font-size: 10px; }
+  .mb-demo .earnings-top-summary span,
+  .mb-demo .earnings-top-summary small { font-size: 11px; }
+  .mb-demo .earnings-top-summary strong { font-size: 24px; }
+  .mb-demo .table-head { font-size: 11px; }
+  .mb-demo .earnings-table > button { font-size: 13px; }
+  .mb-demo .table-company b { font-size: 13px; }
+  .mb-demo .table-company small,
+  .mb-demo .table-date-state small { font-size: 11px; }
+  .mb-demo .result { font-size: 11px; }
+  .mb-demo .earnings-table > button,
+  .mb-demo .table-head { min-width: 800px; }
+  .mb-demo .drawer-head span { font-size: 13px; }
+  .mb-demo .drawer-company p { font-size: 12px; }
+  .mb-demo .report-grid section > span,
+  .mb-demo .earnings-metric > span { font-size: 11px; }
+  .mb-demo .report-grid small,
+  .mb-demo .metric-row small,
+  .mb-demo .drawer-metadata span,
+  .mb-demo .subsection-head small,
+  .mb-demo .detail-metrics span { font-size: 11px; }
+  .mb-demo .detail-metrics strong,
+  .mb-demo .drawer-metadata strong { font-size: 13px; }
+  .mb-demo .metric-row strong { font-size: 14px; }
+  .mb-demo .official-link { font-size: 13px; }
+  .mb-demo .earnings-glossary summary,
+  .mb-demo .earnings-glossary dt,
+  .mb-demo .earnings-glossary dd,
+  .mb-demo .earnings-glossary .glossary-note,
+  .mb-demo .data-quality-note { font-size: 12px; }
+
+  /* Screener */
+  .mb-demo .scr-market-badge { font-size: 12px; }
+  .mb-demo .scr-filters-btn,
+  .mb-demo .scr-filter-option { font-size: var(--type-control); }
+  .mb-demo .scr-active-filter-chip { font-size: 12px; }
+  .mb-demo .scr-table-region {
+    --scr-company-width: 205px;
+    --scr-price-width: 95px;
+    --scr-grid-content-width: calc(var(--scr-company-width) + var(--scr-price-width) + 765px);
+    --scr-grid-template: var(--scr-company-width) var(--scr-price-width) 90px 80px 95px 105px 95px 75px 75px 75px 75px;
+  }
+  .mb-demo .scr-head-cell { font-size: 11px; }
+  .mb-demo .scr-cell { font-size: var(--type-data); }
+  .mb-demo .scr-company-text b { font-size: var(--type-data); }
+  .mb-demo .scr-company-text small {
+    max-width: 140px;
+    font-size: 11px;
+  }
+  .mb-demo .scr-support-pill { font-size: 13px; }
+  .mb-demo .scr-empty,
+  .mb-demo .scr-message,
+  .mb-demo .scr-error,
+  .mb-demo .scr-banner { font-size: 13px; }
+
+  /* Heatmap chrome. TradingView owns iframe typography. */
+  .mb-demo .heatmap-context span,
+  .mb-demo .heatmap-context button { font-size: 12px; }
+  .mb-demo .tv-stock-heatmap-embed .tradingview-widget-copyright { font-size: 10px; }
+  .mb-demo .tv-stock-heatmap-state { font-size: 13px; }
+}

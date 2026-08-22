@@ -1,0 +1,24 @@
+/* Desktop readability policy owned by Stock Detail. Mobile values remain in
+ * stock-detail.css so the compact layout is unchanged. */
+@media (min-width: 901px) {
+  .stock-back-link { font-size: 12px; }
+  .stock-company-identity h1 { font-size: 28px; }
+  .stock-company-identity p { font-size: 14px; }
+  .stock-preview-badge { font-size: 11px; }
+  .stock-quote-row > span { font-size: 15px; }
+  .stock-market-state { font-size: 13px; }
+  .stock-card h2 { font-size: 16px; }
+  .stock-scenario-labels small { font-size: 11px; }
+  .stock-scenario-labels b { font-size: 12px; }
+  .stock-data-list dt,
+  .stock-data-list dd { font-size: 13px; }
+  .stock-data-list dd span { font-size: 11px; }
+  .stock-chart-legend { font-size: 11px; }
+  .stock-chart-crosshair,
+  .stock-chart-credit { font-size: 10px; }
+  .stock-chart-empty,
+  .stock-page-message p,
+  .stock-page-message a { font-size: 13px; }
+  .stock-metric small { font-size: 12px; }
+  .stock-metric strong { font-size: 16px; }
+}
