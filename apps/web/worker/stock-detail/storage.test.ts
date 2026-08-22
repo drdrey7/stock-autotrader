@@ -1,0 +1,173 @@
+import { describe, expect, it } from "vitest";
+// @ts-expect-error -- Vite resolves test-only ?raw imports; Worker typecheck intentionally has no Vite client types.
+import storageSource from "./storage.ts?raw";
+import {
+  readStockDetailCompany,
+  readStockDetailQuote,
+  readStockDetailSplitEvents,
+  readStockDetailStorageSnapshot,
+  readStockDetailSupports,
+  readStockDetailWeeklyHistory,
+  STOCK_DETAIL_HISTORY_LIMIT,
+} from "./storage";
+
+interface DbCalls {
+  sql: string[];
+  binds: unknown[][];
+}
+
+function createDb(options: { first?: unknown; rows?: unknown[]; throwOnPrepare?: boolean } = {}) {
+  const calls: DbCalls = { sql: [], binds: [] };
+  const statement = {
+    bind(...values: unknown[]) {
+      calls.binds.push(values);
+      return statement;
+    },
+    async first<T>() {
+      return (options.first ?? null) as T | null;
+    },
+    async all<T>() {
+      return { results: (options.rows ?? []) as T[] };
+    },
+  };
+  const db = {
+    prepare(sql: string) {
+      if (options.throwOnPrepare) throw new Error("D1 unavailable");
+      calls.sql.push(sql);
+      return statement;
+    },
+  } as unknown as D1Database;
+  return { db, calls };
+}
+
+function createBatchDb(resultRows: unknown[][]) {
+  const calls: DbCalls = { sql: [], binds: [] };
+  const statement = {
+    bind(...values: unknown[]) {
+      calls.binds.push(values);
+      return statement;
+    },
+  };
+  const db = {
+    prepare(sql: string) {
+      calls.sql.push(sql);
+      return statement;
+    },
+    async batch() {
+      return resultRows.map((results) => ({ results }));
+    },
+  } as unknown as D1Database;
+  return { db, calls };
+}
+
+describe("Stock Detail symbol-specific storage", () => {
+  it("uses the weekly_prices PK prefix, explicit DESC order and 459-row bound", async () => {
+    const { db, calls } = createDb({ rows: [] });
+    await readStockDetailWeeklyHistory(db, "MSFT");
+    expect(STOCK_DETAIL_HISTORY_LIMIT).toBe(459);
+    expect(calls.sql[0]).toContain("FROM weekly_prices");
+    expect(calls.sql[0]).toContain("WHERE symbol = ?");
+    expect(calls.sql[0]).toContain("ORDER BY week_end_date DESC");
+    expect(calls.sql[0]).toContain("LIMIT ?");
+    expect(calls.binds[0]).toEqual(["MSFT", 459]);
+  });
+
+  it("binds symbol for company reads rather than interpolating it into SQL", async () => {
+    const { db, calls } = createDb({
+      first: { symbol: "MSFT", company: "Microsoft Corporation", logo_url: "https://example.com/msft.png" },
+    });
+    const row = await readStockDetailCompany(db, "MSFT");
+    expect(row?.company).toBe("Microsoft Corporation");
+    expect(calls.sql[0]).toContain("u.symbol = ?");
+    expect(calls.sql[0]).not.toContain("MSFT");
+    expect(calls.binds[0]).toEqual(["MSFT"]);
+  });
+
+  it("fails closed when a configured symbol is not active in the runtime Core universe", async () => {
+    const staleQuote = {
+      symbol: "MSFT",
+      price: 500,
+      change_abs: 5,
+      change_pct: 1,
+      day_high: null,
+      day_low: null,
+      day_open: null,
+      previous_close: 495,
+      provider: "finnhub-websocket",
+      provider_timestamp: "2026-08-21T15:00:00.000Z",
+      updated_at: "2026-08-21T15:00:05.000Z",
+    };
+    const { db, calls } = createBatchDb([
+      [],
+      [staleQuote],
+      [],
+      [],
+      [],
+      [],
+      [],
+    ]);
+
+    await expect(readStockDetailStorageSnapshot(db, "MSFT")).rejects.toThrow("stock_not_found");
+    expect(calls.sql[0]).toContain("FROM earnings_universe AS u");
+    expect(calls.sql[0]).toContain("u.active = 1");
+    expect(calls.sql[0]).toContain("u.source = 'core'");
+  });
+
+  it("treats a malformed/negative persisted quote as absent, never as $0 or mock data", async () => {
+    const { db } = createDb({
+      first: {
+        symbol: "MSFT",
+        price: -1,
+        change_abs: 0,
+        change_pct: 0,
+        provider: "finnhub",
+        provider_timestamp: "2026-08-21T15:00:00.000Z",
+        updated_at: "2026-08-21T15:00:00.000Z",
+      },
+    });
+    await expect(readStockDetailQuote(db, "MSFT")).resolves.toBeNull();
+  });
+
+  it("returns partial support rows and discards malformed levels", async () => {
+    const { db } = createDb({
+      rows: [
+        { symbol: "MSFT", method: "manual", level: 1, price: 450, as_of_date: "2026-08-03" },
+        { symbol: "MSFT", method: "manual", level: 9, price: 100, as_of_date: "2026-08-03" },
+      ],
+    });
+    const supports = await readStockDetailSupports(db, "MSFT");
+    expect(supports?.levels.map((level) => level.level)).toEqual([1]);
+  });
+
+  it("reads effective dates and split factors with one symbol-bound PK scan", async () => {
+    const { db, calls } = createDb({
+      rows: [
+        { effective_date: "2020-08-31", split_factor: 2 },
+        { effective_date: "2026-06-15", split_factor: 4 },
+        { effective_date: "malformed", split_factor: 3 },
+        { effective_date: "2026-07-01", split_factor: 0 },
+      ],
+    });
+    const splits = await readStockDetailSplitEvents(db, "MSFT");
+    expect(splits).toEqual([
+      { effective_date: "2020-08-31", split_factor: 2 },
+      { effective_date: "2026-06-15", split_factor: 4 },
+    ]);
+    expect(calls.sql[0]).toContain("SELECT effective_date, split_factor");
+    expect(calls.sql[0]).toContain("FROM split_events");
+    expect(calls.sql[0]).toContain("WHERE symbol = ?");
+    expect(calls.sql[0]).toContain("ORDER BY effective_date ASC");
+    expect(calls.binds[0]).toEqual(["MSFT"]);
+  });
+
+  it("propagates D1 failures so the route can return 503 instead of pretending data is absent", async () => {
+    const { db } = createDb({ throwOnPrepare: true });
+    await expect(readStockDetailCompany(db, "MSFT")).rejects.toThrow("D1 unavailable");
+  });
+
+  it("contains no provider/network request path", () => {
+    expect(storageSource).not.toMatch(/\bfetch\s*\(/);
+    expect(storageSource).not.toContain("FINNHUB_API_KEY");
+    expect(storageSource).not.toContain("ALPHA_VANTAGE");
+  });
+});

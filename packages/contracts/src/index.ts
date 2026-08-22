@@ -272,6 +272,7 @@ export * from "./briefing-universe";
 export * from "./core-universe";
 export * from "./source-health";
 export * from "./quotes";
+export * from "./stock-detail";
 export * from "./dashboard";
 
 export interface DashboardData {

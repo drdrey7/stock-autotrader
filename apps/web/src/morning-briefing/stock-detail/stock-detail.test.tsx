@@ -5,7 +5,7 @@ import { CORE_UNIVERSE, type ScreenerRow } from "@stock-autotrader/contracts";
 import { ThemeProvider } from "../../shell/theme";
 import { ScreenerTable } from "../screener/ScreenerTable";
 import StockDetailPage from "./StockDetailPage";
-import { createMockStockDetail } from "./stock-detail.mock";
+import { createMockStockDetail, mockStockDetailDataSource } from "./stock-detail.mock";
 import type { StockDetail, StockDetailDataSource } from "./stock-detail.types";
 
 const chartMock = vi.hoisted(() => {
@@ -52,7 +52,7 @@ vi.mock("lightweight-charts", () => ({
   ColorType: { Solid: "solid" },
   CrosshairMode: { Normal: 0 },
   LineSeries: { type: "line" },
-  LineStyle: { Dashed: 2, Dotted: 1 },
+  LineStyle: { Solid: 0, Dashed: 2, Dotted: 1 },
   createChart: chartMock.createChart,
 }));
 
@@ -72,7 +72,11 @@ function installMatchMedia(prefersDark = true): void {
   });
 }
 
-function renderStockRoute(path: string, dataSource?: StockDetailDataSource, navigationState?: unknown) {
+function renderStockRoute(
+  path: string,
+  dataSource: StockDetailDataSource = mockStockDetailDataSource,
+  navigationState?: unknown,
+) {
   return render(
     <ThemeProvider>
       <MemoryRouter initialEntries={[{ pathname: path, state: navigationState }]}>
@@ -141,7 +145,7 @@ describe("deterministic stock detail mock provider", () => {
 });
 
 describe("StockDetailPage", () => {
-  it("renders the single overview surface without tabs or network requests", async () => {
+  it("renders the single overview surface from an injected fixture without tabs or network requests", async () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
     renderStockRoute("/stocks/MSFT");
@@ -149,7 +153,7 @@ describe("StockDetailPage", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Loading stock details");
     expect(await screen.findByRole("heading", { level: 1, name: "Microsoft Corporation" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Back to Screener" })).toHaveAttribute("href", "/screener");
-    expect(screen.getAllByText("Preview data").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Preview data")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Our Intrinsic Value" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Valuation Methods" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Key Levels" })).toBeInTheDocument();
@@ -173,9 +177,9 @@ describe("StockDetailPage", () => {
     expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, left: 0, behavior: "auto" });
   });
 
-  it("uses the real logo URL forwarded by the Screener navigation state", async () => {
+  it("uses navigation logo only as fallback when the detail provider has no logo", async () => {
     const logoUrl = "https://example.com/logos/now.png";
-    renderStockRoute("/stocks/NOW", undefined, { logoUrl });
+    renderStockRoute("/stocks/NOW", mockStockDetailDataSource, { logoUrl });
     await screen.findByRole("heading", { level: 1, name: "ServiceNow, Inc." });
     const logo = document.querySelector<HTMLImageElement>("img.stock-company-logo.company-logo-img");
     expect(logo).not.toBeNull();
@@ -188,7 +192,7 @@ describe("StockDetailPage", () => {
     expect(screen.getByRole("link", { name: "Back to Screener" })).toHaveAttribute("href", "/screener");
   });
 
-  it("supports missing values and hides chart legend entries for data that is not plotted", async () => {
+  it("supports missing values, uses × for missing IV and hides unplotted legend entries", async () => {
     const base = createMockStockDetail("MSFT")!;
     const incomplete: StockDetail = {
       ...base,
@@ -222,10 +226,12 @@ describe("StockDetailPage", () => {
     renderStockRoute("/stocks/MSFT", dataSource);
 
     await screen.findByRole("heading", { level: 1, name: "Microsoft Corporation" });
+    expect(screen.getByText("×")).toBeInTheDocument();
     expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(12);
     expect(document.body).not.toHaveTextContent(/NaN|undefined/);
     const legend = screen.getByLabelText("Chart legend");
     expect(within(legend).getByText("Price")).toBeInTheDocument();
+    expect(within(legend).getByText("Current")).toBeInTheDocument();
     expect(within(legend).queryByText("IV")).not.toBeInTheDocument();
     expect(within(legend).queryByText("200W SMA")).not.toBeInTheDocument();
     expect(within(legend).queryByText(/Supports/)).not.toBeInTheDocument();
@@ -244,7 +250,7 @@ describe("StockDetailPage", () => {
     expect(chartMock.createChart).not.toHaveBeenCalled();
   });
 
-  it("feeds candlesticks, SMA, IV history and five labelled reference price lines into Lightweight Charts", async () => {
+  it("feeds candlesticks, SMA, IV history and six labelled reference price lines into Lightweight Charts", async () => {
     renderStockRoute("/stocks/MSFT");
     await screen.findByRole("img", { name: /MSFT price chart/i });
 
@@ -255,8 +261,8 @@ describe("StockDetailPage", () => {
     expect(chartMock.setData.mock.calls[0]?.[0]).toHaveLength(260);
     expect(chartMock.setData.mock.calls[1]?.[0]).toHaveLength(61);
     expect((chartMock.setData.mock.calls[2]?.[0] as unknown[] | undefined)?.length).toBeGreaterThan(1);
-    expect(chartMock.createPriceLine).toHaveBeenCalledTimes(5);
-    expect(chartMock.createPriceLine.mock.calls.map(([options]) => options.title)).toEqual(["IV", "S1", "S2", "S3", "S4"]);
+    expect(chartMock.createPriceLine).toHaveBeenCalledTimes(6);
+    expect(chartMock.createPriceLine.mock.calls.map(([options]) => options.title)).toEqual(["Current", "IV", "S1", "S2", "S3", "S4"]);
     expect(chartMock.fitContent).toHaveBeenCalledTimes(1);
 
     const chartOptions = chartMock.createChart.mock.calls[0]?.[1] as {

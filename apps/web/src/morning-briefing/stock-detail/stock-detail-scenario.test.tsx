@@ -14,7 +14,7 @@ describe("Intrinsic Value scenario range", () => {
     vi.stubGlobal("scrollTo", vi.fn());
   });
 
-  it("does not render a range or marker when scenario values are incomplete", async () => {
+  it("keeps the range and a single IV marker when scenario values are incomplete", async () => {
     const base = createMockStockDetail("MSFT")!;
     const incomplete: StockDetail = {
       ...base,
@@ -36,8 +36,11 @@ describe("Intrinsic Value scenario range", () => {
     );
 
     await screen.findByRole("heading", { level: 1, name: "Microsoft Corporation" });
-    expect(screen.getByRole("status", { name: "" })).toHaveTextContent("Scenario range unavailable");
-    expect(document.querySelector(".stock-scenario-track")).toBeNull();
-    expect(document.querySelector(".stock-scenario-marker")).toBeNull();
+    expect(screen.getByLabelText("Intrinsic value range")).toBeInTheDocument();
+    expect(document.querySelector(".stock-scenario-track")).not.toBeNull();
+    expect(document.querySelector(".stock-scenario-marker")).not.toBeNull();
+    expect(screen.getByText("IV")).toBeInTheDocument();
+    expect(screen.getAllByText("$529.20").length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText("Scenario range unavailable")).not.toBeInTheDocument();
   });
 });

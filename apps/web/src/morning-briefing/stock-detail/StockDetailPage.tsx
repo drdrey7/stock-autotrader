@@ -1,9 +1,9 @@
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { CompanyLogo } from "../EarningsLogo";
 import { screenerQueryFromNavigationState, type ScreenerQuery } from "../screener/screener-filter";
 import PriceAndKeyLevelsChart from "./PriceAndKeyLevelsChart";
-import { mockStockDetailDataSource } from "./stock-detail.mock";
+import { apiStockDetailDataSource } from "./stock-detail.api";
 import type { StockDetail, StockDetailDataSource } from "./stock-detail.types";
 import "./stock-detail.css";
 
@@ -22,12 +22,14 @@ function formatNumber(value: number | null, suffix = "", digits = 1): string {
   return value === null ? "—" : `${value.toFixed(digits)}${suffix}`;
 }
 
-function formatChange(value: number): string {
+function formatChange(value: number | null): string {
+  if (value === null) return "—";
   const sign = value > 0 ? "+" : "";
   return `${sign}${value.toFixed(2)}`;
 }
 
-function formatDate(iso: string): string {
+function formatDate(iso: string | null): string {
+  if (iso === null) return "—";
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "—";
   return new Intl.DateTimeFormat("en-US", {
@@ -38,6 +40,20 @@ function formatDate(iso: string): string {
   }).format(date);
 }
 
+function formatQuoteFreshness(detail: StockDetail): string {
+  if (detail.quote.state === "Unavailable") return "Unavailable";
+  if (detail.quote.scaleState !== "safe") return "Split adjustment pending";
+  if (detail.quote.state === "Stale") return "Stale data";
+  return detail.quote.state;
+}
+
+function chartCurrentPrice(detail: StockDetail): number | null {
+  if (detail.quote.scaleState !== "safe") return null;
+  return detail.quote.state === "Live" || detail.quote.state === "Cached"
+    ? detail.quote.price
+    : null;
+}
+
 function navigationLogoUrl(state: unknown): string | null {
   if (typeof state !== "object" || state === null || !("logoUrl" in state)) return null;
   const value = (state as { logoUrl?: unknown }).logoUrl;
@@ -45,47 +61,29 @@ function navigationLogoUrl(state: unknown): string | null {
 }
 
 function IntrinsicValueCard({ detail }: { detail: StockDetail }) {
-  const { intrinsicValue, upsidePct, scenarios } = detail.valuation;
-  const hasValidScenarioRange = scenarios.bear !== null
-    && scenarios.base !== null
-    && scenarios.bull !== null
-    && scenarios.bull > scenarios.bear
-    && scenarios.base >= scenarios.bear
-    && scenarios.base <= scenarios.bull;
-  const spread = hasValidScenarioRange ? scenarios.bull! - scenarios.bear! : 0;
-  const basePosition = hasValidScenarioRange
-    ? ((scenarios.base! - scenarios.bear!) / spread) * 100
-    : 50;
-  const scenarioStyle = { "--stock-base-position": `${basePosition}%` } as CSSProperties;
+  const { intrinsicValue, upsidePct } = detail.valuation;
   const upsideClass = upsidePct === null ? "stock-neutral" : upsidePct >= 0 ? "stock-positive" : "stock-negative";
 
   return (
     <section className="stock-card stock-iv-card" aria-labelledby="stock-iv-title">
       <h2 id="stock-iv-title">Our Intrinsic Value</h2>
-      <div className="stock-iv-value">{formatMoney(intrinsicValue)}</div>
+      <div className="stock-iv-value">{intrinsicValue === null ? "×" : formatMoney(intrinsicValue)}</div>
       <div className={`stock-iv-upside ${upsideClass}`}>
         {upsidePct === null ? "—" : `${upsidePct > 0 ? "▲ " : upsidePct < 0 ? "▼ " : ""}${formatChange(upsidePct)}%`}
         {upsidePct !== null && <span>{upsidePct >= 0 ? " Upside" : " Downside"}</span>}
       </div>
-      {hasValidScenarioRange ? (
-        <div className="stock-scenario" style={scenarioStyle}>
-          <div className="stock-scenario-track" aria-hidden="true">
-            <span className="stock-scenario-bear-segment" />
-            <span className="stock-scenario-base-segment" />
-            <span className="stock-scenario-bull-segment" />
-            <i className="stock-scenario-marker" />
-          </div>
-          <div className="stock-scenario-labels">
-            <span><small>Bear</small><b>{formatMoney(scenarios.bear)}</b></span>
-            <span className="stock-scenario-base"><small>Base</small><b>{formatMoney(scenarios.base)}</b></span>
-            <span><small>Bull</small><b>{formatMoney(scenarios.bull)}</b></span>
-          </div>
+
+      <div className="stock-scenario stock-scenario-single" aria-label="Intrinsic value range">
+        <div className="stock-scenario-track" aria-hidden="true">
+          <span className="stock-scenario-bear-segment" />
+          <span className="stock-scenario-base-segment" />
+          <span className="stock-scenario-bull-segment" />
+          {intrinsicValue !== null && <i className="stock-scenario-marker" />}
         </div>
-      ) : (
-        <div className="stock-scenario stock-scenario-unavailable" role="status">
-          Scenario range unavailable
+        <div className="stock-scenario-labels stock-scenario-labels-single">
+          <span><small>IV</small><b>{formatMoney(intrinsicValue)}</b></span>
         </div>
-      )}
+      </div>
     </section>
   );
 }
@@ -170,6 +168,7 @@ function StockOverview({ detail }: { detail: StockDetail }) {
           <PriceAndKeyLevelsChart
             symbol={detail.symbol}
             priceHistory={detail.chart.priceHistory}
+            currentPrice={chartCurrentPrice(detail)}
             intrinsicValue={detail.valuation.intrinsicValue}
             intrinsicValueHistory={detail.chart.intrinsicValueHistory}
             sma200wHistory={detail.technical.sma200wHistory}
@@ -191,9 +190,11 @@ function StockDetailReady({
   logoUrl: string | null;
   returnQuery: ScreenerQuery | null;
 }) {
-  const quoteDirection = detail.quote.changePct > 0 ? "stock-positive" : detail.quote.changePct < 0 ? "stock-negative" : "stock-neutral";
+  const changePct = detail.quote.changePct;
+  const quoteDirection = changePct === null ? "stock-neutral" : changePct > 0 ? "stock-positive" : changePct < 0 ? "stock-negative" : "stock-neutral";
   const exchangeLine = [detail.symbol, detail.exchange, detail.sector].filter(Boolean).join(" · ");
   const backState = returnQuery ? { screenerQuery: returnQuery } : undefined;
+  const hasQuoteChange = changePct !== null && detail.quote.change !== null;
 
   return (
     <div className="page-content inner-page stock-detail-page">
@@ -211,17 +212,17 @@ function StockDetailReady({
               <p>{exchangeLine || detail.symbol}</p>
             </div>
           </div>
-          <span className="stock-preview-badge">Preview data</span>
         </div>
         <div className="stock-quote-row">
           <strong>{formatMoney(detail.quote.price)}</strong>
           <span className={quoteDirection}>
-            {detail.quote.changePct > 0 ? "▲ " : detail.quote.changePct < 0 ? "▼ " : ""}
-            {formatChange(detail.quote.changePct)}% ({formatChange(detail.quote.change)})
+            {hasQuoteChange
+              ? `${changePct > 0 ? "▲ " : changePct < 0 ? "▼ " : ""}${formatChange(changePct)}% (${formatChange(detail.quote.change)})`
+              : "—"}
           </span>
         </div>
         <p className="stock-market-state">
-          Market {detail.quote.marketState === "open" ? "Open" : "Closed"} · {formatDate(detail.quote.asOf)}
+          Market {detail.quote.marketState === "open" ? "Open" : "Closed"} · {formatQuoteFreshness(detail)} · {formatDate(detail.quote.asOf)}
         </p>
       </header>
 
@@ -234,7 +235,7 @@ interface StockDetailPageProps {
   dataSource?: StockDetailDataSource;
 }
 
-export default function StockDetailPage({ dataSource = mockStockDetailDataSource }: StockDetailPageProps = {}) {
+export default function StockDetailPage({ dataSource = apiStockDetailDataSource }: StockDetailPageProps = {}) {
   const { symbol: rawSymbol = "" } = useParams<{ symbol: string }>();
   const location = useLocation();
   const symbol = rawSymbol.trim().toUpperCase();
@@ -278,7 +279,7 @@ export default function StockDetailPage({ dataSource = mockStockDetailDataSource
   return (
     <StockDetailReady
       detail={state.detail}
-      logoUrl={routedLogoUrl ?? state.detail.logoUrl}
+      logoUrl={state.detail.logoUrl ?? routedLogoUrl}
       returnQuery={returnQuery}
     />
   );

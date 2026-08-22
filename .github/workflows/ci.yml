@@ -49,6 +49,9 @@ jobs:
       - name: Validate seed against local D1
         working-directory: apps/web
         run: node scripts/verify-local-seed.mjs --local --expect-clean
+      - name: Validate Stock Detail against local D1
+        working-directory: apps/web
+        run: node scripts/verify-stock-detail-local.mjs
       - name: Lint Python (ruff)
         run: |
           pip install --quiet "ruff==0.16.0"

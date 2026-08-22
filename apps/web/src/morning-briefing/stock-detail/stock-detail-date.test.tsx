@@ -36,7 +36,7 @@ describe("Stock Detail quote date", () => {
     );
 
     await screen.findByRole("heading", { level: 1, name: "Microsoft Corporation" });
-    expect(screen.getByText(/Market (?:Open|Closed) · Aug 21, 2026/)).toBeInTheDocument();
+    expect(screen.getByText(/Market (?:Open|Closed) · Cached · Aug 21, 2026/)).toBeInTheDocument();
     expect(screen.queryByText(/Aug 22, 2026/)).not.toBeInTheDocument();
   });
 });

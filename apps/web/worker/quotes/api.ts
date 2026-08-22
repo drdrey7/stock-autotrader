@@ -23,81 +23,10 @@ import {
 import { readLatestQuotes } from "./storage";
 import { computeLiveSma200w, type QuoteInput } from "../sma/metrics";
 import { readTechnicalMetrics, readLatestSplitEffectiveDate, readLatestSplitEffectiveDateAsOf } from "../sma/storage";
-import { readManualSupportLevels, type SupportLevelsForSymbol } from "../supports/storage";
-import type { ScreenerSupportLevel, ScreenerIntrinsicValue } from "@stock-autotrader/contracts";
-import { readManualIntrinsicValues, type IntrinsicValuesForSymbol } from "../intrinsic-values/storage";
+import { readManualSupportLevels } from "../supports/storage";
+import { readManualIntrinsicValues } from "../intrinsic-values/storage";
+import { buildIntrinsicValue, buildSupportLevels } from "../stocks/derived";
 import { nyDateKeyOf } from "./freshness";
-
-/** Build the support-level list for one symbol, with triggered derived.
- *
- * Split-safety (P1/P2): if a stock split happened AFTER the support reference
- * date AND is already effective today, the stored manual support prices are on
- * the wrong scale and must not be displayed. Reuses the same
- * `latestSplitEffectiveDates` map that the SMA200W split-safety already reads —
- * no extra provider/D1 calls.
- *
- * Uses the OLDEST asOf from the curated set (conservative: S1-S4 are a set,
- * never mix pre/post-split scales).
- *
- * Rule:
- *  - no split effective date → supports valid
- *  - splitEffectiveDate <= oldestAsOf → supports valid
- *  - splitEffectiveDate > oldestAsOf AND splitEffectiveDate <= currentMarketDate
- *    → return [] (split already effective, supports stale)
- *  - splitEffectiveDate > oldestAsOf AND splitEffectiveDate > currentMarketDate
- *    → supports valid (future split, quote still on pre-split scale) */
-function buildSupportLevels(
-  currentPrice: number | null,
-  grouped: SupportLevelsForSymbol | undefined,
-  splitEffectiveDate: string | undefined,
-  currentMarketDate: string | undefined,
-): ScreenerSupportLevel[] {
-  if (!grouped) return [];
-  if (splitEffectiveDate && currentMarketDate) {
-    const oldestAsOf = grouped.levels.reduce((min, l) => l.as_of_date < min ? l.as_of_date : min, grouped.levels[0]!.as_of_date);
-    if (splitEffectiveDate > oldestAsOf && splitEffectiveDate <= currentMarketDate) return [];
-  }
-  return grouped.levels.map((level) => ({
-    level: level.level as ScreenerSupportLevel["level"],
-    price: level.price,
-    method: level.method,
-    asOf: level.as_of_date,
-    triggered: currentPrice === null ? null : currentPrice <= level.price,
-  }));
-}
-
-/**
- * Build the intrinsic value for one symbol, with distance derived.
- *
- * Split-safety (same rule as supports): if a stock split happened AFTER the
- * IV reference date AND is already effective today, the stored manual IV is on
- * the wrong scale and must not be displayed. Reuses the same
- * `latestSplitEffectiveDates` map that the SMA200W/support split-safety reads.
- *
- * Distance formula: (currentPrice / baseIV - 1) * 100
- * Null when no currentPrice or no IV.
- */
-function buildIntrinsicValue(
-  currentPrice: number | null,
-  iv: IntrinsicValuesForSymbol | undefined,
-  splitEffectiveDate: string | undefined,
-  currentMarketDate: string | undefined,
-): ScreenerIntrinsicValue | null {
-  if (!iv) return null;
-  if (splitEffectiveDate && currentMarketDate) {
-    if (splitEffectiveDate > iv.values.as_of_date && splitEffectiveDate <= currentMarketDate) return null;
-  }
-  const base = iv.values.base_value;
-  const distancePct = currentPrice === null ? null : (currentPrice / base - 1) * 100;
-  return {
-    low: iv.values.low_value,
-    base,
-    high: iv.values.high_value,
-    method: iv.values.method,
-    asOf: iv.values.as_of_date,
-    distancePct,
-  };
-}
 
 interface CompanyRow {
   symbol: string;

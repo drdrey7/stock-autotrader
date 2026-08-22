@@ -246,6 +246,8 @@ export function createMockStockDetail(rawSymbol: string): StockDetail | null {
       price: last.close,
       change,
       changePct,
+      state: "Cached",
+      scaleState: "safe",
       marketState: "closed",
       asOf: MOCK_AS_OF,
     },

@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import StockDetailPage from "./StockDetailPage";
+import { mockStockDetailDataSource } from "./stock-detail.mock";
 import type { ScreenerQuery } from "../screener/screener-filter";
 
 vi.mock("./PriceAndKeyLevelsChart", () => ({
@@ -37,7 +38,7 @@ describe("Stock Detail → Screener navigation", () => {
         }]}
       >
         <Routes>
-          <Route path="/stocks/:symbol" element={<StockDetailPage />} />
+          <Route path="/stocks/:symbol" element={<StockDetailPage dataSource={mockStockDetailDataSource} />} />
           <Route path="/screener" element={<NavigationStateProbe />} />
         </Routes>
       </MemoryRouter>,

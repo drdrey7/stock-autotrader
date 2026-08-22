@@ -1,0 +1,374 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Env } from "../index";
+import type { TechnicalMetricsRow } from "@stock-autotrader/contracts";
+import type { StockDetailStorageSnapshot, WeeklyPriceRow } from "./storage";
+
+const storageMock = vi.hoisted(() => ({
+  readStockDetailStorageSnapshot: vi.fn(),
+}));
+
+vi.mock("./storage", () => ({
+  ...storageMock,
+  STOCK_DETAIL_VISIBLE_WEEKS: 260,
+  STOCK_DETAIL_SMA_WARMUP_WEEKS: 199,
+  STOCK_DETAIL_HISTORY_LIMIT: 459,
+}));
+
+import {
+  buildHistoricalSma200w,
+  readStockDetailApi,
+  servedSplitScaleState,
+  toSplitAdjustedPricePoint,
+} from "./read-model";
+
+const NOW = new Date("2026-08-21T15:00:00.000Z");
+const env = { DB: {} as D1Database } as Env;
+
+function metric(overrides: Partial<TechnicalMetricsRow> = {}): TechnicalMetricsRow {
+  return {
+    symbol: "MSFT",
+    anchor_week: "2026-08-14",
+    completed_weeks_available: 459,
+    sum_199: 199 * 400,
+    anchor_close: 400,
+    closed_sma_200w: 400,
+    historical_data_as_of: "2026-08-14T20:00:00.000Z",
+    calculated_at: "2026-08-15T06:00:00.000Z",
+    status: "ok",
+    source: "alpha-vantage",
+    ...overrides,
+  };
+}
+
+function weeklyHistory(count: number, symbol = "MSFT"): WeeklyPriceRow[] {
+  const last = Date.parse("2026-08-14T00:00:00.000Z");
+  const chronological = Array.from({ length: count }, (_, index): WeeklyPriceRow => {
+    const close = index + 1;
+    const date = new Date(last - (count - 1 - index) * 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    return {
+      symbol,
+      week_end_date: date,
+      raw_open: close,
+      raw_high: close + 2,
+      raw_low: Math.max(0.5, close - 2),
+      raw_close: close,
+      volume: 1000 + index,
+      split_adjustment_factor: 1,
+      split_adjusted_close: close,
+      source: "alpha-vantage",
+      source_fetched_at: "2026-08-15T06:00:00.000Z",
+    };
+  });
+  return chronological.reverse();
+}
+
+function applySplitToHistory(
+  rows: WeeklyPriceRow[],
+  effectiveDate: string,
+  factor: number,
+  fetchedAt = "2026-08-15T06:00:00.000Z",
+): WeeklyPriceRow[] {
+  return rows.map((row) => row.week_end_date < effectiveDate
+    ? {
+        ...row,
+        split_adjustment_factor: row.split_adjustment_factor * factor,
+        split_adjusted_close: row.raw_close / (row.split_adjustment_factor * factor),
+        source_fetched_at: fetchedAt,
+      }
+    : { ...row, source_fetched_at: fetchedAt });
+}
+
+function baseSnapshot(overrides: Partial<StockDetailStorageSnapshot> = {}): StockDetailStorageSnapshot {
+  return {
+    company: {
+      symbol: "MSFT",
+      company: "Microsoft Corporation",
+      logo_url: "https://example.com/msft.png",
+    },
+    quote: {
+      symbol: "MSFT",
+      price: 500,
+      change_abs: 5,
+      change_pct: 1,
+      day_high: 505,
+      day_low: 490,
+      day_open: 492,
+      previous_close: 495,
+      provider: "finnhub",
+      provider_timestamp: "2026-08-21T14:59:00.000Z",
+      updated_at: "2026-08-21T14:59:05.000Z",
+    },
+    metric: metric(),
+    supports: {
+      symbol: "MSFT",
+      levels: [
+        { symbol: "MSFT", method: "manual", level: 1, price: 450, as_of_date: "2026-08-03" },
+        { symbol: "MSFT", method: "manual", level: 2, price: 520, as_of_date: "2026-08-03" },
+      ],
+    },
+    intrinsicValue: {
+      symbol: "MSFT",
+      values: {
+        symbol: "MSFT",
+        method: "manual",
+        low_value: 550,
+        base_value: 600,
+        high_value: 650,
+        as_of_date: "2026-08-03",
+      },
+    },
+    weeklyRows: weeklyHistory(459),
+    splitEvents: [],
+    ...overrides,
+  };
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  storageMock.readStockDetailStorageSnapshot.mockResolvedValue(baseSnapshot());
+});
+
+describe("split-adjusted weekly OHLC", () => {
+  it("adjusts every OHLC field onto the current scale and cross-checks close", () => {
+    expect(toSplitAdjustedPricePoint({
+      symbol: "MSFT",
+      week_end_date: "2020-01-03",
+      raw_open: 200,
+      raw_high: 220,
+      raw_low: 180,
+      raw_close: 210,
+      volume: 123,
+      split_adjustment_factor: 2,
+      split_adjusted_close: 105,
+      source: "alpha-vantage",
+      source_fetched_at: "2026-08-15T06:00:00.000Z",
+    })).toEqual({ time: "2020-01-03", open: 100, high: 110, low: 90, close: 105, volume: 123 });
+  });
+
+  it("rejects a persisted adjusted close that disagrees outside tolerance", () => {
+    const row = weeklyHistory(1)[0]!;
+    expect(toSplitAdjustedPricePoint({ ...row, split_adjusted_close: row.raw_close + 5 })).toBeNull();
+  });
+});
+
+describe("historical SMA200W", () => {
+  it("uses a rolling 200-week window with deterministic math", () => {
+    const history = Array.from({ length: 201 }, (_, index) => ({
+      time: new Date(Date.UTC(2020, 0, 3 + index * 7)).toISOString().slice(0, 10),
+      close: index + 1,
+    }));
+    const sma = buildHistoricalSma200w(history);
+    expect(sma).toHaveLength(2);
+    expect(sma[0]!.value).toBeCloseTo(100.5, 10);
+    expect(sma[1]!.value).toBeCloseTo(101.5, 10);
+  });
+
+  it("returns no series with fewer than 200 completed weeks", () => {
+    const history = weeklyHistory(199).reverse().map((row) => ({ time: row.week_end_date, close: row.split_adjusted_close }));
+    expect(buildHistoricalSma200w(history)).toEqual([]);
+  });
+});
+
+describe("split scale safety", () => {
+  it("is safe without an effective split", () => {
+    expect(servedSplitScaleState(
+      { price: 500, provider_timestamp: "2026-08-21T14:59:00.000Z" },
+      "2026-08-15T06:00:00.000Z",
+      weeklyHistory(459),
+      [],
+    )).toBe("safe");
+  });
+
+  it("accepts a split only after weekly history, quote and metrics all show post-split evidence", () => {
+    const history = applySplitToHistory(weeklyHistory(459), "2026-08-10", 2);
+    expect(servedSplitScaleState(
+      { price: 250, provider_timestamp: "2026-08-21T14:59:00.000Z" },
+      "2026-08-15T06:00:00.000Z",
+      history,
+      [{ effective_date: "2026-08-10", split_factor: 2 }],
+    )).toBe("safe");
+  });
+
+  it("fails closed while weekly history has not yet incorporated an effective split", () => {
+    expect(servedSplitScaleState(
+      { price: 250, provider_timestamp: "2026-08-21T14:59:00.000Z" },
+      "2026-08-15T06:00:00.000Z",
+      weeklyHistory(459),
+      [{ effective_date: "2026-08-10", split_factor: 2 }],
+    )).toBe("mismatch");
+  });
+
+  it("fails closed while quote or metrics still predate the effective split", () => {
+    const history = applySplitToHistory(weeklyHistory(459), "2026-08-10", 2);
+    expect(servedSplitScaleState(
+      { price: 500, provider_timestamp: "2026-08-07T20:00:00.000Z" },
+      "2026-08-15T06:00:00.000Z",
+      history,
+      [{ effective_date: "2026-08-10", split_factor: 2 }],
+    )).toBe("mismatch");
+    expect(servedSplitScaleState(
+      { price: 250, provider_timestamp: "2026-08-21T14:59:00.000Z" },
+      "2026-08-07T20:00:00.000Z",
+      history,
+      [{ effective_date: "2026-08-10", split_factor: 2 }],
+    )).toBe("mismatch");
+  });
+});
+
+describe("Stock Detail D1 read model", () => {
+  it("composes company, quote, manual IV, supports, live SMA and weekly history", async () => {
+    const detail = await readStockDetailApi(env, "MSFT", NOW);
+    expect(detail.company).toEqual({
+      name: "Microsoft Corporation",
+      exchange: null,
+      sector: null,
+      logoUrl: "https://example.com/msft.png",
+    });
+    expect(detail.quote.price).toBe(500);
+    expect(detail.quote.provider).toBe("finnhub");
+    expect(detail.quote.state).toBe("Live");
+    expect(detail.quote.scaleState).toBe("safe");
+    expect(detail.valuation.intrinsicValue?.base).toBe(600);
+    expect(detail.valuation.intrinsicValue?.upsidePct).toBeCloseTo(20, 10);
+    expect(detail.technical.supports.map((support) => support.level)).toEqual([1, 2]);
+    expect(detail.technical.supports.map((support) => support.triggered)).toEqual([false, true]);
+    expect(detail.technical.sma200w).toBeCloseTo(400.5, 10);
+  });
+
+  it("uses 199 warm-up weeks but returns at most 260 visible candles and SMA points", async () => {
+    const detail = await readStockDetailApi(env, "MSFT", NOW);
+    expect(detail.chart.priceHistory).toHaveLength(260);
+    expect(detail.chart.priceHistory[0]!.close).toBe(200);
+    expect(detail.chart.priceHistory.at(-1)!.close).toBe(459);
+    expect(detail.technical.sma200wHistory).toHaveLength(260);
+    expect(detail.technical.sma200wHistory.at(-1)!.value).toBeCloseTo(359.5, 10);
+  });
+
+  it("omits the split-week candle once the split has been reconciled", async () => {
+    const rows = applySplitToHistory(weeklyHistory(459), "2026-08-10", 2);
+    storageMock.readStockDetailStorageSnapshot.mockResolvedValue(baseSnapshot({
+      weeklyRows: [{ ...rows[0]!, raw_open: 450, raw_high: 475, raw_low: 220 }, ...rows.slice(1)],
+      splitEvents: [{ effective_date: "2026-08-10", split_factor: 2 }],
+      quote: { ...baseSnapshot().quote!, price: 250 },
+      metric: metric({ calculated_at: "2026-08-15T06:00:00.000Z" }),
+    }));
+    const detail = await readStockDetailApi(env, "MSFT", NOW);
+    expect(detail.quote.scaleState).toBe("safe");
+    expect(detail.chart.priceHistory.some((point) => point.time === "2026-08-14")).toBe(false);
+    expect(detail.technical.sma200wHistory.at(-1)?.time).toBe("2026-08-14");
+  });
+
+  it("never fabricates the current weekly candle or historical IV", async () => {
+    const detail = await readStockDetailApi(env, "MSFT", NOW);
+    expect(detail.chart.priceHistory.at(-1)!.time).toBe("2026-08-14");
+    expect(detail.quote.price).toBe(500);
+    expect(detail.chart.intrinsicValueHistory).toEqual([]);
+  });
+
+  it("returns partial data when IV or supports are absent", async () => {
+    storageMock.readStockDetailStorageSnapshot.mockResolvedValue(baseSnapshot({ intrinsicValue: undefined, supports: undefined }));
+    const detail = await readStockDetailApi(env, "MSFT", NOW);
+    expect(detail.quote.price).toBe(500);
+    expect(detail.valuation.intrinsicValue).toBeNull();
+    expect(detail.technical.supports).toEqual([]);
+  });
+
+  it("keeps a Core stock usable with no weekly history when no split safety decision is required", async () => {
+    storageMock.readStockDetailStorageSnapshot.mockResolvedValue(baseSnapshot({ weeklyRows: [] }));
+    const detail = await readStockDetailApi(env, "MSFT", NOW);
+    expect(detail.quote.price).toBe(500);
+    expect(detail.chart.priceHistory).toEqual([]);
+    expect(detail.technical.sma200wHistory).toEqual([]);
+  });
+
+  it("handles a CRCL-like short history without fabricating SMA200W", async () => {
+    storageMock.readStockDetailStorageSnapshot.mockResolvedValue(baseSnapshot({
+      company: { symbol: "CRCL", company: "Circle Internet Group, Inc.", logo_url: null },
+      quote: {
+        symbol: "CRCL", price: 130, change_abs: 1, change_pct: 0.8,
+        day_high: null, day_low: null, day_open: null, previous_close: null,
+        provider: "finnhub", provider_timestamp: "2026-08-21T14:59:00.000Z", updated_at: "2026-08-21T14:59:05.000Z",
+      },
+      metric: metric({
+        symbol: "CRCL", completed_weeks_available: 100, sum_199: null,
+        anchor_close: 100, closed_sma_200w: null, status: "not_enough_history",
+      }),
+      supports: undefined,
+      intrinsicValue: undefined,
+      weeklyRows: weeklyHistory(100, "CRCL"),
+    }));
+    const detail = await readStockDetailApi(env, "CRCL", NOW);
+    expect(detail.chart.priceHistory).toHaveLength(100);
+    expect(detail.technical.sma200w).toBeNull();
+    expect(detail.technical.sma200wState).toBe("NotEnoughHistory");
+    expect(detail.technical.sma200wHistory).toEqual([]);
+  });
+
+  it("hides manual supports and IV after an effective split until they are re-entered on the new scale", async () => {
+    const history = applySplitToHistory(weeklyHistory(459), "2026-08-10", 2);
+    storageMock.readStockDetailStorageSnapshot.mockResolvedValue(baseSnapshot({
+      weeklyRows: history,
+      splitEvents: [{ effective_date: "2026-08-10", split_factor: 2 }],
+      quote: { ...baseSnapshot().quote!, price: 250 },
+    }));
+    const detail = await readStockDetailApi(env, "MSFT", NOW);
+    expect(detail.technical.supports).toEqual([]);
+    expect(detail.valuation.intrinsicValue).toBeNull();
+  });
+
+  it("does not let a future announced split affect today's serving scale", async () => {
+    storageMock.readStockDetailStorageSnapshot.mockResolvedValue(baseSnapshot({
+      splitEvents: [{ effective_date: "2026-09-01", split_factor: 3 }],
+    }));
+    const detail = await readStockDetailApi(env, "MSFT", NOW);
+    expect(detail.quote.scaleState).toBe("safe");
+    expect(detail.quote.price).toBe(500);
+    expect(detail.technical.supports).toHaveLength(2);
+    expect(detail.valuation.intrinsicValue?.base).toBe(600);
+  });
+
+  it("uses the latest effective split even when a later future split is stored", async () => {
+    storageMock.readStockDetailStorageSnapshot.mockResolvedValue(baseSnapshot({
+      weeklyRows: weeklyHistory(459),
+      splitEvents: [
+        { effective_date: "2026-08-10", split_factor: 2 },
+        { effective_date: "2026-09-01", split_factor: 3 },
+      ],
+    }));
+    const detail = await readStockDetailApi(env, "MSFT", NOW);
+    expect(detail.quote.scaleState).toBe("mismatch");
+    expect(detail.quote.price).toBeNull();
+    expect(detail.technical.sma200w).toBeNull();
+  });
+
+  it("returns Not available data during a split reconciliation gap rather than mixing scales", async () => {
+    const reconciledHistory = applySplitToHistory(weeklyHistory(459), "2026-08-10", 2);
+    storageMock.readStockDetailStorageSnapshot.mockResolvedValue(baseSnapshot({
+      weeklyRows: reconciledHistory,
+      splitEvents: [{ effective_date: "2026-08-10", split_factor: 2 }],
+      quote: { ...baseSnapshot().quote!, provider_timestamp: "2026-08-07T20:00:00.000Z" },
+    }));
+    const detail = await readStockDetailApi(env, "MSFT", NOW);
+    expect(detail.quote.scaleState).toBe("mismatch");
+    expect(detail.quote.price).toBeNull();
+    expect(detail.quote.changeAbs).toBeNull();
+    expect(detail.quote.changePct).toBeNull();
+    expect(detail.technical.sma200w).toBeNull();
+  });
+
+  it("degrades quote and current SMA honestly when the quote row is absent", async () => {
+    storageMock.readStockDetailStorageSnapshot.mockResolvedValue(baseSnapshot({ quote: null }));
+    const detail = await readStockDetailApi(env, "MSFT", NOW);
+    expect(detail.quote.price).toBeNull();
+    expect(detail.quote.state).toBe("Unavailable");
+    expect(detail.technical.sma200w).toBeNull();
+    expect(detail.technical.supports.every((support) => support.triggered === null)).toBe(true);
+    expect(detail.valuation.intrinsicValue?.upsidePct).toBeNull();
+  });
+
+  it("performs one batched symbol-scoped storage read", async () => {
+    await readStockDetailApi(env, "MSFT", NOW);
+    expect(storageMock.readStockDetailStorageSnapshot).toHaveBeenCalledTimes(1);
+    expect(storageMock.readStockDetailStorageSnapshot).toHaveBeenCalledWith(env.DB, "MSFT");
+  });
+});

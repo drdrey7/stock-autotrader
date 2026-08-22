@@ -34,13 +34,15 @@
 .stock-scenario-bear-segment{border-radius:999px 0 0 999px;background:var(--negative)}
 .stock-scenario-base-segment{background:var(--warning)}
 .stock-scenario-bull-segment{border-radius:0 999px 999px 0;background:var(--positive)}
-.stock-scenario-marker{position:absolute;left:var(--stock-base-position,50%);top:50%;width:13px;height:13px;border:3px solid var(--surface);border-radius:50%;background:var(--positive);box-shadow:0 0 0 1px var(--border);transform:translate(-50%,-50%)}
+.stock-scenario-marker{position:absolute;left:50%;top:50%;width:13px;height:13px;border:3px solid var(--surface);border-radius:50%;background:var(--positive);box-shadow:0 0 0 1px var(--border);transform:translate(-50%,-50%)}
 .stock-scenario-labels{display:flex;justify-content:space-between;gap:10px;margin-top:9px}
 .stock-scenario-labels>span{display:flex;flex-direction:column;gap:2px;min-width:0}
 .stock-scenario-labels>span:nth-child(2){align-items:center;text-align:center}
 .stock-scenario-labels>span:last-child{align-items:flex-end;text-align:right}
 .stock-scenario-labels small{color:var(--muted);font-size:9px;font-weight:700}
 .stock-scenario-labels b{font-size:10px;font-weight:750;font-variant-numeric:tabular-nums}
+.stock-scenario-labels-single{justify-content:center;text-align:center}
+.stock-scenario-labels-single>span{align-items:center!important;text-align:center!important}
 
 .stock-data-list{display:grid;margin:0}
 .stock-data-list>div{display:flex;align-items:center;justify-content:space-between;gap:14px;min-height:35px;border-top:1px solid var(--border)}
@@ -63,6 +65,7 @@
 .stock-chart-support-legend{opacity:.85}
 .stock-chart-frame{position:relative;min-width:0;border-radius:8px;overflow:hidden;background:var(--surface)}
 .stock-chart-canvas{width:100%;height:clamp(310px,30vw,390px);min-width:0}
+.stock-chart-price-axis-gesture{position:absolute;z-index:6;top:0;right:0;bottom:28px;width:72px;pointer-events:none}
 .stock-chart-crosshair{position:absolute;z-index:5;top:8px;left:8px;right:72px;width:max-content;max-width:calc(100% - 88px);padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:color-mix(in srgb,var(--surface) 92%,transparent);color:var(--text);font-size:8px;font-weight:700;line-height:1.35;white-space:normal;pointer-events:none;box-shadow:var(--shadow)}
 .stock-chart-credit{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:7px;color:var(--muted);font-size:8px;font-weight:650}
 .stock-chart-credit a{color:var(--muted);text-decoration:none}
@@ -78,6 +81,10 @@
 .stock-page-message h1{margin:7px 0;font-size:22px;color:var(--text)}
 .stock-page-message p{margin:7px 0 14px;font-size:11px}
 .stock-page-message a{color:var(--brand-blue);font-size:11px;font-weight:750;text-decoration:none}
+
+@media (pointer:coarse){
+  .stock-chart-price-axis-gesture{pointer-events:auto;touch-action:none}
+}
 
 @media (max-width:900px){
   .stock-detail-page{padding-top:24px}
