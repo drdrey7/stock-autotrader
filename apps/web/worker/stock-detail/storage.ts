@@ -13,7 +13,7 @@ export const STOCK_DETAIL_VISIBLE_WEEKS = 260;
 export const STOCK_DETAIL_SMA_WARMUP_WEEKS = 199;
 export const STOCK_DETAIL_HISTORY_LIMIT = STOCK_DETAIL_VISIBLE_WEEKS + STOCK_DETAIL_SMA_WARMUP_WEEKS;
 
-const COMPANY_SQL = `SELECT u.symbol, u.company, u.logo_url
+const COMPANY_SQL = `SELECT u.symbol, u.company, u.logo_url, u.exchange, u.industry
   FROM earnings_universe AS u
   WHERE u.symbol = ? AND ${ACTIVE_UNIVERSE_PREDICATE}
   LIMIT 1`;
@@ -50,6 +50,8 @@ export interface StockDetailCompanyRow {
   symbol: string;
   company: string;
   logo_url: string | null;
+  exchange?: string | null;
+  industry?: string | null;
 }
 
 export interface WeeklyPriceRow {
