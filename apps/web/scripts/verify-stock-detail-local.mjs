@@ -155,7 +155,7 @@ async function main() {
       throw new Error(`MSFT detail returned ${response.status}: ${body}`);
     }
     const detail = await response.json();
-    assert(detail.schemaVersion === 1, "unexpected Stock Detail schemaVersion");
+    assert(detail.schemaVersion === 2, "unexpected Stock Detail schemaVersion");
     assert(detail.symbol === "MSFT", "MSFT symbol was not preserved");
     assert(detail.company?.name === "Microsoft Corporation", "company metadata missing");
     assert(detail.company?.logoUrl === "https://example.com/msft.png", "company logo missing");

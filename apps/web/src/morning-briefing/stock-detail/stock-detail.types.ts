@@ -70,6 +70,7 @@ export interface StockDetail {
     roicPct: number | null;
     fcfMarginPct: number | null;
     debtToEquity: number | null;
+    fundamentalsAsOf: string | null;
   };
   chart: {
     priceHistory: StockPricePoint[];

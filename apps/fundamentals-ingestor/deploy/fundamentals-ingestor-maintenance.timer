@@ -1,0 +1,16 @@
+# Daily fundamentals maintenance cadence (08:30 UTC).
+#
+# The SEC typically posts new filings from 06:00 UTC onwards, so running
+# maintenance at 08:30 UTC captures the bulk of new filings from the prior
+# day. The bootstrap timer runs earlier at 06:00 UTC while initial coverage
+# is incomplete. Service ordering prevents overlap during persistent catch-up.
+[Unit]
+Description=Stock Autotrader fundamentals maintenance (daily incremental; SEC EDGAR)
+
+[Timer]
+OnCalendar=*-*-* 08:30:00 UTC
+RandomizedDelaySec=15m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

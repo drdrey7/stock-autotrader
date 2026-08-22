@@ -86,6 +86,7 @@ function snapshot(weeklyRows: WeeklyPriceRow[]): StockDetailStorageSnapshot {
     intrinsicValue: undefined,
     weeklyRows,
     splitEvents: [{ effective_date: "2026-08-10", split_factor: 2 }],
+    fundamentalSnapshot: null,
   };
 }
 
@@ -125,5 +126,45 @@ describe("Stock Detail review regressions", () => {
     });
 
     expect(buildHistoricalSma200w(history)).toEqual([]);
+  });
+
+  it("reconciles fundamental shares and EPS after an effective split", async () => {
+    storageMock.readStockDetailStorageSnapshot.mockResolvedValue({
+      ...snapshot([]),
+      quote: { ...snapshot([]).quote!, price: 100 },
+      fundamentalSnapshot: {
+        symbol: "MSFT",
+        latest_period_end: "2026-08-01",
+        revenue_ttm: null,
+        operating_income_ttm: null,
+        pretax_income_ttm: null,
+        income_tax_ttm: null,
+        net_income_ttm: null,
+        diluted_eps_ttm: 10,
+        operating_cash_flow_ttm: null,
+        capex_ttm: null,
+        free_cash_flow_ttm: null,
+        cash: null,
+        short_term_investments: null,
+        total_debt: null,
+        shareholders_equity: null,
+        current_assets: null,
+        current_liabilities: null,
+        shares_outstanding: 100,
+        roic_ttm: null,
+        fcf_margin_ttm: null,
+        debt_to_equity: null,
+        coverage_status: "partial",
+        blockers_json: "[]",
+        source: "sec-xbrl",
+        updated_at: "2026-08-22T00:00:00.000Z",
+      },
+      splitEvents: [{ effective_date: "2026-08-10", split_factor: 2 }],
+    });
+
+    const detail = await readStockDetailApi(env, "MSFT", NOW);
+
+    expect(detail.fundamentals.marketCap).toBe(20_000);
+    expect(detail.fundamentals.peTtm).toBe(20);
   });
 });

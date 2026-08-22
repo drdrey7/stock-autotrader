@@ -119,6 +119,7 @@ function baseSnapshot(overrides: Partial<StockDetailStorageSnapshot> = {}): Stoc
     },
     weeklyRows: weeklyHistory(459),
     splitEvents: [],
+    fundamentalSnapshot: null,
     ...overrides,
   };
 }

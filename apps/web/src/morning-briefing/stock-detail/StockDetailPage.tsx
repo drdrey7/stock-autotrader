@@ -151,6 +151,9 @@ function StockMetrics({ detail }: { detail: StockDetail }) {
       {metrics.map(([label, value]) => (
         <div className="stock-metric" key={label}><small>{label}</small><strong>{value}</strong></div>
       ))}
+      {detail.metrics.fundamentalsAsOf && (
+        <small className="stock-metrics-freshness">Fundamentals as of {formatDate(detail.metrics.fundamentalsAsOf)}</small>
+      )}
     </section>
   );
 }

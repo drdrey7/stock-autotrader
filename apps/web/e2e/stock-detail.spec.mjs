@@ -29,7 +29,7 @@ function detailFixture(symbol) {
   const ivBase = symbol === "MSFT" ? 570.31 : symbol === "NVDA" ? 221.02 : null;
   const quotePrice = symbol === "MSFT" ? 500 : symbol === "NVDA" ? 180 : 130;
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt: "2026-08-21T15:00:00.000Z",
     symbol,
     company: { name: COMPANY_NAMES[symbol], exchange: null, sector: null, logoUrl: null },
@@ -54,6 +54,15 @@ function detailFixture(symbol) {
         upsidePct: (ivBase / quotePrice - 1) * 100,
       },
     },
+    fundamentals: {
+      marketCap: null,
+      peTtm: null,
+      roicPct: null,
+      fcfMarginPct: null,
+      debtToEquity: null,
+      coverageStatus: "none",
+      asOf: null,
+    },
     technical: {
       sma200w: hasSma ? 150 : null,
       distanceToSma200wPct: hasSma ? (quotePrice / 150 - 1) * 100 : null,
@@ -73,6 +82,7 @@ function detailFixture(symbol) {
       historyAsOf: "2026-08-15T06:00:00.000Z",
       valuationAsOf: ivBase === null ? null : "2026-08-03",
       technicalAsOf: hasSma ? "2026-08-15T06:00:00.000Z" : null,
+      fundamentalsAsOf: null,
     },
   };
 }

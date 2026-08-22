@@ -6,7 +6,7 @@ import {
 
 function completeResponse(): StockDetailApiResponse {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt: "2026-08-21T14:30:00.000Z",
     symbol: "MSFT",
     company: {
@@ -35,6 +35,15 @@ function completeResponse(): StockDetailApiResponse {
         asOf: "2026-08-03",
         upsidePct: 20,
       },
+    },
+    fundamentals: {
+      marketCap: 3700000000000,
+      peTtm: 35.5,
+      roicPct: 45.2,
+      fcfMarginPct: 32.1,
+      debtToEquity: 0.35,
+      coverageStatus: "complete",
+      asOf: "2026-06-30",
     },
     technical: {
       sma200w: 430,
@@ -68,6 +77,7 @@ function completeResponse(): StockDetailApiResponse {
       historyAsOf: "2026-08-21T06:00:00.000Z",
       valuationAsOf: "2026-08-03",
       technicalAsOf: "2026-08-21T06:00:00.000Z",
+      fundamentalsAsOf: "2026-06-30",
     },
   };
 }
@@ -75,7 +85,7 @@ function completeResponse(): StockDetailApiResponse {
 describe("stockDetailApiResponseSchema", () => {
   it("accepts a complete response and preserves Stock Detail upside semantics", () => {
     const parsed = stockDetailApiResponseSchema.parse(completeResponse());
-    expect(parsed.schemaVersion).toBe(1);
+    expect(parsed.schemaVersion).toBe(2);
     expect(parsed.quote.scaleState).toBe("safe");
     expect(parsed.valuation.intrinsicValue?.upsidePct).toBe(20);
   });
@@ -93,6 +103,13 @@ describe("stockDetailApiResponseSchema", () => {
     value.quote.state = "Unavailable";
     value.quote.scaleState = "unknown";
     value.valuation.intrinsicValue = null;
+    value.fundamentals.marketCap = null;
+    value.fundamentals.peTtm = null;
+    value.fundamentals.roicPct = null;
+    value.fundamentals.fcfMarginPct = null;
+    value.fundamentals.debtToEquity = null;
+    value.fundamentals.coverageStatus = "none";
+    value.fundamentals.asOf = null;
     value.technical.sma200w = null;
     value.technical.distanceToSma200wPct = null;
     value.technical.sma200wState = "Unavailable";
@@ -105,6 +122,7 @@ describe("stockDetailApiResponseSchema", () => {
     value.freshness.historyAsOf = null;
     value.freshness.valuationAsOf = null;
     value.freshness.technicalAsOf = null;
+    value.freshness.fundamentalsAsOf = null;
     expect(stockDetailApiResponseSchema.safeParse(value).success).toBe(true);
   });
 
@@ -114,7 +132,7 @@ describe("stockDetailApiResponseSchema", () => {
     ["malformed generatedAt", (value: StockDetailApiResponse) => { value.generatedAt = "today"; }],
     ["bad support level", (value: StockDetailApiResponse) => { value.technical.supports[0]!.level = 5 as 1; }],
     ["bad interval", (value: StockDetailApiResponse) => { value.chart.interval = "1d" as "1w"; }],
-    ["bad schema version", (value: StockDetailApiResponse) => { value.schemaVersion = 2 as 1; }],
+    ["bad schema version", (value: StockDetailApiResponse) => { value.schemaVersion = 1 as 2; }],
     ["bad scale state", (value: StockDetailApiResponse) => { value.quote.scaleState = "bad" as "safe"; }],
   ])("rejects %s", (_label, mutate) => {
     const value = completeResponse();

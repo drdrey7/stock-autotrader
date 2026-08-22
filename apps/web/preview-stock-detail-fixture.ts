@@ -82,7 +82,7 @@ export function previewStockDetailFixture(rawSymbol: string): StockDetailApiResp
   const currentSma = sma200wHistory.at(-1)?.value ?? null;
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt: "2026-08-21T15:00:00.000Z",
     symbol: typedSymbol,
     company: {
@@ -112,6 +112,15 @@ export function previewStockDetailFixture(rawSymbol: string): StockDetailApiResp
         upsidePct: (ivBase / quotePrice - 1) * 100,
       },
     },
+    fundamentals: {
+      marketCap: null,
+      peTtm: null,
+      roicPct: null,
+      fcfMarginPct: null,
+      debtToEquity: null,
+      coverageStatus: "none",
+      asOf: null,
+    },
     technical: {
       sma200w: currentSma,
       distanceToSma200wPct: currentSma === null ? null : (quotePrice / currentSma - 1) * 100,
@@ -131,6 +140,7 @@ export function previewStockDetailFixture(rawSymbol: string): StockDetailApiResp
       historyAsOf: "2026-08-15T06:00:00.000Z",
       valuationAsOf: ivBase === null ? null : "2026-08-03",
       technicalAsOf: currentSma === null ? null : "2026-08-15T06:00:00.000Z",
+      fundamentalsAsOf: null,
     },
   };
 }

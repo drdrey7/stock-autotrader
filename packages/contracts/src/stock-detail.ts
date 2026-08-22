@@ -49,7 +49,7 @@ export type StockDetailIntrinsicValue = z.infer<typeof stockDetailIntrinsicValue
  * this response is composed exclusively from persisted D1 state.
  */
 export const stockDetailApiResponseSchema = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(2),
   generatedAt: isoTimestampSchema,
   symbol: stockSymbolSchema,
   company: z.object({
@@ -73,6 +73,15 @@ export const stockDetailApiResponseSchema = z.object({
   valuation: z.object({
     intrinsicValue: stockDetailIntrinsicValueSchema.nullable(),
   }),
+  fundamentals: z.object({
+    marketCap: z.number().positive().finite().nullable(),
+    peTtm: z.number().positive().finite().nullable(),
+    roicPct: z.number().finite().nullable(),
+    fcfMarginPct: z.number().finite().nullable(),
+    debtToEquity: z.number().nonnegative().finite().nullable(),
+    coverageStatus: z.string().trim().min(1).max(32),
+    asOf: marketDateSchema.nullable(),
+  }),
   technical: z.object({
     sma200w: nullablePositiveNumber,
     distanceToSma200wPct: z.number().finite().nullable(),
@@ -93,6 +102,7 @@ export const stockDetailApiResponseSchema = z.object({
     historyAsOf: isoTimestampSchema.nullable(),
     valuationAsOf: marketDateSchema.nullable(),
     technicalAsOf: isoTimestampSchema.nullable(),
+    fundamentalsAsOf: marketDateSchema.nullable(),
   }),
 });
 export type StockDetailApiResponse = z.infer<typeof stockDetailApiResponseSchema>;

@@ -1,0 +1,30 @@
+{
+  "name": "@stock-autotrader/fundamentals-ingestor",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Canonical SEC fundamentals ingestor — SEC EDGAR XBRL → D1, serving-only Worker read",
+  "main": "./src/index.ts",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint . --max-warnings=0",
+    "fundamentals": "npx --yes tsx src/cli.ts"
+  },
+  "dependencies": {
+    "@stock-autotrader/contracts": "*",
+    "zod": "^4.0.17"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260702.1",
+    "@types/node": "^22.10.0",
+    "@vitest/coverage-v8": "^3.2.7",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -275,6 +275,7 @@ export function createMockStockDetail(rawSymbol: string): StockDetail | null {
       roicPct: fixture?.roicPct ?? round(6 + random() * 28, 1),
       fcfMarginPct: fixture?.fcfMarginPct ?? round(7 + random() * 31, 1),
       debtToEquity: fixture?.debtToEquity ?? round(0.08 + random() * 1.2, 2),
+      fundamentalsAsOf: "2026-06-30",
     },
     chart: {
       priceHistory: history,

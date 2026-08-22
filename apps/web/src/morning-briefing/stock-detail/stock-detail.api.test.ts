@@ -9,7 +9,7 @@ import { ApiStockDetailDataSource } from "./stock-detail.api";
 
 function responseBody(): StockDetailApiResponse {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt: "2026-08-21T14:30:00.000Z",
     symbol: "MSFT",
     company: {
@@ -39,6 +39,15 @@ function responseBody(): StockDetailApiResponse {
         upsidePct: 20,
       },
     },
+    fundamentals: {
+      marketCap: null,
+      peTtm: null,
+      roicPct: null,
+      fcfMarginPct: null,
+      debtToEquity: null,
+      coverageStatus: "none",
+      asOf: null,
+    },
     technical: {
       sma200w: 430,
       distanceToSma200wPct: 16.279,
@@ -58,6 +67,7 @@ function responseBody(): StockDetailApiResponse {
       historyAsOf: "2026-08-21T06:00:00.000Z",
       valuationAsOf: "2026-08-03",
       technicalAsOf: "2026-08-21T06:00:00.000Z",
+      fundamentalsAsOf: null,
     },
   };
 }
