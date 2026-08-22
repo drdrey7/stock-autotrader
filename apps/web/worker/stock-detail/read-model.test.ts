@@ -337,11 +337,13 @@ describe("Stock Detail D1 read model", () => {
     }));
     const detail = await readStockDetailApi(env, "MSFT", NOW);
     expect(detail.quote.scaleState).toBe("mismatch");
-    expect(detail.quote.price).toBeNull();
-    expect(detail.technical.sma200w).toBeNull();
+    expect(detail.quote.price).toBe(500);
+    expect(detail.technical.sma200w).toBeCloseTo(400.5, 10);
+    expect(detail.chart.priceHistory).toEqual([]);
+    expect(detail.technical.sma200wHistory).toEqual([]);
   });
 
-  it("returns Not available data during a split reconciliation gap rather than mixing scales", async () => {
+  it("keeps the persisted quote visible when the quote predates an effective split", async () => {
     const reconciledHistory = applySplitToHistory(weeklyHistory(459), "2026-08-10", 2);
     storageMock.readStockDetailStorageSnapshot.mockResolvedValue(baseSnapshot({
       weeklyRows: reconciledHistory,
@@ -350,9 +352,9 @@ describe("Stock Detail D1 read model", () => {
     }));
     const detail = await readStockDetailApi(env, "MSFT", NOW);
     expect(detail.quote.scaleState).toBe("mismatch");
-    expect(detail.quote.price).toBeNull();
-    expect(detail.quote.changeAbs).toBeNull();
-    expect(detail.quote.changePct).toBeNull();
+    expect(detail.quote.price).toBe(500);
+    expect(detail.quote.changeAbs).toBe(5);
+    expect(detail.quote.changePct).toBe(1);
     expect(detail.technical.sma200w).toBeNull();
   });
 
