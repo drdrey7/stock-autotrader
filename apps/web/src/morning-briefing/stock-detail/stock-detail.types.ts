@@ -1,3 +1,5 @@
+import type { SourceState, StockDetailQuoteScaleState } from "@stock-autotrader/contracts";
+
 export type StockMarketState = "open" | "closed";
 
 export interface StockPricePoint {
@@ -6,6 +8,7 @@ export interface StockPricePoint {
   open?: number;
   high?: number;
   low?: number;
+  volume?: number;
 }
 
 export interface StockLinePoint {
@@ -16,6 +19,9 @@ export interface StockLinePoint {
 export interface StockSupportLevel {
   level: 1 | 2 | 3 | 4;
   price: number;
+  method?: string;
+  asOf?: string;
+  triggered?: boolean | null;
 }
 
 export interface StockDetail {
@@ -27,11 +33,14 @@ export interface StockDetail {
   sector: string | null;
   logoUrl: string | null;
   quote: {
-    price: number;
-    change: number;
-    changePct: number;
+    price: number | null;
+    change: number | null;
+    changePct: number | null;
+    state: SourceState;
+    /** Always present for API data; optional only for isolated legacy test fixtures. */
+    scaleState?: StockDetailQuoteScaleState;
     marketState: StockMarketState;
-    asOf: string;
+    asOf: string | null;
   };
   valuation: {
     intrinsicValue: number | null;

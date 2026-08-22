@@ -13,6 +13,7 @@ import { readXPosts } from "./x-posts";
 import { readMarketContext, readMarketContextHealth, readMarketContextHealthStrict, runMarketContextJob, runSentimentJob } from "./market-context";
 import { EarningsQueryError, readEarningsApi, runEarningsJob } from "./earnings";
 import { readScreenerApi } from "./quotes/api";
+import { handleStockDetailApi } from "./stock-detail/api";
 import { jobsForProductionCron } from "./cron-dispatcher";
 import {
   buildDashboard,
@@ -360,6 +361,10 @@ export default {
         readMarketContextHealth(env.DB),
       ]);
       return json({ ...context, health });
+    }
+    const stockDetailMatch = pathname.match(/^\/api\/stocks\/([A-Za-z0-9.-]+)\/detail$/);
+    if (stockDetailMatch) {
+      return handleStockDetailApi(stockDetailMatch[1]!, env);
     }
     const stockMatch = pathname.match(/^\/api\/stocks\/([A-Za-z0-9.-]+)$/);
     if (stockMatch) {
