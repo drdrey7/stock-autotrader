@@ -26,7 +26,7 @@ afterEach(() => {
 });
 
 describe("sidebar brand polish", () => {
-  it("renders the desktop wordmark as two deliberate lines without the tagline", () => {
+  it("renders the desktop wordmark as two deliberate lines without truncation or tagline", () => {
     render(
       <MemoryRouter initialEntries={["/dashboard"]}>
         <AppShell><main>content</main></AppShell>
@@ -34,9 +34,15 @@ describe("sidebar brand polish", () => {
     );
 
     const desktopBrand = document.querySelector(".shell-sidebar .brand-logo");
+    const desktopWordmark = desktopBrand?.querySelector("strong") as HTMLElement | null;
     expect(desktopBrand).toHaveClass("is-stacked");
-    expect(desktopBrand?.querySelector("strong")).toHaveTextContent("HOW ARETHE MARKETS");
-    expect(desktopBrand?.querySelector("strong br")).toBeInTheDocument();
+    expect(desktopWordmark).toHaveTextContent("HOW ARETHE MARKETS");
+    expect(desktopWordmark?.querySelector("br")).toBeInTheDocument();
+    expect(desktopWordmark).toHaveStyle({
+      overflow: "visible",
+      textOverflow: "clip",
+      whiteSpace: "normal",
+    });
     expect(desktopBrand?.querySelector("small")).toBeNull();
   });
 
