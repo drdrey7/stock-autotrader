@@ -294,11 +294,7 @@ export async function readStockDetailApi(
   // Same source of truth as Screener: validated latest_quotes from D1.
   // Split/history reconciliation may suppress only chart/history data.
   const currentPrice = quote?.price ?? null;
-  const liveSma = computeLiveSma200w(
-    quoteInput,
-    metric,
-    latestEffectiveSplitMap,
-  );
+  const liveSma = computeLiveSma200w(quoteInput, metric, latestEffectiveSplitMap);
 
   const supports = buildSupportLevels(
     currentPrice,
