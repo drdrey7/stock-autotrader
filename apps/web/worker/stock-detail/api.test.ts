@@ -14,7 +14,7 @@ beforeEach(() => vi.clearAllMocks());
 
 describe("handleStockDetailApi", () => {
   it("normalizes a Core Universe ticker and serves a short-cache public response", async () => {
-    readModelMock.readStockDetailApi.mockResolvedValue({ schemaVersion: 1, symbol: "MSFT" });
+    readModelMock.readStockDetailApi.mockResolvedValue({ schemaVersion: 2, symbol: "MSFT" });
     const response = await handleStockDetailApi("msft", env, new Date("2026-08-21T15:00:00.000Z"));
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("public, max-age=30");

@@ -216,6 +216,7 @@ describe("StockDetailPage", () => {
         roicPct: null,
         fcfMarginPct: null,
         debtToEquity: null,
+        fundamentalsAsOf: null,
       },
       chart: {
         ...base.chart,

@@ -86,6 +86,7 @@ function snapshot(weeklyRows: WeeklyPriceRow[]): StockDetailStorageSnapshot {
     intrinsicValue: undefined,
     weeklyRows,
     splitEvents: [{ effective_date: "2026-08-10", split_factor: 2 }],
+    fundamentalSnapshot: null,
   };
 }
 
