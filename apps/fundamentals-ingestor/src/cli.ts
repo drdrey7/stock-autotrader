@@ -5,7 +5,7 @@
  * Usage:
  *   npx tsx apps/fundamentals-ingestor/src/cli.ts audit --symbol ADBE
  *   npx tsx apps/fundamentals-ingestor/src/cli.ts bootstrap --symbol ADBE --local
- *   npx tsx apps/fundamentals-ingestor/src/cli.ts maintenance --all-core --local
+ *   npx tsx apps/fundamentals-ingestor/src/cli.ts maintenance --all-core --remote --apply
  *
  * Commands:
  *   audit       Read-only: fetch SEC, normalize, print canonical + derived metrics
@@ -28,7 +28,7 @@ import {
 } from "./metrics";
 import {
   periodToRow,
-  type D1FundamentalPeriodRow,
+  type D1FundamentalSnapshotRow,
 } from "./storage";
 import { CORE_UNIVERSE } from "@stock-autotrader/contracts";
 
@@ -157,52 +157,61 @@ interface ProcessResult {
 }
 
 async function processSymbol(symbol: string, facts: CompanyFacts, options: CliOptions): Promise<ProcessResult> {
-  // For audit: just normalize the most recent quarterly period and print
-  // For bootstrap: normalize all available periods and write D1
-
-  // Find most recent fiscal identity from facts
+  // Extract all fiscal identities from facts
   const identities = extractFiscalIdentities(facts);
   if (identities.length === 0) {
     console.error(`  ${symbol}: no fiscal identities found`);
     return { quality: "none" };
   }
 
-  // Process the most recent quarterly period
-  const latest = identities[0]!;
-  const period = normalizePeriod(symbol, facts, latest);
+  // Process all periods (not just the first one)
+  const periods: NormalizedPeriod[] = [];
+  for (const identity of identities) {
+    const period = normalizePeriod(symbol, facts, identity);
+    periods.push(period);
+  }
 
-  // Compute derived metrics from the latest period
+  // Compute derived metrics from the most recent period
+  const latest = periods[0]!;
   const derived = computeDerivedMetrics({
-    revenue: period.fields.revenue?.value ?? null,
-    operatingIncome: period.fields.operating_income?.value ?? null,
-    pretaxIncome: period.fields.pretax_income?.value ?? null,
-    incomeTax: period.fields.income_tax?.value ?? null,
-    netIncome: period.fields.net_income?.value ?? null,
-    dilutedEps: period.fields.diluted_eps?.value ?? null,
-    operatingCashFlow: period.fields.operating_cash_flow?.value ?? null,
-    capex: period.fields.capex?.value ?? null,
-    cash: period.fields.cash?.value ?? null,
-    shortTermInvestments: period.fields.short_term_investments?.value ?? null,
-    totalDebt: period.fields.total_debt?.value ?? null,
-    shareholdersEquity: period.fields.shareholders_equity?.value ?? null,
-    sharesOutstanding: period.fields.shares_outstanding?.value ?? null,
-    currentAssets: period.fields.current_assets?.value ?? null,
-    currentLiabilities: period.fields.current_liabilities?.value ?? null,
-    totalAssets: period.fields.total_assets?.value ?? null,
-    totalLiabilities: period.fields.total_liabilities?.value ?? null,
-    weightedAvgDilutedShares: period.fields.weighted_avg_diluted_shares?.value ?? null,
+    revenue: latest.fields.revenue?.value ?? null,
+    operatingIncome: latest.fields.operating_income?.value ?? null,
+    pretaxIncome: latest.fields.pretax_income?.value ?? null,
+    incomeTax: latest.fields.income_tax?.value ?? null,
+    netIncome: latest.fields.net_income?.value ?? null,
+    dilutedEps: latest.fields.diluted_eps?.value ?? null,
+    operatingCashFlow: latest.fields.operating_cash_flow?.value ?? null,
+    capex: latest.fields.capex?.value ?? null,
+    cash: latest.fields.cash?.value ?? null,
+    shortTermInvestments: latest.fields.short_term_investments?.value ?? null,
+    totalDebt: latest.fields.total_debt?.value ?? null,
+    shareholdersEquity: latest.fields.shareholders_equity?.value ?? null,
+    sharesOutstanding: latest.fields.shares_outstanding?.value ?? null,
+    currentAssets: latest.fields.current_assets?.value ?? null,
+    currentLiabilities: latest.fields.current_liabilities?.value ?? null,
+    totalAssets: latest.fields.total_assets?.value ?? null,
+    totalLiabilities: latest.fields.total_liabilities?.value ?? null,
+    weightedAvgDilutedShares: latest.fields.weighted_avg_diluted_shares?.value ?? null,
   });
 
   if (options.command === "audit") {
-    printAudit(symbol, period, derived);
-    return { quality: period.missingFields.length === 0 ? "complete" : period.missingFields.length < 10 ? "partial" : "none" };
+    printAudit(symbol, latest, derived);
+    return { quality: latest.missingFields.length === 0 ? "complete" : latest.missingFields.length < 10 ? "partial" : "none" };
   }
 
-  if (options.command === "bootstrap" && options.apply) {
-    await writePeriodToD1(period, derived, options);
+  // For bootstrap and maintenance: write to D1 if --apply
+  if (options.apply) {
+    // Write all periods
+    for (const period of periods) {
+      await writePeriodToD1(period, options);
+    }
+
+    // Generate and write snapshot
+    const snapshot = buildSnapshot(symbol, periods);
+    await writeSnapshotToD1(snapshot, options);
   }
 
-  return { quality: period.missingFields.length === 0 ? "complete" : "partial" };
+  return { quality: latest.missingFields.length === 0 ? "complete" : "partial" };
 }
 
 function printAudit(symbol: string, period: NormalizedPeriod, derived: ReturnType<typeof computeDerivedMetrics>): void {
@@ -232,26 +241,113 @@ function printAudit(symbol: string, period: NormalizedPeriod, derived: ReturnTyp
   }
 }
 
-async function writePeriodToD1(period: NormalizedPeriod, derived: ReturnType<typeof computeDerivedMetrics>, options: CliOptions): Promise<void> {
+async function writePeriodToD1(period: NormalizedPeriod, options: CliOptions): Promise<void> {
   const updatedAt = new Date().toISOString();
+  const derived = computeDerivedMetrics({
+    revenue: period.fields.revenue?.value ?? null,
+    operatingIncome: period.fields.operating_income?.value ?? null,
+    pretaxIncome: period.fields.pretax_income?.value ?? null,
+    incomeTax: period.fields.income_tax?.value ?? null,
+    netIncome: period.fields.net_income?.value ?? null,
+    dilutedEps: period.fields.diluted_eps?.value ?? null,
+    operatingCashFlow: period.fields.operating_cash_flow?.value ?? null,
+    capex: period.fields.capex?.value ?? null,
+    cash: period.fields.cash?.value ?? null,
+    shortTermInvestments: period.fields.short_term_investments?.value ?? null,
+    totalDebt: period.fields.total_debt?.value ?? null,
+    shareholdersEquity: period.fields.shareholders_equity?.value ?? null,
+    sharesOutstanding: period.fields.shares_outstanding?.value ?? null,
+    currentAssets: period.fields.current_assets?.value ?? null,
+    currentLiabilities: period.fields.current_liabilities?.value ?? null,
+    totalAssets: period.fields.total_assets?.value ?? null,
+    totalLiabilities: period.fields.total_liabilities?.value ?? null,
+    weightedAvgDilutedShares: period.fields.weighted_avg_diluted_shares?.value ?? null,
+  });
   const row = periodToRow(period, derived, updatedAt);
   const sql = buildUpsertSql(row);
-  const result = runWrangler(sql, options);
-  if (result.status !== 0) {
-    throw new Error(`D1 write failed: ${result.stderr}`);
-  }
+  runWrangler(sql, options);
 }
 
-function buildUpsertSql(row: D1FundamentalPeriodRow): string {
+function buildSnapshot(symbol: string, periods: NormalizedPeriod[]): D1FundamentalSnapshotRow {
+  // Use the most recent period for TTM-like metrics
+  const latest = periods[0]!;
+  const updatedAt = new Date().toISOString();
+
+  // Compute derived metrics from latest period
+  const derived = computeDerivedMetrics({
+    revenue: latest.fields.revenue?.value ?? null,
+    operatingIncome: latest.fields.operating_income?.value ?? null,
+    pretaxIncome: latest.fields.pretax_income?.value ?? null,
+    incomeTax: latest.fields.income_tax?.value ?? null,
+    netIncome: latest.fields.net_income?.value ?? null,
+    dilutedEps: latest.fields.diluted_eps?.value ?? null,
+    operatingCashFlow: latest.fields.operating_cash_flow?.value ?? null,
+    capex: latest.fields.capex?.value ?? null,
+    cash: latest.fields.cash?.value ?? null,
+    shortTermInvestments: latest.fields.short_term_investments?.value ?? null,
+    totalDebt: latest.fields.total_debt?.value ?? null,
+    shareholdersEquity: latest.fields.shareholders_equity?.value ?? null,
+    sharesOutstanding: latest.fields.shares_outstanding?.value ?? null,
+    currentAssets: latest.fields.current_assets?.value ?? null,
+    currentLiabilities: latest.fields.current_liabilities?.value ?? null,
+    totalAssets: latest.fields.total_assets?.value ?? null,
+    totalLiabilities: latest.fields.total_liabilities?.value ?? null,
+    weightedAvgDilutedShares: latest.fields.weighted_avg_diluted_shares?.value ?? null,
+  });
+
+  return {
+    symbol,
+    latest_period_end: latest.periodEnd,
+    revenue_ttm: latest.fields.revenue?.value ?? null,
+    operating_income_ttm: latest.fields.operating_income?.value ?? null,
+    pretax_income_ttm: latest.fields.pretax_income?.value ?? null,
+    income_tax_ttm: latest.fields.income_tax?.value ?? null,
+    net_income_ttm: latest.fields.net_income?.value ?? null,
+    diluted_eps_ttm: latest.fields.diluted_eps?.value ?? null,
+    operating_cash_flow_ttm: latest.fields.operating_cash_flow?.value ?? null,
+    capex_ttm: latest.fields.capex?.value ?? null,
+    free_cash_flow_ttm: derived.freeCashFlow,
+    cash: latest.fields.cash?.value ?? null,
+    short_term_investments: latest.fields.short_term_investments?.value ?? null,
+    total_debt: latest.fields.total_debt?.value ?? null,
+    shareholders_equity: latest.fields.shareholders_equity?.value ?? null,
+    current_assets: latest.fields.current_assets?.value ?? null,
+    current_liabilities: latest.fields.current_liabilities?.value ?? null,
+    shares_outstanding: latest.fields.shares_outstanding?.value ?? null,
+    roic_ttm: derived.roicPct,
+    fcf_margin_ttm: derived.fcfMarginPct,
+    debt_to_equity: derived.debtToEquity,
+    coverage_status: latest.missingFields.length === 0 ? "complete" : "partial",
+    blockers_json: JSON.stringify(latest.missingFields),
+    source: "sec-xbrl",
+    updated_at: updatedAt,
+  };
+}
+
+async function writeSnapshotToD1(snapshot: D1FundamentalSnapshotRow, options: CliOptions): Promise<void> {
+  const sql = buildSnapshotUpsertSql(snapshot);
+  runWrangler(sql, options);
+}
+
+function buildUpsertSql(row: ReturnType<typeof periodToRow>): string {
   const v = (val: string | number | null): string => {
     if (val === null || val === undefined) return "NULL";
     if (typeof val === "number") return Number.isFinite(val) ? String(val) : "NULL";
     return `'${String(val).replace(/'/g, "''")}'`;
   };
-  return `INSERT INTO stock_fundamental_periods (symbol, fiscal_year, fiscal_period, period_start, period_end, filing_date, form, accession, taxonomy, currency, revenue, gross_profit, operating_income, pretax_income, income_tax, net_income, diluted_eps, operating_cash_flow, capex, depreciation_amortization, free_cash_flow, cash, short_term_investments, total_debt, total_assets, total_liabilities, shareholders_equity, current_assets, current_liabilities, weighted_avg_diluted_shares, shares_outstanding, source, quality, provenance_json, updated_at) VALUES (${v(row.symbol)}, ${v(row.fiscal_year)}, ${v(row.fiscal_period)}, ${v(row.period_start)}, ${v(row.period_end)}, ${v(row.filing_date)}, ${v(row.form)}, ${v(row.accession)}, ${v(row.taxonomy)}, ${v(row.currency)}, ${v(row.revenue)}, ${v(row.gross_profit)}, ${v(row.operating_income)}, ${v(row.pretax_income)}, ${v(row.income_tax)}, ${v(row.net_income)}, ${v(row.diluted_eps)}, ${v(row.operating_cash_flow)}, ${v(row.capex)}, ${v(row.depreciation_amortization)}, ${v(row.free_cash_flow)}, ${v(row.cash)}, ${v(row.short_term_investments)}, ${v(row.total_debt)}, ${v(row.total_assets)}, ${v(row.total_liabilities)}, ${v(row.shareholders_equity)}, ${v(row.current_assets)}, ${v(row.current_liabilities)}, ${v(row.weighted_avg_diluted_shares)}, ${v(row.shares_outstanding)}, ${v(row.source)}, ${v(row.quality)}, ${v(row.provenance_json)}, ${v(row.updated_at)});`;
+  return `INSERT INTO stock_fundamental_periods (symbol, fiscal_year, fiscal_period, period_start, period_end, filing_date, form, accession, taxonomy, currency, revenue, gross_profit, operating_income, pretax_income, income_tax, net_income, diluted_eps, operating_cash_flow, capex, depreciation_amortization, free_cash_flow, cash, short_term_investments, total_debt, total_assets, total_liabilities, shareholders_equity, current_assets, current_liabilities, weighted_avg_diluted_shares, shares_outstanding, source, quality, provenance_json, updated_at) VALUES (${v(row.symbol)}, ${v(row.fiscal_year)}, ${v(row.fiscal_period)}, ${v(row.period_start)}, ${v(row.period_end)}, ${v(row.filing_date)}, ${v(row.form)}, ${v(row.accession)}, ${v(row.taxonomy)}, ${v(row.currency)}, ${v(row.revenue)}, ${v(row.gross_profit)}, ${v(row.operating_income)}, ${v(row.pretax_income)}, ${v(row.income_tax)}, ${v(row.net_income)}, ${v(row.diluted_eps)}, ${v(row.operating_cash_flow)}, ${v(row.capex)}, ${v(row.depreciation_amortization)}, ${v(row.free_cash_flow)}, ${v(row.cash)}, ${v(row.short_term_investments)}, ${v(row.total_debt)}, ${v(row.total_assets)}, ${v(row.total_liabilities)}, ${v(row.shareholders_equity)}, ${v(row.current_assets)}, ${v(row.current_liabilities)}, ${v(row.weighted_avg_diluted_shares)}, ${v(row.shares_outstanding)}, ${v(row.source)}, ${v(row.quality)}, ${v(row.provenance_json)}, ${v(row.updated_at)}) ON CONFLICT(symbol, fiscal_year, fiscal_period) DO UPDATE SET filing_date = excluded.filing_date, form = excluded.form, accession = excluded.accession, taxonomy = excluded.taxonomy, revenue = excluded.revenue, gross_profit = excluded.gross_profit, operating_income = excluded.operating_income, pretax_income = excluded.pretax_income, income_tax = excluded.income_tax, net_income = excluded.net_income, diluted_eps = excluded.diluted_eps, operating_cash_flow = excluded.operating_cash_flow, capex = excluded.capex, depreciation_amortization = excluded.depreciation_amortization, free_cash_flow = excluded.free_cash_flow, cash = excluded.cash, short_term_investments = excluded.short_term_investments, total_debt = excluded.total_debt, total_assets = excluded.total_assets, total_liabilities = excluded.total_liabilities, shareholders_equity = excluded.shareholders_equity, current_assets = excluded.current_assets, current_liabilities = excluded.current_liabilities, weighted_avg_diluted_shares = excluded.weighted_avg_diluted_shares, shares_outstanding = excluded.shares_outstanding, source = excluded.source, quality = excluded.quality, provenance_json = excluded.provenance_json, updated_at = excluded.updated_at WHERE excluded.filing_date IS NULL OR stock_fundamental_periods.filing_date IS NULL OR excluded.filing_date >= stock_fundamental_periods.filing_date;`;
 }
 
-function runWrangler(command: string, options: CliOptions): { status: number; stdout: string; stderr: string } {
+function buildSnapshotUpsertSql(row: D1FundamentalSnapshotRow): string {
+  const v = (val: string | number | null): string => {
+    if (val === null || val === undefined) return "NULL";
+    if (typeof val === "number") return Number.isFinite(val) ? String(val) : "NULL";
+    return `'${String(val).replace(/'/g, "''")}'`;
+  };
+  return `INSERT INTO stock_fundamental_snapshots (symbol, latest_period_end, revenue_ttm, operating_income_ttm, pretax_income_ttm, income_tax_ttm, net_income_ttm, diluted_eps_ttm, operating_cash_flow_ttm, capex_ttm, free_cash_flow_ttm, cash, short_term_investments, total_debt, shareholders_equity, current_assets, current_liabilities, shares_outstanding, roic_ttm, fcf_margin_ttm, debt_to_equity, coverage_status, blockers_json, source, updated_at) VALUES (${v(row.symbol)}, ${v(row.latest_period_end)}, ${v(row.revenue_ttm)}, ${v(row.operating_income_ttm)}, ${v(row.pretax_income_ttm)}, ${v(row.income_tax_ttm)}, ${v(row.net_income_ttm)}, ${v(row.diluted_eps_ttm)}, ${v(row.operating_cash_flow_ttm)}, ${v(row.capex_ttm)}, ${v(row.free_cash_flow_ttm)}, ${v(row.cash)}, ${v(row.short_term_investments)}, ${v(row.total_debt)}, ${v(row.shareholders_equity)}, ${v(row.current_assets)}, ${v(row.current_liabilities)}, ${v(row.shares_outstanding)}, ${v(row.roic_ttm)}, ${v(row.fcf_margin_ttm)}, ${v(row.debt_to_equity)}, ${v(row.coverage_status)}, ${v(row.blockers_json)}, ${v(row.source)}, ${v(row.updated_at)}) ON CONFLICT(symbol) DO UPDATE SET latest_period_end = excluded.latest_period_end, revenue_ttm = excluded.revenue_ttm, operating_income_ttm = excluded.operating_income_ttm, pretax_income_ttm = excluded.pretax_income_ttm, income_tax_ttm = excluded.income_tax_ttm, net_income_ttm = excluded.net_income_ttm, diluted_eps_ttm = excluded.diluted_eps_ttm, operating_cash_flow_ttm = excluded.operating_cash_flow_ttm, capex_ttm = excluded.capex_ttm, free_cash_flow_ttm = excluded.free_cash_flow_ttm, cash = excluded.cash, short_term_investments = excluded.short_term_investments, total_debt = excluded.total_debt, shareholders_equity = excluded.shareholders_equity, current_assets = excluded.current_assets, current_liabilities = excluded.current_liabilities, shares_outstanding = excluded.shares_outstanding, roic_ttm = excluded.roic_ttm, fcf_margin_ttm = excluded.fcf_margin_ttm, debt_to_equity = excluded.debt_to_equity, coverage_status = excluded.coverage_status, blockers_json = excluded.blockers_json, source = excluded.source, updated_at = excluded.updated_at;`;
+}
+
+function runWrangler(command: string, options: CliOptions): void {
   const args = ["d1", "execute", options.db];
   if (options.remote) args.push("--remote");
   else args.push("--local");
@@ -260,7 +356,9 @@ function runWrangler(command: string, options: CliOptions): { status: number; st
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
   });
-  return { status: result.status ?? 0, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+  if (result.status !== 0) {
+    throw new Error(`D1 write failed: ${result.stderr?.slice(0, 2000) || result.stdout?.slice(0, 2000)}`);
+  }
 }
 
 /**

@@ -78,7 +78,7 @@ export const stockDetailApiResponseSchema = z.object({
     peTtm: z.number().positive().finite().nullable(),
     roicPct: z.number().finite().nullable(),
     fcfMarginPct: z.number().finite().nullable(),
-    debtToEquity: z.number().positive().finite().nullable(),
+    debtToEquity: z.number().nonnegative().finite().nullable(),
     coverageStatus: z.string().trim().min(1).max(32),
     asOf: marketDateSchema.nullable(),
   }),

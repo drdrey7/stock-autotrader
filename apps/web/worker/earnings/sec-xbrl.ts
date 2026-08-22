@@ -47,6 +47,7 @@ export const REVENUE_CONCEPTS = [
 export interface XbrlFactInstance {
   concept: string;
   unit: string | null;
+  taxonomy: string | null;
   start: string | null;
   end: string | null;
   val: number | null;
@@ -133,45 +134,74 @@ function textValue(value: unknown): string | null {
 }
 
 /**
+ * Taxonomies to parse from a companyfacts payload, in priority order.
+ * us-gaap first (US filers), then ifrs-full (foreign issuers), then dei (metadata).
+ */
+export const PARSED_TAXONOMIES = ["us-gaap", "ifrs-full", "dei"] as const;
+export type ParsedTaxonomy = (typeof PARSED_TAXONOMIES)[number];
+
+/**
  * Parse a raw companyfacts payload into a flat fact list. Malformed units or
  * instances are skipped with a warning instead of failing the whole company.
+ *
+ * Generalised to support multiple taxonomies: us-gaap (US GAAP filers),
+ * ifrs-full (foreign issuers such as ASML, NVO, TSM), and dei (entity metadata
+ * like sharesOutstanding). Each fact carries its source taxonomy so downstream
+ * resolvers can preserve provenance and avoid mixing GAAP/IFRS concepts.
+ *
+ * Backward-compatible: existing callers that only need us-gaap continue to work.
  */
 export function parseCompanyFacts(payload: unknown): CompanyFacts {
   const root = isRecord(payload) ? payload : null;
   if (!root) return { cik: "", facts: [], warnings: ["malformed companyfacts payload"] };
   const cik = String(root.cik ?? "").padStart(10, "0");
   const factsObject = isRecord(root.facts) ? root.facts : null;
-  const gaap = factsObject ? isRecord(factsObject["us-gaap"]) ? factsObject["us-gaap"] : null : null;
   const facts: XbrlFactInstance[] = [];
   const warnings: string[] = [];
-  if (!gaap) return { cik, facts, warnings: ["companyfacts payload has no us-gaap taxonomy"] };
-  for (const [concept, rawConcept] of Object.entries(gaap)) {
-    const conceptObject = isRecord(rawConcept) ? rawConcept : null;
-    const units = conceptObject ? isRecord(conceptObject.units) ? conceptObject.units : null : null;
-    if (!units) continue;
-    for (const [unit, rawInstances] of Object.entries(units)) {
-      if (!Array.isArray(rawInstances)) continue;
-      for (const rawInstance of rawInstances) {
-        const instance = isRecord(rawInstance) ? rawInstance : null;
-        if (!instance) continue;
-        const val = finiteNumber(instance.val);
-        if (val === null) continue;
-        facts.push({
-          concept,
-          unit,
-          start: textValue(instance.start),
-          end: textValue(instance.end),
-          val,
-          accn: textValue(instance.accn),
-          fy: finiteNumber(instance.fy),
-          fp: textValue(instance.fp)?.toUpperCase() ?? null,
-          form: textValue(instance.form)?.toUpperCase() ?? null,
-          filed: textValue(instance.filed),
-        });
+
+  // Track whether ANY taxonomy produced facts
+  let hasAnyTaxonomy = false;
+
+  for (const taxonomy of PARSED_TAXONOMIES) {
+    const taxonomyObject = factsObject ? isRecord(factsObject[taxonomy]) ? factsObject[taxonomy] : null : null;
+    if (!taxonomyObject) continue;
+    hasAnyTaxonomy = true;
+
+    for (const [concept, rawConcept] of Object.entries(taxonomyObject)) {
+      const conceptObject = isRecord(rawConcept) ? rawConcept : null;
+      const units = conceptObject ? isRecord(conceptObject.units) ? conceptObject.units : null : null;
+      if (!units) continue;
+      for (const [unit, rawInstances] of Object.entries(units)) {
+        if (!Array.isArray(rawInstances)) continue;
+        for (const rawInstance of rawInstances) {
+          const instance = isRecord(rawInstance) ? rawInstance : null;
+          if (!instance) continue;
+          const val = finiteNumber(instance.val);
+          if (val === null) continue;
+          facts.push({
+            concept,
+            unit,
+            taxonomy: taxonomy as ParsedTaxonomy,
+            start: textValue(instance.start),
+            end: textValue(instance.end),
+            val,
+            accn: textValue(instance.accn),
+            fy: finiteNumber(instance.fy),
+            fp: textValue(instance.fp)?.toUpperCase() ?? null,
+            form: textValue(instance.form)?.toUpperCase() ?? null,
+            filed: textValue(instance.filed),
+          });
+        }
       }
     }
   }
-  if (facts.length === 0) warnings.push("no usable us-gaap fact instances in companyfacts payload");
+
+  if (!hasAnyTaxonomy) {
+    warnings.push("companyfacts payload has no supported taxonomy (us-gaap, ifrs-full, dei)");
+  }
+  if (facts.length === 0) {
+    warnings.push("no usable fact instances in companyfacts payload");
+  }
   return { cik, facts, warnings };
 }
 

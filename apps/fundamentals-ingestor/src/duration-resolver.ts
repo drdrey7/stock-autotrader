@@ -103,17 +103,15 @@ export function resolveDurationFact(
       const q1Days = daysBetween(q1.start, q1.end);
       if (h1Days > 120 && q1Days <= 120) {
         const q2Val = h1.val - q1.val;
-        if (q2Val >= 0) {
-          return {
-            value: q2Val, concept: h1.concept, unit: h1.unit,
-            accn: h1.accn, form: h1.form, filed: h1.filed,
-            periodEnd: h1.end, periodStart: q1.end,
-            fiscalYear: h1.fy, fiscalPeriod: "Q2",
-            taxonomy: mapping.taxonomy,
-            blockers: ["derived: Q2 = H1 − Q1"],
-            derived: true, derivation: "H1−Q1",
-          };
-        }
+        return {
+          value: q2Val, concept: h1.concept, unit: h1.unit,
+          accn: h1.accn, form: h1.form, filed: h1.filed,
+          periodEnd: h1.end, periodStart: q1.end,
+          fiscalYear: h1.fy, fiscalPeriod: "Q2",
+          taxonomy: mapping.taxonomy,
+          blockers: ["derived: Q2 = H1 − Q1"],
+          derived: true, derivation: "H1−Q1",
+        };
       }
     }
   }
@@ -127,17 +125,15 @@ export function resolveDurationFact(
       const h1Days = daysBetween(h1.start, h1.end);
       if (nineMDays > 180 && h1Days > 120) {
         const q3Val = nineM.val - h1.val;
-        if (q3Val >= 0) {
-          return {
-            value: q3Val, concept: nineM.concept, unit: nineM.unit,
-            accn: nineM.accn, form: nineM.form, filed: nineM.filed,
-            periodEnd: nineM.end, periodStart: h1.end,
-            fiscalYear: nineM.fy, fiscalPeriod: "Q3",
-            taxonomy: mapping.taxonomy,
-            blockers: ["derived: Q3 = 9M − H1"],
-            derived: true, derivation: "9M−H1",
-          };
-        }
+        return {
+          value: q3Val, concept: nineM.concept, unit: nineM.unit,
+          accn: nineM.accn, form: nineM.form, filed: nineM.filed,
+          periodEnd: nineM.end, periodStart: h1.end,
+          fiscalYear: nineM.fy, fiscalPeriod: "Q3",
+          taxonomy: mapping.taxonomy,
+          blockers: ["derived: Q3 = 9M − H1"],
+          derived: true, derivation: "9M−H1",
+        };
       }
     }
   }
@@ -151,17 +147,15 @@ export function resolveDurationFact(
       const nineMDays = daysBetween(nineM.start, nineM.end);
       if (fyDays > 300 && nineMDays > 180) {
         const q4Val = fy.val - nineM.val;
-        if (q4Val >= 0) {
-          return {
-            value: q4Val, concept: fy.concept, unit: fy.unit,
-            accn: fy.accn, form: fy.form, filed: fy.filed,
-            periodEnd: fy.end, periodStart: nineM.end,
-            fiscalYear: fy.fy, fiscalPeriod: "Q4",
-            taxonomy: mapping.taxonomy,
-            blockers: ["derived: Q4 = FY − 9M"],
-            derived: true, derivation: "FY−9M",
-          };
-        }
+        return {
+          value: q4Val, concept: fy.concept, unit: fy.unit,
+          accn: fy.accn, form: fy.form, filed: fy.filed,
+          periodEnd: fy.end, periodStart: nineM.end,
+          fiscalYear: fy.fy, fiscalPeriod: "Q4",
+          taxonomy: mapping.taxonomy,
+          blockers: ["derived: Q4 = FY − 9M"],
+          derived: true, derivation: "FY−9M",
+        };
       }
     }
   }

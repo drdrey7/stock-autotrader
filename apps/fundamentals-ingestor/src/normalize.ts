@@ -93,8 +93,8 @@ export function resolveCanonicalField(
           fiscalPeriod: match.fiscalPeriod,
           taxonomy: match.taxonomy,
           blockers: match.blockers,
-          derived: (match as any).derived ?? false,
-          derivation: (match as any).derivation ?? null,
+          derived: "derived" in match ? (match as { derived: boolean }).derived : false,
+          derivation: "derivation" in match ? (match as { derivation: string | null }).derivation : null,
         };
       }
       allBlockers.push(...match.blockers);
