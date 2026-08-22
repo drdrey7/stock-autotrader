@@ -80,12 +80,15 @@ class FinnhubClient:
         self._min_interval = min_interval_seconds
         self._last_request_at: float | None = None
 
-    def _get(self, path: str, symbol: str) -> Any:
+    def _get(self, path: str, symbol: str, extra_params: dict[str, str] | None = None) -> Any:
         if self._last_request_at is not None:
             remaining = self._min_interval - (time.monotonic() - self._last_request_at)
             if remaining > 0:
                 time.sleep(remaining)
-        query = urllib.parse.urlencode({"symbol": symbol, "token": self._api_key})
+        params = {"symbol": symbol, "token": self._api_key}
+        if extra_params:
+            params.update(extra_params)
+        query = urllib.parse.urlencode(params)
         request = urllib.request.Request(f"{FINNHUB_BASE_URL}/{path}?{query}", headers={"Accept": "application/json"})
         try:
             self._last_request_at = time.monotonic()
@@ -100,6 +103,17 @@ class FinnhubClient:
 
     def fetch(self, symbol: str) -> MarketData:
         quote = self._get("quote", symbol)
-        market_as_of = normalize_quote(quote)
-        metrics = normalize_metric(self._get("stock/metric", symbol), market_as_of)
-        return metrics
+        if not isinstance(quote, dict) or quote.get("error"):
+            raise FinnhubError("finnhub_invalid_quote_payload")
+        metric_payload = self._get("stock/metric", symbol, {"metric": "all"})
+        if not isinstance(metric_payload, dict) or metric_payload.get("error"):
+            raise FinnhubError("finnhub_invalid_metric_payload")
+        metric = metric_payload.get("metric")
+        if not isinstance(metric, dict) or not metric or not {"marketCapitalization", "peTTM"}.intersection(metric):
+            raise FinnhubError("finnhub_invalid_metric_payload")
+        # Finnhub's metric response has no as-of timestamp for these fields.
+        # The quote timestamp must not be presented as metric freshness.
+        normalized = normalize_metric(metric_payload)
+        if normalized.market_cap is None and normalized.pe_ttm is None:
+            raise FinnhubError("finnhub_invalid_metric_payload")
+        return normalized

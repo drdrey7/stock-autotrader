@@ -160,10 +160,12 @@ function marketFundamentalsAreFresh(
   now: Date,
 ): boolean {
   if (!fundamentals) return false;
-  const marketAsOfMs = Date.parse(fundamentals.market_as_of ?? "");
   const updatedMs = Date.parse(fundamentals.updated_at);
-  if (!Number.isFinite(marketAsOfMs) || !Number.isFinite(updatedMs)) return false;
-  const oldestTimestamp = Math.min(marketAsOfMs, updatedMs);
+  const timestamps = [fundamentals.market_as_of, fundamentals.updated_at]
+    .map((value) => Date.parse(value ?? ""))
+    .filter((value) => Number.isFinite(value));
+  if (!Number.isFinite(updatedMs) || timestamps.length === 0) return false;
+  const oldestTimestamp = Math.min(...timestamps);
   const ageSeconds = (now.getTime() - oldestTimestamp) / 1000;
   return ageSeconds >= 0 && ageSeconds <= FUNDAMENTALS_MARKET_STALE_AFTER_SECONDS;
 }

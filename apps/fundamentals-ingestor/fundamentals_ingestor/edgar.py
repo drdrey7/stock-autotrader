@@ -19,6 +19,13 @@ INCOME_LABELS = {
     ),
     "income_tax_ttm": ("Income Tax Expense (Benefit)", "Income Tax Expense"),
 }
+INCOME_FACT_CONCEPTS = {
+    "revenue_ttm": ("us-gaap:Revenues", "us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax"),
+    "pretax_income_ttm": (
+        "us-gaap:IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
+        "us-gaap:IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+    ),
+}
 OCF_LABELS = ("Net Cash Provided by (Used in) Operating Activities", "Operating Cash Flow")
 CAPEX_LABELS = ("Payments to Acquire Property, Plant, and Equipment", "Capital Expenditures")
 CAPEX_FACT_CONCEPTS = ("us-gaap:PaymentsToAcquireProductiveAssets",)
@@ -26,6 +33,8 @@ SHORT_TERM_INVESTMENT_FACT_CONCEPTS = (
     "us-gaap:DebtSecuritiesCurrent",
     "us-gaap:EquitySecuritiesFvNi",
 )
+DEBT_CURRENT_FACT_CONCEPTS = ("us-gaap:DebtCurrent", "us-gaap:LongTermDebtCurrent")
+DEBT_NONCURRENT_FACT_CONCEPTS = ("us-gaap:LongTermDebtNoncurrent", "us-gaap:LongTermDebt")
 MARKETABLE_SECURITIES_CURRENT_CONCEPT = "us-gaap:MarketableSecuritiesCurrent"
 RELEVANT_FILING_FORMS = [
     "10-K", "10-K/A", "10-Q", "10-Q/A", "20-F", "20-F/A", "6-K", "6-K/A",
@@ -264,11 +273,19 @@ def fetch_accounting_inputs(symbol: str, identity: str, filing: FilingMetadata |
         noncurrent = _balance_value(balance_rows, ("LongTermDebtNoncurrent", "LongTermDebt"), ("Long-term Debt, Excluding Current Maturities",), balance_period_name)
         if current is not None and noncurrent is not None:
             total_debt = current + noncurrent
+    fact_rows: list[dict[str, Any]] | None = None
+    if total_debt is None:
+        fact_rows = _fact_rows(company)
+        current = _fact_value(fact_rows, DEBT_CURRENT_FACT_CONCEPTS, balance_ref)
+        noncurrent = _fact_value(fact_rows, DEBT_NONCURRENT_FACT_CONCEPTS, balance_ref)
+        if current is not None and noncurrent is not None:
+            total_debt = current + noncurrent
 
     cash = _balance_value(balance_rows, ("CashAndCashEquivalentsAtCarryingValue",), ("Cash and Cash Equivalents",), balance_period_name)
     short_term_investments = _balance_value(balance_rows, ("ShortTermInvestments",), ("Short-term Investments",), balance_period_name)
     if short_term_investments is None:
-        fact_rows = _fact_rows(company)
+        if fact_rows is None:
+            fact_rows = _fact_rows(company)
         short_term_investments = _fact_value(fact_rows, (MARKETABLE_SECURITIES_CURRENT_CONCEPT,), balance_ref)
         if short_term_investments is None:
             marketable_debt = _fact_value(fact_rows, (SHORT_TERM_INVESTMENT_FACT_CONCEPTS[0],), balance_ref)
@@ -276,10 +293,17 @@ def fetch_accounting_inputs(symbol: str, identity: str, filing: FilingMetadata |
             if marketable_debt is not None and marketable_equity is not None:
                 short_term_investments = marketable_debt + marketable_equity
 
+    revenue = _find(income_rows, INCOME_LABELS["revenue_ttm"], income_period if isinstance(income_period, str) else None)
+    if revenue is None:
+        revenue = _fact_ttm_value(company, INCOME_FACT_CONCEPTS["revenue_ttm"])
+    pretax_income = _find(income_rows, INCOME_LABELS["pretax_income_ttm"], income_period if isinstance(income_period, str) else None)
+    if pretax_income is None:
+        pretax_income = _fact_ttm_value(company, INCOME_FACT_CONCEPTS["pretax_income_ttm"])
+
     return AccountingInputs(
-        revenue_ttm=_find(income_rows, INCOME_LABELS["revenue_ttm"], income_period if isinstance(income_period, str) else None),
+        revenue_ttm=revenue,
         operating_income_ttm=_find(income_rows, INCOME_LABELS["operating_income_ttm"], income_period if isinstance(income_period, str) else None),
-        pretax_income_ttm=_find(income_rows, INCOME_LABELS["pretax_income_ttm"], income_period if isinstance(income_period, str) else None),
+        pretax_income_ttm=pretax_income,
         income_tax_ttm=_find(income_rows, INCOME_LABELS["income_tax_ttm"], income_period if isinstance(income_period, str) else None),
         operating_cash_flow_ttm=_find(cash_rows, OCF_LABELS, income_period if isinstance(income_period, str) else None),
         capex_ttm=capex,

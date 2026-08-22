@@ -5,7 +5,7 @@ from unittest.mock import patch
 from fundamentals_ingestor.config import Settings
 from fundamentals_ingestor.d1 import SNAPSHOT_COLUMNS
 from fundamentals_ingestor.edgar import FilingLookupError, FilingMetadata
-from fundamentals_ingestor.finnhub import MarketData
+from fundamentals_ingestor.finnhub import FinnhubError, MarketData
 from fundamentals_ingestor.main import run
 from fundamentals_ingestor.metrics import AccountingInputs
 
@@ -188,3 +188,21 @@ class RefreshTests(unittest.TestCase):
         self.assertEqual(result["written"], 1)
         values = d1_instance.writes[0]
         self.assertEqual(values[SNAPSHOT_COLUMNS.index("accounting_filing_accession")], "0000000000-26-000001")
+
+    def test_finnhub_provider_failure_never_overwrites_existing_snapshot(self):
+        class FailingFinnhub:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def fetch(self, symbol):
+                raise FinnhubError("finnhub_invalid_metric_payload")
+
+        d1_instance = FakeD1()
+        with (
+            patch("fundamentals_ingestor.main.load_universe", return_value=["MSFT"]),
+            patch("fundamentals_ingestor.main.FinnhubClient", FailingFinnhub),
+            patch("fundamentals_ingestor.main.D1Client", return_value=d1_instance),
+        ):
+            result = run(self.settings())
+        self.assertEqual(result, {"complete": 0, "partial": 0, "missing": 0, "failed": 1, "written": 0})
+        self.assertEqual(d1_instance.writes, [])

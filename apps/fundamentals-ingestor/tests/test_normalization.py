@@ -14,7 +14,7 @@ from fundamentals_ingestor.edgar import (
     fetch_latest_filing_metadata,
     periods_compatible,
 )
-from fundamentals_ingestor.finnhub import normalize_metric, normalize_quote
+from fundamentals_ingestor.finnhub import FinnhubClient, FinnhubError, normalize_metric, normalize_quote
 
 
 class FakeFrame:
@@ -38,15 +38,33 @@ class FakeStatement:
 
 
 class FakeFacts:
-    def __init__(self, rows, ttm_value=None):
+    def __init__(self, rows, ttm_value=None, ttm_values=None):
         self.rows = rows
         self.ttm_value = ttm_value
+        self.ttm_values = ttm_values or {}
 
     def to_dataframe(self):
         return FakeFrame(self.rows)
 
     def get_ttm(self, concept):
-        return types.SimpleNamespace(value=self.ttm_value)
+        return types.SimpleNamespace(value=self.ttm_values.get(concept, self.ttm_value))
+
+
+class FakeHttpResponse:
+    status = 200
+
+    def __init__(self, payload):
+        self.payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return None
+
+    def read(self):
+        import json
+        return json.dumps(self.payload).encode("utf-8")
 
 
 class NormalizationTests(unittest.TestCase):
@@ -60,6 +78,41 @@ class NormalizationTests(unittest.TestCase):
         value = normalize_metric({"metric": {"marketCapitalization": -1, "peTTM": "n/a"}})
         self.assertIsNone(value.market_cap)
         self.assertIsNone(value.pe_ttm)
+
+    def test_finnhub_metric_request_uses_metric_all_and_no_quote_freshness(self):
+        requests = []
+
+        def opener(request, timeout):
+            requests.append(request)
+            if request.full_url.split("/")[-1].split("?")[0] == "quote":
+                return FakeHttpResponse({"t": 1_700_000_000})
+            return FakeHttpResponse({"metric": {"marketCapitalization": 123.4, "peTTM": 21.5}})
+
+        result = FinnhubClient("test-key", opener=opener, min_interval_seconds=0).fetch("MSFT")
+        from urllib.parse import parse_qs, urlparse
+        metric_query = parse_qs(urlparse(requests[1].full_url).query)
+        self.assertEqual(metric_query, {"symbol": ["MSFT"], "token": ["test-key"], "metric": ["all"]})
+        self.assertEqual(result.market_cap, 123_400_000)
+        self.assertEqual(result.pe_ttm, 21.5)
+        self.assertIsNone(result.market_as_of)
+
+    def test_finnhub_http_200_invalid_metric_payload_is_provider_failure(self):
+        invalid_payloads = [
+            {"error": "rate limit"},
+            {"symbol": "MSFT"},
+            {"metric": {}},
+            {"metric": {"epsTTM": 1.0}},
+            {"metric": {"peTTM": None}},
+        ]
+        for payload in invalid_payloads:
+            with self.subTest(payload=payload):
+                def opener(request, timeout, payload=payload):
+                    if "/quote?" in request.full_url:
+                        return FakeHttpResponse({"t": 1_700_000_000})
+                    return FakeHttpResponse(payload)
+
+                with self.assertRaises(FinnhubError):
+                    FinnhubClient("test-key", opener=opener, min_interval_seconds=0).fetch("MSFT")
 
     def test_edgartools_statement_rows_use_normalized_labels(self):
         rows = _rows(FakeStatement([{"label": "Total Revenue", "Q4 2026": 100}], ["Q4 2026"]))
@@ -171,3 +224,35 @@ class NormalizationTests(unittest.TestCase):
 
         self.assertEqual(result.capex_ttm, 6_572)
         self.assertEqual(result.short_term_investments, 67_335)
+
+    def test_accounting_inputs_use_canonical_income_and_debt_facts_when_labels_are_absent(self):
+        class Company:
+            def __init__(self, symbol):
+                self.facts = FakeFacts([
+                    {"concept": "us-gaap:DebtCurrent", "numeric_value": 20, "period_type": "instant", "fiscal_year": 2027, "fiscal_period": "Q1", "period_end": "2026-04-26"},
+                    {"concept": "us-gaap:LongTermDebtNoncurrent", "numeric_value": 80, "period_type": "instant", "fiscal_year": 2027, "fiscal_period": "Q1", "period_end": "2026-04-26"},
+                ], ttm_values={
+                    "us-gaap:Revenues": 1_000,
+                    "us-gaap:IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments": 200,
+                })
+
+            def income_statement(self, **kwargs):
+                return FakeStatement([{"label": "Operating Income", "Q1 2027": 300}, {"label": "Income Tax Expense", "Q1 2027": 40}], [(2027, "Q1")])
+
+            def cash_flow_statement(self, **kwargs):
+                return FakeStatement([{"label": "Net Cash Provided by (Used in) Operating Activities", "Q1 2027": 400}], [(2027, "Q1")])
+
+            def balance_sheet(self, **kwargs):
+                return FakeStatement([
+                    {"concept": "CashAndCashEquivalentsAtCarryingValue", "label": "Cash and Cash Equivalents", "Q1 2027": 100},
+                    {"concept": "StockholdersEquity", "label": "Total Stockholders' Equity", "Q1 2027": 500},
+                ], [(2027, "Q1")])
+
+        fake_edgar = types.SimpleNamespace(Company=Company, set_identity=lambda identity: None)
+        filing = types.SimpleNamespace(period_of_report="2026-04-26")
+        with patch.dict(sys.modules, {"edgar": fake_edgar}):
+            result = fetch_accounting_inputs("AMZN", "Validation Operator validation@example.invalid", filing)
+
+        self.assertEqual(result.revenue_ttm, 1_000)
+        self.assertEqual(result.pretax_income_ttm, 200)
+        self.assertEqual(result.total_debt, 100)
