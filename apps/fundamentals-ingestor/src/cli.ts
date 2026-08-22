@@ -311,7 +311,7 @@ function runWrangler(command: string, options: CliOptions): void {
   const result = spawnSync("npx", ["--yes", `wrangler@${options.wrangler}`, ...args], {
     encoding: "utf8", maxBuffer: 64 * 1024 * 1024, cwd,
   });
-  try { unlinkSync(tmpFile); } catch {}
+  try { unlinkSync(tmpFile); } catch { /* cleanup - file may not exist */ }
   if (result.status !== 0) {
     const out = result.stdout?.slice(0, 2000) || "";
     const err = result.stderr?.slice(0, 2000) || "";
