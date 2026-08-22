@@ -24,6 +24,7 @@ class AccountingInputs:
     shareholders_equity: float | None = None
     accounting_as_of: str | None = None
     periods_compatible: bool = False
+    extraction_status: str = "ok"
 
 
 def accounting_inputs_from_snapshot(row: dict[str, object]) -> AccountingInputs:
@@ -44,6 +45,7 @@ def accounting_inputs_from_snapshot(row: dict[str, object]) -> AccountingInputs:
         shareholders_equity=number("shareholders_equity"),
         accounting_as_of=row.get("accounting_as_of") if isinstance(row.get("accounting_as_of"), str) else None,
         periods_compatible=False,
+        extraction_status=row.get("accounting_refresh_status") if row.get("accounting_refresh_status") in {"ok", "unknown", "incomplete"} else "unknown",
     )
 
 

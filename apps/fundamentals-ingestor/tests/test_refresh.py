@@ -34,6 +34,7 @@ def existing_snapshot():
         "accounting_source": "edgartools",
         "market_source": "finnhub",
         "accounting_filing_accession": "0000000000-26-000001",
+        "accounting_refresh_status": "ok",
         "updated_at": "old",
     }
 
@@ -106,6 +107,7 @@ class RefreshTests(unittest.TestCase):
         partial["capex_ttm"] = None
         partial["free_cash_flow_ttm"] = None
         partial["fcf_margin_pct"] = None
+        partial["accounting_refresh_status"] = "incomplete"
 
         class PartialD1(FakeD1):
             def get_snapshot(self, symbol):
@@ -209,3 +211,38 @@ class RefreshTests(unittest.TestCase):
             result = run(self.settings())
         self.assertEqual(result, {"complete": 0, "partial": 0, "missing": 0, "failed": 1, "written": 0})
         self.assertEqual(d1_instance.writes, [])
+
+    def test_market_refresh_is_persisted_when_new_accounting_refresh_fails(self):
+        d1_instance = FakeD1()
+        with (
+            patch("fundamentals_ingestor.main.load_universe", return_value=["MSFT"]),
+            patch("fundamentals_ingestor.main.FinnhubClient", FakeFinnhub),
+            patch("fundamentals_ingestor.main.D1Client", return_value=d1_instance),
+            patch("fundamentals_ingestor.main.fetch_latest_filing_metadata", return_value=FilingMetadata("new-accession", "2026-08-21")),
+            patch("fundamentals_ingestor.main.fetch_accounting_inputs", side_effect=RuntimeError("temporary EdgarTools failure")),
+        ):
+            result = run(self.settings())
+        self.assertEqual(result["written"], 1)
+        self.assertEqual(result["failed"], 1)
+        values = d1_instance.writes[0]
+        self.assertEqual(values[SNAPSHOT_COLUMNS.index("market_cap")], 100.0)
+        self.assertEqual(values[SNAPSHOT_COLUMNS.index("accounting_filing_accession")], "0000000000-26-000001")
+
+    def test_successful_partial_extraction_is_reused_for_same_accession(self):
+        partial = existing_snapshot()
+        partial["total_debt"] = None
+        partial["accounting_refresh_status"] = "ok"
+
+        class PartialD1(FakeD1):
+            def get_snapshot(self, symbol):
+                return partial
+
+        with (
+            patch("fundamentals_ingestor.main.load_universe", return_value=["MSFT"]),
+            patch("fundamentals_ingestor.main.FinnhubClient", FakeFinnhub),
+            patch("fundamentals_ingestor.main.D1Client", PartialD1),
+            patch("fundamentals_ingestor.main.fetch_latest_filing_metadata", return_value=FilingMetadata("0000000000-26-000001", "2026-06-30")),
+            patch("fundamentals_ingestor.main.fetch_accounting_inputs", side_effect=AssertionError("successful partial extraction must be reusable")),
+        ):
+            result = run(self.settings())
+        self.assertEqual(result["failed"], 0)

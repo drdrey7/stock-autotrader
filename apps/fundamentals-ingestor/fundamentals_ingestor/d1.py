@@ -22,7 +22,7 @@ SNAPSHOT_COLUMNS = (
     "income_tax_ttm", "operating_cash_flow_ttm", "capex_ttm", "free_cash_flow_ttm", "cash",
     "short_term_investments", "total_debt", "shareholders_equity", "roic_pct", "fcf_margin_pct",
     "debt_to_equity", "accounting_as_of", "market_as_of", "accounting_source", "market_source",
-    "accounting_filing_accession", "updated_at",
+    "accounting_filing_accession", "accounting_refresh_status", "updated_at",
 )
 
 
@@ -57,6 +57,7 @@ def snapshot_values(
         "edgartools",
         "finnhub",
         _value(accounting_filing_accession),
+        _value(accounting.extraction_status),
         updated_at,
     ]
 
@@ -104,7 +105,7 @@ class D1Client:
           free_cash_flow_ttm, cash, short_term_investments, total_debt,
           shareholders_equity, roic_pct, fcf_margin_pct, debt_to_equity,
           accounting_as_of, market_as_of, accounting_source, market_source,
-          accounting_filing_accession, updated_at
+          accounting_filing_accession, accounting_refresh_status, updated_at
         ) VALUES ({placeholders})
         ON CONFLICT(symbol) DO UPDATE SET
           market_cap=excluded.market_cap, pe_ttm=excluded.pe_ttm,
@@ -118,6 +119,7 @@ class D1Client:
           accounting_as_of=excluded.accounting_as_of, market_as_of=excluded.market_as_of,
           accounting_source=excluded.accounting_source, market_source=excluded.market_source,
           accounting_filing_accession=excluded.accounting_filing_accession,
+          accounting_refresh_status=excluded.accounting_refresh_status,
           updated_at=excluded.updated_at
         """.strip()
         try:

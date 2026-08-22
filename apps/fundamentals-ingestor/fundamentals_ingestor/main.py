@@ -44,15 +44,10 @@ def _stored_metrics(row: dict[str, object]) -> CalculatedMetrics:
 
 
 def _accounting_snapshot_complete(row: dict[str, object]) -> bool:
-    required = (
-        "revenue_ttm", "operating_income_ttm", "pretax_income_ttm", "income_tax_ttm",
-        "operating_cash_flow_ttm", "capex_ttm", "free_cash_flow_ttm", "cash",
-        "short_term_investments", "total_debt", "shareholders_equity",
-    )
-    # A derived card may be NULL for a valid financial reason (negative pretax,
-    # incompatible periods, or an invalid denominator). Reuse is gated on the
-    # extracted source inputs, not on presentation metrics.
-    return all(_stored_number(row, name) is not None for name in required)
+    # EdgarTools may successfully process a filing while a fact is genuinely
+    # inapplicable or unavailable. Reuse the recorded extraction result rather
+    # than treating every nullable source field as a daily retry signal.
+    return row.get("accounting_refresh_status") == "ok"
 
 
 def _snapshot_changed(existing: dict[str, object] | None, values: list[object]) -> bool:
@@ -107,8 +102,24 @@ def run(settings: Settings, dry_run: bool = False) -> dict[str, int]:
                 accounting = accounting_inputs_from_snapshot(existing)
                 calculated = _stored_metrics(existing)
             else:
-                accounting = fetch_accounting_inputs(symbol, settings.edgar_identity, filing)
-                calculated = calculate_metrics(accounting)
+                try:
+                    accounting = fetch_accounting_inputs(symbol, settings.edgar_identity, filing)
+                    calculated = calculate_metrics(accounting)
+                except Exception:
+                    if not existing:
+                        raise
+                    # A successful Finnhub refresh must not be lost because a
+                    # new SEC filing is temporarily unavailable or incomplete.
+                    # Keep the last processed accession until accounting is
+                    # successfully refreshed.
+                    accounting = accounting_inputs_from_snapshot(existing)
+                    calculated = _stored_metrics(existing)
+                    filing = FilingMetadata(
+                        existing.get("accounting_filing_accession") if isinstance(existing.get("accounting_filing_accession"), str) else None,
+                        existing.get("accounting_as_of") if isinstance(existing.get("accounting_as_of"), str) else None,
+                    )
+                    counts["failed"] += 1
+                    logger.error("accounting refresh failed symbol=%s; market refresh preserved", symbol)
             card_values = [market.market_cap, market.pe_ttm, calculated.roic_pct, calculated.fcf_margin_pct, calculated.debt_to_equity]
             available = sum(value is not None for value in card_values)
             if available == 5:
