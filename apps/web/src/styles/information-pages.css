@@ -113,6 +113,12 @@
   transform: translateY(-2px);
 }
 
+@media (min-width: 901px) {
+  .briefing-information-body p:not(.briefing-information-lead) {
+    font-size: 15px;
+  }
+}
+
 @media (max-width: 620px) {
   .briefing-information-page {
     padding: 40px 19px 72px;
