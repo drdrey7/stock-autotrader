@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -97,7 +98,7 @@ def run(settings: Settings, dry_run: bool = False) -> dict[str, int]:
             # check. Market cards use the current quote already stored in D1.
             finnhub.fetch(symbol)
             existing = d1.get_snapshot(symbol) if not dry_run else None
-            quote = d1.get_latest_quote(symbol) if not dry_run and hasattr(d1, "get_latest_quote") else None
+            quote = None
             filing_lookup_failed = False
             try:
                 filing = fetch_latest_filing_metadata(symbol, settings.edgar_identity)
@@ -125,8 +126,11 @@ def run(settings: Settings, dry_run: bool = False) -> dict[str, int]:
                     if not dry_run and hasattr(d1, "upsert_annual"):
                         try:
                             annual = fetch_annual_fundamentals(symbol, settings.edgar_identity, filing)
+                            if not annual:
+                                raise RuntimeError("annual_history_unavailable")
                             d1.upsert_annual([(symbol, row) for row in annual])
                         except Exception:
+                            accounting = replace(accounting, extraction_status="incomplete")
                             counts["failed"] += 1
                             logger.exception("annual history refresh failed symbol=%s", symbol)
                 except Exception:
@@ -150,6 +154,12 @@ def run(settings: Settings, dry_run: bool = False) -> dict[str, int]:
                 _stored_number(existing, "pe_ttm") if existing else None,
                 existing.get("market_as_of") if existing and isinstance(existing.get("market_as_of"), str) else None,
             )
+            if not dry_run and hasattr(d1, "get_latest_quote"):
+                quote_data = d1.get_latest_quote(symbol, accounting.accounting_as_of)
+                if quote_data is not None and quote_data.basis_compatible:
+                    quote = (quote_data.price, quote_data.timestamp)
+                elif quote_data is not None:
+                    fallback_market = MarketData(None, None, None)
             market = _derived_market(accounting, quote, fallback_market)
             card_values = [market.market_cap, market.pe_ttm, calculated.roic_pct, calculated.fcf_margin_pct, calculated.debt_to_equity]
             available = sum(value is not None for value in card_values)

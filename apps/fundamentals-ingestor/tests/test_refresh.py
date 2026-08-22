@@ -54,6 +54,9 @@ class FakeD1:
     def get_snapshot(self, symbol):
         return existing_snapshot()
 
+    def get_latest_quote(self, symbol, accounting_as_of=None):
+        return None
+
     def upsert(self, values):
         self.writes.append(values)
 

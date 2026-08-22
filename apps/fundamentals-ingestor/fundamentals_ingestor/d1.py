@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from typing import Any
 
 from .edgar import AnnualFundamental
@@ -76,6 +77,13 @@ ANNUAL_COLUMNS = (
 )
 
 
+@dataclass(frozen=True)
+class QuoteData:
+    price: float
+    timestamp: str
+    basis_compatible: bool = True
+
+
 def annual_values(symbol: str, row: AnnualFundamental) -> list[Any]:
     return [
         symbol, row.fiscal_year, row.revenue, row.operating_income, row.pretax_income,
@@ -119,7 +127,7 @@ class D1Client:
         )
         return rows[0] if rows and isinstance(rows[0], dict) else None
 
-    def get_latest_quote(self, symbol: str) -> tuple[float, str] | None:
+    def get_latest_quote(self, symbol: str, accounting_as_of: str | None = None) -> QuoteData | None:
         rows = self._query(
             "SELECT price, provider_timestamp FROM latest_quotes WHERE symbol = ? LIMIT 1",
             [symbol],
@@ -131,7 +139,15 @@ class D1Client:
             return None
         if not isinstance(timestamp, str) or not timestamp.strip():
             return None
-        return float(price), timestamp
+        basis_compatible = True
+        if accounting_as_of:
+            split_rows = self._query(
+                "SELECT effective_date FROM split_events WHERE symbol = ? AND effective_date > ? AND effective_date <= ? LIMIT 1",
+                [symbol, accounting_as_of[:10], timestamp[:10]],
+            )
+            if split_rows:
+                basis_compatible = False
+        return QuoteData(float(price), timestamp, basis_compatible)
 
     def upsert(self, values: list[Any]) -> None:
         placeholders = ", ".join("?" for _ in values)
@@ -190,3 +206,9 @@ class D1Client:
           source=excluded.source
         """.strip()
         self._query(sql, [item for row in values for item in row])
+        years = [row.fiscal_year for _, row in rows]
+        year_placeholders = ", ".join("?" for _ in years)
+        self._query(
+            f"DELETE FROM stock_fundamentals_annual WHERE symbol = ? AND fiscal_year NOT IN ({year_placeholders})",
+            [rows[0][0], *years],
+        )
