@@ -50,8 +50,15 @@ export function BrandLogo({
         {!markOnly && (
           <span className="brand-logo-fallback-copy">
             <strong>
-              <span className="brand-logo-wordmark-line">HOW ARE</span>
-              <span className="brand-logo-wordmark-line"><em>THE</em> MARKETS</span>
+              {stacked ? (
+                <>
+                  HOW ARE
+                  <br />
+                  <em>THE</em> MARKETS
+                </>
+              ) : (
+                <>HOW ARE <em>THE</em> MARKETS</>
+              )}
             </strong>
             {!compact && !stacked && <small>Market intelligence</small>}
           </span>
