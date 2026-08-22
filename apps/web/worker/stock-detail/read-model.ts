@@ -291,9 +291,8 @@ export async function readStockDetailApi(
     effectiveSplitEvents,
   );
 
-  // Quote summary values come from the same persisted latest_quotes row used
-  // by Screener. History reconciliation is allowed to hide only history/chart
-  // data; it must never blank a valid current quote.
+  // Same source of truth as Screener: validated latest_quotes from D1.
+  // Split/history reconciliation may suppress only chart/history data.
   const currentPrice = quote?.price ?? null;
   const liveSma = computeLiveSma200w(
     quoteInput,
