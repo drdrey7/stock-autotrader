@@ -211,35 +211,12 @@ function servedHistoryScaleState(
 }
 
 /**
- * Evidence-based split safety for Stock Detail.
+ * Evidence-based split safety for Stock Detail chart/history compatibility.
  *
- * In the short reconciliation window after a split we prefer temporary
- * `Not available` over guessing which scale a persisted value uses. Recovery
- * is automatic as soon as all stored data that is actually served agrees.
- *
- * When weekly history is present, every served row must carry the exact
- * cumulative split factor defined by split_events and must have been persisted
- * after the latest effective split. This deliberately handles the ingestor's
- * independently committed D1 chunks: one correct witness is not enough to
- * prove that older rows are already on the same scale. The current quote must
- * also be post-split before it can be combined with that served history.
- *
- * Technical metrics are deliberately not required for quote/chart safety.
- * Callers that explicitly provide a metric timestamp may use it as an
- * additional guard, while Stock Detail quote serving leaves that guard unset;
- * computeLiveSma200w() validates quote/metric compatibility independently.
- * This preserves a valid price during metric bootstrap/write failures without
- * allowing an unsafe live SMA to be calculated.
- *
- * When no weekly history is served there is no chart scale to reconcile. A
- * valid quote can therefore remain visible as soon as its own provider
- * timestamp proves it is post-split. The SMA path still performs its separate
- * quote/metrics split guard before combining those two data families.
- *
- * Future announced splits are excluded before this function is called. There
- * is no fixed 24-hour lockout: a symbol becomes available immediately when the
- * evidence is coherent, while a provider/maintenance delay of up to a day is
- * acceptable operationally.
+ * This state no longer controls whether the persisted latest quote is shown.
+ * Screener and Stock Detail both expose the same validated `latest_quotes`
+ * value; chart/history can independently fail closed while reconciliation is
+ * pending. SMA keeps its own split guard in computeLiveSma200w().
  */
 export function servedSplitScaleState(
   quote: QuoteInput | null,
@@ -299,9 +276,6 @@ export async function readStockDetailApi(
       .filter((week): week is string => week !== null),
   );
 
-  // Future announced splits are deliberately excluded. Quote/chart scale
-  // safety is decided without technical_metrics; computeLiveSma200w performs
-  // the separate quote/metric guard before combining those values.
   const latestEffectiveSplitMap = effectiveSplitAsOf
     ? new Map([[symbol, effectiveSplitAsOf]])
     : new Map<string, string>();
@@ -316,10 +290,13 @@ export async function readStockDetailApi(
     weeklyRows,
     effectiveSplitEvents,
   );
-  const quoteScaleSafe = scaleState === "safe";
-  const currentPrice = quoteScaleSafe ? quote?.price ?? null : null;
+
+  // Quote summary values come from the same persisted latest_quotes row used
+  // by Screener. History reconciliation is allowed to hide only history/chart
+  // data; it must never blank a valid current quote.
+  const currentPrice = quote?.price ?? null;
   const liveSma = computeLiveSma200w(
-    quoteScaleSafe ? quoteInput : null,
+    quoteInput,
     metric,
     latestEffectiveSplitMap,
   );
@@ -374,8 +351,8 @@ export async function readStockDetailApi(
     },
     quote: {
       price: currentPrice,
-      changeAbs: quoteScaleSafe ? quote?.change_abs ?? null : null,
-      changePct: quoteScaleSafe ? quote?.change_pct ?? null : null,
+      changeAbs: quote?.change_abs ?? null,
+      changePct: quote?.change_pct ?? null,
       provider: quote?.provider ?? null,
       asOf: quote?.provider_timestamp ?? null,
       updatedAt: quote?.updated_at ?? null,
