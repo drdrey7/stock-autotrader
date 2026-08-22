@@ -6,6 +6,7 @@ const appSource = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
 const briefingSource = readFileSync(new URL("../morning-briefing/MorningBriefingApp.tsx", import.meta.url), "utf8");
 const shellSource = readFileSync(new URL("../shell/AppShell.tsx", import.meta.url), "utf8");
 const stockSource = readFileSync(new URL("../morning-briefing/stock-detail/StockDetailPage.tsx", import.meta.url), "utf8");
+const informationSource = readFileSync(new URL("../information-pages.tsx", import.meta.url), "utf8");
 
 describe("CSS runtime boundaries", () => {
   it("keeps the entrypoint foundation-only", () => {
@@ -17,13 +18,14 @@ describe("CSS runtime boundaries", () => {
     expect(mainSource).not.toContain('import "./daily-briefing.css"');
   });
 
-  it("loads route typography from the component that owns the route", () => {
+  it("loads route styles from the component that owns the route", () => {
     expect(briefingSource).toContain('import "./morning-briefing.css"');
     expect(briefingSource).toContain('import "./typography.css"');
     expect(shellSource).toContain('import "./shell.css"');
     expect(shellSource).toContain('import "./typography.css"');
     expect(stockSource).toContain('import "./stock-detail.css"');
     expect(stockSource).toContain('import "./typography.css"');
+    expect(informationSource).toContain('import "./styles/information-pages.css"');
   });
 
   it("does not keep retired global CSS generations in src", () => {
