@@ -7,8 +7,8 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from .finnhub import MarketData
 from .edgar import AnnualFundamental
+from .finnhub import MarketData
 from .metrics import AccountingInputs, CalculatedMetrics
 
 ENDPOINT = "https://api.cloudflare.com/client/v4/accounts/{account_id}/d1/database/{database_id}/query"
