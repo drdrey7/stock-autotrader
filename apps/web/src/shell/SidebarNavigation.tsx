@@ -6,7 +6,7 @@ import { isNavItemActive, shellNavGroups } from "./navigation";
 export function ShellBrand({ compact = false }: { compact?: boolean }) {
   return (
     <Link className="shell-brand" to="/" aria-label="How Are The Markets home">
-      <BrandLogo compact={compact} stacked />
+      <BrandLogo compact={compact} stacked={!compact} />
     </Link>
   );
 }
