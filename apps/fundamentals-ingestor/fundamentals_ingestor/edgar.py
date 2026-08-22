@@ -21,6 +21,9 @@ INCOME_LABELS = {
 }
 OCF_LABELS = ("Net Cash Provided by (Used in) Operating Activities", "Operating Cash Flow")
 CAPEX_LABELS = ("Payments to Acquire Property, Plant, and Equipment", "Capital Expenditures")
+RELEVANT_FILING_FORMS = [
+    "10-K", "10-K/A", "10-Q", "10-Q/A", "20-F", "20-F/A", "6-K", "6-K/A",
+]
 
 
 @dataclass(frozen=True)
@@ -121,9 +124,9 @@ def periods_compatible(ttm_statement: Any, balance_statement: Any) -> bool:
 
 
 def _filing_as_of(company: Any, annual: bool) -> str | None:
-    forms = ["10-K", "20-F"] if annual else ["10-Q", "6-K"]
+    forms = ["10-K", "10-K/A", "20-F", "20-F/A"] if annual else ["10-Q", "10-Q/A", "6-K", "6-K/A"]
     try:
-        filing = company.get_filings(form=forms, amendments=False).latest()
+        filing = company.get_filings(form=forms, amendments=True).latest()
         period = getattr(filing, "period_of_report", None)
         if isinstance(period, date):
             return period.isoformat()
@@ -141,8 +144,8 @@ def fetch_latest_filing_metadata(symbol: str, identity: str) -> FilingMetadata:
     set_identity(identity)
     try:
         filing = Company(symbol).get_filings(
-            form=["10-K", "10-Q", "20-F", "6-K"],
-            amendments=False,
+            form=RELEVANT_FILING_FORMS,
+            amendments=True,
         ).latest()
     except Exception:
         return FilingMetadata(None, None)

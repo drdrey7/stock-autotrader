@@ -1,6 +1,9 @@
+import sys
+import types
 import unittest
+from unittest.mock import patch
 
-from fundamentals_ingestor.edgar import _balance_value, _find, _rows, periods_compatible
+from fundamentals_ingestor.edgar import _balance_value, _find, _rows, fetch_latest_filing_metadata, periods_compatible
 from fundamentals_ingestor.finnhub import normalize_metric, normalize_quote
 
 
@@ -58,3 +61,33 @@ class NormalizationTests(unittest.TestCase):
         self.assertEqual(_balance_value(rows, ("LongTermDebtCurrent",), (), "FY 2026"), 10)
         self.assertEqual(_balance_value(rows, ("LongTermDebtNoncurrent",), (), "FY 2026"), 90)
         self.assertEqual(_balance_value(rows, ("StockholdersEquity",), (), "FY 2026"), 400)
+
+    def test_latest_filing_detection_includes_relevant_amendments(self):
+        calls = []
+
+        class Filing:
+            accession_number = "0000000000-26-000002"
+            period_of_report = "2026-06-30"
+
+        class Filings:
+            def latest(self):
+                return Filing()
+
+        class Company:
+            def __init__(self, symbol):
+                self.symbol = symbol
+
+            def get_filings(self, **kwargs):
+                calls.append(kwargs)
+                return Filings()
+
+        fake_edgar = types.SimpleNamespace(Company=Company, set_identity=lambda identity: None)
+        with patch.dict(sys.modules, {"edgar": fake_edgar}):
+            result = fetch_latest_filing_metadata("MSFT", "Validation Operator validation@example.invalid")
+
+        self.assertEqual(result.accession, "0000000000-26-000002")
+        self.assertEqual(calls[0]["amendments"], True)
+        self.assertEqual(
+            calls[0]["form"],
+            ["10-K", "10-K/A", "10-Q", "10-Q/A", "20-F", "20-F/A", "6-K", "6-K/A"],
+        )

@@ -1,11 +1,12 @@
 import { isCoreUniverseSymbol } from "@stock-autotrader/contracts";
 import { proxyProductionApiRequest, type ProductionApiBinding } from "./preview-api-proxy";
-import { previewStockDetailFixture } from "./preview-stock-detail-fixture";
+import { handleStockDetailApi } from "./worker/stock-detail/api";
 
 export interface PreviewEnv {
   ASSETS: Fetcher;
   ENVIRONMENT: "preview";
   PRODUCTION_API: Fetcher;
+  DB: D1Database;
 }
 
 type JsonObject = Record<string, unknown>;
@@ -29,7 +30,11 @@ function methodNotAllowed(): Response {
   });
 }
 
-function previewStockDetailResponse(request: Request, pathname: string): Response | null {
+async function previewStockDetailResponse(
+  request: Request,
+  pathname: string,
+  env: PreviewEnv,
+): Promise<Response | null> {
   const match = pathname.match(/^\/api\/stocks\/([^/]+)\/detail$/);
   if (!match) return null;
   if (request.method !== "GET" && request.method !== "HEAD") return methodNotAllowed();
@@ -45,16 +50,8 @@ function previewStockDetailResponse(request: Request, pathname: string): Respons
     return jsonResponse({ error: "stock_not_found" }, 404, request.method);
   }
 
-  const fixture = previewStockDetailFixture(symbol);
-  if (!fixture) {
-    // The branch preview deliberately fixtures only the stocks used for visual
-    // acceptance. Do not fall through to production, whose pre-merge Worker
-    // does not know the new /detail endpoint and would create a false 404.
-    return jsonResponse({ error: "preview_stock_detail_fixture_unavailable" }, 503, request.method);
-  }
-
-  const response = jsonResponse(fixture, 200, request.method);
-  response.headers.set("x-stock-detail-preview-fixture", "1");
+  const response = await handleStockDetailApi(symbol, env, new Date());
+  response.headers.set("x-stock-detail-preview-d1", "1");
   return response;
 }
 
@@ -112,8 +109,8 @@ export async function handlePreviewRequest(
 ): Promise<Response> {
   const { pathname } = new URL(request.url);
 
-  const stockDetailFixture = previewStockDetailResponse(request, pathname);
-  if (stockDetailFixture) return stockDetailFixture;
+  const stockDetailResponse = await previewStockDetailResponse(request, pathname, env);
+  if (stockDetailResponse) return stockDetailResponse;
 
   if (pathname === "/api" || pathname.startsWith("/api/")) {
     return proxyProductionApiRequest(request, env.PRODUCTION_API);

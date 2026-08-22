@@ -17,12 +17,14 @@ import {
   readStockDetailStorageSnapshot,
   STOCK_DETAIL_VISIBLE_WEEKS,
   type StockDetailSplitEventRow,
+  type StockDetailStorageSnapshot,
   type WeeklyPriceRow,
 } from "./storage";
 
 const SMA_WINDOW_WEEKS = 200;
 const CLOSE_CROSSCHECK_RELATIVE_TOLERANCE = 1e-6;
 const CLOSE_CROSSCHECK_ABSOLUTE_TOLERANCE = 1e-8;
+export const FUNDAMENTALS_MARKET_STALE_AFTER_SECONDS = 3 * 24 * 60 * 60;
 
 interface AdjustedClosePoint {
   time: string;
@@ -151,6 +153,19 @@ function toValidChronologicalCandles(
 function approximatelyEqual(left: number, right: number): boolean {
   const tolerance = Math.max(1e-8, Math.abs(right) * 1e-6);
   return Math.abs(left - right) <= tolerance;
+}
+
+function marketFundamentalsAreFresh(
+  fundamentals: StockDetailStorageSnapshot["fundamentals"],
+  now: Date,
+): boolean {
+  if (!fundamentals) return false;
+  const marketAsOfMs = Date.parse(fundamentals.market_as_of ?? "");
+  const updatedMs = Date.parse(fundamentals.updated_at);
+  if (!Number.isFinite(marketAsOfMs) || !Number.isFinite(updatedMs)) return false;
+  const oldestTimestamp = Math.min(marketAsOfMs, updatedMs);
+  const ageSeconds = (now.getTime() - oldestTimestamp) / 1000;
+  return ageSeconds >= 0 && ageSeconds <= FUNDAMENTALS_MARKET_STALE_AFTER_SECONDS;
 }
 
 function expectedSplitFactorForWeek(
@@ -290,7 +305,8 @@ export async function readStockDetailApi(
     fundamentals,
   } = await readStockDetailStorageSnapshot(env.DB, symbol);
 
-  const marketCap = fundamentals?.market_cap ?? null;
+  const marketFundamentalsFresh = marketFundamentalsAreFresh(fundamentals, now);
+  const marketCap = marketFundamentalsFresh ? fundamentals?.market_cap ?? null : null;
   const formattedMarketCap = marketCap === null
     ? null
     : marketCap >= 1_000_000_000_000
@@ -396,7 +412,7 @@ export async function readStockDetailApi(
     valuation: { intrinsicValue },
     fundamentals: {
       marketCap: formattedMarketCap,
-      peTtm: fundamentals?.pe_ttm ?? null,
+      peTtm: marketFundamentalsFresh ? fundamentals?.pe_ttm ?? null : null,
       roicPct: fundamentals?.roic_pct ?? null,
       fcfMarginPct: fundamentals?.fcf_margin_pct ?? null,
       debtToEquity: fundamentals?.debt_to_equity ?? null,
