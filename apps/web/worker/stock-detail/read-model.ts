@@ -368,8 +368,8 @@ export async function readStockDetailApi(
     symbol,
     company: {
       name: company?.company ?? null,
-      exchange: null,
-      sector: null,
+      exchange: company?.exchange?.trim() || null,
+      sector: company?.industry?.trim() || null,
       logoUrl: company?.logo_url ?? null,
     },
     quote: {
