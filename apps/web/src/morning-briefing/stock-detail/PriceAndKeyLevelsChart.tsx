@@ -262,11 +262,12 @@ export default function PriceAndKeyLevelsChart({
     const referenceLevels = [currentPrice, intrinsicValue, ...supports.map((support) => support.price)];
     const autoscaleInfoProvider = keyLevelAutoscale(referenceLevels);
     const ohlcReady = priceHistory.every(hasOhlc);
+    const priceAxisTitle = currentPrice === null ? "Price" : "";
     let referenceSeries: ReferenceSeries;
 
     if (ohlcReady) {
       const priceSeries = chart.addSeries(CandlestickSeries, {
-        title: "Price",
+        title: priceAxisTitle,
         upColor: colours.positive,
         downColor: colours.negative,
         borderUpColor: colours.positive,
@@ -287,7 +288,7 @@ export default function PriceAndKeyLevelsChart({
       referenceSeries = priceSeries;
     } else {
       const priceSeries = chart.addSeries(LineSeries, {
-        title: "Price",
+        title: priceAxisTitle,
         color: colours.blue,
         lineWidth: 2,
         priceLineVisible: false,
@@ -334,7 +335,7 @@ export default function PriceAndKeyLevelsChart({
       for (const [series, data] of param.seriesData) {
         const value = crosshairValue(data);
         if (value === null) continue;
-        const title = series.options().title || "Value";
+        const title = series === referenceSeries ? "Price" : series.options().title || "Value";
         values.push(`${title} ${formatPrice(value)}`);
       }
       if (currentPrice !== null) values.push(`Current ${formatPrice(currentPrice)}`);

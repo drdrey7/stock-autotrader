@@ -11,21 +11,22 @@ const chartMock = vi.hoisted(() => {
   const getVisibleRange = vi.fn(() => ({ from: 100, to: 220 }));
   const priceScale = vi.fn(() => ({ getVisibleRange, setVisibleRange, setAutoScale }));
   const fitContent = vi.fn();
+  const subscribeCrosshairMove = vi.fn();
+  const unsubscribeCrosshairMove = vi.fn();
   const addSeries = vi.fn((definition: unknown, options?: unknown) => {
     void definition;
-    void options;
     return {
       setData,
       createPriceLine,
-      options: () => ({ title: "Series" }),
+      options: () => options as { title?: string },
     };
   });
   const createChart = vi.fn(() => ({
     addSeries,
     priceScale,
     timeScale: () => ({ fitContent }),
-    subscribeCrosshairMove: vi.fn(),
-    unsubscribeCrosshairMove: vi.fn(),
+    subscribeCrosshairMove,
+    unsubscribeCrosshairMove,
     remove: vi.fn(),
   }));
   return {
@@ -38,6 +39,8 @@ const chartMock = vi.hoisted(() => {
     setAutoScale,
     setData,
     setVisibleRange,
+    subscribeCrosshairMove,
+    unsubscribeCrosshairMove,
   };
 });
 
@@ -97,6 +100,75 @@ describe("Stock Detail chart scaling", () => {
       "Current", "IV", "S1", "S2", "S3", "S4",
     ]);
     expect(chartMock.addSeries).toHaveBeenCalledTimes(2);
+  });
+
+  it("hides the historical Price axis title when a current quote exists while preserving Price in the tooltip", async () => {
+    const { container } = render(
+      <ThemeProvider>
+        <PriceAndKeyLevelsChart
+          symbol="NVDA"
+          currentPrice={180}
+          intrinsicValue={null}
+          priceHistory={[
+            { time: "2026-08-07", open: 172, high: 184, low: 168, close: 180 },
+            { time: "2026-08-14", open: 180, high: 188, low: 176, close: 184 },
+          ]}
+          sma200wHistory={[]}
+          supports={[]}
+        />
+      </ThemeProvider>,
+    );
+
+    await waitFor(() => expect(chartMock.addSeries).toHaveBeenCalledOnce());
+    const priceOptions = chartMock.addSeries.mock.calls[0]?.[1] as {
+      title?: string;
+      lastValueVisible?: boolean;
+    } | undefined;
+    expect(priceOptions?.title).toBe("");
+    expect(priceOptions?.lastValueVisible).toBe(false);
+
+    const priceSeries = chartMock.addSeries.mock.results[0]?.value;
+    const onCrosshairMove = chartMock.subscribeCrosshairMove.mock.calls[0]?.[0] as ((param: {
+      time: string;
+      seriesData: Map<unknown, unknown>;
+    }) => void) | undefined;
+    expect(onCrosshairMove).toBeTypeOf("function");
+    onCrosshairMove?.({
+      time: "2026-08-14",
+      seriesData: new Map([[priceSeries, { open: 180, high: 188, low: 176, close: 184 }]]),
+    });
+
+    const tooltip = container.querySelector<HTMLElement>(".stock-chart-crosshair");
+    expect(tooltip?.textContent).toContain("Price $184.00");
+    expect(tooltip?.textContent).toContain("Current $180.00");
+    expect(tooltip?.textContent).not.toContain("Value $184.00");
+  });
+
+  it("restores the historical Price axis title and value when the current quote is unavailable", async () => {
+    render(
+      <ThemeProvider>
+        <PriceAndKeyLevelsChart
+          symbol="NVDA"
+          currentPrice={null}
+          intrinsicValue={null}
+          priceHistory={[
+            { time: "2026-08-07", open: 172, high: 184, low: 168, close: 180 },
+            { time: "2026-08-14", open: 180, high: 188, low: 176, close: 184 },
+          ]}
+          sma200wHistory={[]}
+          supports={[]}
+        />
+      </ThemeProvider>,
+    );
+
+    await waitFor(() => expect(chartMock.addSeries).toHaveBeenCalledOnce());
+    const priceOptions = chartMock.addSeries.mock.calls[0]?.[1] as {
+      title?: string;
+      lastValueVisible?: boolean;
+    } | undefined;
+    expect(priceOptions?.title).toBe("Price");
+    expect(priceOptions?.lastValueVisible).toBe(true);
+    expect(chartMock.createPriceLine).not.toHaveBeenCalled();
   });
 
   it("lets a coarse-pointer user stretch/compress the right price axis with one finger", async () => {
