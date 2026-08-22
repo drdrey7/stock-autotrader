@@ -10,6 +10,8 @@ import {
   type ScreenerQuery,
 } from "./screener/screener-filter";
 import { LazyPageErrorBoundary, PageLoadingFallback, spring } from "./shared";
+import "./morning-briefing.css";
+import "./typography.css";
 
 const HeatmapPage = lazy(() => import("./HeatmapPage"));
 const XPulsePage = lazy(() => import("./XPulsePage"));
