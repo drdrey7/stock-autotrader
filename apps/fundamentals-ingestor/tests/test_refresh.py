@@ -3,7 +3,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from fundamentals_ingestor.config import Settings
-from fundamentals_ingestor.edgar import FilingMetadata
+from fundamentals_ingestor.d1 import SNAPSHOT_COLUMNS
+from fundamentals_ingestor.edgar import FilingLookupError, FilingMetadata
 from fundamentals_ingestor.finnhub import MarketData
 from fundamentals_ingestor.main import run
 from fundamentals_ingestor.metrics import AccountingInputs
@@ -96,3 +97,75 @@ class RefreshTests(unittest.TestCase):
             result = run(self.settings())
         fetch.assert_called_once()
         self.assertEqual(result["written"], 1)
+
+    def test_same_accession_retries_incomplete_snapshot(self):
+        partial = existing_snapshot()
+        partial["capex_ttm"] = None
+        partial["free_cash_flow_ttm"] = None
+        partial["fcf_margin_pct"] = None
+
+        class PartialD1(FakeD1):
+            def get_snapshot(self, symbol):
+                return partial
+
+        refreshed = AccountingInputs(
+            revenue_ttm=100,
+            operating_income_ttm=20,
+            pretax_income_ttm=20,
+            income_tax_ttm=4,
+            operating_cash_flow_ttm=30,
+            capex_ttm=5,
+            cash=10,
+            short_term_investments=5,
+            total_debt=20,
+            shareholders_equity=50,
+            accounting_as_of="2026-06-30",
+            periods_compatible=True,
+        )
+        with (
+            patch("fundamentals_ingestor.main.load_universe", return_value=["MSFT"]),
+            patch("fundamentals_ingestor.main.FinnhubClient", FakeFinnhub),
+            patch("fundamentals_ingestor.main.D1Client", PartialD1),
+            patch("fundamentals_ingestor.main.fetch_latest_filing_metadata", return_value=FilingMetadata("0000000000-26-000001", "2026-06-30")),
+            patch("fundamentals_ingestor.main.fetch_accounting_inputs", return_value=refreshed) as fetch,
+        ):
+            result = run(self.settings())
+        fetch.assert_called_once()
+        self.assertEqual(result["written"], 1)
+
+    def test_lookup_failure_preserves_existing_filing_metadata(self):
+        partial = existing_snapshot()
+        partial["capex_ttm"] = None
+        partial["free_cash_flow_ttm"] = None
+        partial["fcf_margin_pct"] = None
+        refreshed = AccountingInputs(
+            revenue_ttm=100,
+            operating_income_ttm=20,
+            pretax_income_ttm=20,
+            income_tax_ttm=4,
+            operating_cash_flow_ttm=30,
+            capex_ttm=5,
+            cash=10,
+            short_term_investments=5,
+            total_debt=20,
+            shareholders_equity=50,
+            accounting_as_of="2026-06-30",
+            periods_compatible=True,
+        )
+
+        class PartialD1(FakeD1):
+            def get_snapshot(self, symbol):
+                return partial
+
+        d1_instance = PartialD1()
+        with (
+            patch("fundamentals_ingestor.main.load_universe", return_value=["MSFT"]),
+            patch("fundamentals_ingestor.main.FinnhubClient", FakeFinnhub),
+            patch("fundamentals_ingestor.main.D1Client", return_value=d1_instance),
+            patch("fundamentals_ingestor.main.fetch_latest_filing_metadata", side_effect=FilingLookupError("temporary")),
+            patch("fundamentals_ingestor.main.fetch_accounting_inputs", return_value=refreshed),
+        ):
+            result = run(self.settings())
+        self.assertEqual(result["written"], 1)
+        values = d1_instance.writes[0]
+        self.assertEqual(values[SNAPSHOT_COLUMNS.index("accounting_filing_accession")], "0000000000-26-000001")

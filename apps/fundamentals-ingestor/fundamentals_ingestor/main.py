@@ -10,7 +10,7 @@ from pathlib import Path
 
 from .config import Settings, from_env
 from .d1 import SNAPSHOT_COLUMNS, D1Client, snapshot_values
-from .edgar import fetch_accounting_inputs, fetch_latest_filing_metadata
+from .edgar import FilingLookupError, FilingMetadata, fetch_accounting_inputs, fetch_latest_filing_metadata
 from .finnhub import FinnhubClient
 from .metrics import CalculatedMetrics, accounting_inputs_from_snapshot, calculate_metrics
 
@@ -43,6 +43,16 @@ def _stored_metrics(row: dict[str, object]) -> CalculatedMetrics:
     )
 
 
+def _accounting_snapshot_complete(row: dict[str, object]) -> bool:
+    required = (
+        "revenue_ttm", "operating_income_ttm", "pretax_income_ttm", "income_tax_ttm",
+        "operating_cash_flow_ttm", "capex_ttm", "free_cash_flow_ttm", "cash",
+        "short_term_investments", "total_debt", "shareholders_equity", "roic_pct",
+        "fcf_margin_pct", "debt_to_equity",
+    )
+    return all(_stored_number(row, name) is not None for name in required)
+
+
 def _snapshot_changed(existing: dict[str, object] | None, values: list[object]) -> bool:
     if existing is None:
         return True
@@ -69,12 +79,24 @@ def run(settings: Settings, dry_run: bool = False) -> dict[str, int]:
         try:
             market = finnhub.fetch(symbol)
             existing = d1.get_snapshot(symbol) if not dry_run else None
-            filing = fetch_latest_filing_metadata(symbol, settings.edgar_identity) if not dry_run else None
+            filing_lookup_failed = False
+            if not dry_run:
+                try:
+                    filing = fetch_latest_filing_metadata(symbol, settings.edgar_identity)
+                except FilingLookupError:
+                    filing_lookup_failed = True
+                    filing = FilingMetadata(
+                        existing.get("accounting_filing_accession") if existing and isinstance(existing.get("accounting_filing_accession"), str) else None,
+                        existing.get("accounting_as_of") if existing and isinstance(existing.get("accounting_as_of"), str) else None,
+                    )
+            else:
+                filing = None
             can_reuse = bool(
                 existing
                 and filing
                 and filing.accession
                 and existing.get("accounting_filing_accession") == filing.accession
+                and _accounting_snapshot_complete(existing)
             )
             if can_reuse:
                 accounting = accounting_inputs_from_snapshot(existing)
@@ -101,7 +123,7 @@ def run(settings: Settings, dry_run: bool = False) -> dict[str, int]:
             if not dry_run and _snapshot_changed(existing, values):
                 d1.upsert(values)
                 counts["written"] += 1
-            logger.info("snapshot symbol=%s cards=%d reused=%s dry_run=%s", symbol, available, can_reuse, dry_run)
+            logger.info("snapshot symbol=%s cards=%d reused=%s filing_lookup_failed=%s dry_run=%s", symbol, available, can_reuse, filing_lookup_failed, dry_run)
         except Exception as exc:
             counts["failed"] += 1
             logger.error("snapshot failed symbol=%s reason=%s", symbol, type(exc).__name__)

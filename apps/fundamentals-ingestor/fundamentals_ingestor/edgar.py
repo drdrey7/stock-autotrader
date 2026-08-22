@@ -21,6 +21,12 @@ INCOME_LABELS = {
 }
 OCF_LABELS = ("Net Cash Provided by (Used in) Operating Activities", "Operating Cash Flow")
 CAPEX_LABELS = ("Payments to Acquire Property, Plant, and Equipment", "Capital Expenditures")
+CAPEX_FACT_CONCEPTS = ("us-gaap:PaymentsToAcquireProductiveAssets",)
+SHORT_TERM_INVESTMENT_FACT_CONCEPTS = (
+    "us-gaap:DebtSecuritiesCurrent",
+    "us-gaap:EquitySecuritiesFvNi",
+)
+MARKETABLE_SECURITIES_CURRENT_CONCEPT = "us-gaap:MarketableSecuritiesCurrent"
 RELEVANT_FILING_FORMS = [
     "10-K", "10-K/A", "10-Q", "10-Q/A", "20-F", "20-F/A", "6-K", "6-K/A",
 ]
@@ -30,6 +36,10 @@ RELEVANT_FILING_FORMS = [
 class FilingMetadata:
     accession: str | None
     period_of_report: str | None
+
+
+class FilingLookupError(RuntimeError):
+    """The filing provider could not answer the refresh-detection lookup."""
 
 
 def _finite(value: Any) -> float | None:
@@ -51,6 +61,57 @@ def _rows(statement: Any) -> list[dict[str, Any]]:
     if hasattr(frame, "to_dict"):
         return list(frame.to_dict(orient="records"))
     return []
+
+
+def _fact_rows(company: Any) -> list[dict[str, Any]]:
+    try:
+        facts = getattr(company, "facts", None)
+    except Exception:
+        return []
+    if facts is None or not hasattr(facts, "to_dataframe"):
+        return []
+    frame = facts.to_dataframe()
+    if hasattr(frame, "to_dict"):
+        return list(frame.to_dict(orient="records"))
+    return []
+
+
+def _fact_value(rows: list[dict[str, Any]], concepts: tuple[str, ...], period_ref: tuple[int, str] | None) -> float | None:
+    if not period_ref:
+        return None
+    wanted = {concept.casefold() for concept in concepts}
+    matches = [
+        row for row in rows
+        if isinstance(row.get("concept"), str)
+        and row["concept"].casefold() in wanted
+        and row.get("period_type") == "instant"
+        and row.get("fiscal_year") == period_ref[0]
+        and row.get("fiscal_period") == period_ref[1]
+    ]
+    matches.sort(key=lambda row: str(row.get("period_end") or ""))
+    for row in reversed(matches):
+        value = _finite(row.get("numeric_value", row.get("value")))
+        if value is not None:
+            return value
+    return None
+
+
+def _fact_ttm_value(company: Any, concepts: tuple[str, ...]) -> float | None:
+    try:
+        facts = getattr(company, "facts", None)
+    except Exception:
+        return None
+    if facts is None or not hasattr(facts, "get_ttm"):
+        return None
+    for concept in concepts:
+        try:
+            metric = facts.get_ttm(concept)
+        except Exception:
+            continue
+        value = _finite(getattr(metric, "value", None))
+        if value is not None:
+            return value
+    return None
 
 
 def _period_columns(row: dict[str, Any]) -> list[str]:
@@ -147,8 +208,8 @@ def fetch_latest_filing_metadata(symbol: str, identity: str) -> FilingMetadata:
             form=RELEVANT_FILING_FORMS,
             amendments=True,
         ).latest()
-    except Exception:
-        return FilingMetadata(None, None)
+    except Exception as exc:
+        raise FilingLookupError("filing_lookup_failed") from exc
     if filing is None:
         return FilingMetadata(None, None)
     accession = None
@@ -186,8 +247,9 @@ def fetch_accounting_inputs(symbol: str, identity: str, filing: FilingMetadata |
     balance_period_name = balance_period if isinstance(balance_period, str) else None
     balance_ref = _period_ref(balance)
     annual_balance = bool(balance_ref and balance_ref[1] == "FY")
-
     capex = _find(cash_rows, CAPEX_LABELS, income_period if isinstance(income_period, str) else None)
+    if capex is None:
+        capex = _fact_ttm_value(company, CAPEX_FACT_CONCEPTS)
     if capex is not None:
         capex = abs(capex)
 
@@ -203,6 +265,17 @@ def fetch_accounting_inputs(symbol: str, identity: str, filing: FilingMetadata |
         if current is not None and noncurrent is not None:
             total_debt = current + noncurrent
 
+    cash = _balance_value(balance_rows, ("CashAndCashEquivalentsAtCarryingValue",), ("Cash and Cash Equivalents",), balance_period_name)
+    short_term_investments = _balance_value(balance_rows, ("ShortTermInvestments",), ("Short-term Investments",), balance_period_name)
+    if short_term_investments is None:
+        fact_rows = _fact_rows(company)
+        short_term_investments = _fact_value(fact_rows, (MARKETABLE_SECURITIES_CURRENT_CONCEPT,), balance_ref)
+        if short_term_investments is None:
+            marketable_debt = _fact_value(fact_rows, (SHORT_TERM_INVESTMENT_FACT_CONCEPTS[0],), balance_ref)
+            marketable_equity = _fact_value(fact_rows, (SHORT_TERM_INVESTMENT_FACT_CONCEPTS[1],), balance_ref)
+            if marketable_debt is not None and marketable_equity is not None:
+                short_term_investments = marketable_debt + marketable_equity
+
     return AccountingInputs(
         revenue_ttm=_find(income_rows, INCOME_LABELS["revenue_ttm"], income_period if isinstance(income_period, str) else None),
         operating_income_ttm=_find(income_rows, INCOME_LABELS["operating_income_ttm"], income_period if isinstance(income_period, str) else None),
@@ -210,8 +283,8 @@ def fetch_accounting_inputs(symbol: str, identity: str, filing: FilingMetadata |
         income_tax_ttm=_find(income_rows, INCOME_LABELS["income_tax_ttm"], income_period if isinstance(income_period, str) else None),
         operating_cash_flow_ttm=_find(cash_rows, OCF_LABELS, income_period if isinstance(income_period, str) else None),
         capex_ttm=capex,
-        cash=_balance_value(balance_rows, ("CashAndCashEquivalentsAtCarryingValue",), ("Cash and Cash Equivalents",), balance_period_name),
-        short_term_investments=_balance_value(balance_rows, ("ShortTermInvestments",), ("Short-term Investments",), balance_period_name),
+        cash=cash,
+        short_term_investments=short_term_investments,
         total_debt=total_debt,
         shareholders_equity=_balance_value(balance_rows, ("StockholdersEquity",), ("Stockholders' Equity Attributable to Parent", "Total Stockholders' Equity"), balance_period_name),
         accounting_as_of=filing.period_of_report if filing else _filing_as_of(company, annual=annual_balance),

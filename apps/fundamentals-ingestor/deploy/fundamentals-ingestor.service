@@ -3,6 +3,8 @@ Description=Stock Autotrader simple fundamentals snapshot ingestor
 Documentation=https://github.com/drdrey7/stock-autotrader
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=1h
+StartLimitBurst=3
 
 [Service]
 Type=oneshot
@@ -17,7 +19,7 @@ StateDirectory=stock-autotrader-fundamentals
 ExecStart=/usr/bin/flock /var/lib/stock-autotrader-fundamentals/run.lock /usr/bin/python3 -m fundamentals_ingestor
 TimeoutStartSec=3600
 Restart=on-failure
-RestartSec=120
+RestartSec=300
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=read-only
