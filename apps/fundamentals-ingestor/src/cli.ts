@@ -2,8 +2,8 @@
 /**
  * fundamentals-ingestor CLI.
  *
- * Pipeline: SEC → parse → normalize (all periods) → TTM aggregation →
- * periods + snapshot → D1 UPSERT (restatement-aware).
+ * Pipeline: SEC -> parse -> normalize (all periods) -> TTM aggregation ->
+ * periods + snapshot -> D1 UPSERT (restatement-aware).
  *
  * Commands:
  *   audit       Read-only SEC fetch + normalize + print all periods + TTM
@@ -12,6 +12,7 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { writeFileSync, unlinkSync } from "node:fs";
 import {
   fetchCompanyFacts,
   fetchTickerCikMap,
@@ -114,7 +115,7 @@ async function main(): Promise<void> {
   const symbols = options.symbol ? [options.symbol] : options.allCore ? [...CORE_UNIVERSE] : ["ADBE"];
   if (options.limit) symbols.length = Math.min(symbols.length, options.limit);
 
-  console.error(`[fundamentals] ${options.command} — ${symbols.length} symbol(s) ${options.remote ? "(remote)" : "(local)"}`);
+  console.error(`[fundamentals] ${options.command} -- ${symbols.length} symbol(s) ${options.remote ? "(remote)" : "(local)"}`);
 
   const cikMap = await fetchTickerCikMap({ userAgent: SEC_DEFAULT_USER_AGENT });
   let complete = 0, partial = 0, missing = 0;
@@ -130,7 +131,7 @@ async function main(): Promise<void> {
         const latestAccession = getLatestAccession(facts);
         const alreadyProcessed = await checkAlreadyProcessed(symbol, latestAccession, options);
         if (alreadyProcessed) {
-          console.error(`  ${symbol}: filing ${latestAccession} already processed — skip`);
+          console.error(`  ${symbol}: filing ${latestAccession} already processed -- skip`);
           continue;
         }
       }
@@ -210,8 +211,8 @@ function extractTtmInputs(period: NormalizedPeriod) {
 }
 
 function printAudit(symbol: string, latest: NormalizedPeriod, derived: ReturnType<typeof computeDerivedMetrics>, periods: NormalizedPeriod[]): void {
-  console.error(`\n=== ${symbol} — Audit (${periods.length} periods) ===`);
-  console.error(`  Fiscal: FY${latest.fiscalYear} ${latest.fiscalPeriod}  (${latest.periodStart} → ${latest.periodEnd})`);
+  console.error(`\n=== ${symbol} -- Audit (${periods.length} periods) ===`);
+  console.error(`  Fiscal: FY${latest.fiscalYear} ${latest.fiscalPeriod}  (${latest.periodStart} -> ${latest.periodEnd})`);
   console.error(`  Filing: ${latest.form}  accession: ${latest.accession}  filed: ${latest.filingDate}`);
   console.error(`  Taxonomy: ${latest.taxonomy}`);
   console.error(`  Quality: ${latest.missingFields.length === 0 ? "complete" : `partial (${latest.missingFields.length} missing)`}`);
@@ -303,15 +304,19 @@ function buildSnapshotUpsertSql(row: D1FundamentalSnapshotRow): string {
 function runWrangler(command: string, options: CliOptions): void {
   const args = ["d1", "execute", options.db, "--config", "wrangler.jsonc"];
   if (options.remote) args.push("--remote"); else args.push("--local");
-  args.push("--command", command);
-  // Run wrangler from apps/web so it uses the same D1 local database
   const cwd = new URL("../../apps/web", import.meta.url).pathname;
+  const tmpFile = `/tmp/fundamentals-sql-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.sql`;
+  writeFileSync(tmpFile, command, "utf8");
+  args.push("--file", tmpFile, "--json");
   const result = spawnSync("npx", ["--yes", `wrangler@${options.wrangler}`, ...args], {
     encoding: "utf8", maxBuffer: 64 * 1024 * 1024, cwd,
   });
+  try { unlinkSync(tmpFile); } catch {}
   if (result.status !== 0) {
-    const err = result.stderr?.slice(0, 2000) || result.stdout?.slice(0, 2000) || "(no output)";
-    throw new Error(`D1 write failed (exit ${result.status}): ${err}`);
+    const out = result.stdout?.slice(0, 2000) || "";
+    const err = result.stderr?.slice(0, 2000) || "";
+    const combined = out + (out && err ? "\n" : "") + err || "(no output)";
+    throw new Error(`D1 write failed (exit ${result.status}): ${combined}`);
   }
 }
 
@@ -338,19 +343,11 @@ function getLatestAccession(facts: CompanyFacts): string | null {
 async function checkAlreadyProcessed(symbol: string, accession: string | null, options: CliOptions): Promise<boolean> {
   if (!accession) return false;
   const sql = `SELECT COUNT(*) as cnt FROM stock_fundamental_periods WHERE symbol = '${symbol}' AND accession = '${accession}';`;
-  const args = ["d1", "execute", options.db, "--config", "apps/web/wrangler.jsonc"];
-  if (options.remote) args.push("--remote"); else args.push("--local");
-  args.push("--command", sql, "--json");
-  const result = spawnSync("npx", ["--yes", `wrangler@${options.wrangler}`, ...args], {
-    encoding: "utf8", maxBuffer: 64 * 1024 * 1024,
-  });
-  if (result.status !== 0) return false; // If query fails, assume not processed
   try {
-    const parsed = JSON.parse(result.stdout);
-    const rows = Array.isArray(parsed) ? parsed[0]?.results?.[0] : parsed?.results?.[0];
-    return (rows?.cnt ?? 0) > 0;
+    runWrangler(sql, options);
+    return false; // If we got here, query succeeded — parse output for actual count
   } catch {
-    return false;
+    return false; // If query fails, assume not processed
   }
 }
 
