@@ -6,7 +6,7 @@ const appSource = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
 const briefingSource = readFileSync(new URL("../morning-briefing/MorningBriefingApp.tsx", import.meta.url), "utf8");
 const shellSource = readFileSync(new URL("../shell/AppShell.tsx", import.meta.url), "utf8");
 const stockSource = readFileSync(new URL("../morning-briefing/stock-detail/StockDetailPage.tsx", import.meta.url), "utf8");
-const informationSource = readFileSync(new URL("../information-pages.tsx", import.meta.url), "utf8");
+const informationSource = readFileSync(new URL("../information/InformationPages.tsx", import.meta.url), "utf8");
 
 describe("CSS runtime boundaries", () => {
   it("keeps the entrypoint foundation-only", () => {
@@ -27,7 +27,7 @@ describe("CSS runtime boundaries", () => {
     expect(shellSource).toContain('import "./typography.css"');
     expect(stockSource).toContain('import "./stock-detail.css"');
     expect(stockSource).toContain('import "./typography.css"');
-    expect(informationSource).toContain('import "./styles/information-pages.css"');
+    expect(informationSource).toContain('import "./information.css"');
   });
 
   it("does not keep retired global CSS generations in src", () => {
@@ -37,7 +37,7 @@ describe("CSS runtime boundaries", () => {
   });
 
   it("routes active information pages through their dedicated owner", () => {
-    expect(appSource).toContain('from "./information-pages"');
+    expect(appSource).toContain('from "./information/InformationPages"');
     expect(appSource).not.toContain('from "./daily-briefing-pages"');
   });
 });
