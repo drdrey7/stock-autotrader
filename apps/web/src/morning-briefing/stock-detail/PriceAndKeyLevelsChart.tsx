@@ -274,7 +274,7 @@ export default function PriceAndKeyLevelsChart({
         wickUpColor: colours.positive,
         wickDownColor: colours.negative,
         priceLineVisible: false,
-        lastValueVisible: true,
+        lastValueVisible: currentPrice === null,
         autoscaleInfoProvider,
       });
       priceSeries.setData(priceHistory.map((point) => ({
@@ -291,7 +291,7 @@ export default function PriceAndKeyLevelsChart({
         color: colours.blue,
         lineWidth: 2,
         priceLineVisible: false,
-        lastValueVisible: true,
+        lastValueVisible: currentPrice === null,
         autoscaleInfoProvider,
       });
       priceSeries.setData(priceHistory.map((point) => ({ time: point.time, value: point.close })));
