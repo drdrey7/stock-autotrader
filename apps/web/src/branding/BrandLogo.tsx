@@ -57,6 +57,7 @@ export function BrandLogo({
           height="38"
           alt=""
           aria-hidden="true"
+          style={{ flex: "0 0 auto" }}
           onLoad={() => setAssetReady(true)}
           onError={() => setAssetReady(false)}
         />
