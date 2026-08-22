@@ -4,17 +4,30 @@ set -euo pipefail
 APP=${APP:-/home/hermes/projects/stock-autotrader/apps/fundamentals-ingestor}
 SYSTEMD_DIR=${SYSTEMD_DIR:-/etc/systemd/system}
 CONF_DIR=${CONF_DIR:-/etc/stock-autotrader}
+VENV_DIR=${VENV_DIR:-/opt/stock-autotrader-fundamentals}
 UNITS=(fundamentals-ingestor.service fundamentals-ingestor.timer)
 
 command -v systemctl >/dev/null
 command -v systemd-analyze >/dev/null
 command -v install >/dev/null
 command -v flock >/dev/null
+command -v python3 >/dev/null
+command -v pip3 >/dev/null
 [ -d "$APP" ] || { echo "ERROR: missing deployed app: $APP" >&2; exit 1; }
 [ -r "$CONF_DIR/finnhub.env" ] || { echo "ERROR: missing $CONF_DIR/finnhub.env" >&2; exit 1; }
 [ -r "$CONF_DIR/cloudflare.env" ] || { echo "ERROR: missing $CONF_DIR/cloudflare.env" >&2; exit 1; }
 [ -r "$CONF_DIR/edgar.env" ] || { echo "ERROR: provision $CONF_DIR/edgar.env from the secure operator configuration" >&2; exit 1; }
 grep -Eq '^EDGAR_IDENTITY=[^[:space:]].*' "$CONF_DIR/edgar.env" || { echo "ERROR: EDGAR_IDENTITY is missing" >&2; exit 1; }
+grep -Eq '^FINNHUB_API_KEY=[^[:space:]].*' "$CONF_DIR/finnhub.env" || { echo "ERROR: FINNHUB_API_KEY is missing" >&2; exit 1; }
+for key in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_D1_DATABASE_ID; do
+  grep -Eq "^${key}=[^[:space:]].*" "$CONF_DIR/cloudflare.env" || { echo "ERROR: $key is missing" >&2; exit 1; }
+done
+
+if [ ! -x "$VENV_DIR/bin/python" ]; then
+  python3 -m venv "$VENV_DIR"
+fi
+"$VENV_DIR/bin/python" -m pip install --disable-pip-version-check --no-input --requirement "$APP/requirements.txt" >/dev/null
+chown -R hermes:hermes "$VENV_DIR"
 
 for unit in "${UNITS[@]}"; do
   systemd-analyze verify "$APP/deploy/$unit" >/dev/null

@@ -10,8 +10,14 @@ from pathlib import Path
 
 from .config import Settings, from_env
 from .d1 import SNAPSHOT_COLUMNS, D1Client, snapshot_values
-from .edgar import FilingLookupError, FilingMetadata, fetch_accounting_inputs, fetch_latest_filing_metadata
-from .finnhub import FinnhubClient
+from .edgar import (
+    FilingLookupError,
+    FilingMetadata,
+    fetch_accounting_inputs,
+    fetch_annual_fundamentals,
+    fetch_latest_filing_metadata,
+)
+from .finnhub import FinnhubClient, MarketData
 from .metrics import CalculatedMetrics, accounting_inputs_from_snapshot, calculate_metrics
 
 logger = logging.getLogger("fundamentals_ingestor")
@@ -50,6 +56,16 @@ def _accounting_snapshot_complete(row: dict[str, object]) -> bool:
     return row.get("accounting_refresh_status") == "ok"
 
 
+def _derived_market(accounting, quote: tuple[float, str] | None, fallback):
+    """Use the quote pipeline for freshness; never timestamp Finnhub metrics."""
+    if quote is None:
+        return fallback
+    price, timestamp = quote
+    market_cap = price * accounting.shares_outstanding if accounting.shares_outstanding and accounting.shares_outstanding > 0 else None
+    pe_ttm = price / accounting.diluted_eps_ttm if accounting.diluted_eps_ttm and accounting.diluted_eps_ttm > 0 else None
+    return MarketData(market_cap, pe_ttm, timestamp)
+
+
 def _snapshot_changed(existing: dict[str, object] | None, values: list[object]) -> bool:
     if existing is None:
         return True
@@ -77,20 +93,21 @@ def run(settings: Settings, dry_run: bool = False) -> dict[str, int]:
     counts = {"complete": 0, "partial": 0, "missing": 0, "failed": 0, "written": 0}
     for symbol in symbols:
         try:
-            market = finnhub.fetch(symbol)
+            # One Finnhub metric=all request remains the provider health/reference
+            # check. Market cards use the current quote already stored in D1.
+            finnhub.fetch(symbol)
             existing = d1.get_snapshot(symbol) if not dry_run else None
+            quote = d1.get_latest_quote(symbol) if not dry_run and hasattr(d1, "get_latest_quote") else None
             filing_lookup_failed = False
-            if not dry_run:
-                try:
-                    filing = fetch_latest_filing_metadata(symbol, settings.edgar_identity)
-                except FilingLookupError:
-                    filing_lookup_failed = True
-                    filing = FilingMetadata(
-                        existing.get("accounting_filing_accession") if existing and isinstance(existing.get("accounting_filing_accession"), str) else None,
-                        existing.get("accounting_as_of") if existing and isinstance(existing.get("accounting_as_of"), str) else None,
-                    )
-            else:
-                filing = None
+            try:
+                filing = fetch_latest_filing_metadata(symbol, settings.edgar_identity)
+            except FilingLookupError:
+                filing_lookup_failed = True
+                filing = FilingMetadata(
+                    existing.get("accounting_filing_accession") if existing and isinstance(existing.get("accounting_filing_accession"), str) else None,
+                    existing.get("accounting_as_of") if existing and isinstance(existing.get("accounting_as_of"), str) else None,
+                    existing.get("accounting_filing_form") if existing and isinstance(existing.get("accounting_filing_form"), str) else None,
+                )
             can_reuse = bool(
                 existing
                 and filing
@@ -105,6 +122,13 @@ def run(settings: Settings, dry_run: bool = False) -> dict[str, int]:
                 try:
                     accounting = fetch_accounting_inputs(symbol, settings.edgar_identity, filing)
                     calculated = calculate_metrics(accounting)
+                    if not dry_run and hasattr(d1, "upsert_annual"):
+                        try:
+                            annual = fetch_annual_fundamentals(symbol, settings.edgar_identity, filing)
+                            d1.upsert_annual([(symbol, row) for row in annual])
+                        except Exception:
+                            counts["failed"] += 1
+                            logger.exception("annual history refresh failed symbol=%s", symbol)
                 except Exception:
                     if not existing:
                         raise
@@ -117,9 +141,16 @@ def run(settings: Settings, dry_run: bool = False) -> dict[str, int]:
                     filing = FilingMetadata(
                         existing.get("accounting_filing_accession") if isinstance(existing.get("accounting_filing_accession"), str) else None,
                         existing.get("accounting_as_of") if isinstance(existing.get("accounting_as_of"), str) else None,
+                        existing.get("accounting_filing_form") if isinstance(existing.get("accounting_filing_form"), str) else None,
                     )
                     counts["failed"] += 1
                     logger.error("accounting refresh failed symbol=%s; market refresh preserved", symbol)
+            fallback_market = MarketData(
+                _stored_number(existing, "market_cap") if existing else None,
+                _stored_number(existing, "pe_ttm") if existing else None,
+                existing.get("market_as_of") if existing and isinstance(existing.get("market_as_of"), str) else None,
+            )
+            market = _derived_market(accounting, quote, fallback_market)
             card_values = [market.market_cap, market.pe_ttm, calculated.roic_pct, calculated.fcf_margin_pct, calculated.debt_to_equity]
             available = sum(value is not None for value in card_values)
             if available == 5:

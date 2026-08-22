@@ -2,8 +2,9 @@
 Description=Daily Stock Autotrader simple fundamentals snapshot
 
 [Timer]
-OnCalendar=*-*-* 07:00:00 UTC
+OnCalendar=*-*-* 23:30:00 UTC
 Persistent=true
+RandomizedDelaySec=300
 Unit=fundamentals-ingestor.service
 
 [Install]

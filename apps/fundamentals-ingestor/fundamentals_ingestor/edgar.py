@@ -26,6 +26,17 @@ INCOME_FACT_CONCEPTS = {
         "us-gaap:IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
     ),
 }
+NET_INCOME_FACT_CONCEPTS = ("us-gaap:NetIncomeLoss", "us-gaap:ProfitLoss")
+EPS_FACT_CONCEPTS = ("us-gaap:EarningsPerShareDiluted",)
+D_AND_A_FACT_CONCEPTS = (
+    "us-gaap:DepreciationDepletionAndAmortization",
+    "us-gaap:Depreciation",
+    "us-gaap:DepreciationDepletionAndAmortizationPropertyPlantAndEquipment",
+)
+SHARES_FACT_CONCEPTS = (
+    "dei:EntityCommonStockSharesOutstanding",
+    "us-gaap:CommonStockSharesOutstanding",
+)
 OCF_LABELS = ("Net Cash Provided by (Used in) Operating Activities", "Operating Cash Flow")
 CAPEX_LABELS = ("Payments to Acquire Property, Plant, and Equipment", "Capital Expenditures")
 CAPEX_FACT_CONCEPTS = ("us-gaap:PaymentsToAcquireProductiveAssets",)
@@ -45,6 +56,28 @@ RELEVANT_FILING_FORMS = [
 class FilingMetadata:
     accession: str | None
     period_of_report: str | None
+    form: str | None = None
+
+
+@dataclass(frozen=True)
+class AnnualFundamental:
+    fiscal_year: int
+    revenue: float | None
+    operating_income: float | None
+    pretax_income: float | None
+    income_tax: float | None
+    net_income: float | None
+    diluted_eps: float | None
+    operating_cash_flow: float | None
+    capex: float | None
+    free_cash_flow: float | None
+    depreciation_amortization: float | None
+    cash: float | None
+    total_debt: float | None
+    shareholders_equity: float | None
+    shares_outstanding: float | None
+    as_of: str | None
+    source: str = "edgartools"
 
 
 class FilingLookupError(RuntimeError):
@@ -121,6 +154,51 @@ def _fact_ttm_value(company: Any, concepts: tuple[str, ...]) -> float | None:
         if value is not None:
             return value
     return None
+
+
+def _latest_instant_fact(
+    rows: list[dict[str, Any]],
+    concepts: tuple[str, ...],
+    as_of: str | None = None,
+) -> float | None:
+    wanted = {concept.casefold() for concept in concepts}
+    candidates: list[tuple[str, float]] = []
+    for row in rows:
+        if row.get("period_type") != "instant":
+            continue
+        concept = row.get("concept")
+        if not isinstance(concept, str) or concept.casefold() not in wanted:
+            continue
+        period_end = row.get("period_end")
+        if isinstance(period_end, date):
+            period_end = period_end.isoformat()
+        if not isinstance(period_end, str):
+            continue
+        period_end = period_end[:10]
+        if as_of and period_end > as_of[:10]:
+            continue
+        value = _finite(row.get("numeric_value", row.get("value")))
+        if value is not None:
+            candidates.append((period_end, value))
+    return max(candidates, key=lambda item: item[0])[1] if candidates else None
+
+
+def _instant_fact_for_year(rows: list[dict[str, Any]], concepts: tuple[str, ...], year: int) -> float | None:
+    wanted = {concept.casefold() for concept in concepts}
+    candidates: list[tuple[str, float]] = []
+    for row in rows:
+        if row.get("period_type") != "instant" or row.get("fiscal_year") != year:
+            continue
+        concept = row.get("concept")
+        if not isinstance(concept, str) or concept.casefold() not in wanted:
+            continue
+        period_end = row.get("period_end")
+        if not isinstance(period_end, str):
+            continue
+        value = _finite(row.get("numeric_value", row.get("value")))
+        if value is not None:
+            candidates.append((period_end[:10], value))
+    return max(candidates, key=lambda item: item[0])[1] if candidates else None
 
 
 def _period_columns(row: dict[str, Any]) -> list[str]:
@@ -220,7 +298,7 @@ def fetch_latest_filing_metadata(symbol: str, identity: str) -> FilingMetadata:
     except Exception as exc:
         raise FilingLookupError("filing_lookup_failed") from exc
     if filing is None:
-        return FilingMetadata(None, None)
+        return FilingMetadata(None, None, None)
     accession = None
     for field in ("accession_number", "accession_no", "accession"):
         value = getattr(filing, field, None)
@@ -234,7 +312,9 @@ def fetch_latest_filing_metadata(symbol: str, identity: str) -> FilingMetadata:
         period = period[:10]
     else:
         period = None
-    return FilingMetadata(accession, period)
+    form = getattr(filing, "form", None)
+    form = form.strip() if isinstance(form, str) and form.strip() else None
+    return FilingMetadata(accession, period, form)
 
 
 def fetch_accounting_inputs(symbol: str, identity: str, filing: FilingMetadata | None = None) -> AccountingInputs:
@@ -300,6 +380,36 @@ def fetch_accounting_inputs(symbol: str, identity: str, filing: FilingMetadata |
     if pretax_income is None:
         pretax_income = _fact_ttm_value(company, INCOME_FACT_CONCEPTS["pretax_income_ttm"])
 
+    net_income = _find(
+        income_rows,
+        ("Net Income", "Net Income (Loss)", "Net Income Attributable to Parent"),
+        income_period if isinstance(income_period, str) else None,
+    )
+    if net_income is None:
+        net_income = _fact_ttm_value(company, NET_INCOME_FACT_CONCEPTS)
+    diluted_eps = _fact_ttm_value(company, EPS_FACT_CONCEPTS)
+    if diluted_eps is None:
+        diluted_eps = _find(
+            income_rows,
+            ("Earnings Per Share, Diluted", "Earnings Per Share (Derived)", "Diluted Earnings Per Share"),
+            income_period if isinstance(income_period, str) else None,
+        )
+    depreciation = _find(
+        cash_rows,
+        ("Depreciation, Depletion and Amortization", "Depreciation and Amortization", "Depreciation"),
+        income_period if isinstance(income_period, str) else None,
+    )
+    if depreciation is None:
+        depreciation = _fact_ttm_value(company, D_AND_A_FACT_CONCEPTS)
+    if fact_rows is None:
+        fact_rows = _fact_rows(company)
+    foreign_filing = filing is not None and getattr(filing, "form", None) in {"20-F", "20-F/A", "6-K", "6-K/A"}
+    shares = None if foreign_filing else _latest_instant_fact(
+        fact_rows,
+        SHARES_FACT_CONCEPTS,
+        filing.period_of_report if filing else None,
+    )
+
     return AccountingInputs(
         revenue_ttm=revenue,
         operating_income_ttm=_find(income_rows, INCOME_LABELS["operating_income_ttm"], income_period if isinstance(income_period, str) else None),
@@ -311,6 +421,88 @@ def fetch_accounting_inputs(symbol: str, identity: str, filing: FilingMetadata |
         short_term_investments=short_term_investments,
         total_debt=total_debt,
         shareholders_equity=_balance_value(balance_rows, ("StockholdersEquity",), ("Stockholders' Equity Attributable to Parent", "Total Stockholders' Equity"), balance_period_name),
+        net_income_ttm=net_income,
+        diluted_eps_ttm=diluted_eps,
+        depreciation_amortization_ttm=depreciation,
+        shares_outstanding=shares,
         accounting_as_of=filing.period_of_report if filing else _filing_as_of(company, annual=annual_balance),
         periods_compatible=compatible,
     )
+
+
+def _statement_value(rows: list[dict[str, Any]], labels: tuple[str, ...], period: str) -> float | None:
+    return _find(rows, labels, period)
+
+
+def _annual_years(statement: Any) -> list[int]:
+    years: list[int] = []
+    for raw in getattr(statement, "periods", None) or []:
+        text = str(raw).upper().replace("FY ", "FY ")
+        parts = text.split()
+        if len(parts) == 2 and parts[0] == "FY":
+            try:
+                year = int(parts[1])
+            except ValueError:
+                continue
+            if year not in years:
+                years.append(year)
+    return years[:5]
+
+
+def fetch_annual_fundamentals(
+    symbol: str,
+    identity: str,
+    filing: FilingMetadata | None = None,
+) -> list[AnnualFundamental]:
+    """Fetch the small annual input set needed by the next valuation PRs."""
+    from edgar import Company, set_identity
+
+    set_identity(identity)
+    company = Company(symbol)
+    income = company.income_statement(period="annual", periods=5)
+    cashflow = company.cash_flow_statement(period="annual", periods=5)
+    balance = company.balance_sheet(period="annual", periods=5)
+    income_rows, cash_rows, balance_rows = _rows(income), _rows(cashflow), _rows(balance)
+    facts = _fact_rows(company)
+    foreign_filing = filing is not None and getattr(filing, "form", None) in {"20-F", "20-F/A", "6-K", "6-K/A"}
+    rows: list[AnnualFundamental] = []
+    for year in _annual_years(income):
+        period = f"FY {year}"
+        revenue = _statement_value(income_rows, INCOME_LABELS["revenue_ttm"], period)
+        operating_income = _statement_value(income_rows, INCOME_LABELS["operating_income_ttm"], period)
+        pretax = _statement_value(income_rows, INCOME_LABELS["pretax_income_ttm"], period)
+        tax = _statement_value(income_rows, INCOME_LABELS["income_tax_ttm"], period)
+        net_income = _statement_value(income_rows, ("Net Income", "Net Income (Loss)", "Net Income Attributable to Parent"), period)
+        eps = _statement_value(income_rows, ("Earnings Per Share, Diluted", "Diluted Earnings Per Share"), period)
+        ocf = _statement_value(cash_rows, OCF_LABELS, period)
+        capex = _statement_value(cash_rows, CAPEX_LABELS, period)
+        if capex is not None:
+            capex = abs(capex)
+        fcf = ocf - capex if ocf is not None and capex is not None else None
+        depreciation = _statement_value(cash_rows, ("Depreciation, Depletion and Amortization", "Depreciation and Amortization", "Depreciation"), period)
+        shares = None if foreign_filing else _instant_fact_for_year(facts, SHARES_FACT_CONCEPTS, year)
+        total_debt = _balance_value(balance_rows, ("Debt", "LongTermDebt"), ("Total Debt", "Debt"), period)
+        if total_debt is None:
+            current_debt = _balance_value(balance_rows, DEBT_CURRENT_FACT_CONCEPTS, ("Long-term Debt, Current Maturities",), period)
+            noncurrent_debt = _balance_value(balance_rows, DEBT_NONCURRENT_FACT_CONCEPTS, ("Long-term Debt, Excluding Current Maturities",), period)
+            if current_debt is not None and noncurrent_debt is not None:
+                total_debt = current_debt + noncurrent_debt
+        rows.append(AnnualFundamental(
+            fiscal_year=year,
+            revenue=revenue,
+            operating_income=operating_income,
+            pretax_income=pretax,
+            income_tax=tax,
+            net_income=net_income,
+            diluted_eps=eps,
+            operating_cash_flow=ocf,
+            capex=capex,
+            free_cash_flow=fcf,
+            depreciation_amortization=depreciation,
+            cash=_balance_value(balance_rows, ("CashAndCashEquivalentsAtCarryingValue",), ("Cash and Cash Equivalents",), period),
+            total_debt=total_debt,
+            shareholders_equity=_balance_value(balance_rows, ("StockholdersEquity",), ("Stockholders' Equity Attributable to Parent", "Total Stockholders' Equity"), period),
+            shares_outstanding=shares,
+            as_of=period,
+        ))
+    return rows

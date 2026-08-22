@@ -161,11 +161,9 @@ function marketFundamentalsAreFresh(
 ): boolean {
   if (!fundamentals) return false;
   const updatedMs = Date.parse(fundamentals.updated_at);
-  const timestamps = [fundamentals.market_as_of, fundamentals.updated_at]
-    .map((value) => Date.parse(value ?? ""))
-    .filter((value) => Number.isFinite(value));
-  if (!Number.isFinite(updatedMs) || timestamps.length === 0) return false;
-  const oldestTimestamp = Math.min(...timestamps);
+  const marketAsOfMs = Date.parse(fundamentals.market_as_of ?? "");
+  if (!Number.isFinite(updatedMs) || !Number.isFinite(marketAsOfMs)) return false;
+  const oldestTimestamp = Math.min(marketAsOfMs, updatedMs);
   const ageSeconds = (now.getTime() - oldestTimestamp) / 1000;
   return ageSeconds >= 0 && ageSeconds <= FUNDAMENTALS_MARKET_STALE_AFTER_SECONDS;
 }

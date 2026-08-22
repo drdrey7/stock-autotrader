@@ -22,6 +22,10 @@ class AccountingInputs:
     short_term_investments: float | None = None
     total_debt: float | None = None
     shareholders_equity: float | None = None
+    net_income_ttm: float | None = None
+    diluted_eps_ttm: float | None = None
+    depreciation_amortization_ttm: float | None = None
+    shares_outstanding: float | None = None
     accounting_as_of: str | None = None
     periods_compatible: bool = False
     extraction_status: str = "ok"
@@ -43,6 +47,10 @@ def accounting_inputs_from_snapshot(row: dict[str, object]) -> AccountingInputs:
         short_term_investments=number("short_term_investments"),
         total_debt=number("total_debt"),
         shareholders_equity=number("shareholders_equity"),
+        net_income_ttm=number("net_income_ttm"),
+        diluted_eps_ttm=number("diluted_eps_ttm"),
+        depreciation_amortization_ttm=number("depreciation_amortization_ttm"),
+        shares_outstanding=number("shares_outstanding"),
         accounting_as_of=row.get("accounting_as_of") if isinstance(row.get("accounting_as_of"), str) else None,
         periods_compatible=False,
         extraction_status=row.get("accounting_refresh_status") if row.get("accounting_refresh_status") in {"ok", "unknown", "incomplete"} else "unknown",

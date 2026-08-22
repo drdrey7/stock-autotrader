@@ -8,6 +8,7 @@ from fundamentals_ingestor.edgar import (
     _balance_value,
     _fact_ttm_value,
     _fact_value,
+    _latest_instant_fact,
     _find,
     _rows,
     fetch_accounting_inputs,
@@ -177,6 +178,13 @@ class NormalizationTests(unittest.TestCase):
         self.assertEqual(_fact_value(rows, ("us-gaap:DebtSecuritiesCurrent",), (2027, "Q1")), 37_098)
         self.assertEqual(_fact_value(rows, ("us-gaap:EquitySecuritiesFvNi",), (2027, "Q1")), 30_237)
         self.assertEqual(_fact_ttm_value(types.SimpleNamespace(facts=FakeFacts([], 6_572)), ("us-gaap:PaymentsToAcquireProductiveAssets",)), 6_572)
+
+    def test_latest_share_fact_uses_normalized_concept_and_filing_as_of(self):
+        rows = [
+            {"concept": "dei:EntityCommonStockSharesOutstanding", "numeric_value": 101, "period_type": "instant", "period_end": "2026-06-30"},
+            {"concept": "us-gaap:CommonStockSharesOutstanding", "numeric_value": 102, "period_type": "instant", "period_end": "2026-07-31"},
+        ]
+        self.assertEqual(_latest_instant_fact(rows, ("dei:EntityCommonStockSharesOutstanding", "us-gaap:CommonStockSharesOutstanding"), "2026-07-01"), 101)
 
     def test_filing_lookup_failure_is_not_reported_as_no_filing(self):
         class Company:

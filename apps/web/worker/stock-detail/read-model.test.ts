@@ -293,7 +293,7 @@ describe("Stock Detail D1 read model", () => {
     });
   });
 
-  it("uses ingestion updated_at when Finnhub metrics have no field timestamp", async () => {
+  it("fails closed when market metrics have no known as-of timestamp", async () => {
     storageMock.readStockDetailStorageSnapshot.mockResolvedValue(baseSnapshot({
       fundamentals: {
         symbol: "MSFT",
@@ -322,8 +322,8 @@ describe("Stock Detail D1 read model", () => {
     }));
 
     const detail = await readStockDetailApi(env, "MSFT", NOW);
-    expect(detail.fundamentals?.marketCap).toBe("$3.00T");
-    expect(detail.fundamentals?.peTtm).toBe(35.5);
+    expect(detail.fundamentals?.marketCap).toBeNull();
+    expect(detail.fundamentals?.peTtm).toBeNull();
   });
 
   it("composes company, quote, manual IV, supports, live SMA and weekly history", async () => {
