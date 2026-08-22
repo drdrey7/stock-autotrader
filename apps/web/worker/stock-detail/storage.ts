@@ -16,17 +16,13 @@ export const STOCK_DETAIL_HISTORY_LIMIT = STOCK_DETAIL_VISIBLE_WEEKS + STOCK_DET
 const COMPANY_SQL = `SELECT u.symbol, u.company, u.logo_url, u.exchange, u.industry
   FROM earnings_universe AS u
   WHERE u.symbol = ? AND ${ACTIVE_UNIVERSE_PREDICATE}
-UNION ALL
-SELECT f.symbol, f.symbol AS company, NULL AS logo_url, NULL AS exchange, NULL AS industry
-  FROM stock_fundamentals_snapshot AS f
-  WHERE f.symbol = ?
-    AND EXISTS (
-      SELECT 1
-      FROM earnings_universe AS active_core
-      WHERE active_core.symbol = f.symbol
-        AND active_core.active = 1
-        AND active_core.source = 'core'
-    )
+  LIMIT 1`;
+// Branch Preview is intentionally seeded only with fundamentals rows. This
+// path is never selected by production, which keeps the runtime membership
+// gate above authoritative for real serving traffic.
+const PREVIEW_COMPANY_SQL = `SELECT symbol, symbol AS company, NULL AS logo_url, NULL AS exchange, NULL AS industry
+  FROM stock_fundamentals_snapshot
+  WHERE symbol = ?
   LIMIT 1`;
 const QUOTE_SQL = `SELECT symbol, price, change_abs, change_pct, day_high, day_low, day_open,
   previous_close, provider, provider_timestamp, updated_at
@@ -223,9 +219,11 @@ export async function readStockDetailStorageSnapshot(
   db: D1Database,
   symbol: string,
   historyLimit = STOCK_DETAIL_HISTORY_LIMIT,
+  environment = "production",
 ): Promise<StockDetailStorageSnapshot> {
+  const companySql = environment === "preview" ? PREVIEW_COMPANY_SQL : COMPANY_SQL;
   const results = await db.batch([
-    db.prepare(COMPANY_SQL).bind(symbol, symbol),
+    db.prepare(companySql).bind(symbol),
     db.prepare(QUOTE_SQL).bind(symbol),
     db.prepare(TECHNICAL_SQL).bind(symbol),
     db.prepare(SUPPORTS_SQL).bind(symbol),
@@ -252,8 +250,9 @@ export async function readStockDetailStorageSnapshot(
 }
 
 /** Individual strict reads are retained for focused storage tests/reuse. */
-export async function readStockDetailCompany(db: D1Database, symbol: string): Promise<StockDetailCompanyRow | null> {
-  return parseCompany(await db.prepare(COMPANY_SQL).bind(symbol, symbol).first<StockDetailCompanyRow>());
+export async function readStockDetailCompany(db: D1Database, symbol: string, environment = "production"): Promise<StockDetailCompanyRow | null> {
+  const companySql = environment === "preview" ? PREVIEW_COMPANY_SQL : COMPANY_SQL;
+  return parseCompany(await db.prepare(companySql).bind(symbol).first<StockDetailCompanyRow>());
 }
 
 export async function readStockDetailQuote(db: D1Database, symbol: string): Promise<LatestQuoteRow | null> {

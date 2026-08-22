@@ -15,6 +15,7 @@ import { nyDateKeyOf, quoteState, quotesMarketState } from "../quotes/freshness"
 import type { Env } from "../index";
 import {
   readStockDetailStorageSnapshot,
+  STOCK_DETAIL_HISTORY_LIMIT,
   STOCK_DETAIL_VISIBLE_WEEKS,
   type StockDetailSplitEventRow,
   type StockDetailStorageSnapshot,
@@ -303,7 +304,9 @@ export async function readStockDetailApi(
     weeklyRows,
     splitEvents,
     fundamentals,
-  } = await readStockDetailStorageSnapshot(env.DB, symbol);
+  } = env.ENVIRONMENT === "preview"
+    ? await readStockDetailStorageSnapshot(env.DB, symbol, STOCK_DETAIL_HISTORY_LIMIT, "preview")
+    : await readStockDetailStorageSnapshot(env.DB, symbol);
 
   const marketFundamentalsFresh = marketFundamentalsAreFresh(fundamentals, now);
   const marketCap = marketFundamentalsFresh ? fundamentals?.market_cap ?? null : null;
