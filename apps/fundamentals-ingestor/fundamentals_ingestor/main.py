@@ -47,9 +47,11 @@ def _accounting_snapshot_complete(row: dict[str, object]) -> bool:
     required = (
         "revenue_ttm", "operating_income_ttm", "pretax_income_ttm", "income_tax_ttm",
         "operating_cash_flow_ttm", "capex_ttm", "free_cash_flow_ttm", "cash",
-        "short_term_investments", "total_debt", "shareholders_equity", "roic_pct",
-        "fcf_margin_pct", "debt_to_equity",
+        "short_term_investments", "total_debt", "shareholders_equity",
     )
+    # A derived card may be NULL for a valid financial reason (negative pretax,
+    # incompatible periods, or an invalid denominator). Reuse is gated on the
+    # extracted source inputs, not on presentation metrics.
     return all(_stored_number(row, name) is not None for name in required)
 
 

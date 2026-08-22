@@ -133,6 +133,25 @@ class RefreshTests(unittest.TestCase):
         fetch.assert_called_once()
         self.assertEqual(result["written"], 1)
 
+    def test_same_accession_reuses_valid_nullable_derived_metrics(self):
+        nullable = existing_snapshot()
+        nullable["roic_pct"] = None
+        nullable["debt_to_equity"] = None
+
+        class NullableD1(FakeD1):
+            def get_snapshot(self, symbol):
+                return nullable
+
+        with (
+            patch("fundamentals_ingestor.main.load_universe", return_value=["MSFT"]),
+            patch("fundamentals_ingestor.main.FinnhubClient", FakeFinnhub),
+            patch("fundamentals_ingestor.main.D1Client", NullableD1),
+            patch("fundamentals_ingestor.main.fetch_latest_filing_metadata", return_value=FilingMetadata("0000000000-26-000001", "2026-06-30")),
+            patch("fundamentals_ingestor.main.fetch_accounting_inputs", side_effect=AssertionError("valid nullable metrics must be reusable")),
+        ):
+            result = run(self.settings())
+        self.assertEqual(result, {"complete": 0, "partial": 1, "missing": 0, "failed": 0, "written": 0})
+
     def test_lookup_failure_preserves_existing_filing_metadata(self):
         partial = existing_snapshot()
         partial["capex_ttm"] = None
