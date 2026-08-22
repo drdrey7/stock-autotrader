@@ -70,7 +70,7 @@ class RefreshTests(unittest.TestCase):
             patch("fundamentals_ingestor.main.fetch_accounting_inputs", side_effect=AssertionError("statement refresh must be skipped")),
         ):
             result = run(self.settings())
-        self.assertEqual(result, {"complete": 1, "partial": 0, "missing": 0, "failed": 0, "written": 0})
+        self.assertEqual(result, {"complete": 1, "partial": 0, "missing": 0, "failed": 0, "written": 1})
 
     def test_new_accession_refreshes_statements(self):
         refreshed = AccountingInputs(
@@ -150,7 +150,7 @@ class RefreshTests(unittest.TestCase):
             patch("fundamentals_ingestor.main.fetch_accounting_inputs", side_effect=AssertionError("valid nullable metrics must be reusable")),
         ):
             result = run(self.settings())
-        self.assertEqual(result, {"complete": 0, "partial": 1, "missing": 0, "failed": 0, "written": 0})
+        self.assertEqual(result, {"complete": 0, "partial": 1, "missing": 0, "failed": 0, "written": 1})
 
     def test_lookup_failure_preserves_existing_filing_metadata(self):
         partial = existing_snapshot()

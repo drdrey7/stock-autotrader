@@ -59,7 +59,10 @@ def _snapshot_changed(existing: dict[str, object] | None, values: list[object]) 
     if existing is None:
         return True
     candidate = dict(zip(SNAPSHOT_COLUMNS, values))
-    return any(existing.get(column) != candidate.get(column) for column in SNAPSHOT_COLUMNS[:-1])
+    # updated_at is the successful provider-check timestamp. Persist it even
+    # when Finnhub and EdgarTools return the same financial values, so market
+    # freshness reflects successful daily checks rather than value churn.
+    return any(existing.get(column) != candidate.get(column) for column in SNAPSHOT_COLUMNS)
 
 
 def run(settings: Settings, dry_run: bool = False) -> dict[str, int]:

@@ -102,9 +102,6 @@ class FinnhubClient:
             raise FinnhubError("finnhub_request_failed") from exc
 
     def fetch(self, symbol: str) -> MarketData:
-        quote = self._get("quote", symbol)
-        if not isinstance(quote, dict) or quote.get("error"):
-            raise FinnhubError("finnhub_invalid_quote_payload")
         metric_payload = self._get("stock/metric", symbol, {"metric": "all"})
         if not isinstance(metric_payload, dict) or metric_payload.get("error"):
             raise FinnhubError("finnhub_invalid_metric_payload")

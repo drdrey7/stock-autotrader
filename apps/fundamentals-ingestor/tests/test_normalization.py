@@ -90,7 +90,7 @@ class NormalizationTests(unittest.TestCase):
 
         result = FinnhubClient("test-key", opener=opener, min_interval_seconds=0).fetch("MSFT")
         from urllib.parse import parse_qs, urlparse
-        metric_query = parse_qs(urlparse(requests[1].full_url).query)
+        metric_query = parse_qs(urlparse(requests[0].full_url).query)
         self.assertEqual(metric_query, {"symbol": ["MSFT"], "token": ["test-key"], "metric": ["all"]})
         self.assertEqual(result.market_cap, 123_400_000)
         self.assertEqual(result.pe_ttm, 21.5)
