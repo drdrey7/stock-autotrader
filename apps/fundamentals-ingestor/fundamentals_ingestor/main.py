@@ -96,7 +96,13 @@ def run(settings: Settings, dry_run: bool = False) -> dict[str, int]:
         try:
             # One Finnhub metric=all request remains the provider health/reference
             # check. Market cards use the current quote already stored in D1.
-            finnhub.fetch(symbol)
+            try:
+                finnhub.fetch(symbol)
+            except Exception as exc:
+                # This request is deliberately independent from the local quote,
+                # filing lookup, and accounting refresh paths. Its fields are not
+                # persisted, so provider failure is a warning, not a symbol failure.
+                logger.warning("Finnhub reference check failed symbol=%s reason=%s", symbol, type(exc).__name__)
             existing = d1.get_snapshot(symbol) if not dry_run else None
             quote = None
             filing_lookup_failed = False

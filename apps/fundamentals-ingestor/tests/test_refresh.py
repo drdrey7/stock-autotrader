@@ -1,5 +1,6 @@
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from fundamentals_ingestor.config import Settings
@@ -212,10 +213,64 @@ class RefreshTests(unittest.TestCase):
             patch("fundamentals_ingestor.main.load_universe", return_value=["MSFT"]),
             patch("fundamentals_ingestor.main.FinnhubClient", FailingFinnhub),
             patch("fundamentals_ingestor.main.D1Client", return_value=d1_instance),
+            patch("fundamentals_ingestor.main.fetch_latest_filing_metadata", return_value=FilingMetadata("0000000000-26-000001", "2026-06-30")),
         ):
             result = run(self.settings())
-        self.assertEqual(result, {"complete": 0, "partial": 0, "missing": 0, "failed": 1, "written": 0})
-        self.assertEqual(d1_instance.writes, [])
+        self.assertEqual(result, {"complete": 1, "partial": 0, "missing": 0, "failed": 0, "written": 1})
+        self.assertEqual(len(d1_instance.writes), 1)
+
+    def test_finnhub_reference_failure_does_not_block_quote_edgar_or_annual_refresh(self):
+        class FailingFinnhub:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def fetch(self, symbol):
+                raise FinnhubError("finnhub_http_429")
+
+        class QuoteD1(FakeD1):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.quote_reads = 0
+                self.annual_writes = 0
+
+            def get_latest_quote(self, symbol, accounting_as_of=None):
+                self.quote_reads += 1
+                return SimpleNamespace(price=20.0, timestamp="2026-08-22T20:00:00Z", basis_compatible=True)
+
+            def upsert_annual(self, rows):
+                self.annual_writes += 1
+
+        refreshed = AccountingInputs(
+            revenue_ttm=100,
+            operating_income_ttm=20,
+            pretax_income_ttm=20,
+            income_tax_ttm=4,
+            operating_cash_flow_ttm=30,
+            capex_ttm=5,
+            cash=10,
+            short_term_investments=5,
+            total_debt=20,
+            shareholders_equity=50,
+            diluted_eps_ttm=5,
+            shares_outstanding=10,
+            accounting_as_of="2026-06-30",
+            periods_compatible=True,
+        )
+        d1_instance = QuoteD1()
+        with (
+            patch("fundamentals_ingestor.main.load_universe", return_value=["MSFT"]),
+            patch("fundamentals_ingestor.main.FinnhubClient", FailingFinnhub),
+            patch("fundamentals_ingestor.main.D1Client", return_value=d1_instance),
+            patch("fundamentals_ingestor.main.fetch_latest_filing_metadata", return_value=FilingMetadata("new-accession", "2026-06-30")),
+            patch("fundamentals_ingestor.main.fetch_accounting_inputs", return_value=refreshed),
+            patch("fundamentals_ingestor.main.fetch_annual_fundamentals", return_value=[object()]) as annual_fetch,
+        ):
+            result = run(self.settings())
+        annual_fetch.assert_called_once()
+        self.assertEqual(d1_instance.quote_reads, 1)
+        self.assertEqual(d1_instance.annual_writes, 1)
+        self.assertEqual(result["failed"], 0)
+        self.assertEqual(d1_instance.writes[0][SNAPSHOT_COLUMNS.index("market_cap")], 200.0)
 
     def test_market_refresh_is_persisted_when_new_accounting_refresh_fails(self):
         d1_instance = FakeD1()

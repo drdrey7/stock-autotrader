@@ -118,6 +118,24 @@ def _fact_rows(company: Any) -> list[dict[str, Any]]:
     return []
 
 
+def _share_fact_rows(company: Any) -> list[dict[str, Any]]:
+    """Read only normalized share facts with EdgarTools dimensions included."""
+    try:
+        facts = getattr(company, "facts", None)
+    except Exception:
+        return []
+    if facts is None or not hasattr(facts, "query"):
+        return []
+    rows: list[dict[str, Any]] = []
+    for concept in SHARES_FACT_CONCEPTS:
+        try:
+            query = facts.query().by_concept(concept, exact=True).with_dimensions()
+            rows.extend(_rows(query))
+        except Exception:
+            continue
+    return rows
+
+
 def _fact_value(rows: list[dict[str, Any]], concepts: tuple[str, ...], period_ref: tuple[int, str] | None) -> float | None:
     if not period_ref:
         return None
@@ -181,6 +199,77 @@ def _latest_instant_fact(
         if value is not None:
             candidates.append((period_end, value))
     return max(candidates, key=lambda item: item[0])[1] if candidates else None
+
+
+def _dimension_items(row: dict[str, Any]) -> tuple[tuple[str, str], ...]:
+    dimensions = row.get("dimensions")
+    items: list[tuple[str, str]] = []
+    if isinstance(dimensions, dict):
+        items.extend((str(key), str(value)) for key, value in dimensions.items())
+    for key, value in row.items():
+        if isinstance(key, str) and key.startswith("dim_") and value is not None:
+            items.append((key, str(value)))
+    return tuple(sorted(set(items)))
+
+
+def _share_fact_value(
+    rows: list[dict[str, Any]],
+    concepts: tuple[str, ...],
+    as_of: str | None = None,
+    fiscal_year: int | None = None,
+) -> float | None:
+    wanted = {concept.casefold() for concept in concepts}
+    candidates: list[tuple[dict[str, Any], str, float]] = []
+    for row in rows:
+        if row.get("period_type") != "instant":
+            continue
+        concept = row.get("concept")
+        if not isinstance(concept, str) or concept.casefold() not in wanted:
+            continue
+        if fiscal_year is not None and row.get("fiscal_year") != fiscal_year:
+            continue
+        period_end = row.get("period_end")
+        if isinstance(period_end, date):
+            period_end = period_end.isoformat()
+        if not isinstance(period_end, str):
+            continue
+        period_end = period_end[:10]
+        if as_of and period_end > as_of[:10]:
+            continue
+        value = _finite(row.get("numeric_value", row.get("value")))
+        if value is not None:
+            candidates.append((row, period_end, value))
+    if not candidates:
+        return None
+
+    latest_date = max(period_end for _, period_end, _ in candidates)
+    latest = [(row, value) for row, period_end, value in candidates if period_end == latest_date]
+    primary = [(row, value) for row, value in latest if not _dimension_items(row)]
+    if primary:
+        # A non-dimensional fact is the issuer-level/consolidated total. Prefer
+        # the canonical US-GAAP concept over an equivalent DEI presentation and
+        # never add two representations of the same total.
+        for concept in concepts:
+            values = [value for row, value in primary if str(row.get("concept", "")).casefold() == concept.casefold()]
+            if values:
+                return values[0] if len(set(values)) == 1 else None
+        return None
+
+    # Without a consolidated total, sum only distinct, explicitly dimensioned
+    # share classes. Duplicate facts for one class are accepted only when they
+    # agree; conflicting same-date facts fail closed.
+    class_rows = []
+    for row, value in latest:
+        dimensions = _dimension_items(row)
+        if not dimensions or not any("class" in f"{key} {member}".casefold() for key, member in dimensions):
+            return None
+        class_rows.append((dimensions, value))
+    by_class: dict[tuple[tuple[str, str], ...], set[float]] = {}
+    for dimensions, value in class_rows:
+        by_class.setdefault(dimensions, set()).add(value)
+    if any(len(values) != 1 for values in by_class.values()):
+        return None
+    return sum(next(iter(values)) for values in by_class.values())
 
 
 def _instant_fact_for_year(rows: list[dict[str, Any]], concepts: tuple[str, ...], year: int) -> float | None:
@@ -404,11 +493,16 @@ def fetch_accounting_inputs(symbol: str, identity: str, filing: FilingMetadata |
     if fact_rows is None:
         fact_rows = _fact_rows(company)
     foreign_filing = filing is not None and getattr(filing, "form", None) in {"20-F", "20-F/A", "6-K", "6-K/A"}
-    shares = None if foreign_filing else _latest_instant_fact(
-        fact_rows,
-        SHARES_FACT_CONCEPTS,
-        filing.period_of_report if filing else None,
-    )
+    if not foreign_filing:
+        if fact_rows is None:
+            fact_rows = _fact_rows(company)
+        shares = _share_fact_value(
+            fact_rows + _share_fact_rows(company),
+            SHARES_FACT_CONCEPTS,
+            filing.period_of_report if filing else None,
+        )
+    else:
+        shares = None
 
     return AccountingInputs(
         revenue_ttm=revenue,
@@ -468,6 +562,7 @@ def fetch_annual_fundamentals(
     balance = company.balance_sheet(period="annual", periods=5)
     income_rows, cash_rows, balance_rows = _rows(income), _rows(cashflow), _rows(balance)
     facts = _fact_rows(company)
+    share_facts = _share_fact_rows(company)
     foreign_filing = filing is not None and getattr(filing, "form", None) in {"20-F", "20-F/A", "6-K", "6-K/A"}
     rows: list[AnnualFundamental] = []
     for year in _annual_years(income):
@@ -484,7 +579,7 @@ def fetch_annual_fundamentals(
             capex = abs(capex)
         fcf = ocf - capex if ocf is not None and capex is not None else None
         depreciation = _statement_value(cash_rows, ("Depreciation, Depletion and Amortization", "Depreciation and Amortization", "Depreciation"), period)
-        shares = None if foreign_filing else _instant_fact_for_year(facts, SHARES_FACT_CONCEPTS, year)
+        shares = None if foreign_filing else _share_fact_value(facts + share_facts, SHARES_FACT_CONCEPTS, fiscal_year=year)
         total_debt = _balance_value(balance_rows, ("Debt", "LongTermDebt"), ("Total Debt", "Debt"), period)
         if total_debt is None:
             current_debt = _balance_value(balance_rows, DEBT_CURRENT_FACT_CONCEPTS, ("Long-term Debt, Current Maturities",), period)

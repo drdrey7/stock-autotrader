@@ -12,6 +12,7 @@ from fundamentals_ingestor.edgar import (
     _find,
     _latest_instant_fact,
     _rows,
+    _share_fact_value,
     fetch_accounting_inputs,
     fetch_latest_filing_metadata,
     periods_compatible,
@@ -189,6 +190,22 @@ class NormalizationTests(unittest.TestCase):
             {"concept": "us-gaap:CommonStockSharesOutstanding", "numeric_value": 102, "period_type": "instant", "period_end": "2026-07-31"},
         ]
         self.assertEqual(_latest_instant_fact(rows, ("dei:EntityCommonStockSharesOutstanding", "us-gaap:CommonStockSharesOutstanding"), "2026-07-01"), 101)
+
+    def test_share_facts_sum_distinct_same_date_classes_without_double_counting(self):
+        rows = [
+            {"concept": "dei:EntityCommonStockSharesOutstanding", "numeric_value": 100, "period_type": "instant", "period_end": "2026-06-30", "dim_dei_StatementClassOfStockAxis": "goog:ClassA"},
+            {"concept": "dei:EntityCommonStockSharesOutstanding", "numeric_value": 50, "period_type": "instant", "period_end": "2026-06-30", "dim_dei_StatementClassOfStockAxis": "goog:ClassC"},
+            {"concept": "dei:EntityCommonStockSharesOutstanding", "numeric_value": 100, "period_type": "instant", "period_end": "2026-06-30", "dim_dei_StatementClassOfStockAxis": "goog:ClassA"},
+        ]
+        self.assertEqual(_share_fact_value(rows, ("dei:EntityCommonStockSharesOutstanding",), "2026-06-30"), 150)
+
+    def test_share_facts_prefer_consolidated_total_over_dimensional_classes(self):
+        rows = [
+            {"concept": "us-gaap:CommonStockSharesOutstanding", "numeric_value": 150, "period_type": "instant", "period_end": "2026-06-30"},
+            {"concept": "dei:EntityCommonStockSharesOutstanding", "numeric_value": 100, "period_type": "instant", "period_end": "2026-06-30", "dim_dei_StatementClassOfStockAxis": "goog:ClassA"},
+            {"concept": "dei:EntityCommonStockSharesOutstanding", "numeric_value": 50, "period_type": "instant", "period_end": "2026-06-30", "dim_dei_StatementClassOfStockAxis": "goog:ClassC"},
+        ]
+        self.assertEqual(_share_fact_value(rows, ("dei:EntityCommonStockSharesOutstanding", "us-gaap:CommonStockSharesOutstanding"), "2026-06-30"), 150)
 
     def test_filing_lookup_failure_is_not_reported_as_no_filing(self):
         class Company:
