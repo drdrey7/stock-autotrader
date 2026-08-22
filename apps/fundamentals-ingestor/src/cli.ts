@@ -301,14 +301,17 @@ function buildSnapshotUpsertSql(row: D1FundamentalSnapshotRow): string {
 }
 
 function runWrangler(command: string, options: CliOptions): void {
-  const args = ["d1", "execute", options.db];
+  const args = ["d1", "execute", options.db, "--config", "wrangler.jsonc"];
   if (options.remote) args.push("--remote"); else args.push("--local");
   args.push("--command", command);
+  // Run wrangler from apps/web so it uses the same D1 local database
+  const cwd = new URL("../../apps/web", import.meta.url).pathname;
   const result = spawnSync("npx", ["--yes", `wrangler@${options.wrangler}`, ...args], {
-    encoding: "utf8", maxBuffer: 64 * 1024 * 1024,
+    encoding: "utf8", maxBuffer: 64 * 1024 * 1024, cwd,
   });
   if (result.status !== 0) {
-    throw new Error(`D1 write failed: ${result.stderr?.slice(0, 2000) || result.stdout?.slice(0, 2000)}`);
+    const err = result.stderr?.slice(0, 2000) || result.stdout?.slice(0, 2000) || "(no output)";
+    throw new Error(`D1 write failed (exit ${result.status}): ${err}`);
   }
 }
 
@@ -335,7 +338,7 @@ function getLatestAccession(facts: CompanyFacts): string | null {
 async function checkAlreadyProcessed(symbol: string, accession: string | null, options: CliOptions): Promise<boolean> {
   if (!accession) return false;
   const sql = `SELECT COUNT(*) as cnt FROM stock_fundamental_periods WHERE symbol = '${symbol}' AND accession = '${accession}';`;
-  const args = ["d1", "execute", options.db];
+  const args = ["d1", "execute", options.db, "--config", "apps/web/wrangler.jsonc"];
   if (options.remote) args.push("--remote"); else args.push("--local");
   args.push("--command", sql, "--json");
   const result = spawnSync("npx", ["--yes", `wrangler@${options.wrangler}`, ...args], {
