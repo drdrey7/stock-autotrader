@@ -94,7 +94,7 @@ beforeEach(() => {
 });
 
 describe("Stock Detail review regressions", () => {
-  it("suppresses chart and historical SMA while any served split row is unreconciled", async () => {
+  it("keeps the persisted quote visible while unsafe split history stays suppressed", async () => {
     const rows = splitReconciledHistory();
     const staleIndex = rows.findIndex((row) => row.week_end_date < "2026-08-10");
     rows[staleIndex] = {
@@ -108,7 +108,9 @@ describe("Stock Detail review regressions", () => {
     const detail = await readStockDetailApi(env, "MSFT", NOW);
 
     expect(detail.quote.scaleState).toBe("mismatch");
-    expect(detail.quote.price).toBeNull();
+    expect(detail.quote.price).toBe(250);
+    expect(detail.quote.changeAbs).toBe(2);
+    expect(detail.quote.changePct).toBe(0.8);
     expect(detail.chart.priceHistory).toEqual([]);
     expect(detail.technical.sma200wHistory).toEqual([]);
     expect(detail.freshness.historyAsOf).toBeNull();
