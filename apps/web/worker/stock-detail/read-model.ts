@@ -213,7 +213,7 @@ function servedHistoryScaleState(
 /**
  * Evidence-based split safety for Stock Detail chart/history compatibility.
  *
- * This state no longer controls whether the persisted latest quote is shown.
+ * This state does not control whether the persisted latest quote is shown.
  * Screener and Stock Detail both expose the same validated `latest_quotes`
  * value; chart/history can independently fail closed while reconciliation is
  * pending. SMA keeps its own split guard in computeLiveSma200w().
