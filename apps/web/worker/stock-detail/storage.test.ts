@@ -79,8 +79,9 @@ describe("Stock Detail symbol-specific storage", () => {
     const row = await readStockDetailCompany(db, "MSFT");
     expect(row?.company).toBe("Microsoft Corporation");
     expect(calls.sql[0]).toContain("u.symbol = ?");
+    expect(calls.sql[0]).toContain("stock_fundamentals_snapshot");
     expect(calls.sql[0]).not.toContain("MSFT");
-    expect(calls.binds[0]).toEqual(["MSFT"]);
+    expect(calls.binds[0]).toEqual(["MSFT", "MSFT"]);
   });
 
   it("fails closed when a configured symbol is not active in the runtime Core universe", async () => {

@@ -16,6 +16,10 @@ export const STOCK_DETAIL_HISTORY_LIMIT = STOCK_DETAIL_VISIBLE_WEEKS + STOCK_DET
 const COMPANY_SQL = `SELECT u.symbol, u.company, u.logo_url, u.exchange, u.industry
   FROM earnings_universe AS u
   WHERE u.symbol = ? AND ${ACTIVE_UNIVERSE_PREDICATE}
+UNION ALL
+SELECT f.symbol, f.symbol AS company, NULL AS logo_url, NULL AS exchange, NULL AS industry
+  FROM stock_fundamentals_snapshot AS f
+  WHERE f.symbol = ?
   LIMIT 1`;
 const QUOTE_SQL = `SELECT symbol, price, change_abs, change_pct, day_high, day_low, day_open,
   previous_close, provider, provider_timestamp, updated_at
@@ -214,7 +218,7 @@ export async function readStockDetailStorageSnapshot(
   historyLimit = STOCK_DETAIL_HISTORY_LIMIT,
 ): Promise<StockDetailStorageSnapshot> {
   const results = await db.batch([
-    db.prepare(COMPANY_SQL).bind(symbol),
+    db.prepare(COMPANY_SQL).bind(symbol, symbol),
     db.prepare(QUOTE_SQL).bind(symbol),
     db.prepare(TECHNICAL_SQL).bind(symbol),
     db.prepare(SUPPORTS_SQL).bind(symbol),
@@ -242,7 +246,7 @@ export async function readStockDetailStorageSnapshot(
 
 /** Individual strict reads are retained for focused storage tests/reuse. */
 export async function readStockDetailCompany(db: D1Database, symbol: string): Promise<StockDetailCompanyRow | null> {
-  return parseCompany(await db.prepare(COMPANY_SQL).bind(symbol).first<StockDetailCompanyRow>());
+  return parseCompany(await db.prepare(COMPANY_SQL).bind(symbol, symbol).first<StockDetailCompanyRow>());
 }
 
 export async function readStockDetailQuote(db: D1Database, symbol: string): Promise<LatestQuoteRow | null> {
