@@ -46,7 +46,7 @@ describe("sidebar brand polish", () => {
     expect(desktopBrand?.querySelector("small")).toBeNull();
   });
 
-  it("keeps the mobile wordmark compact instead of forcing the desktop stack", () => {
+  it("keeps the complete mobile wordmark visible in a compact two-line layout", () => {
     render(
       <MemoryRouter initialEntries={["/dashboard"]}>
         <AppShell><main>content</main></AppShell>
@@ -54,9 +54,15 @@ describe("sidebar brand polish", () => {
     );
 
     const mobileBrand = document.querySelector(".shell-topbar .brand-logo");
+    const mobileWordmark = mobileBrand?.querySelector("strong") as HTMLElement | null;
     expect(mobileBrand).toHaveClass("is-compact");
-    expect(mobileBrand).not.toHaveClass("is-stacked");
-    expect(mobileBrand?.querySelector("strong br")).toBeNull();
-    expect(mobileBrand?.querySelector("strong")).toHaveTextContent("HOW ARE THE MARKETS");
+    expect(mobileBrand).toHaveClass("is-stacked");
+    expect(mobileWordmark).toHaveTextContent("HOW ARETHE MARKETS");
+    expect(mobileWordmark?.querySelector("br")).toBeInTheDocument();
+    expect(mobileWordmark).toHaveStyle({
+      overflow: "visible",
+      textOverflow: "clip",
+      whiteSpace: "normal",
+    });
   });
 });
