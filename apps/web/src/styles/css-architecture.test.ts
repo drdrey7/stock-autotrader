@@ -12,6 +12,8 @@ describe("CSS runtime boundaries", () => {
   it("keeps the entrypoint foundation-only", () => {
     expect(mainSource).toContain('import "./branding/tokens.css"');
     expect(mainSource).toContain('import "./styles/base.css"');
+    const cssImports = mainSource.match(/import\s+["'][^"']+\.css["'];?/g) ?? [];
+    expect(cssImports).toHaveLength(2);
     expect(mainSource).not.toContain("morning-briefing.css");
     expect(mainSource).not.toContain("typography.css");
     expect(mainSource).not.toContain('import "./styles.css"');
