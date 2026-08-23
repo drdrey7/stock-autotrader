@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 from . import edgar as provider
@@ -27,12 +28,34 @@ def _unsupported_or_incomplete(filing: provider.FilingMetadata | None) -> None:
     raise RuntimeError("accounting_statement_incomplete")
 
 
+def _date_text(value: Any) -> str | None:
+    if isinstance(value, date):
+        return value.isoformat()[:10]
+    if isinstance(value, str) and len(value) >= 10:
+        return value[:10]
+    return None
+
+
+def _anchored_ttm_value(company: Any, concepts: tuple[str, ...], as_of: str) -> float | None:
+    """Return only an EdgarTools TTM metric ending at the requested period."""
+    for concept in concepts:
+        try:
+            metric = company.get_ttm(concept, as_of=as_of)
+        except Exception:
+            continue
+        if metric is None or _date_text(getattr(metric, "as_of_date", None)) != as_of[:10]:
+            continue
+        value = provider._finite(getattr(metric, "value", None))
+        if value is not None:
+            return value
+    return None
+
+
 def _balance_inputs(
     company: Any,
     balance: Any,
     filing: provider.FilingMetadata | None,
 ) -> tuple[
-    float | None,
     float | None,
     float | None,
     float | None,
@@ -148,7 +171,6 @@ def _balance_inputs(
         shares,
         current_assets,
         current_liabilities,
-        balance_ref,
     )
 
 
@@ -157,18 +179,21 @@ def _fetch_normalized_facts_fallback(
     identity: str,
     filing: provider.FilingMetadata | None,
 ) -> AccountingInputs:
-    """Use EdgarTools' duration-aware TTM facts, never sums of statement columns."""
+    """Use period-anchored EdgarTools TTM facts, never statement-column sums."""
     if filing and filing.form in FOREIGN_FORMS:
         raise AccountingUnsupportedError("accounting_current_basis_unsupported")
+    if not filing or not filing.period_of_report:
+        _unsupported_or_incomplete(filing)
 
     from edgar import Company, set_identity
 
     set_identity(identity)
     company = Company(symbol)
+    as_of = filing.period_of_report[:10]
 
     # Quarterly statement values can be discrete or year-to-date depending on
-    # the issuer/presentation. Use the statement only as a period anchor. Flow
-    # values below come exclusively from EdgarTools' duration-aware get_ttm().
+    # issuer presentation. Use this statement only to anchor the balance-sheet
+    # fiscal period. Flow values come from Company.get_ttm(as_of=...) below.
     period_anchor = company.income_statement(period="quarterly", periods=1)
     if not provider._rows(period_anchor) or provider._period_ref(period_anchor) is None:
         _unsupported_or_incomplete(filing)
@@ -190,24 +215,24 @@ def _fetch_normalized_facts_fallback(
         shares,
         current_assets,
         current_liabilities,
-        _balance_ref,
     ) = _balance_inputs(company, balance, filing)
 
-    revenue = provider._fact_ttm_value(company, provider.INCOME_FACT_CONCEPTS["revenue_ttm"])
-    operating_income = provider._fact_ttm_value(company, OPERATING_INCOME_FACT_CONCEPTS)
-    pretax_income = provider._fact_ttm_value(company, provider.INCOME_FACT_CONCEPTS["pretax_income_ttm"])
-    income_tax = provider._fact_ttm_value(company, INCOME_TAX_FACT_CONCEPTS)
-    net_income = provider._fact_ttm_value(company, provider.NET_INCOME_FACT_CONCEPTS)
-    diluted_eps = provider._fact_ttm_value(company, provider.EPS_FACT_CONCEPTS)
-    depreciation = provider._fact_ttm_value(company, provider.D_AND_A_FACT_CONCEPTS)
-    operating_cash_flow = provider._fact_ttm_value(company, OPERATING_CASH_FLOW_FACT_CONCEPTS)
-    capex = provider._fact_ttm_value(company, provider.CAPEX_FACT_CONCEPTS)
+    revenue = _anchored_ttm_value(company, provider.INCOME_FACT_CONCEPTS["revenue_ttm"], as_of)
+    operating_income = _anchored_ttm_value(company, OPERATING_INCOME_FACT_CONCEPTS, as_of)
+    pretax_income = _anchored_ttm_value(company, provider.INCOME_FACT_CONCEPTS["pretax_income_ttm"], as_of)
+    income_tax = _anchored_ttm_value(company, INCOME_TAX_FACT_CONCEPTS, as_of)
+    net_income = _anchored_ttm_value(company, provider.NET_INCOME_FACT_CONCEPTS, as_of)
+    diluted_eps = _anchored_ttm_value(company, provider.EPS_FACT_CONCEPTS, as_of)
+    depreciation = _anchored_ttm_value(company, provider.D_AND_A_FACT_CONCEPTS, as_of)
+    operating_cash_flow = _anchored_ttm_value(company, OPERATING_CASH_FLOW_FACT_CONCEPTS, as_of)
+    capex = _anchored_ttm_value(company, provider.CAPEX_FACT_CONCEPTS, as_of)
     if capex is not None:
         capex = abs(capex)
     free_cash_flow = operating_cash_flow - capex if operating_cash_flow is not None and capex is not None else None
 
-    # A fallback with no duration-aware flow evidence is not a successful
-    # extraction. Individual metrics may still be legitimately nullable.
+    # A fallback with no current-period flow evidence is not a successful
+    # extraction. Individual metrics may still be legitimately nullable, but
+    # stale TTM metrics are discarded instead of mixed with current ones.
     if all(
         value is None
         for value in (
@@ -240,7 +265,7 @@ def _fetch_normalized_facts_fallback(
         shares_outstanding=shares,
         current_assets=current_assets,
         current_liabilities=current_liabilities,
-        accounting_as_of=filing.period_of_report if filing else provider._filing_as_of(company, annual=False),
+        accounting_as_of=as_of,
         periods_compatible=True,
     )
 
