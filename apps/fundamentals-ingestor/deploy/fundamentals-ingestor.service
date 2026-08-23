@@ -1,5 +1,5 @@
 [Unit]
-Description=Stock Autotrader simple fundamentals snapshot ingestor
+Description=Stock Autotrader simple Finnhub fundamentals snapshot ingestor
 Documentation=https://github.com/drdrey7/stock-autotrader
 After=network-online.target
 Wants=network-online.target
@@ -12,7 +12,6 @@ WorkingDirectory=/opt/stock-autotrader/apps/fundamentals-ingestor
 Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=/etc/stock-autotrader/finnhub.env
 EnvironmentFile=/etc/stock-autotrader/cloudflare.env
-EnvironmentFile=/etc/stock-autotrader/edgar.env
 StateDirectory=stock-autotrader-fundamentals
 ExecStart=/usr/bin/flock /var/lib/stock-autotrader-fundamentals/run.lock /opt/stock-autotrader-fundamentals/bin/python -m fundamentals_ingestor
 TimeoutStartSec=3600
