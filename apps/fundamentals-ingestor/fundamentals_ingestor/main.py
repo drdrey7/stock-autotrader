@@ -9,17 +9,17 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
+from .accounting import AccountingUnsupportedError, fetch_accounting_inputs
 from .config import Settings, from_env
 from .d1 import SNAPSHOT_COLUMNS, D1Client, snapshot_values
 from .edgar import (
     FilingLookupError,
     FilingMetadata,
-    fetch_accounting_inputs,
     fetch_annual_fundamentals,
     fetch_latest_filing_metadata,
 )
 from .finnhub import FinnhubClient, MarketData
-from .metrics import accounting_inputs_from_snapshot
+from .metrics import AccountingInputs, accounting_inputs_from_snapshot
 
 logger = logging.getLogger("fundamentals_ingestor")
 
@@ -45,7 +45,7 @@ def _accounting_snapshot_complete(row: dict[str, object]) -> bool:
     # EdgarTools may successfully process a filing while a fact is genuinely
     # inapplicable or unavailable. Reuse the recorded extraction result rather
     # than treating every nullable source field as a daily retry signal.
-    return row.get("accounting_refresh_status") == "ok"
+    return row.get("accounting_refresh_status") in {"ok", "unsupported"}
 
 
 def _market_from_snapshot(row: dict[str, object] | None) -> MarketData | None:
@@ -186,7 +186,12 @@ def run(settings: Settings, dry_run: bool = False) -> dict[str, int]:
                 and filing.accession
                 and existing.get("accounting_filing_accession") == filing.accession
                 and _accounting_snapshot_complete(existing)
-                and (dry_run or not hasattr(d1, "get_annual_years") or bool(annual_years))
+                and (
+                    existing.get("accounting_refresh_status") == "unsupported"
+                    or dry_run
+                    or not hasattr(d1, "get_annual_years")
+                    or bool(annual_years)
+                )
             )
             if can_reuse:
                 accounting = accounting_inputs_from_snapshot(existing)
@@ -210,6 +215,21 @@ def run(settings: Settings, dry_run: bool = False) -> dict[str, int]:
                             accounting = replace(accounting, extraction_status="incomplete")
                             counts["failed"] += 1
                             logger.exception("annual history refresh failed symbol=%s", symbol)
+                except AccountingUnsupportedError:
+                    if existing:
+                        accounting = accounting_inputs_from_snapshot(existing)
+                        filing = FilingMetadata(
+                            existing.get("accounting_filing_accession") if isinstance(existing.get("accounting_filing_accession"), str) else None,
+                            existing.get("accounting_as_of") if isinstance(existing.get("accounting_as_of"), str) else None,
+                            existing.get("accounting_filing_form") if isinstance(existing.get("accounting_filing_form"), str) else None,
+                        )
+                        logger.warning("accounting unsupported symbol=%s; valid data preserved", symbol)
+                    else:
+                        accounting = AccountingInputs(
+                            accounting_as_of=filing.period_of_report if filing else None,
+                            extraction_status="unsupported",
+                        )
+                        logger.warning("accounting unsupported symbol=%s; market-only snapshot written", symbol)
                 except Exception:
                     if not existing:
                         raise
