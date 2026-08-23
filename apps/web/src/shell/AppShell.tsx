@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useLocation } from "react-router-dom";
+import { User } from "lucide-react";
 import { ThemeProvider, ThemeToggle } from "./theme";
 import { SidebarNavigation, ShellBrand } from "./SidebarNavigation";
 import { MobileHeader } from "./MobileHeader";
@@ -88,6 +89,15 @@ export function AppShell({ children }: { children: ReactNode }) {
           <ShellBrand />
           <SidebarNavigation />
           <div className="shell-sidebar-footer">
+            <button
+              type="button"
+              className="shell-account-button"
+              aria-label="Account (coming soon)"
+              title="Account (coming soon)"
+              disabled
+            >
+              <User size={16} aria-hidden="true" />
+            </button>
             <ThemeToggle />
           </div>
         </div>

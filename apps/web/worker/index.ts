@@ -46,6 +46,8 @@ export interface Env {
   ENVIRONMENT?: string;
   FINNHUB_API_KEY?: string;
   SEC_USER_AGENT?: string;
+  BETTER_AUTH_SECRET?: string;
+  BETTER_AUTH_URL?: string;
 }
 
 const json = (data: unknown, status = 200, cacheControl = "public, max-age=60") =>
@@ -204,6 +206,15 @@ export default {
 
   async fetch(request: Request, env: Env): Promise<Response> {
     const { pathname } = new URL(request.url);
+
+    // Better Auth — routed before the global GET-only gate so POST/PUT/
+    // DELETE/PATCH to /api/auth/* are not rejected. Dynamically imported so
+    // the auth module is only initialized when handling an auth request
+    // (prevents adapter init in the test environment).
+    if (pathname.startsWith("/api/auth/")) {
+      const { handleAuth } = await import("./auth/handler");
+      return handleAuth(request, env);
+    }
 
     // Protected publication endpoint (PR #3) — accepts POST before the GET-only gate.
     if (pathname === "/ingest/events") return handleIngest(request, env);
