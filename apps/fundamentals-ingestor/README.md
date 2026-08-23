@@ -20,7 +20,7 @@ The current cards use direct Finnhub values when present:
 - P/E TTM
 - ROIC (`series.quarterly.roicTTM`, annual ROIC fallback)
 - FCF Margin (`series.quarterly.fcfMargin`, annual fallback)
-- Debt/Equity (`series.quarterly.totalDebtToEquity`, metric fallback)
+- Debt/Equity (`series.quarterly.totalDebtToEquity`)
 
 The job also stores `fcf_per_share_ttm` from
 `series.quarterly.fcfPerShareTTM` as the starting input for a later simple
