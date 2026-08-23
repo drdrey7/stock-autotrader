@@ -14,6 +14,7 @@ from history_ingestor.provider import (
     AlphaVantageClient,
     ProviderError,
     QuotaExhaustedError,
+    ThrottleExhaustedError,
 )
 from history_ingestor.state import KeyBudgetLedger, StateStore
 from history_ingestor.universe import load_core_universe
@@ -170,26 +171,87 @@ class ProviderTests(unittest.TestCase):
             client.fetch_splits("NVDA")
         self.assertIn(0, client.quota_hits_this_run)
 
-    def test_information_throttle_backs_off_then_succeeds(self):
-        store = FakeStore(1)
+    def test_first_key_throttled_second_key_healthy(self):
+        """Key 0 Information → circuit-break; key 1 serves data (1 attempt each)."""
+        store = FakeStore(2)
         url = RecordingURL([
             ({"function": "SPLITS", "symbol": "NVDA"}, {"Information": "spread out requests"}),
             ({"function": "SPLITS", "symbol": "NVDA"}, splits_payload("NVDA")),
         ])
         client = self._client(store, url)
         index, events, _ = client.fetch_splits("NVDA")
-        self.assertEqual(index, 0)
+        self.assertEqual(index, 1)
+        self.assertEqual(len(events), 1)
         self.assertEqual(client.throttle_retries_this_run, 1)
-        self.assertEqual(store.keys[0]["used"], 2)  # throttle response also counts
+        self.assertEqual(store.keys[0]["used"], 1)  # throttle HTTP still counts
+        self.assertEqual(store.keys[1]["used"], 1)
+        self.assertEqual(len(url.calls), 2)
+        results = [entry["result"] for entry in client.attempt_log if entry.get("key_index") is not None]
+        self.assertEqual(results[:2], ["information", "data"])
 
-    def test_throttle_loop_is_bounded(self):
-        store = FakeStore(1)
+    def test_first_key_healthy_no_second_call(self):
+        store = FakeStore(2)
+        url = RecordingURL([
+            ({"function": "SPLITS", "symbol": "NVDA"}, splits_payload("NVDA")),
+        ])
+        client = self._client(store, url)
+        index, events, _ = client.fetch_splits("NVDA")
+        self.assertEqual(index, 0)
+        self.assertEqual(len(url.calls), 1)
+        self.assertEqual(store.keys[0]["used"], 1)
+        self.assertEqual(store.keys[1]["used"], 0)
+
+    def test_all_keys_throttled_raises_throttle_exhausted(self):
+        store = FakeStore(2)
+        url = RecordingURL([
+            ({"function": "SPLITS", "symbol": "NVDA"}, {"Information": "throttle"}),
+            ({"function": "SPLITS", "symbol": "NVDA"}, {"Information": "throttle"}),
+        ])
+        client = self._client(store, url)
+        with self.assertRaises(ThrottleExhaustedError):
+            client.fetch_splits("NVDA")
+        self.assertEqual(len(url.calls), 2)  # one attempt per key
+        self.assertEqual(store.keys[0]["used"], 1)
+        self.assertEqual(store.keys[1]["used"], 1)
+        self.assertEqual(client.requests_this_run, 2)
+
+    def test_persistent_throttle_does_not_burn_ten_requests(self):
+        """Regression: Information must never approach the old 10-request burn."""
+        store = FakeStore(2)
         url = RecordingURL([
             ({"function": "SPLITS", "symbol": "NVDA"}, {"Information": "throttle"}),
         ])
         client = self._client(store, url)
-        with self.assertRaises(AllKeysFailedError):
+        with self.assertRaises(ThrottleExhaustedError):
             client.fetch_splits("NVDA")
+        self.assertLessEqual(len(url.calls), 2)
+        self.assertEqual(client.requests_this_run, 2)
+
+    def test_single_key_throttled_counts_one_http_and_stops(self):
+        store = FakeStore(1)
+        url = RecordingURL([
+            ({"function": "SPLITS", "symbol": "NVDA"}, {"Information": "throttle"}),
+            ({"function": "SPLITS", "symbol": "NVDA"}, splits_payload("NVDA")),
+        ])
+        client = self._client(store, url)
+        with self.assertRaises(ThrottleExhaustedError):
+            client.fetch_splits("NVDA")
+        # Circuit breaker: do NOT retry the same key after Information.
+        self.assertEqual(len(url.calls), 1)
+        self.assertEqual(store.keys[0]["used"], 1)
+
+    def test_attempt_log_never_contains_api_keys(self):
+        store = FakeStore(2)
+        url = RecordingURL([
+            ({"function": "SPLITS", "symbol": "NVDA"}, {"Information": "throttle"}),
+            ({"function": "SPLITS", "symbol": "NVDA"}, splits_payload("NVDA")),
+        ])
+        settings = settings_with(keys=("SECRETKEYAAAA1111", "SECRETKEYBBBB2222"))
+        client = self._client(store, url, settings=settings)
+        client.fetch_splits("NVDA")
+        blob = json.dumps(client.attempt_log)
+        self.assertNotIn("SECRETKEYAAAA1111", blob)
+        self.assertNotIn("SECRETKEYBBBB2222", blob)
 
     def test_invalid_key_skipped(self):
         store = FakeStore(2)

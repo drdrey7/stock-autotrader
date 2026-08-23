@@ -46,6 +46,7 @@ from .provider import (
     AlphaVantageClient,
     ProviderError,
     QuotaExhaustedError,
+    ThrottleExhaustedError,
 )
 from .sma import compute_technical_metrics
 from .splits import (
@@ -154,6 +155,7 @@ class MaintenanceRunner:
             "requests_used_total": 0,
             "keys_used": [],
             "quota_exhausted": False,
+            "throttled": False,
             "anomalies": [],
             "rows_updated": 0,
             "metrics_updated": 0,
@@ -195,6 +197,9 @@ class MaintenanceRunner:
                 if symbol_report["quota"]:
                     report["quota_exhausted"] = True
                     break
+                if symbol_report.get("throttled"):
+                    report["throttled"] = True
+                    break
                 if not dry_run:
                     self._store.save()
 
@@ -223,9 +228,12 @@ class MaintenanceRunner:
                     if symbol_report["quota"]:
                         report["quota_exhausted"] = True
                         break
+                    if symbol_report.get("throttled"):
+                        report["throttled"] = True
+                        break
                     if not dry_run:
                         self._store.save()
-                if not dry_run and not report["quota_exhausted"]:
+                if not dry_run and not report["quota_exhausted"] and not report["throttled"]:
                     # Repair metrics-only gaps from D1 (zero provider calls).
                     self._reconcile_metrics_gaps(symbols, report)
             else:
@@ -242,6 +250,8 @@ class MaintenanceRunner:
         report["phase"] = phase
         if report["quota_exhausted"]:
             report["status"] = "quota"
+        elif report["throttled"]:
+            report["status"] = "throttled"
         elif phase == "complete":
             report["status"] = "complete"
         else:
@@ -257,7 +267,7 @@ class MaintenanceRunner:
             "splits": STATUS_DONE, "weekly": self._store.state.symbol_status(symbol, "weekly"),
             "metrics": self._store.state.symbol_status(symbol, "metrics"),
             "split_changed": False, "rows_updated": 0, "metrics_updated": False,
-            "completed_weeks": 0, "quota": False, "anomalies": [],
+            "completed_weeks": 0, "quota": False, "throttled": False, "anomalies": [],
         }
         try:
             _, fresh_events, _ = self._provider.fetch_splits(symbol)
@@ -294,6 +304,11 @@ class MaintenanceRunner:
             result["anomalies"].append("provider daily quota exhausted — SPLITS resumes from checkpoint")
             result["splits"] = "pending"
             return result
+        except ThrottleExhaustedError:
+            result["throttled"] = True
+            result["anomalies"].append("provider throttle — SPLITS resumes from checkpoint")
+            result["splits"] = "pending"
+            return result
         except (ProviderError, AllKeysFailedError) as exc:
             self._store.state.mark_symbol(symbol, "splits", STATUS_ERROR)
             result["splits"] = STATUS_ERROR
@@ -306,7 +321,7 @@ class MaintenanceRunner:
             "splits": self._store.state.symbol_status(symbol, "splits"),
             "weekly": STATUS_DONE, "metrics": self._store.state.symbol_status(symbol, "metrics"),
             "split_changed": False, "rows_updated": 0, "metrics_updated": False,
-            "completed_weeks": 0, "quota": False, "anomalies": [],
+            "completed_weeks": 0, "quota": False, "throttled": False, "anomalies": [],
         }
         try:
             # Split factors come from the DURABLE store (reconciled on Sunday)
@@ -380,6 +395,11 @@ class MaintenanceRunner:
         except QuotaExhaustedError:
             result["quota"] = True
             result["anomalies"].append("provider daily quota exhausted — WEEKLY resumes from checkpoint")
+            result["weekly"] = "pending"
+            return result
+        except ThrottleExhaustedError:
+            result["throttled"] = True
+            result["anomalies"].append("provider throttle — WEEKLY resumes from checkpoint")
             result["weekly"] = "pending"
             return result
         except (ProviderError, AllKeysFailedError) as exc:

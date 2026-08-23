@@ -140,7 +140,7 @@ class FakeProvider:
     """
 
     def __init__(self, weekly_payloads=None, splits_payloads=None,
-                 quota_after=None, weekly_error=None):
+                 quota_after=None, weekly_error=None, throttle_on=None):
         from history_ingestor.parser import parse_splits_payload, parse_weekly_payload
         self._parse_weekly = parse_weekly_payload
         self._parse_splits = parse_splits_payload
@@ -152,11 +152,17 @@ class FakeProvider:
         self.splits_calls = []
         self.call_log: list[tuple[str, str]] = []  # (kind, symbol), in order
         self._weekly_error = weekly_error
+        # throttle_on: set of (kind, symbol) that raise ThrottleExhaustedError
+        self._throttle_on = set(throttle_on or [])
+        self.attempt_log: list[dict] = []
 
     def fetch_weekly(self, symbol):
         self.requests_this_run += 1
         self.weekly_calls.append(symbol)
         self.call_log.append(("weekly", symbol))
+        if ("weekly", symbol) in self._throttle_on:
+            from history_ingestor.provider import ThrottleExhaustedError
+            raise ThrottleExhaustedError("provider throttle on 2 key(s)")
         if self._weekly_error and symbol in self._weekly_error:
             from history_ingestor.provider import ProviderError
             raise ProviderError(self._weekly_error[symbol])
@@ -174,6 +180,9 @@ class FakeProvider:
         self.requests_this_run += 1
         self.splits_calls.append(symbol)
         self.call_log.append(("splits", symbol))
+        if ("splits", symbol) in self._throttle_on:
+            from history_ingestor.provider import ThrottleExhaustedError
+            raise ThrottleExhaustedError("provider throttle on 2 key(s)")
         if self.quota_after is not None and self.requests_this_run > self.quota_after:
             from history_ingestor.provider import QuotaExhaustedError
             raise QuotaExhaustedError("quota")
@@ -562,8 +571,122 @@ class BootstrapTests(unittest.TestCase):
                 runner2.run(universe=["NVDA"])
             self.assertIn("technical_metrics write failed", str(ctx.exception))
 
+    def test_provider_throttle_stops_run_without_permanent_error(self):
+        """All-keys throttle must stop bootstrap and leave symbol pending."""
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            settings = settings_with()
+            provider = FakeProvider(
+                weekly_payloads={"A": weekly_payload("A"), "B": weekly_payload("B")},
+                splits_payloads={"A": splits_payload("A"), "B": splits_payload("B")},
+                throttle_on={("splits", "A")},
+            )
+            store = StateStore(settings, d1, state_path=Path(tmp) / "checkpoint.json")
+            runner = BootstrapRunner(settings, d1, provider, store, now_fn=lambda: NOW)
+            report = runner.run(universe=["A", "B"])
+            self.assertEqual(report["status"], "throttled")
+            self.assertTrue(report["throttled"])
+            self.assertFalse(report["quota_exhausted"])
+            # No permanent ticker error from provider-wide throttle.
+            self.assertEqual(store.symbol_status("A", "splits"), "pending")
+            self.assertEqual(store.symbol_status("A", "weekly"), "pending")
+            # Did not continue burning quota on B after throttle.
+            self.assertEqual(provider.splits_calls, ["A"])
+            self.assertEqual(provider.weekly_calls, [])
+            self.assertEqual(d1.written_rows, 0)
 
+    def test_throttle_preserves_prior_done_checkpoint(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            settings = settings_with()
+            # First: complete A.
+            provider1 = FakeProvider(
+                weekly_payloads={"A": weekly_payload("A"), "B": weekly_payload("B")},
+                splits_payloads={"A": splits_payload("A"), "B": splits_payload("B")},
+            )
+            store = StateStore(settings, d1, state_path=Path(tmp) / "checkpoint.json")
+            BootstrapRunner(settings, d1, provider1, store, now_fn=lambda: NOW).run(
+                universe=["A", "B"], symbols_filter=["A"]
+            )
+            self.assertEqual(store.symbol_status("A", "weekly"), "done")
+            # Second: throttle on B.
+            provider2 = FakeProvider(
+                weekly_payloads={"A": weekly_payload("A"), "B": weekly_payload("B")},
+                splits_payloads={"A": splits_payload("A"), "B": splits_payload("B")},
+                throttle_on={("splits", "B")},
+            )
+            store2 = StateStore(settings, d1, state_path=Path(tmp) / "checkpoint.json")
+            report = BootstrapRunner(settings, d1, provider2, store2, now_fn=lambda: NOW).run(
+                universe=["A", "B"]
+            )
+            self.assertEqual(report["status"], "throttled")
+            self.assertEqual(store2.symbol_status("A", "splits"), "done")
+            self.assertEqual(store2.symbol_status("A", "weekly"), "done")
+            self.assertEqual(store2.symbol_status("B", "splits"), "pending")
+            self.assertNotIn("A", provider2.splits_calls)
+            self.assertNotIn("A", provider2.weekly_calls)
 
+    def test_fairness_pending_before_transient_errors(self):
+        """Never-tried symbols must be attempted before sticky error symbols."""
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            settings = settings_with()
+            store = StateStore(settings, d1, state_path=Path(tmp) / "checkpoint.json")
+            store.load()
+            # ORCL-like sticky error head-of-line; SHOP never tried.
+            store.mark_symbol("ORCL", "splits", "error")
+            store.save()
+            provider = FakeProvider(
+                weekly_payloads={
+                    "ORCL": weekly_payload("ORCL"),
+                    "SHOP": weekly_payload("SHOP"),
+                },
+                splits_payloads={
+                    "ORCL": splits_payload("ORCL"),
+                    "SHOP": splits_payload("SHOP"),
+                },
+            )
+            runner = BootstrapRunner(settings, d1, provider, store, now_fn=lambda: NOW)
+            report = runner.run(universe=["ORCL", "SHOP"])
+            self.assertEqual(report["status"], "complete")
+            # SHOP (pending) before ORCL (error) in provider call order.
+            self.assertEqual(provider.splits_calls[0], "SHOP")
+            self.assertEqual(provider.splits_calls[1], "ORCL")
+            self.assertEqual(store.symbol_status("SHOP", "weekly"), "done")
+            self.assertEqual(store.symbol_status("ORCL", "weekly"), "done")
+
+    def test_fairness_partial_before_errors(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            settings = settings_with()
+            store = StateStore(settings, d1, state_path=Path(tmp) / "checkpoint.json")
+            store.load()
+            store.mark_symbol("ERR", "splits", "error")
+            store.mark_symbol("PART", "splits", "done")  # weekly still pending
+            # Seed durable empty splits for PART so weekly can proceed without refetch.
+            d1.split_events["PART"] = []
+            store.save()
+            provider = FakeProvider(
+                weekly_payloads={
+                    "ERR": weekly_payload("ERR"),
+                    "PART": weekly_payload("PART"),
+                    "NEW": weekly_payload("NEW"),
+                },
+                splits_payloads={
+                    "ERR": splits_payload("ERR"),
+                    "PART": splits_payload("PART"),
+                    "NEW": splits_payload("NEW"),
+                },
+            )
+            runner = BootstrapRunner(settings, d1, provider, store, now_fn=lambda: NOW)
+            report = runner.run(universe=["ERR", "PART", "NEW"])
+            self.assertEqual(report["status"], "complete")
+            # pending NEW first, then partial PART, then error ERR.
+            first_symbols = []
+            for _kind, sym in provider.call_log:
+                if sym not in first_symbols:
+                    first_symbols.append(sym)
+            self.assertEqual(first_symbols, ["NEW", "PART", "ERR"])
 
 
 if __name__ == "__main__":
