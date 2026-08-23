@@ -62,12 +62,14 @@ def _market_from_snapshot(row: dict[str, object] | None) -> MarketData | None:
 
 
 def _annual_rows_have_statement_coverage(rows: list[object]) -> bool:
-    """Require evidence from each required annual statement for every year.
+    """Require evidence from each exposed required statement for every year.
 
-    Individual metrics remain nullable because they can be legitimately absent.
-    A whole statement group being NULL for one fiscal year, however, indicates
-    that EdgarTools returned a shorter/partial statement window. Reject that
-    window before any D1 upsert/pruning so existing history is preserved.
+    `fetch_annual_fundamentals()` returns AnnualFundamental objects with all
+    statement fields present, so a whole exposed statement group being NULL is
+    a partial EdgarTools response and must fail closed. Small mocks/opaque rows
+    that expose only fiscal-year metadata are left to the independent
+    year-window checks instead of being misclassified as provider data.
+    Individual metrics remain legitimately nullable.
     """
     groups = (
         (
@@ -92,11 +94,12 @@ def _annual_rows_have_statement_coverage(rows: list[object]) -> bool:
             "current_liabilities",
         ),
     )
-    return all(
-        any(getattr(row, field, None) is not None for field in group)
-        for row in rows
-        for group in groups
-    )
+    for row in rows:
+        for group in groups:
+            exposed = [field for field in group if hasattr(row, field)]
+            if exposed and not any(getattr(row, field) is not None for field in exposed):
+                return False
+    return True
 
 
 def _annual_window_is_safe(
