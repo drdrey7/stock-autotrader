@@ -688,6 +688,101 @@ class BootstrapTests(unittest.TestCase):
                     first_symbols.append(sym)
             self.assertEqual(first_symbols, ["NEW", "PART", "ERR"])
 
+    def test_report_counts_done_from_checkpoint_on_early_throttle(self):
+        """A=done, B=pending; B throttles before loop visits A → done still 1."""
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            settings = settings_with()
+            store = StateStore(settings, d1, state_path=Path(tmp) / "checkpoint.json")
+            store.load()
+            store.mark_symbol("A", "splits", "done")
+            store.mark_symbol("A", "weekly", "done")
+            store.save()
+            provider = FakeProvider(
+                weekly_payloads={"A": weekly_payload("A"), "B": weekly_payload("B")},
+                splits_payloads={"A": splits_payload("A"), "B": splits_payload("B")},
+                throttle_on={("splits", "B")},
+            )
+            report = BootstrapRunner(settings, d1, provider, store, now_fn=lambda: NOW).run(
+                universe=["A", "B"]
+            )
+            self.assertEqual(report["status"], "throttled")
+            self.assertEqual(report["symbols_done"], 1)
+            self.assertEqual(report["symbols_remaining"], 1)
+            self.assertEqual(report["remaining_symbols"], ["B"])
+            self.assertNotIn("A", report["remaining_symbols"])
+
+    def test_report_remaining_excludes_all_done_on_mixed_early_throttle(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            settings = settings_with()
+            store = StateStore(settings, d1, state_path=Path(tmp) / "checkpoint.json")
+            store.load()
+            for sym in ("D1", "D2", "D3"):
+                store.mark_symbol(sym, "splits", "done")
+                store.mark_symbol(sym, "weekly", "done")
+            store.mark_symbol("ERR", "splits", "error")
+            store.save()
+            provider = FakeProvider(
+                weekly_payloads={
+                    "D1": weekly_payload("D1"), "D2": weekly_payload("D2"),
+                    "D3": weekly_payload("D3"), "PEND": weekly_payload("PEND"),
+                    "ERR": weekly_payload("ERR"),
+                },
+                splits_payloads={
+                    "D1": splits_payload("D1"), "D2": splits_payload("D2"),
+                    "D3": splits_payload("D3"), "PEND": splits_payload("PEND"),
+                    "ERR": splits_payload("ERR"),
+                },
+                throttle_on={("splits", "PEND")},
+            )
+            report = BootstrapRunner(settings, d1, provider, store, now_fn=lambda: NOW).run(
+                universe=["D1", "D2", "D3", "PEND", "ERR"]
+            )
+            self.assertEqual(report["status"], "throttled")
+            self.assertEqual(report["symbols_done"], 3)
+            self.assertEqual(set(report["remaining_symbols"]), {"PEND", "ERR"})
+            for done_sym in ("D1", "D2", "D3"):
+                self.assertNotIn(done_sym, report["remaining_symbols"])
+
+    def test_report_counts_done_from_checkpoint_on_early_quota(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            settings = settings_with()
+            store = StateStore(settings, d1, state_path=Path(tmp) / "checkpoint.json")
+            store.load()
+            store.mark_symbol("A", "splits", "done")
+            store.mark_symbol("A", "weekly", "done")
+            store.save()
+            provider = FakeProvider(
+                weekly_payloads={"A": weekly_payload("A"), "B": weekly_payload("B")},
+                splits_payloads={"A": splits_payload("A"), "B": splits_payload("B")},
+                quota_after=0,  # first provider call hits quota
+            )
+            report = BootstrapRunner(settings, d1, provider, store, now_fn=lambda: NOW).run(
+                universe=["A", "B"]
+            )
+            self.assertEqual(report["status"], "quota")
+            self.assertEqual(report["symbols_done"], 1)
+            self.assertEqual(report["remaining_symbols"], ["B"])
+
+    def test_report_counts_correct_on_full_complete_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            settings = settings_with()
+            provider = FakeProvider(
+                weekly_payloads={"A": weekly_payload("A"), "B": weekly_payload("B")},
+                splits_payloads={"A": splits_payload("A"), "B": splits_payload("B")},
+            )
+            store = StateStore(settings, d1, state_path=Path(tmp) / "checkpoint.json")
+            report = BootstrapRunner(settings, d1, provider, store, now_fn=lambda: NOW).run(
+                universe=["A", "B"]
+            )
+            self.assertEqual(report["status"], "complete")
+            self.assertEqual(report["symbols_done"], 2)
+            self.assertEqual(report["symbols_remaining"], 0)
+            self.assertEqual(report["remaining_symbols"], [])
+
 
 if __name__ == "__main__":
     unittest.main()
