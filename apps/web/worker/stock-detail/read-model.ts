@@ -25,6 +25,7 @@ import {
 const SMA_WINDOW_WEEKS = 200;
 const CLOSE_CROSSCHECK_RELATIVE_TOLERANCE = 1e-6;
 const CLOSE_CROSSCHECK_ABSOLUTE_TOLERANCE = 1e-8;
+const FINNHUB_BASIC_FINANCIALS_SOURCE = "finnhub-basic-financials";
 export const FUNDAMENTALS_MARKET_STALE_AFTER_SECONDS = 3 * 24 * 60 * 60;
 
 interface AdjustedClosePoint {
@@ -57,12 +58,7 @@ function toSplitAdjustedClosePoint(row: WeeklyPriceRow): AdjustedClosePoint | nu
   return { time: row.week_end_date, close };
 }
 
-/**
- * Convert a normal raw/as-traded weekly bucket to today's split-adjusted price
- * scale. A bucket containing a split is filtered by the caller: the persisted
- * factor is defined from the week-end close, while raw O/H/L can span both
- * sides of the split and therefore cannot form an honest adjusted candle.
- */
+/** Convert one raw weekly row to today's split-adjusted scale. */
 export function toSplitAdjustedPricePoint(row: WeeklyPriceRow): StockDetailPricePoint | null {
   const closePoint = toSplitAdjustedClosePoint(row);
   const factor = row.split_adjustment_factor;
@@ -79,7 +75,6 @@ export function toSplitAdjustedPricePoint(row: WeeklyPriceRow): StockDetailPrice
   const high = row.raw_high / factor;
   const low = row.raw_low / factor;
   if (![open, high, low].every(isPositiveFinite)) return null;
-
   return { time: row.week_end_date, open, high, low, close: closePoint.close, volume: row.volume };
 }
 
@@ -89,11 +84,7 @@ function consecutiveIsoWeeks(previousTime: string, currentTime: string): boolean
   return previousWeek !== null && currentWeek !== null && weekDiffDays(currentWeek, previousWeek) === 7;
 }
 
-/**
- * O(n) rolling 200-week SMA over completed split-adjusted weekly closes.
- * A missing/invalid/duplicate ISO week resets the rolling basis; we never
- * relabel 200 observations spanning more than 200 consecutive weeks as 200W.
- */
+/** O(n) rolling 200-week SMA over completed split-adjusted weekly closes. */
 export function buildHistoricalSma200w(
   history: readonly AdjustedClosePoint[],
   visibleStartIndex = 0,
@@ -111,11 +102,8 @@ export function buildHistoricalSma200w(
     } else {
       runningSum += current.close;
     }
-
     const contiguousWeeks = index - contiguousRunStart + 1;
-    if (contiguousWeeks > SMA_WINDOW_WEEKS) {
-      runningSum -= history[index - SMA_WINDOW_WEEKS]!.close;
-    }
+    if (contiguousWeeks > SMA_WINDOW_WEEKS) runningSum -= history[index - SMA_WINDOW_WEEKS]!.close;
     if (contiguousWeeks >= SMA_WINDOW_WEEKS && index >= visibleStartIndex) {
       points.push({ time: current.time, value: runningSum / SMA_WINDOW_WEEKS });
     }
@@ -179,12 +167,11 @@ function finite(value: number | null | undefined): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
-/**
- * Direct Finnhub card selector retained under the established export name so
- * focused callers/tests do not need an unrelated API rename. No accounting
- * reconstruction happens in the Worker.
- */
-export function calculateAccountingCardMetrics(
+function nonNegative(value: number | null | undefined): value is number {
+  return finite(value) && value >= 0;
+}
+
+function directFinnhubCardMetrics(
   fundamentals: StockDetailStorageSnapshot["fundamentals"],
 ): AccountingCardMetrics {
   return {
@@ -192,6 +179,57 @@ export function calculateAccountingCardMetrics(
     fcfMarginPct: finite(fundamentals?.fcf_margin_pct) ? fundamentals.fcf_margin_pct : null,
     debtToEquity: finite(fundamentals?.debt_to_equity) ? fundamentals.debt_to_equity : null,
   };
+}
+
+/**
+ * Read the three slow-moving cards. New snapshots use Finnhub's direct ratios.
+ * The old accounting derivation remains only as a rollout compatibility path
+ * for rows not yet refreshed by the new daily job.
+ */
+export function calculateAccountingCardMetrics(
+  fundamentals: StockDetailStorageSnapshot["fundamentals"],
+): AccountingCardMetrics {
+  if (fundamentals?.market_source === FINNHUB_BASIC_FINANCIALS_SOURCE) {
+    return directFinnhubCardMetrics(fundamentals);
+  }
+
+  const metrics: AccountingCardMetrics = { roicPct: null, fcfMarginPct: null, debtToEquity: null };
+  if (!fundamentals) return metrics;
+  if (
+    finite(fundamentals.operating_cash_flow_ttm)
+    && finite(fundamentals.capex_ttm)
+    && finite(fundamentals.revenue_ttm)
+    && fundamentals.revenue_ttm > 0
+  ) {
+    const freeCashFlow = fundamentals.operating_cash_flow_ttm - fundamentals.capex_ttm;
+    const fcfMargin = freeCashFlow / fundamentals.revenue_ttm;
+    if (Number.isFinite(fcfMargin)) metrics.fcfMarginPct = fcfMargin * 100;
+  }
+  if (nonNegative(fundamentals.total_debt) && finite(fundamentals.shareholders_equity) && fundamentals.shareholders_equity > 0) {
+    metrics.debtToEquity = fundamentals.total_debt / fundamentals.shareholders_equity;
+  }
+  if (
+    finite(fundamentals.operating_income_ttm)
+    && finite(fundamentals.income_tax_ttm)
+    && finite(fundamentals.pretax_income_ttm)
+    && fundamentals.pretax_income_ttm > 0
+    && nonNegative(fundamentals.total_debt)
+    && nonNegative(fundamentals.shareholders_equity)
+    && nonNegative(fundamentals.cash)
+    && nonNegative(fundamentals.short_term_investments)
+    && fundamentals.accounting_periods_compatible === 1
+  ) {
+    const effectiveTaxRate = fundamentals.income_tax_ttm / fundamentals.pretax_income_ttm;
+    const nopat = fundamentals.operating_income_ttm * (1 - effectiveTaxRate);
+    const investedCapital = fundamentals.total_debt
+      + fundamentals.shareholders_equity
+      - fundamentals.cash
+      - fundamentals.short_term_investments;
+    if (Number.isFinite(nopat) && Number.isFinite(investedCapital) && investedCapital > 0) {
+      metrics.roicPct = (nopat / investedCapital) * 100;
+    }
+  }
+  return metrics;
 }
 
 function expectedSplitFactorForWeek(
@@ -222,16 +260,13 @@ function servedHistorySplitState(
 ): QuoteHistoryScaleState {
   for (const row of weeklyRows) {
     if (!isoWeekOfDateKey(row.week_end_date)) return "unknown";
-
     const expectedFactor = expectedSplitFactorForWeek(row.week_end_date, effectiveSplits);
     if (expectedFactor === null) return "unknown";
     if (!approximatelyEqual(row.split_adjustment_factor, expectedFactor)) return "mismatch";
-
     const fetchedAt = Date.parse(row.source_fetched_at);
     if (!Number.isFinite(fetchedAt)) return "unknown";
     if (fetchedAt < splitMs) return "mismatch";
   }
-
   return "safe";
 }
 
@@ -247,11 +282,7 @@ function servedHistoryScaleState(
   return servedHistorySplitState(weeklyRows, effectiveSplits, splitMs);
 }
 
-/**
- * Evidence-based split safety for Stock Detail.
- * Future announced splits are excluded before this function is called. Price,
- * history and live SMA scale guards remain independent from fundamentals.
- */
+/** Evidence-based split safety for quote/chart serving. */
 export function servedSplitScaleState(
   quote: QuoteInput | null,
   metricCalculatedAt: string | null,
@@ -260,18 +291,13 @@ export function servedSplitScaleState(
 ): QuoteHistoryScaleState {
   const latestEffectiveSplit = effectiveSplits.at(-1) ?? null;
   if (!latestEffectiveSplit) return "safe";
-
   const splitMs = Date.parse(`${latestEffectiveSplit.effective_date}T00:00:00.000Z`);
   if (!Number.isFinite(splitMs)) return "unknown";
-
   if (weeklyRows.length === 0) return quoteSplitState(quote, splitMs);
-
   const historyState = servedHistoryScaleState(weeklyRows, effectiveSplits);
   if (historyState !== "safe") return historyState;
-
   const quoteState = quoteSplitState(quote, splitMs);
   if (quoteState !== "safe" || metricCalculatedAt === null) return quoteState;
-
   const metricMs = Date.parse(metricCalculatedAt);
   if (!Number.isFinite(metricMs)) return "unknown";
   return metricMs >= splitMs ? "safe" : "mismatch";
@@ -319,7 +345,6 @@ export async function readStockDetailApi(
       .map((event) => weekIdentity(event.effective_date))
       .filter((week): week is string => week !== null),
   );
-
   const latestEffectiveSplitMap = effectiveSplitAsOf
     ? new Map([[symbol, effectiveSplitAsOf]])
     : new Map<string, string>();
@@ -328,12 +353,7 @@ export async function readStockDetailApi(
     : null;
   const historyScaleState = servedHistoryScaleState(weeklyRows, effectiveSplitEvents);
   const historyScaleSafe = historyScaleState === "safe";
-  const scaleState = servedSplitScaleState(
-    quoteInput,
-    null,
-    weeklyRows,
-    effectiveSplitEvents,
-  );
+  const scaleState = servedSplitScaleState(quoteInput, null, weeklyRows, effectiveSplitEvents);
   const quoteScaleSafe = scaleState === "safe";
   const currentPrice = quoteScaleSafe ? quote?.price ?? null : null;
   const liveSma = computeLiveSma200w(
@@ -405,9 +425,9 @@ export async function readStockDetailApi(
     fundamentals: {
       marketCap: formattedMarketCap,
       peTtm: marketFundamentalsFresh ? fundamentals?.pe_ttm ?? null : null,
-      roicPct: marketFundamentalsFresh ? cardMetrics.roicPct : null,
-      fcfMarginPct: marketFundamentalsFresh ? cardMetrics.fcfMarginPct : null,
-      debtToEquity: marketFundamentalsFresh ? cardMetrics.debtToEquity : null,
+      roicPct: cardMetrics.roicPct,
+      fcfMarginPct: cardMetrics.fcfMarginPct,
+      debtToEquity: cardMetrics.debtToEquity,
     },
     technical: {
       sma200w: liveSma.sma200w,
