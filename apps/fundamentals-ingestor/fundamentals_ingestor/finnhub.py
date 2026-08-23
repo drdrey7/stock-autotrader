@@ -102,9 +102,10 @@ def normalize_metric(payload: Any, checked_at: str | None = None) -> MarketData:
         _latest_series_value(payload, "quarterly", "fcfMargin"),
         _latest_series_value(payload, "annual", "fcfMargin"),
     )
+    # Use the semantically explicit ratio series only. The similarly named
+    # metric field has ambiguous provider units and is unnecessary for our
+    # observed Core Universe coverage.
     debt_to_equity = _latest_series_value(payload, "quarterly", "totalDebtToEquity")
-    if debt_to_equity is None:
-        debt_to_equity = _finite_number(metric.get("totalDebt/totalEquityQuarterly"))
     fcf_per_share_ttm = _latest_series_value(payload, "quarterly", "fcfPerShareTTM")
 
     # Finnhub reports marketCapitalization in millions. This is only provider
