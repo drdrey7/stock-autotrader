@@ -217,13 +217,15 @@ def run(settings: Settings, dry_run: bool = False) -> dict[str, int]:
                             logger.exception("annual history refresh failed symbol=%s", symbol)
                 except AccountingUnsupportedError:
                     if existing:
-                        accounting = accounting_inputs_from_snapshot(existing)
-                        filing = FilingMetadata(
-                            existing.get("accounting_filing_accession") if isinstance(existing.get("accounting_filing_accession"), str) else None,
-                            existing.get("accounting_as_of") if isinstance(existing.get("accounting_as_of"), str) else None,
-                            existing.get("accounting_filing_form") if isinstance(existing.get("accounting_filing_form"), str) else None,
+                        # Keep the last safe numeric inputs/as-of date, but mark
+                        # the *new* filing accession as unsupported. That makes
+                        # the classification reusable without pretending the
+                        # preserved values came from the unsupported filing.
+                        accounting = replace(
+                            accounting_inputs_from_snapshot(existing),
+                            extraction_status="unsupported",
                         )
-                        logger.warning("accounting unsupported symbol=%s; valid data preserved", symbol)
+                        logger.warning("accounting unsupported symbol=%s; prior safe values preserved", symbol)
                     else:
                         accounting = AccountingInputs(
                             accounting_as_of=filing.period_of_report if filing else None,
