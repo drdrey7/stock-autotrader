@@ -9,6 +9,8 @@
 #     command line and never echoes them.
 #   - The script copies those sources into /etc/stock-autotrader/{finnhub.env,
 #     cloudflare.env} with mode 0600, owner hermes (the service user).
+#   - /etc/stock-autotrader is root:hermes 0710: hermes may traverse to its
+#     explicitly named 0600 env files but cannot list the directory contents.
 #   - Temporary sources are destroyed at the end (shred, fallback rm). The
 #     Hermes Vault copy is deliberately NOT touched here.
 #   - No service start in this script (operator starts it after verification);
@@ -30,7 +32,7 @@ CF_TMP="/home/hermes/.secrets/stock-autotrader/cloudflare-credentials.tmp"
 die() { echo "ERROR: $*" >&2; exit 1; }
 
 echo "==> Preparing ${CONF_DIR}"
-install -d -m 0700 -o root -g root "${CONF_DIR}"
+install -d -m 0710 -o root -g hermes "${CONF_DIR}"
 
 # ---------------------------------------------------------------------------
 # /etc/stock-autotrader/finnhub.env  (Finnhub API key only)
