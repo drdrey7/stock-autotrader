@@ -4,7 +4,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from fundamentals_ingestor.accounting import AccountingUnsupportedError, fetch_accounting_inputs
+from fundamentals_ingestor.accounting import (
+    AccountingUnsupportedError,
+    _anchored_ttm_value,
+    fetch_accounting_inputs,
+)
 from fundamentals_ingestor.config import Settings
 from fundamentals_ingestor.d1 import SNAPSHOT_COLUMNS
 from fundamentals_ingestor.edgar import FilingMetadata
@@ -33,18 +37,12 @@ class FakeStatement:
 
 
 class FakeFacts:
-    def __init__(self, ttm_values=None):
-        self.ttm_values = ttm_values or {}
-
     def to_dataframe(self):
         return FakeFrame([])
 
-    def get_ttm(self, concept):
-        return types.SimpleNamespace(value=self.ttm_values.get(concept))
-
 
 class AccountingFallbackTests(unittest.TestCase):
-    def test_empty_native_ttm_uses_duration_aware_facts_not_quarter_sums(self):
+    def test_empty_native_ttm_uses_anchored_facts_not_quarter_sums(self):
         ttm_values = {
             "us-gaap:Revenues": 340,
             "us-gaap:OperatingIncomeLoss": 70,
@@ -59,7 +57,10 @@ class AccountingFallbackTests(unittest.TestCase):
 
         class Company:
             def __init__(self, symbol):
-                self.facts = FakeFacts(ttm_values)
+                self.facts = FakeFacts()
+
+            def get_ttm(self, concept, as_of=None):
+                return types.SimpleNamespace(value=ttm_values.get(concept), as_of_date=as_of)
 
             def income_statement(self, period, periods=None):
                 if period == "ttm":
@@ -106,7 +107,21 @@ class AccountingFallbackTests(unittest.TestCase):
         self.assertEqual(result.shareholders_equity, 200)
         self.assertEqual(result.current_assets, 150)
         self.assertEqual(result.current_liabilities, 75)
+        self.assertEqual(result.accounting_as_of, "2026-06-30")
         self.assertTrue(result.periods_compatible)
+
+    def test_stale_ttm_fact_is_rejected_for_current_anchor(self):
+        class Company:
+            def get_ttm(self, concept, as_of=None):
+                return types.SimpleNamespace(value=170, as_of_date="2026-03-31")
+
+        self.assertIsNone(
+            _anchored_ttm_value(
+                Company(),
+                ("us-gaap:NetCashProvidedByUsedInOperatingActivities",),
+                "2026-06-30",
+            )
+        )
 
     def test_foreign_issuer_with_incomplete_native_ttm_is_unsupported(self):
         class Company:
