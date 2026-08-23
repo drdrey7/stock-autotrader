@@ -19,9 +19,13 @@ const migration0020 = readFileSync(
 const migrationSequence = `${migration0019}\n${migration0020}`;
 
 function tableDefinition(sql: string, table: string): string {
-  const match = sql.match(new RegExp(`CREATE TABLE \\`${table}\\` \\(([\\s\\S]*?)\\n\\);`));
-  expect(match, `missing CREATE TABLE for ${table}`).not.toBeNull();
-  return match?.[1] ?? "";
+  const marker = "CREATE TABLE `" + table + "` (";
+  const start = sql.indexOf(marker);
+  expect(start, `missing CREATE TABLE for ${table}`).toBeGreaterThanOrEqual(0);
+  const bodyStart = start + marker.length;
+  const end = sql.indexOf("\n);", bodyStart);
+  expect(end, `unterminated CREATE TABLE for ${table}`).toBeGreaterThan(bodyStart);
+  return sql.slice(bodyStart, end);
 }
 
 describe("Better Auth migration sequence", () => {
