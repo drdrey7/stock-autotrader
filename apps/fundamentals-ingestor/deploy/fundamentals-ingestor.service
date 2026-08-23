@@ -8,7 +8,7 @@ Wants=network-online.target
 Type=oneshot
 User=hermes
 Group=hermes
-WorkingDirectory=/home/hermes/projects/stock-autotrader/apps/fundamentals-ingestor
+WorkingDirectory=/opt/stock-autotrader/apps/fundamentals-ingestor
 Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=/etc/stock-autotrader/finnhub.env
 EnvironmentFile=/etc/stock-autotrader/cloudflare.env
