@@ -73,6 +73,10 @@ def _latest_series_value(payload: dict[str, Any], cadence: str, field: str) -> f
     return undated[-1] if undated else None
 
 
+def _first_not_none(*values: float | None) -> float | None:
+    return next((value for value in values if value is not None), None)
+
+
 def normalize_metric(payload: Any, checked_at: str | None = None) -> MarketData:
     if not isinstance(payload, dict):
         return MarketData(None, None, None, None, None, checked_at)
@@ -90,13 +94,13 @@ def normalize_metric(payload: Any, checked_at: str | None = None) -> MarketData:
 
     # Finnhub series ratios are decimal ratios (e.g. 0.25 = 25%). Store the
     # two percentage-labelled D1 fields in percentage points for the UI.
-    roic_ratio = (
-        _latest_series_value(payload, "quarterly", "roicTTM")
-        or _latest_series_value(payload, "annual", "roic")
+    roic_ratio = _first_not_none(
+        _latest_series_value(payload, "quarterly", "roicTTM"),
+        _latest_series_value(payload, "annual", "roic"),
     )
-    fcf_margin_ratio = (
-        _latest_series_value(payload, "quarterly", "fcfMargin")
-        or _latest_series_value(payload, "annual", "fcfMargin")
+    fcf_margin_ratio = _first_not_none(
+        _latest_series_value(payload, "quarterly", "fcfMargin"),
+        _latest_series_value(payload, "annual", "fcfMargin"),
     )
     debt_to_equity = _latest_series_value(payload, "quarterly", "totalDebtToEquity")
     if debt_to_equity is None:
@@ -158,6 +162,9 @@ class FinnhubClient:
     def fetch(self, symbol: str) -> MarketData:
         payload = self._get("stock/metric", symbol, {"metric": "all"})
         if not isinstance(payload, dict) or payload.get("error"):
+            raise FinnhubError("finnhub_invalid_metric_payload")
+        metric = payload.get("metric")
+        if not isinstance(metric, dict) or not metric or not {"marketCapitalization", "peTTM"}.intersection(metric):
             raise FinnhubError("finnhub_invalid_metric_payload")
         checked_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
         normalized = normalize_metric(payload, checked_at)
