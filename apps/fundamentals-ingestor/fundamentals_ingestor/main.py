@@ -61,13 +61,51 @@ def _market_from_snapshot(row: dict[str, object] | None) -> MarketData | None:
     )
 
 
+def _annual_rows_have_statement_coverage(rows: list[object]) -> bool:
+    """Require evidence from each required annual statement for every year.
+
+    Individual metrics remain nullable because they can be legitimately absent.
+    A whole statement group being NULL for one fiscal year, however, indicates
+    that EdgarTools returned a shorter/partial statement window. Reject that
+    window before any D1 upsert/pruning so existing history is preserved.
+    """
+    groups = (
+        (
+            "revenue",
+            "operating_income",
+            "pretax_income",
+            "income_tax",
+            "net_income",
+            "diluted_eps",
+        ),
+        (
+            "operating_cash_flow",
+            "capex",
+            "free_cash_flow",
+            "depreciation_amortization",
+        ),
+        (
+            "cash",
+            "total_debt",
+            "shareholders_equity",
+            "current_assets",
+            "current_liabilities",
+        ),
+    )
+    return all(
+        any(getattr(row, field, None) is not None for field in group)
+        for row in rows
+        for group in groups
+    )
+
+
 def _annual_window_is_safe(
     existing_years: set[int],
     rows: list[object],
     annual_periods_available: int | None = None,
 ) -> bool:
     """Reject a short/truncated provider window before D1 pruning."""
-    if not rows or len(rows) > 5:
+    if not rows or len(rows) > 5 or not _annual_rows_have_statement_coverage(rows):
         return False
     returned_years = {getattr(row, "fiscal_year", None) for row in rows}
     if not all(isinstance(year, int) for year in returned_years):
