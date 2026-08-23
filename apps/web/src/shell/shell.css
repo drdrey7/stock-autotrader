@@ -208,8 +208,29 @@
 .shell-sidebar-footer {
   display: flex;
   align-items: center;
+  gap: 8px;
   margin: 4px 13px 16px;
   padding: 4px 7px;
+}
+
+.shell-account-button {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--shell-line);
+  border-radius: 9px;
+  background: var(--shell-surface);
+  color: var(--shell-muted);
+  cursor: pointer;
+  transition: border-color 160ms ease, color 160ms ease, background 160ms ease;
+}
+
+.shell-account-button:hover {
+  border-color: var(--shell-primary);
+  color: var(--shell-primary);
+  background: var(--shell-primary-soft);
 }
 
 /* ---- Shared theme toggle ---- */

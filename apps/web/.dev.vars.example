@@ -2,3 +2,7 @@
 # committed). The permanent Worker PR preview has no secrets.
 # Copy to .dev.vars and set a value only when exercising the Worker locally.
 INGEST_SECRET=dev-secret-change-me
+
+# Better Auth — generate with: openssl rand -base64 32
+BETTER_AUTH_SECRET=replace-with-32-char-secret
+BETTER_AUTH_URL=http://localhost:8787
