@@ -310,7 +310,7 @@ class WatchdogTest(unittest.TestCase):
 
     def test_14_secret_not_in_stall_log(self) -> None:
         """FINNHUB_API_KEY must never appear in watchdog log events."""
-        settings = make_settings(finnhub_api_key="SUPER_SECRET_KEY_12345")
+        settings = make_settings(finnhub_api_key="test-key-placeholder")
         ing = Ingestor(settings, SYMBOLS, FakeD1(), clock=lambda: ET_10AM)
         ws_mock = MagicMock(spec=FinnhubWebSocketClient)
         ws_mock.is_connected = True
@@ -330,7 +330,7 @@ class WatchdogTest(unittest.TestCase):
                 mock_time.time.return_value = time.time()
                 ing._trigger_stall_reconnect(ws_mock, 10.0)
         for line in cm.output:
-            self.assertNotIn("SUPER_SECRET_KEY_12345", line)
+            self.assertNotIn("test-key-placeholder", line)
 
     def test_15_duplicate_accepted_regular_tick_refreshes_liveness(self) -> None:
         """P2 #3: A duplicate accepted regular tick refreshes watchdog liveness

@@ -39,6 +39,13 @@ function responseBody(): StockDetailApiResponse {
         upsidePct: 20,
       },
     },
+    fundamentals: {
+      marketCap: null,
+      peTtm: null,
+      roicPct: null,
+      fcfMarginPct: null,
+      debtToEquity: null,
+    },
     technical: {
       sma200w: 430,
       distanceToSma200wPct: 16.279,

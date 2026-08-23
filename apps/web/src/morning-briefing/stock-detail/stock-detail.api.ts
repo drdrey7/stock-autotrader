@@ -73,13 +73,7 @@ function toUiModel(api: StockDetailApiResponse): StockDetail {
         triggered: support.triggered,
       })),
     },
-    metrics: {
-      marketCap: null,
-      peTtm: null,
-      roicPct: null,
-      fcfMarginPct: null,
-      debtToEquity: null,
-    },
+    metrics: api.fundamentals,
     chart: {
       priceHistory: api.chart.priceHistory,
       intrinsicValueHistory: api.chart.intrinsicValueHistory,

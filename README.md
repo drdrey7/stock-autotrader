@@ -166,13 +166,14 @@ npx wrangler secret put SEC_USER_AGENT
 ```
 
 No key, token or contact secret belongs in Git. PR previews use one permanent
-`stock-autotrader-preview` Worker with no D1, KV, R2, Durable Object or secret
-bindings and no cron triggers. Its only service binding is
-`PRODUCTION_API → stock-autotrader-web`; the same-origin `/api/*` handler
-proxies only public GET/HEAD requests to that production Worker. Branch
-commits are uploaded as isolated Worker versions by Cloudflare Workers Builds.
-Isolated backend staging/D1 previews remain a future follow-up and are
-intentionally outside this issue.
+`stock-autotrader-preview` Worker with a dedicated non-production D1 for Stock
+Detail fundamentals, no KV, R2, Durable Object or secret bindings, and no cron
+triggers. Its only service binding is `PRODUCTION_API → stock-autotrader-web`;
+the same-origin `/api/*` handler proxies only unrelated public GET/HEAD
+requests to that production Worker. Stock Detail requests read the preview D1
+directly. Branch commits are uploaded as isolated Worker versions by
+Cloudflare Workers Builds. The preview D1 is not production storage and is not
+used by Earnings ingestion.
 
 The daily Finnhub request refreshes `today - 30 days → today + 60 days`, matching
 the useful Free-plan historical range while retaining older rows already in
