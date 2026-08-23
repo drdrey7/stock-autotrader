@@ -6,6 +6,7 @@ import { LazyPageErrorBoundary, PageLoadingFallback } from "./morning-briefing/s
 import { AppShell } from "./shell/AppShell";
 
 const StockDetailPage = lazy(() => import("./morning-briefing/stock-detail/StockDetailPage"));
+const InvestorHubPage = lazy(() => import("./account/InvestorHubPage"));
 
 const legacyRoutes = [
   "/signals",
@@ -35,6 +36,16 @@ export default function App() {
             <LazyPageErrorBoundary resetKey="stock-detail">
               <Suspense fallback={<PageLoadingFallback />}>
                 <StockDetailPage />
+              </Suspense>
+            </LazyPageErrorBoundary>
+          )}
+        />
+        <Route
+          path="/account"
+          element={(
+            <LazyPageErrorBoundary resetKey="investor-hub">
+              <Suspense fallback={<PageLoadingFallback />}>
+                <InvestorHubPage />
               </Suspense>
             </LazyPageErrorBoundary>
           )}

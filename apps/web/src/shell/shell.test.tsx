@@ -69,14 +69,22 @@ describe("desktop sidebar navigation", () => {
     expect(shellNavGroups[0]?.items.find((item) => item.label === "Heatmap")?.icon).toBe(Flame);
   });
 
-  it("renders every primary and secondary destination as a link", () => {
+  it("renders every desktop destination as a link", () => {
     renderShell();
     for (const group of shellNavGroups) {
-      for (const item of group.items) {
+      for (const item of group.items.filter((candidate) => !candidate.mobileOnly)) {
         expect(sidebarLink(item.label)).toHaveAttribute("href", item.to);
       }
     }
     expect(sidebarNav()).toBeInTheDocument();
+  });
+
+  it("exposes Investor Hub as the compact account destination", () => {
+    renderShell("/account");
+    const account = screen.getByRole("link", { name: "Investor Hub" });
+    expect(account).toHaveAttribute("href", "/account");
+    expect(account).toHaveAttribute("aria-current", "page");
+    expect(within(sidebarNav()).queryByRole("link", { name: "Investor Hub" })).not.toBeInTheDocument();
   });
 
   it("keeps X Pulse out of public navigation while the direct route stays internal", () => {
@@ -104,17 +112,23 @@ describe("desktop sidebar navigation", () => {
     expect(isNavItemActive(dashboard, "/dashboard")).toBe(true);
     expect(isNavItemActive(dashboard, "/x")).toBe(false);
     expect(findActiveNavItem("/x")).toBeUndefined();
+    expect(findActiveNavItem("/account")?.label).toBe("Investor Hub");
     expect(findActiveNavItem("/earnings")?.label).toBe("Earnings");
     expect(findActiveNavItem("/unknown")).toBeUndefined();
   });
 });
 
 describe("mobile navigation drawer", () => {
-  it("keeps Status in the drawer and does not render a bottom navigation", () => {
+  it("keeps Investor Hub before Status in the drawer and does not render a bottom navigation", () => {
     renderShell();
     expect(document.querySelector(".shell-bottom-nav")).toBeNull();
     fireEvent.click(hamburger());
-    expect(within(drawer()).getByRole("link", { name: "Status" })).toBeInTheDocument();
+    const drawerLinks = within(drawer()).getAllByRole("link");
+    const investorIndex = drawerLinks.findIndex((link) => link.textContent?.includes("Investor Hub"));
+    const statusIndex = drawerLinks.findIndex((link) => link.textContent?.includes("Status"));
+    expect(investorIndex).toBeGreaterThanOrEqual(0);
+    expect(statusIndex).toBeGreaterThan(investorIndex);
+    expect(within(drawer()).getByRole("link", { name: "Investor Hub" })).toHaveAttribute("href", "/account");
     expect(document.querySelector(".shell-topbar")).not.toHaveTextContent("Status");
   });
 

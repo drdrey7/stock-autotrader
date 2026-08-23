@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { useLocation } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { User } from "lucide-react";
 import { ThemeProvider, ThemeToggle } from "./theme";
 import { SidebarNavigation, ShellBrand } from "./SidebarNavigation";
@@ -82,6 +82,8 @@ export function AppShell({ children }: { children: ReactNode }) {
     }
   }, [menuOpen]);
 
+  const accountActive = location.pathname === "/account";
+
   return (
     <ThemeProvider>
       <div className="shell">
@@ -89,15 +91,15 @@ export function AppShell({ children }: { children: ReactNode }) {
           <ShellBrand />
           <SidebarNavigation />
           <div className="shell-sidebar-footer">
-            <button
-              type="button"
+            <Link
               className="shell-account-button"
-              aria-label="Account (coming soon)"
-              title="Account (coming soon)"
-              disabled
+              to="/account"
+              aria-label="Investor Hub"
+              aria-current={accountActive ? "page" : undefined}
+              title="Investor Hub"
             >
               <User size={16} aria-hidden="true" />
-            </button>
+            </Link>
             <ThemeToggle />
           </div>
         </div>

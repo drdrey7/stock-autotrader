@@ -1,6 +1,20 @@
 import { betterAuth } from "better-auth";
 import type { D1Database } from "@cloudflare/workers-types";
 
+function shouldUseSecureCookies(baseURL?: string): boolean {
+  if (!baseURL) return true;
+
+  try {
+    const url = new URL(baseURL);
+    const isLoopback = ["localhost", "127.0.0.1", "[::1]", "::1"].includes(url.hostname);
+    return !(url.protocol === "http:" && isLoopback);
+  } catch {
+    // A malformed runtime URL should never cause cookies to degrade to
+    // insecure transport. Better Auth can surface the configuration error.
+    return true;
+  }
+}
+
 /**
  * Build a Better Auth instance bound to a Cloudflare D1 database.
  *
@@ -16,8 +30,13 @@ export function createAuth(d1: D1Database, baseURL?: string, secret?: string) {
     baseURL,
     secret,
     trustedOrigins: baseURL ? [baseURL] : [],
+    emailAndPassword: {
+      enabled: true,
+    },
     advanced: {
-      useSecureCookies: true,
+      // Production stays fail-secure. Only loopback HTTP is allowed to drop
+      // the Secure cookie attribute so local `wrangler dev` can exercise auth.
+      useSecureCookies: shouldUseSecureCookies(baseURL),
     },
   });
 }
