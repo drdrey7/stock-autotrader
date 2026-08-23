@@ -1,6 +1,6 @@
 # AI analysis runner deployment
 
-The runner lives at `/opt/stock-autotrader/apps/ai-analysis-runner`, uses the root-owned virtual environment `/opt/stock-autotrader-ai-analysis`, and runs as the unprivileged `hermes` user. Persistent state is systemd-managed at `/var/lib/ai-analysis-runner` with mode `0700`.
+The runner lives at `/opt/stock-autotrader/apps/ai-analysis-runner`, uses the `hermes:hermes` virtual environment `/opt/stock-autotrader-ai-analysis`, and runs as the unprivileged `hermes` user. Persistent state is systemd-managed at `/var/lib/ai-analysis-runner` with mode `0700`.
 
 ## 1. Configure the HTTP pull consumer
 
@@ -33,6 +33,12 @@ Cloudflare's pull API base64-encodes `json` and `bytes` bodies and does not supp
 
 ## 2. Install secrets
 
+`/etc/stock-autotrader/` must be `root:hermes 0710` (hermes may traverse to its env files but cannot list the directory contents):
+
+```bash
+sudo install -d -o root -g hermes -m 0710 /etc/stock-autotrader
+```
+
 `/etc/stock-autotrader/cloudflare.env` must already contain a least-privilege D1 token plus account/database IDs:
 
 ```dotenv
@@ -41,13 +47,14 @@ CLOUDFLARE_ACCOUNT_ID=replace-with-account-id
 CLOUDFLARE_D1_DATABASE_ID=replace-with-database-id
 ```
 
-Copy `ai-analysis.env.example` to `/etc/stock-autotrader/ai-analysis.env` and fill its Queue/provider values. Use a separate least-privilege Queues token. The installer intentionally rejects group/world-readable files:
+Copy `ai-analysis.env.example` to `/etc/stock-autotrader/ai-analysis.env` and fill its Queue/provider values. Use a separate least-privilege Queues token. Both env files must be `hermes:hermes 0600` so the service user can read them (the systemd unit runs as `hermes`), and the installer intentionally rejects group/world-readable files and wrong ownership:
 
 ```bash
-sudo install -o root -g root -m 0600 \
+sudo install -o hermes -g hermes -m 0600 \
   apps/ai-analysis-runner/deploy/ai-analysis.env.example \
   /etc/stock-autotrader/ai-analysis.env
-sudo chmod 0600 /etc/stock-autotrader/cloudflare.env
+sudo chown hermes:hermes /etc/stock-autotrader/cloudflare.env
+sudo chmod 0600 /etc/stock-autotrader/cloudflare.env /etc/stock-autotrader/ai-analysis.env
 sudoedit /etc/stock-autotrader/ai-analysis.env
 ```
 
@@ -82,4 +89,3 @@ Start with one service instance. The D1 CAS permits multiple instances later, bu
 On SIGTERM the runner stops pulling new work, continues the in-flight graph, completes its terminal D1 CAS/ack when possible, then exits. The service allows 65 minutes for that drain. If killed, the Queue visibility lease eventually redelivers; after the D1 heartbeat is stale, the next execution reclaims it and uses any validated local normalized-result checkpoint before considering another model call.
 
 Do not manually change credits during recovery. A definitive `running -> failed` transition invokes the backend-owned D1 refund trigger. Manual reconciliation should inspect the analysis row, credit ledger, and Queue/DLQ together.
-

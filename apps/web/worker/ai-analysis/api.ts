@@ -292,6 +292,9 @@ async function handleCreateRun(
     });
 
     if (acquisition.run.analysisStatus === "dispatching") {
+      if (!env.AI_ANALYSIS_QUEUE) {
+        return privateJson({ error: "ai_analysis_dispatch_unavailable" }, 503);
+      }
       await dispatchAnalysis(env.DB, env.AI_ANALYSIS_QUEUE, acquisition.run.analysisId, now);
       const refreshed = await readRunForUser(env.DB, user.id, acquisition.run.runId);
       if (refreshed) acquisition.run = refreshed;
@@ -344,6 +347,9 @@ async function handleReadRun(
     // reclaimable here; the same logical analysisId may be physically sent
     // again, while the runner's canonical CAS prevents duplicate execution.
     if (run.analysisStatus === "dispatching") {
+      if (!env.AI_ANALYSIS_QUEUE) {
+        return privateJson({ error: "ai_analysis_dispatch_unavailable" }, 503);
+      }
       await dispatchAnalysis(env.DB, env.AI_ANALYSIS_QUEUE, run.analysisId, dependencies.now());
       run = await readRunForUser(env.DB, user.id, runId) ?? run;
     }

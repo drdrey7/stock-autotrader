@@ -1,11 +1,13 @@
 import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { CORE_UNIVERSE } from "@stock-autotrader/contracts";
 import { handleAiAnalysisApi } from "./api";
 
-const migrationPath = fileURLToPath(new URL("../../migrations/0028_ai_analysis.sql", import.meta.url));
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const migrationPath = resolve(__dirname, "../../migrations/0028_ai_analysis.sql");
 const migrationSql = readFileSync(migrationPath, "utf8");
 const ENGINE_VERSION = "v0.3.1+01477f9afb7a47b849ed4c9259d3a9a4738d9fda";
 const COMMIT = "01477f9afb7a47b849ed4c9259d3a9a4738d9fda";

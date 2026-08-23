@@ -8,6 +8,7 @@ VENV_DIR=${VENV_DIR:-/opt/stock-autotrader-ai-analysis}
 SERVICE=${SERVICE:-ai-analysis-runner.service}
 ENABLE_NOW=${ENABLE_NOW:-0}
 LOCK_FILE=${LOCK_FILE:-/run/lock/stock-autotrader-ai-analysis-install.lock}
+STATE_DIR=${STATE_DIR:-/var/lib/ai-analysis-runner}
 UNIT_SOURCE="$APP/deploy/ai-analysis-runner.service"
 UNIT_TARGET="$SYSTEMD_DIR/$SERVICE"
 
@@ -20,17 +21,23 @@ id hermes >/dev/null 2>&1 || { echo "ERROR: service user hermes does not exist" 
 [ -r "$APP/requirements-lock.txt" ] || { echo "ERROR: missing dependency lock" >&2; exit 1; }
 [ -r "$UNIT_SOURCE" ] || { echo "ERROR: missing systemd unit" >&2; exit 1; }
 
-install -d -o root -g root -m 0755 "$(dirname "$LOCK_FILE")" "$CONF_DIR" "$SYSTEMD_DIR"
+install -d -o root -g hermes -m 0710 "$CONF_DIR"
+install -d -o root -g root -m 0755 "$SYSTEMD_DIR"
+install -d -o hermes -g hermes -m 0700 "$STATE_DIR"
 exec 9>"$LOCK_FILE"
 flock -n 9 || { echo "ERROR: another runner installation is active" >&2; exit 1; }
 
 check_env_file() {
   local file=$1
   [ -r "$file" ] || { echo "ERROR: missing $file" >&2; exit 1; }
-  [ "$(stat -c %U "$file")" = root ] || { echo "ERROR: $file must be root-owned" >&2; exit 1; }
-  local mode
+  local owner group mode
+  owner=$(stat -c %U "$file")
+  group=$(stat -c %G "$file")
   mode=$(stat -c %a "$file")
-  (( (8#$mode & 077) == 0 )) || { echo "ERROR: $file must not be group/world accessible" >&2; exit 1; }
+  if [ "$owner" != "hermes" ] || [ "$group" != "hermes" ]; then
+    echo "ERROR: $file must be owned by hermes:hermes (got $owner:$group)" >&2; exit 1
+  fi
+  (( (8#$mode & 0077) == 0 )) || { echo "ERROR: $file must not be group/world accessible (got $mode)" >&2; exit 1; }
 }
 
 require_env_key() {
@@ -92,6 +99,7 @@ chmod 0755 "$new_venv"
 "$new_venv/bin/python" -m pip install --disable-pip-version-check --no-input --requirement "$APP/requirements-lock.txt" >/dev/null
 "$new_venv/bin/python" -m pip check
 "$new_venv/bin/python" -c 'from importlib.metadata import version; assert version("tradingagents") == "0.3.1"'
+chown -R hermes:hermes "$new_venv"
 
 [ "$was_active" -eq 1 ] && systemctl stop "$SERVICE"
 if [ -e "$VENV_DIR" ]; then

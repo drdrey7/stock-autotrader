@@ -1,6 +1,10 @@
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import worker from "../index";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 describe("AI Analysis routing and bindings", () => {
   it("routes protected POSTs before the Worker's global read-only method gate", async () => {
@@ -25,8 +29,8 @@ describe("AI Analysis routing and bindings", () => {
   });
 
   it("declares the producer only on the production Worker", () => {
-    const production = JSON.parse(readFileSync(new URL("../../wrangler.jsonc", import.meta.url), "utf8"));
-    const preview = JSON.parse(readFileSync(new URL("../../wrangler.preview.jsonc", import.meta.url), "utf8"));
+    const production = JSON.parse(readFileSync(resolve(__dirname, "../../wrangler.jsonc"), "utf8"));
+    const preview = JSON.parse(readFileSync(resolve(__dirname, "../../wrangler.preview.jsonc"), "utf8"));
     expect(production.queues.producers).toEqual([
       { binding: "AI_ANALYSIS_QUEUE", queue: "stock-autotrader-ai-analysis" },
     ]);

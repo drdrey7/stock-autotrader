@@ -42,7 +42,7 @@ import {
 export interface Env {
   DB: D1Database;
   ASSETS: Fetcher;
-  AI_ANALYSIS_QUEUE: Queue<string>;
+  AI_ANALYSIS_QUEUE?: Queue<string>;
   INGEST_SECRET?: string;
   ENVIRONMENT?: string;
   FINNHUB_API_KEY?: string;

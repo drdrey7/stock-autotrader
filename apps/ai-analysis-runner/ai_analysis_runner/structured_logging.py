@@ -1,4 +1,8 @@
-"""Minimal JSON logging with field allow-listing and secret redaction."""
+"""Minimal JSON logging with field allow-listing and secret redaction.
+
+Operational fields only. Prompts, raw model responses, report bodies,
+Queue lease IDs, auth headers, and API keys are NEVER logged.
+"""
 
 from __future__ import annotations
 
@@ -10,10 +14,24 @@ from typing import Any
 _LOGGER = logging.getLogger("ai_analysis_runner")
 _LOGGER.addHandler(logging.NullHandler())
 _LOGGER.propagate = False
-_SECRET_MARKERS = ("token", "secret", "password", "api_key", "authorization", "lease_id")
+
+_SECRET_MARKERS = frozenset({
+    "token", "secret", "password", "api_key", "authorization", "auth",
+    "lease_id", "prompt", "response", "raw_response", "model_response",
+    "report", "report_body", "result", "body", "content", "raw",
+})
+
+_NEVER_LOG_FIELDS = frozenset({
+    "prompt", "response", "raw_response", "model_response", "report",
+    "report_body", "result", "lease_id", "auth", "authorization",
+    "raw", "body", "content", "api_key", "token", "secret", "password",
+})
+
 _ALLOWED_FIELDS = frozenset({
-    "analysis_id", "attempt", "code", "delay_seconds", "elapsed_ms", "event",
-    "level", "message_id", "provider", "status", "symbol", "timestamp",
+    "analysis_id", "attempt", "code", "delay_seconds", "elapsed_ms",
+    "event", "level", "message_id", "provider", "status", "symbol",
+    "timestamp", "error_type", "error_code", "queue_depth",
+    "heartbeat_age_seconds", "stale", "reused", "checkpoint",
 })
 
 
@@ -32,7 +50,10 @@ def configure_logging() -> None:
 
 
 def _safe_value(key: str, value: Any) -> str | int | float | bool | None:
-    if any(marker in key.lower() for marker in _SECRET_MARKERS):
+    key_lower = key.lower()
+    if key_lower in _NEVER_LOG_FIELDS:
+        return "<forbidden>"
+    if any(marker in key_lower for marker in _SECRET_MARKERS):
         return "<redacted>"
     if value is None or isinstance(value, (int, float, bool)):
         return value
@@ -47,6 +68,8 @@ def log_event(event: str, *, level: int = logging.INFO, **fields: Any) -> None:
         "event": event[:96],
     }
     for key, value in fields.items():
+        if key in _NEVER_LOG_FIELDS:
+            continue
         if key in _ALLOWED_FIELDS and key not in {"event", "level", "timestamp"}:
             payload[key] = _safe_value(key, value)
     _LOGGER.log(level, payload)
