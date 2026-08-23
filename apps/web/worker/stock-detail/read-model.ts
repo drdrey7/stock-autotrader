@@ -15,14 +15,17 @@ import { nyDateKeyOf, quoteState, quotesMarketState } from "../quotes/freshness"
 import type { Env } from "../index";
 import {
   readStockDetailStorageSnapshot,
+  STOCK_DETAIL_HISTORY_LIMIT,
   STOCK_DETAIL_VISIBLE_WEEKS,
   type StockDetailSplitEventRow,
+  type StockDetailStorageSnapshot,
   type WeeklyPriceRow,
 } from "./storage";
 
 const SMA_WINDOW_WEEKS = 200;
 const CLOSE_CROSSCHECK_RELATIVE_TOLERANCE = 1e-6;
 const CLOSE_CROSSCHECK_ABSOLUTE_TOLERANCE = 1e-8;
+export const FUNDAMENTALS_MARKET_STALE_AFTER_SECONDS = 3 * 24 * 60 * 60;
 
 interface AdjustedClosePoint {
   time: string;
@@ -153,6 +156,86 @@ function approximatelyEqual(left: number, right: number): boolean {
   return Math.abs(left - right) <= tolerance;
 }
 
+function marketFundamentalsAreFresh(
+  fundamentals: StockDetailStorageSnapshot["fundamentals"],
+  now: Date,
+): boolean {
+  if (!fundamentals) return false;
+  const updatedMs = Date.parse(fundamentals.updated_at);
+  const marketAsOfMs = Date.parse(fundamentals.market_checked_at ?? fundamentals.market_as_of ?? "");
+  if (!Number.isFinite(updatedMs) || !Number.isFinite(marketAsOfMs)) return false;
+  const oldestTimestamp = Math.min(marketAsOfMs, updatedMs);
+  const ageSeconds = (now.getTime() - oldestTimestamp) / 1000;
+  return ageSeconds >= 0 && ageSeconds <= FUNDAMENTALS_MARKET_STALE_AFTER_SECONDS;
+}
+
+export interface AccountingCardMetrics {
+  roicPct: number | null;
+  fcfMarginPct: number | null;
+  debtToEquity: number | null;
+}
+
+function finite(value: number | null | undefined): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function nonNegative(value: number | null | undefined): value is number {
+  return finite(value) && value >= 0;
+}
+
+/** Calculate presentation-only accounting cards from persisted provider inputs. */
+export function calculateAccountingCardMetrics(
+  fundamentals: StockDetailStorageSnapshot["fundamentals"],
+): AccountingCardMetrics {
+  const metrics: AccountingCardMetrics = {
+    roicPct: null,
+    fcfMarginPct: null,
+    debtToEquity: null,
+  };
+  if (!fundamentals) return metrics;
+
+  if (
+    finite(fundamentals.operating_cash_flow_ttm)
+    && finite(fundamentals.capex_ttm)
+    && finite(fundamentals.revenue_ttm)
+    && fundamentals.revenue_ttm > 0
+  ) {
+    const freeCashFlow = fundamentals.operating_cash_flow_ttm - fundamentals.capex_ttm;
+    const fcfMargin = freeCashFlow / fundamentals.revenue_ttm;
+    if (Number.isFinite(fcfMargin)) metrics.fcfMarginPct = fcfMargin * 100;
+  }
+
+  if (nonNegative(fundamentals.total_debt) && finite(fundamentals.shareholders_equity) && fundamentals.shareholders_equity > 0) {
+    const debtToEquity = fundamentals.total_debt / fundamentals.shareholders_equity;
+    if (Number.isFinite(debtToEquity)) metrics.debtToEquity = debtToEquity;
+  }
+
+  if (
+    finite(fundamentals.operating_income_ttm)
+    && finite(fundamentals.income_tax_ttm)
+    && finite(fundamentals.pretax_income_ttm)
+    && fundamentals.pretax_income_ttm > 0
+    && nonNegative(fundamentals.total_debt)
+    && nonNegative(fundamentals.shareholders_equity)
+    && nonNegative(fundamentals.cash)
+    && nonNegative(fundamentals.short_term_investments)
+    && fundamentals.accounting_periods_compatible === 1
+  ) {
+    const effectiveTaxRate = fundamentals.income_tax_ttm / fundamentals.pretax_income_ttm;
+    const nopat = fundamentals.operating_income_ttm * (1 - effectiveTaxRate);
+    const investedCapital = fundamentals.total_debt
+      + fundamentals.shareholders_equity
+      - fundamentals.cash
+      - fundamentals.short_term_investments;
+    if (Number.isFinite(nopat) && Number.isFinite(investedCapital) && investedCapital > 0) {
+      const roic = nopat / investedCapital;
+      if (Number.isFinite(roic)) metrics.roicPct = roic * 100;
+    }
+  }
+
+  return metrics;
+}
+
 function expectedSplitFactorForWeek(
   weekEndDate: string,
   effectiveSplits: readonly StockDetailSplitEventRow[],
@@ -268,7 +351,7 @@ export function servedSplitScaleState(
 
 /**
  * One-stock serving read model. Every external/provider action happens before
- * this request path. D1 serving uses one batch snapshot so the seven
+ * this request path. D1 serving uses one batch snapshot so the eight
  * symbol-scoped reads do not exceed Cloudflare's simultaneous-connection cap.
  */
 export async function readStockDetailApi(
@@ -287,7 +370,21 @@ export async function readStockDetailApi(
     intrinsicValue: intrinsicRaw,
     weeklyRows,
     splitEvents,
-  } = await readStockDetailStorageSnapshot(env.DB, symbol);
+    fundamentals,
+  } = env.ENVIRONMENT === "preview"
+    ? await readStockDetailStorageSnapshot(env.DB, symbol, STOCK_DETAIL_HISTORY_LIMIT, "preview")
+    : await readStockDetailStorageSnapshot(env.DB, symbol);
+
+  const marketFundamentalsFresh = marketFundamentalsAreFresh(fundamentals, now);
+  const accountingCardMetrics = calculateAccountingCardMetrics(fundamentals);
+  const marketCap = marketFundamentalsFresh ? fundamentals?.market_cap ?? null : null;
+  const formattedMarketCap = marketCap === null
+    ? null
+    : marketCap >= 1_000_000_000_000
+      ? `$${(marketCap / 1_000_000_000_000).toFixed(2)}T`
+      : marketCap >= 1_000_000_000
+        ? `$${(marketCap / 1_000_000_000).toFixed(1)}B`
+        : `$${(marketCap / 1_000_000).toFixed(0)}M`;
 
   const validSplitEvents = splitEvents.filter((event) => isoWeekOfDateKey(event.effective_date) !== null);
   const effectiveSplitEvents = validSplitEvents.filter((event) => event.effective_date <= currentMarketDate);
@@ -384,6 +481,13 @@ export async function readStockDetailApi(
       scaleState,
     },
     valuation: { intrinsicValue },
+    fundamentals: {
+      marketCap: formattedMarketCap,
+      peTtm: marketFundamentalsFresh ? fundamentals?.pe_ttm ?? null : null,
+      roicPct: accountingCardMetrics.roicPct,
+      fcfMarginPct: accountingCardMetrics.fcfMarginPct,
+      debtToEquity: accountingCardMetrics.debtToEquity,
+    },
     technical: {
       sma200w: liveSma.sma200w,
       distanceToSma200wPct: liveSma.distanceToSma200wPct,

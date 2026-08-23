@@ -73,6 +73,13 @@ export const stockDetailApiResponseSchema = z.object({
   valuation: z.object({
     intrinsicValue: stockDetailIntrinsicValueSchema.nullable(),
   }),
+  fundamentals: z.object({
+    marketCap: z.string().trim().min(1).nullable(),
+    peTtm: z.number().finite().nullable(),
+    roicPct: z.number().finite().nullable(),
+    fcfMarginPct: z.number().finite().nullable(),
+    debtToEquity: z.number().finite().nullable(),
+  }),
   technical: z.object({
     sma200w: nullablePositiveNumber,
     distanceToSma200wPct: z.number().finite().nullable(),

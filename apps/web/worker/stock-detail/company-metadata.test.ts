@@ -32,6 +32,7 @@ describe("Stock Detail persisted company metadata", () => {
       metric: null,
       supports: undefined,
       intrinsicValue: undefined,
+      fundamentals: null,
       weeklyRows: [],
       splitEvents: [],
     });

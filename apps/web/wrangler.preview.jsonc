@@ -8,6 +8,14 @@
   "vars": {
     "ENVIRONMENT": "preview"
   },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "stock-autotrader-preview-db",
+      "database_id": "9026c34e-15e2-4a55-b7df-2897d8fccd08",
+      "migrations_dir": "migrations"
+    }
+  ],
   "services": [
     {
       "binding": "PRODUCTION_API",

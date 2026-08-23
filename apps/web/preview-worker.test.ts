@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from "vitest";
-import type { StockDetailApiResponse } from "@stock-autotrader/contracts";
 import { handlePreviewRequest, type PreviewEnv } from "./preview-worker";
 
 type ProductionApiStub = { fetch: ReturnType<typeof vi.fn> };
@@ -12,6 +11,7 @@ const previewEnv = (
     ENVIRONMENT: "preview",
     ASSETS: { fetch: vi.fn(async () => assetResponse) } as unknown as Fetcher,
     PRODUCTION_API: productionApi as unknown as Fetcher,
+    DB: undefined as unknown as D1Database,
   },
   productionApi,
 });
@@ -26,7 +26,7 @@ describe("preview Worker", () => {
     expect(env.ASSETS.fetch).toHaveBeenCalledOnce();
   });
 
-  it("serves an isolated typed Stock Detail fixture without calling production", async () => {
+  it("fails closed when the preview D1 binding is unavailable", async () => {
     const productionApi = { fetch: vi.fn(async () => new Response("must not run")) };
     const { env } = previewEnv(new Response("branch asset"), productionApi);
 
@@ -35,58 +35,10 @@ describe("preview Worker", () => {
       env,
     );
 
-    expect(response.status).toBe(200);
-    expect(response.headers.get("x-stock-detail-preview-fixture")).toBe("1");
-    const body = await response.json() as StockDetailApiResponse;
-    expect(body.symbol).toBe("MSFT");
-    expect(body.company.name).toBe("Microsoft Corporation");
-    expect(body.quote.price).toBe(500);
-    expect(body.quote.scaleState).toBe("safe");
-    expect(body.chart.priceHistory).toHaveLength(260);
-    expect(body.chart.intrinsicValueHistory).toEqual([]);
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: "stock_detail_store_unavailable" });
     expect(productionApi.fetch).not.toHaveBeenCalled();
     expect(env.ASSETS.fetch).not.toHaveBeenCalled();
-  });
-
-  it("keeps all four NVDA supports and IV visible in the visual fixture", async () => {
-    const { env, productionApi } = previewEnv();
-    const response = await handlePreviewRequest(
-      new Request("https://preview.example/api/stocks/NVDA/detail"),
-      env,
-    );
-    const body = await response.json() as StockDetailApiResponse;
-
-    expect(response.status).toBe(200);
-    expect(body.valuation.intrinsicValue?.base).toBe(212.04);
-    expect(body.technical.supports.map((support) => support.price)).toEqual([204.99, 187.16, 169.34, 151.51]);
-    expect(body.technical.supports.map((support) => support.level)).toEqual([1, 2, 3, 4]);
-    expect(productionApi.fetch).not.toHaveBeenCalled();
-  });
-
-  it("represents CRCL insufficient history honestly in the visual fixture", async () => {
-    const { env, productionApi } = previewEnv();
-    const response = await handlePreviewRequest(
-      new Request("https://preview.example/api/stocks/CRCL/detail"),
-      env,
-    );
-    const body = await response.json() as StockDetailApiResponse;
-    expect(response.status).toBe(200);
-    expect(body.valuation.intrinsicValue).toBeNull();
-    expect(body.technical.sma200w).toBeNull();
-    expect(body.technical.sma200wHistory).toEqual([]);
-    expect(body.chart.priceHistory).toHaveLength(60);
-    expect(productionApi.fetch).not.toHaveBeenCalled();
-  });
-
-  it("does not turn an un-fixtured Core symbol into a false not-found", async () => {
-    const { env, productionApi } = previewEnv();
-    const response = await handlePreviewRequest(
-      new Request("https://preview.example/api/stocks/AAPL/detail"),
-      env,
-    );
-    expect(response.status).toBe(503);
-    expect(await response.json()).toEqual({ error: "preview_stock_detail_fixture_unavailable" });
-    expect(productionApi.fetch).not.toHaveBeenCalled();
   });
 
   it("returns the real not-found contract for invalid Stock Detail symbols", async () => {
