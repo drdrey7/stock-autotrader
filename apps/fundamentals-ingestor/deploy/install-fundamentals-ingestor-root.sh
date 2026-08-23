@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP=${APP:-/home/hermes/projects/stock-autotrader/apps/fundamentals-ingestor}
+APP=${APP:-/opt/stock-autotrader/apps/fundamentals-ingestor}
 SYSTEMD_DIR=${SYSTEMD_DIR:-/etc/systemd/system}
 CONF_DIR=${CONF_DIR:-/etc/stock-autotrader}
 VENV_DIR=${VENV_DIR:-/opt/stock-autotrader-fundamentals}
