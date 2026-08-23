@@ -93,7 +93,8 @@ export function AppShell({ children }: { children: ReactNode }) {
               type="button"
               className="shell-account-button"
               aria-label="Account (coming soon)"
-              title="Account"
+              title="Account (coming soon)"
+              disabled
             >
               <User size={16} aria-hidden="true" />
             </button>

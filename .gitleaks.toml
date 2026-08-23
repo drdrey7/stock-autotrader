@@ -12,4 +12,4 @@ useDefault = true
 # any other secret in any file (including .dev.vars.example) is still caught.
 [allowlist]
 description = "Known false-positive placeholder in local-only .dev.vars.example"
-regexes = ['''replace-with-32-char-secret''']
+regexes = ['''^replace-with-32-char-secret$''']
