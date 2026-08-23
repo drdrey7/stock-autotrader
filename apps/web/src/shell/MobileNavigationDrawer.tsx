@@ -69,7 +69,7 @@ export const MobileNavigationDrawer = forwardRef<HTMLButtonElement, MobileNaviga
               <X size={20} aria-hidden="true" />
             </button>
           </div>
-          <SidebarNavigation onNavigate={onClose} />
+          <SidebarNavigation onNavigate={onClose} variant="mobile" />
         </div>
       </div>
     );

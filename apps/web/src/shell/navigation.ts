@@ -1,10 +1,18 @@
-import { Activity, CalendarClock, Flame, LayoutDashboard, ListFilter, type LucideIcon } from "lucide-react";
+import {
+  Activity,
+  CalendarClock,
+  CircleUserRound,
+  Flame,
+  LayoutDashboard,
+  ListFilter,
+  type LucideIcon,
+} from "lucide-react";
 
 /**
  * Single source of truth for the application shell navigation.
  *
  * Both the desktop sidebar and the mobile drawer render from this list so the
- * route set cannot drift between the two. The route paths below are the public
+ * route set cannot drift between them. The route paths below are the public
  * destinations intentionally exposed in the shell. Internal/direct routes may
  * exist without being listed here.
  */
@@ -14,6 +22,8 @@ export interface ShellNavItem {
   /** Target route. */
   to: string;
   icon: LucideIcon;
+  /** Render the full navigation row only in the mobile drawer. */
+  mobileOnly?: boolean;
   /**
    * Pathname(s) considered active for this item. `Dashboard` deliberately
    * includes `/` because the home route and `/dashboard` render the same
@@ -39,7 +49,10 @@ export const shellNavGroups: ShellNavGroup[] = [
   },
   {
     label: "Information",
-    items: [{ label: "Status", to: "/status", icon: Activity, paths: ["/status"] }],
+    items: [
+      { label: "Investor Hub", to: "/account", icon: CircleUserRound, mobileOnly: true, paths: ["/account"] },
+      { label: "Status", to: "/status", icon: Activity, paths: ["/status"] },
+    ],
   },
 ];
 
