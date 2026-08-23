@@ -9,6 +9,8 @@ class FinnhubCardNormalizationTests(unittest.TestCase):
             "metric": {
                 "marketCapitalization": 3000,
                 "peTTM": 30,
+                # This similarly named metric is intentionally ignored because
+                # its units are ambiguous; the explicit series below is used.
                 "totalDebt/totalEquityQuarterly": 9.9,
             },
             "series": {
@@ -45,7 +47,7 @@ class FinnhubCardNormalizationTests(unittest.TestCase):
         self.assertEqual(value.debt_to_equity, 0.2)
         self.assertEqual(value.fcf_per_share_ttm, 14.25)
 
-    def test_annual_ratio_fallback_and_metric_debt_fallback(self):
+    def test_annual_ratio_fallback_does_not_use_ambiguous_debt_metric(self):
         payload = {
             "metric": {
                 "marketCapitalization": 100,
@@ -63,7 +65,7 @@ class FinnhubCardNormalizationTests(unittest.TestCase):
         value = normalize_metric(payload)
         self.assertEqual(value.roic_pct, 10.0)
         self.assertEqual(value.fcf_margin_pct, -5.0)
-        self.assertEqual(value.debt_to_equity, 0.75)
+        self.assertIsNone(value.debt_to_equity)
         self.assertIsNone(value.fcf_per_share_ttm)
 
     def test_zero_quarterly_ratio_is_not_replaced_by_annual_fallback(self):
