@@ -22,7 +22,7 @@ class MarketD1Client(D1Client):
             market.debt_to_equity,
             market.fcf_per_share_ttm,
             market.checked_at,
-            "finnhub",
+            "finnhub-basic-financials",
             "none",
             updated_at,
         ]
