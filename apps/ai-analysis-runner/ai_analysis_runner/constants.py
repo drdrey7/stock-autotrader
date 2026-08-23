@@ -1,0 +1,9 @@
+"""Immutable protocol and engine identifiers."""
+
+ENGINE_NAME = "TradingAgents"
+ENGINE_VERSION = "0.3.1"
+ENGINE_COMMIT = "01477f9afb7a47b849ed4c9259d3a9a4738d9fda"
+ENGINE_DB_VERSION = f"v{ENGINE_VERSION}+{ENGINE_COMMIT}"
+RESULT_SCHEMA_VERSION = 1
+JOB_SCHEMA_VERSION = 1
+

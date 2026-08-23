@@ -1,5 +1,6 @@
 import {
   Activity,
+  BrainCircuit,
   CalendarClock,
   CircleUserRound,
   Flame,
@@ -24,6 +25,8 @@ export interface ShellNavItem {
   icon: LucideIcon;
   /** Render the full navigation row only in the mobile drawer. */
   mobileOnly?: boolean;
+  /** Also mark nested pages below one of `paths` active. */
+  matchDescendants?: boolean;
   /**
    * Pathname(s) considered active for this item. `Dashboard` deliberately
    * includes `/` because the home route and `/dashboard` render the same
@@ -45,6 +48,7 @@ export const shellNavGroups: ShellNavGroup[] = [
       { label: "Heatmap", to: "/heatmap", icon: Flame, paths: ["/heatmap"] },
       { label: "Screener", to: "/screener", icon: ListFilter, paths: ["/screener"] },
       { label: "Earnings", to: "/earnings", icon: CalendarClock, paths: ["/earnings"] },
+      { label: "AI Analysis", to: "/ai-analysis", icon: BrainCircuit, paths: ["/ai-analysis"], matchDescendants: true },
     ],
   },
   {
@@ -57,7 +61,8 @@ export const shellNavGroups: ShellNavGroup[] = [
 ];
 
 export function isNavItemActive(item: ShellNavItem, pathname: string): boolean {
-  return item.paths.includes(pathname);
+  return item.paths.some((path) => pathname === path
+    || (item.matchDescendants === true && pathname.startsWith(`${path}/`)));
 }
 
 export function findActiveNavItem(pathname: string): ShellNavItem | undefined {

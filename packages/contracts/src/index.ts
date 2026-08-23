@@ -274,6 +274,7 @@ export * from "./source-health";
 export * from "./quotes";
 export * from "./stock-detail";
 export * from "./dashboard";
+export * from "./ai-analysis";
 
 export interface DashboardData {
   demo: boolean;

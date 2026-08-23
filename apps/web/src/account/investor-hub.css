@@ -6,7 +6,7 @@
 }
 
 .investor-hub-shell {
-  width: min(100%, 760px);
+  width: min(100%, 920px);
   margin: 0 auto;
 }
 
@@ -247,6 +247,260 @@
   padding: 24px;
 }
 
+.investor-hub-primary-link {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 42px;
+  box-sizing: border-box;
+  padding: 0 15px;
+  border: 1px solid var(--brand-blue);
+  border-radius: 10px;
+  background: var(--brand-blue);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.investor-hub-primary-link:hover {
+  transform: translateY(-1px);
+}
+
+.investor-hub-primary-link:focus-visible,
+.investor-hub-text-button:focus-visible,
+.investor-ai-history-list a:focus-visible {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 3px;
+}
+
+.investor-ai {
+  margin-top: 28px;
+}
+
+.investor-ai-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 18px;
+}
+
+.investor-ai-heading h2 {
+  margin: 0;
+  color: var(--text);
+  font-family: Manrope, "DM Sans", sans-serif;
+  font-size: clamp(22px, 3vw, 28px);
+  letter-spacing: -0.025em;
+}
+
+.investor-ai-heading p:not(.investor-hub-kicker) {
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.investor-ai-credit-card {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 18px;
+  border: 1px solid color-mix(in srgb, var(--warning) 28%, var(--border));
+  border-radius: 14px;
+  background: linear-gradient(100deg, var(--warning-soft), var(--surface));
+}
+
+.investor-ai-credit-icon {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: var(--surface-elevated);
+  color: var(--warning);
+}
+
+.investor-ai-credit-card > div {
+  display: grid;
+  gap: 2px;
+}
+
+.investor-ai-credit-card span,
+.investor-ai-credit-card p {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.investor-ai-credit-card strong {
+  color: var(--text);
+  font-size: 20px;
+}
+
+.investor-ai-credit-card p {
+  margin: 0;
+  text-align: right;
+}
+
+.investor-hub-text-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--brand-blue);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.investor-ai-history-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 28px 0 11px;
+}
+
+.investor-ai-history-heading h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 15px;
+}
+
+.investor-ai-history-heading span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.investor-ai-history-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.investor-ai-history-list li {
+  min-width: 0;
+}
+
+.investor-ai-history-list a {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(150px, 0.8fr) auto auto;
+  align-items: center;
+  gap: 16px;
+  min-height: 62px;
+  box-sizing: border-box;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: inherit;
+  text-decoration: none;
+  transition: border-color 140ms ease, transform 140ms ease, box-shadow 140ms ease;
+}
+
+.investor-ai-history-list a:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--brand-blue) 36%, var(--border));
+  box-shadow: var(--shadow-card);
+}
+
+.investor-ai-history-symbol {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.investor-ai-history-symbol strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.investor-ai-history-symbol span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.investor-ai-history-list time {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.investor-ai-recommendation {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 9px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+}
+
+.investor-ai-recommendation.is-positive {
+  background: var(--positive-soft);
+  color: var(--positive);
+}
+
+.investor-ai-recommendation.is-negative {
+  background: var(--negative-soft);
+  color: var(--negative);
+}
+
+.investor-ai-recommendation.is-neutral {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.investor-ai-history-arrow {
+  color: var(--muted);
+}
+
+.investor-ai-history-state {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  min-height: 72px;
+  box-sizing: border-box;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.investor-ai-history-state p,
+.investor-ai-history-state h3 {
+  margin: 0;
+}
+
+.investor-ai-history-state h3 {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.investor-ai-empty p {
+  margin-top: 3px;
+  font-size: 12px;
+}
+
+.investor-ai-load-more {
+  margin-top: 12px;
+}
+
 @media (max-width: 620px) {
   .investor-hub-page {
     padding: 28px 16px 56px;
@@ -262,12 +516,52 @@
     grid-column: 1 / -1;
     width: 100%;
   }
+
+  .investor-ai-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .investor-hub-primary-link {
+    width: 100%;
+  }
+
+  .investor-ai-credit-card {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .investor-ai-credit-card p,
+  .investor-ai-credit-card .investor-hub-text-button {
+    grid-column: 1 / -1;
+    text-align: left;
+  }
+
+  .investor-ai-history-list a {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 7px 10px;
+  }
+
+  .investor-ai-history-list time {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .investor-ai-recommendation {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .investor-ai-history-arrow {
+    display: none;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .investor-hub-primary-button,
   .investor-hub-secondary-button,
-  .investor-hub-form input {
+  .investor-hub-form input,
+  .investor-hub-primary-link,
+  .investor-ai-history-list a {
     transition: none;
   }
 }

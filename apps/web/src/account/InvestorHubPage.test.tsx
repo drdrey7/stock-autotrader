@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const authMocks = vi.hoisted(() => ({
@@ -18,7 +19,15 @@ vi.mock("../lib/auth-client", () => ({
   },
 }));
 
+vi.mock("./AiAnalysisAccount", () => ({
+  AiAnalysisAccount: () => <section aria-label="AI analysis account test section" />,
+}));
+
 import InvestorHubPage from "./InvestorHubPage";
+
+function renderHub() {
+  return render(<MemoryRouter><InvestorHubPage /></MemoryRouter>);
+}
 
 beforeEach(() => {
   authMocks.refetch.mockResolvedValue(undefined);
@@ -40,7 +49,7 @@ afterEach(() => {
 
 describe("Investor Hub", () => {
   it("signs in with email/password and refreshes the session", async () => {
-    render(<InvestorHubPage />);
+    renderHub();
     const form = screen.getByRole("form", { name: "Sign in form" });
 
     fireEvent.change(within(form).getByLabelText("Email"), { target: { value: "person@example.com" } });
@@ -58,7 +67,7 @@ describe("Investor Hub", () => {
   });
 
   it("creates an account with name, email and password", async () => {
-    render(<InvestorHubPage />);
+    renderHub();
 
     fireEvent.click(screen.getByRole("button", { name: "Create account" }));
     const form = screen.getByRole("form", { name: "Create account form" });
@@ -88,7 +97,7 @@ describe("Investor Hub", () => {
       refetch: authMocks.refetch,
     });
 
-    render(<InvestorHubPage />);
+    renderHub();
 
     expect(screen.getByRole("heading", { name: "Test User" })).toBeInTheDocument();
     expect(screen.getByText("test@example.com")).toBeInTheDocument();
@@ -116,7 +125,7 @@ describe("Investor Hub", () => {
     };
 
     authMocks.useSession.mockReturnValue(signedOutSession);
-    const { rerender } = render(<InvestorHubPage />);
+    const { rerender } = render(<MemoryRouter><InvestorHubPage /></MemoryRouter>);
     fireEvent.click(screen.getByRole("button", { name: "Create account" }));
     const signUpForm = screen.getByRole("form", { name: "Create account form" });
     fireEvent.change(within(signUpForm).getByLabelText("Name"), { target: { value: "Test User" } });
@@ -124,7 +133,7 @@ describe("Investor Hub", () => {
     fireEvent.change(within(signUpForm).getByLabelText(/^Password/), { target: { value: "password123" } });
 
     authMocks.useSession.mockReturnValue(authenticatedSession);
-    rerender(<InvestorHubPage />);
+    rerender(<MemoryRouter><InvestorHubPage /></MemoryRouter>);
     authMocks.signOut.mockImplementationOnce(async () => {
       authMocks.useSession.mockReturnValue(signedOutSession);
       return { data: {}, error: null };
@@ -140,7 +149,7 @@ describe("Investor Hub", () => {
 
   it("surfaces Better Auth errors without exposing internals", async () => {
     authMocks.signInEmail.mockResolvedValue({ data: null, error: { message: "Invalid email or password" } });
-    render(<InvestorHubPage />);
+    renderHub();
     const form = screen.getByRole("form", { name: "Sign in form" });
 
     fireEvent.change(within(form).getByLabelText("Email"), { target: { value: "person@example.com" } });
@@ -149,5 +158,25 @@ describe("Investor Hub", () => {
 
     expect(await within(form).findByRole("alert")).toHaveTextContent("Invalid email or password");
     expect(authMocks.refetch).not.toHaveBeenCalled();
+  });
+
+  it("returns a signed-in user to their selected AI Analysis stock", async () => {
+    function LocationView() {
+      return <output aria-label="Current route">{useLocation().pathname}{useLocation().search}</output>;
+    }
+
+    render(
+      <MemoryRouter initialEntries={[{ pathname: "/account", state: { returnTo: "/ai-analysis?symbol=NVDA" } }]}>
+        <Routes>
+          <Route path="*" element={<><InvestorHubPage /><LocationView /></>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    const form = screen.getByRole("form", { name: "Sign in form" });
+    fireEvent.change(within(form).getByLabelText("Email"), { target: { value: "person@example.com" } });
+    fireEvent.change(within(form).getByLabelText("Password"), { target: { value: "password123" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Sign in" }));
+
+    await waitFor(() => expect(screen.getByLabelText("Current route")).toHaveTextContent("/ai-analysis?symbol=NVDA"));
   });
 });

@@ -42,6 +42,7 @@ import {
 export interface Env {
   DB: D1Database;
   ASSETS: Fetcher;
+  AI_ANALYSIS_QUEUE: Queue<string>;
   INGEST_SECRET?: string;
   ENVIRONMENT?: string;
   FINNHUB_API_KEY?: string;
@@ -214,6 +215,14 @@ export default {
     if (pathname.startsWith("/api/auth/")) {
       const { handleAuth } = await import("./auth/handler");
       return handleAuth(request, env);
+    }
+
+    // AI Analysis includes an authenticated POST producer, so it must be
+    // routed before the Worker's public read-only method gate. The handler
+    // applies its own method, session, origin, and content-type policy.
+    if (pathname.startsWith("/api/ai-analysis/")) {
+      const { handleAiAnalysisApi } = await import("./ai-analysis/api");
+      return handleAiAnalysisApi(request, env);
     }
 
     // Protected publication endpoint (PR #3) — accepts POST before the GET-only gate.

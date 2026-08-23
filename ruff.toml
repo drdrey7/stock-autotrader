@@ -2,7 +2,7 @@
 # apps/quote-ingestor/). Mirrors the strict-but-focused posture of apps/web's
 # ESLint config: catch real bugs (unused imports/vars, undefined names)
 # without forcing a repo-wide reformat.
-include = ["bot/**/*.py", "apps/publisher/**/*.py", "apps/quote-ingestor/**/*.py", "apps/history-ingestor/**/*.py", "apps/fundamentals-ingestor/**/*.py"]
+include = ["bot/**/*.py", "apps/publisher/**/*.py", "apps/quote-ingestor/**/*.py", "apps/history-ingestor/**/*.py", "apps/fundamentals-ingestor/**/*.py", "apps/ai-analysis-runner/**/*.py"]
 extend-exclude = ["bot/stock_autotrader_bot.egg-info", "**/__pycache__"]
 target-version = "py311"
 line-length = 200

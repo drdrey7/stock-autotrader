@@ -74,3 +74,64 @@ jobs:
       - name: Test history ingestor (Python)
         working-directory: apps/history-ingestor
         run: python3 -m unittest discover -s tests -v
+
+  ai-analysis-runner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Lint runner
+        run: |
+          python3 -m pip install --quiet "ruff==0.16.0"
+          ruff check apps/ai-analysis-runner
+      - name: Test runner without paid calls
+        working-directory: apps/ai-analysis-runner
+        run: PYTHONPATH=. python3 -m unittest discover -s tests -v
+      - name: Install immutable runner dependency lock
+        run: |
+          python3 -m venv "${RUNNER_TEMP}/ai-analysis-venv"
+          "${RUNNER_TEMP}/ai-analysis-venv/bin/python" -m pip install --disable-pip-version-check --requirement apps/ai-analysis-runner/requirements-lock.txt
+          "${RUNNER_TEMP}/ai-analysis-venv/bin/python" -m pip check
+      - name: Import pinned engine and instantiate Google graph offline
+        env:
+          GOOGLE_API_KEY: ci-placeholder-never-sent
+          RUNNER_VENV: ${{ runner.temp }}/ai-analysis-venv
+        run: |
+          PYTHONPATH=apps/ai-analysis-runner "$RUNNER_VENV/bin/python" - <<'PY'
+          import copy
+          import tempfile
+          from importlib.metadata import version
+          from pathlib import Path
+
+          import ai_analysis_runner
+          from tradingagents.default_config import DEFAULT_CONFIG
+          from tradingagents.graph.trading_graph import TradingAgentsGraph
+
+          assert version("tradingagents") == "0.3.1"
+          assert ai_analysis_runner.ENGINE_COMMIT == "01477f9afb7a47b849ed4c9259d3a9a4738d9fda"
+          with tempfile.TemporaryDirectory() as directory:
+              root = Path(directory)
+              config = copy.deepcopy(DEFAULT_CONFIG)
+              config.update({
+                  "llm_provider": "google",
+                  "quick_think_llm": "gemini-3.1-flash-lite",
+                  "deep_think_llm": "gemini-3.5-flash",
+                  "data_cache_dir": str(root / "cache"),
+                  "results_dir": str(root / "results"),
+                  "memory_log_path": str(root / "memory" / "trading_memory.md"),
+                  "checkpoint_enabled": True,
+              })
+              graph = TradingAgentsGraph(
+                  selected_analysts=("market", "social", "news", "fundamentals"),
+                  config=config,
+              )
+              assert graph.selected_analysts == ("market", "social", "news", "fundamentals")
+          PY
+      - name: Verify hardened systemd service
+        run: |
+          sudo useradd --system --no-create-home hermes
+          sudo install -d /opt/stock-autotrader/apps /opt/stock-autotrader-ai-analysis/bin /etc/stock-autotrader
+          sudo ln -s "$GITHUB_WORKSPACE/apps/ai-analysis-runner" /opt/stock-autotrader/apps/ai-analysis-runner
+          sudo ln -s "${RUNNER_TEMP}/ai-analysis-venv/bin/python" /opt/stock-autotrader-ai-analysis/bin/python
+          sudo touch /etc/stock-autotrader/cloudflare.env /etc/stock-autotrader/ai-analysis.env
+          sudo systemd-analyze verify apps/ai-analysis-runner/deploy/ai-analysis-runner.service
