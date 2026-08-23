@@ -1,31 +1,14 @@
 /**
- * Better Auth browser client (PR1 — stub for future use).
+ * Better Auth browser client.
  *
- * This client is intentionally minimal. PR1 installs Better Auth and wires the
- * backend — no login provider is implemented yet. Future PRs (Google OAuth,
- * email/password, magic links) should import from `better-auth/react` and use
- * the official `createAuthClient` with the appropriate plugins.
+ * Uses the official Better Auth React client. The frontend and /api/auth
+ * are same-origin, so no explicit baseURL is required — the client
+ * inherits the page origin.
  *
  * @see https://www.better-auth.com/docs/client-creation
  */
+import { createAuthClient } from "better-auth/react";
 
-export function createAuthClient() {
-  return {
-    signIn: {
-      social: async () => {
-        throw new Error("Better Auth provider not implemented in PR1");
-      },
-      email: async () => {
-        throw new Error("Better Auth provider not implemented in PR1");
-      },
-    },
-    signOut: async () => {
-      throw new Error("Better Auth provider not implemented in PR1");
-    },
-    getSession: async () => {
-      throw new Error("Better Auth provider not implemented in PR1");
-    },
-  };
-}
+export const authClient = createAuthClient();
 
-export type AuthClient = ReturnType<typeof createAuthClient>;
+export type AuthClient = typeof authClient;

@@ -21,10 +21,3 @@ export function createAuth(d1: D1Database, baseURL?: string, secret?: string) {
     },
   });
 }
-
-/**
- * Default export for `npx auth@latest migrate`. Uses a dummy D1 binding — the
- * CLI only needs the config shape, not a live database, to generate the SQL
- * migration file.
- */
-export default createAuth({} as D1Database);

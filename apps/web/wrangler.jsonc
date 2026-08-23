@@ -4,7 +4,8 @@
   "compatibility_flags": ["nodejs_compat"],
   "main": "worker/index.ts",
   "vars": {
-    "ENVIRONMENT": "production"
+    "ENVIRONMENT": "production",
+    "BETTER_AUTH_URL": "https://stock-autotrader-web.barroso-labs.workers.dev"
   },
   "assets": {
     "directory": "./dist",

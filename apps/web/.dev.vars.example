@@ -3,6 +3,6 @@
 # Copy to .dev.vars and set a value only when exercising the Worker locally.
 INGEST_SECRET=dev-secret-change-me
 
-# Better Auth — generate with: openssl rand -base64 32
-BETTER_AUTH_SECRET=replace-with-32-char-secret
+# Better Auth — copy this file to .dev.vars, then set BETTER_AUTH_SECRET
+# (generate with: openssl rand -base64 32) and BETTER_AUTH_URL.
 BETTER_AUTH_URL=http://localhost:8787
