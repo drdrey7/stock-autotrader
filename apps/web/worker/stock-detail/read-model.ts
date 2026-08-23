@@ -179,61 +179,19 @@ function finite(value: number | null | undefined): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
-function nonNegative(value: number | null | undefined): value is number {
-  return finite(value) && value >= 0;
-}
-
-/** Calculate presentation-only accounting cards from persisted provider inputs. */
+/**
+ * Direct Finnhub card selector retained under the established export name so
+ * focused callers/tests do not need an unrelated API rename. No accounting
+ * reconstruction happens in the Worker.
+ */
 export function calculateAccountingCardMetrics(
   fundamentals: StockDetailStorageSnapshot["fundamentals"],
 ): AccountingCardMetrics {
-  const metrics: AccountingCardMetrics = {
-    roicPct: null,
-    fcfMarginPct: null,
-    debtToEquity: null,
+  return {
+    roicPct: finite(fundamentals?.roic_pct) ? fundamentals.roic_pct : null,
+    fcfMarginPct: finite(fundamentals?.fcf_margin_pct) ? fundamentals.fcf_margin_pct : null,
+    debtToEquity: finite(fundamentals?.debt_to_equity) ? fundamentals.debt_to_equity : null,
   };
-  if (!fundamentals) return metrics;
-
-  if (
-    finite(fundamentals.operating_cash_flow_ttm)
-    && finite(fundamentals.capex_ttm)
-    && finite(fundamentals.revenue_ttm)
-    && fundamentals.revenue_ttm > 0
-  ) {
-    const freeCashFlow = fundamentals.operating_cash_flow_ttm - fundamentals.capex_ttm;
-    const fcfMargin = freeCashFlow / fundamentals.revenue_ttm;
-    if (Number.isFinite(fcfMargin)) metrics.fcfMarginPct = fcfMargin * 100;
-  }
-
-  if (nonNegative(fundamentals.total_debt) && finite(fundamentals.shareholders_equity) && fundamentals.shareholders_equity > 0) {
-    const debtToEquity = fundamentals.total_debt / fundamentals.shareholders_equity;
-    if (Number.isFinite(debtToEquity)) metrics.debtToEquity = debtToEquity;
-  }
-
-  if (
-    finite(fundamentals.operating_income_ttm)
-    && finite(fundamentals.income_tax_ttm)
-    && finite(fundamentals.pretax_income_ttm)
-    && fundamentals.pretax_income_ttm > 0
-    && nonNegative(fundamentals.total_debt)
-    && nonNegative(fundamentals.shareholders_equity)
-    && nonNegative(fundamentals.cash)
-    && nonNegative(fundamentals.short_term_investments)
-    && fundamentals.accounting_periods_compatible === 1
-  ) {
-    const effectiveTaxRate = fundamentals.income_tax_ttm / fundamentals.pretax_income_ttm;
-    const nopat = fundamentals.operating_income_ttm * (1 - effectiveTaxRate);
-    const investedCapital = fundamentals.total_debt
-      + fundamentals.shareholders_equity
-      - fundamentals.cash
-      - fundamentals.short_term_investments;
-    if (Number.isFinite(nopat) && Number.isFinite(investedCapital) && investedCapital > 0) {
-      const roic = nopat / investedCapital;
-      if (Number.isFinite(roic)) metrics.roicPct = roic * 100;
-    }
-  }
-
-  return metrics;
 }
 
 function expectedSplitFactorForWeek(
@@ -269,10 +227,6 @@ function servedHistorySplitState(
     if (expectedFactor === null) return "unknown";
     if (!approximatelyEqual(row.split_adjustment_factor, expectedFactor)) return "mismatch";
 
-    // D1 weekly history is written in independently committed chunks. A
-    // single correct witness cannot prove that the full served window was
-    // reconciled after a split, so every row we actually serve must have been
-    // persisted after the latest effective split.
     const fetchedAt = Date.parse(row.source_fetched_at);
     if (!Number.isFinite(fetchedAt)) return "unknown";
     if (fetchedAt < splitMs) return "mismatch";
@@ -295,34 +249,8 @@ function servedHistoryScaleState(
 
 /**
  * Evidence-based split safety for Stock Detail.
- *
- * In the short reconciliation window after a split we prefer temporary
- * `Not available` over guessing which scale a persisted value uses. Recovery
- * is automatic as soon as all stored data that is actually served agrees.
- *
- * When weekly history is present, every served row must carry the exact
- * cumulative split factor defined by split_events and must have been persisted
- * after the latest effective split. This deliberately handles the ingestor's
- * independently committed D1 chunks: one correct witness is not enough to
- * prove that older rows are already on the same scale. The current quote must
- * also be post-split before it can be combined with that served history.
- *
- * Technical metrics are deliberately not required for quote/chart safety.
- * Callers that explicitly provide a metric timestamp may use it as an
- * additional guard, while Stock Detail quote serving leaves that guard unset;
- * computeLiveSma200w() validates quote/metric compatibility independently.
- * This preserves a valid price during metric bootstrap/write failures without
- * allowing an unsafe live SMA to be calculated.
- *
- * When no weekly history is served there is no chart scale to reconcile. A
- * valid quote can therefore remain visible as soon as its own provider
- * timestamp proves it is post-split. The SMA path still performs its separate
- * quote/metrics split guard before combining those two data families.
- *
- * Future announced splits are excluded before this function is called. There
- * is no fixed 24-hour lockout: a symbol becomes available immediately when the
- * evidence is coherent, while a provider/maintenance delay of up to a day is
- * acceptable operationally.
+ * Future announced splits are excluded before this function is called. Price,
+ * history and live SMA scale guards remain independent from fundamentals.
  */
 export function servedSplitScaleState(
   quote: QuoteInput | null,
@@ -349,11 +277,7 @@ export function servedSplitScaleState(
   return metricMs >= splitMs ? "safe" : "mismatch";
 }
 
-/**
- * One-stock serving read model. Every external/provider action happens before
- * this request path. D1 serving uses one batch snapshot so the eight
- * symbol-scoped reads do not exceed Cloudflare's simultaneous-connection cap.
- */
+/** One-stock serving read model. Providers never run in this request path. */
 export async function readStockDetailApi(
   env: Env,
   symbol: string,
@@ -376,7 +300,7 @@ export async function readStockDetailApi(
     : await readStockDetailStorageSnapshot(env.DB, symbol);
 
   const marketFundamentalsFresh = marketFundamentalsAreFresh(fundamentals, now);
-  const accountingCardMetrics = calculateAccountingCardMetrics(fundamentals);
+  const cardMetrics = calculateAccountingCardMetrics(fundamentals);
   const marketCap = marketFundamentalsFresh ? fundamentals?.market_cap ?? null : null;
   const formattedMarketCap = marketCap === null
     ? null
@@ -396,9 +320,6 @@ export async function readStockDetailApi(
       .filter((week): week is string => week !== null),
   );
 
-  // Future announced splits are deliberately excluded. Quote/chart scale
-  // safety is decided without technical_metrics; computeLiveSma200w performs
-  // the separate quote/metric guard before combining those values.
   const latestEffectiveSplitMap = effectiveSplitAsOf
     ? new Map([[symbol, effectiveSplitAsOf]])
     : new Map<string, string>();
@@ -484,9 +405,9 @@ export async function readStockDetailApi(
     fundamentals: {
       marketCap: formattedMarketCap,
       peTtm: marketFundamentalsFresh ? fundamentals?.pe_ttm ?? null : null,
-      roicPct: accountingCardMetrics.roicPct,
-      fcfMarginPct: accountingCardMetrics.fcfMarginPct,
-      debtToEquity: accountingCardMetrics.debtToEquity,
+      roicPct: marketFundamentalsFresh ? cardMetrics.roicPct : null,
+      fcfMarginPct: marketFundamentalsFresh ? cardMetrics.fcfMarginPct : null,
+      debtToEquity: marketFundamentalsFresh ? cardMetrics.debtToEquity : null,
     },
     technical: {
       sma200w: liveSma.sma200w,
