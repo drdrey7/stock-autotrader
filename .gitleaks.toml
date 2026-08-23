@@ -1,0 +1,10 @@
+# Gitleaks configuration
+# The .dev.vars.example file is a local-only template shipped with placeholder
+# comments (never real secrets). Allowlist its path so Gitleaks ignores the
+# example-key comments that the template must contain to guide local setup.
+
+[allowlist]
+  description = "Local-only example env templates with intentional placeholder comments"
+  paths = [
+    '''apps/web/\.dev\.vars\.example''',
+  ]
