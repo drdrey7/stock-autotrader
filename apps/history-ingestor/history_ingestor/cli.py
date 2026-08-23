@@ -67,7 +67,8 @@ def cmd_bootstrap(settings: Settings, args: argparse.Namespace) -> int:
     _emit("bootstrap_report", **report)
     # Quota exhaustion is NORMAL partial completion (free-tier), NOT a crash:
     # exit 0 so the systemd unit does not Restart=on-failure into a 120s loop.
-    return 0 if report["status"] in ("complete", "partial", "quota") else 2
+    # throttled = provider-wide Information circuit breaker (normal partial day)
+    return 0 if report["status"] in ("complete", "partial", "quota", "throttled") else 2
 
 
 def cmd_maintenance(settings: Settings, args: argparse.Namespace) -> int:

@@ -13,7 +13,12 @@ import logging
 import unittest
 
 from history_ingestor.config import Settings, from_env
-from history_ingestor.provider import AllKeysFailedError, ProviderError, QuotaExhaustedError
+from history_ingestor.provider import (
+    AllKeysFailedError,
+    ProviderError,
+    QuotaExhaustedError,
+    ThrottleExhaustedError,
+)
 
 KEYS = ("AVKEY_TEST_KEY_0001", "AVKEY_TEST_KEY_0002")
 
@@ -56,6 +61,10 @@ class SecretTests(unittest.TestCase):
         try:
             raise ProviderError("provider message: Invalid API call")
         except ProviderError as exc:
+            client_errors.append(str(exc))
+        try:
+            raise ThrottleExhaustedError("provider throttle on 2 key(s)")
+        except ThrottleExhaustedError as exc:
             client_errors.append(str(exc))
         for message in client_errors:
             for key in KEYS:

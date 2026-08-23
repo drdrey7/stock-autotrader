@@ -128,12 +128,18 @@ before L, so it honestly reports `NotEnoughHistory`.
   per-endpoint status (`splits` / `weekly` → pending | done | error).
 - Resume skips done symbols (no duplicate downloads); a new day resets per-key
   counts while keeping completed symbols done — can spread across days.
-- `Information` throttle → bounded backoff, same key. `Note` quota → the key
-  is marked exhausted; when all keys are exhausted the run stops cleanly,
-  saves the checkpoint and reports the remaining symbols.
-- Transient network/server errors retry with bounded backoff; invalid keys and
-  unknown symbols are non-retryable. Provider messages are NEVER persisted as
-  market data (strict parser).
+- `Information` throttle → count the HTTP request, circuit-break that key for
+  the rest of the run (no same-key retry storm), try other keys once. When
+  every key is throttled the run stops with status `throttled`, saves the
+  checkpoint, and does NOT mark the current symbol as a permanent error.
+  Fairness queue prefers never-tried/pending symbols over sticky transient
+  errors so head-of-line blocking cannot starve the rest of the universe.
+  `Note` quota → the key is marked exhausted; when all keys are exhausted the
+  run stops cleanly, saves the checkpoint and reports the remaining symbols.
+- Transient network/server errors retry across keys with a small bound;
+  invalid keys and unknown symbols are non-retryable. Provider messages are
+  NEVER persisted as market data (strict parser). Structured attempt logs
+  record `symbol/endpoint/key_index/attempt/result` without secrets.
 
 ## Weekly maintenance
 

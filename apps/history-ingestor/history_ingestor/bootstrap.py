@@ -29,6 +29,7 @@ from .provider import (
     AlphaVantageClient,
     ProviderError,
     QuotaExhaustedError,
+    ThrottleExhaustedError,
 )
 from .sma import TechnicalMetrics, compute_technical_metrics
 from .splits import adjust_series, split_events_from_rows, split_events_to_rows
@@ -41,6 +42,41 @@ logger = logging.getLogger("history_ingestor.bootstrap")
 
 def _now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()) + "Z"
+
+
+def classify_symbol_work(store: StateStore, symbol: str) -> str:
+    """Classify bootstrap work for fairness ordering.
+
+    Returns one of: ``done``, ``pending`` (never-tried / both pending),
+    ``partial`` (one endpoint done), ``error`` (transient endpoint error).
+    """
+    splits = store.symbol_status(symbol, "splits")
+    weekly = store.symbol_status(symbol, "weekly")
+    if splits == STATUS_DONE and weekly == STATUS_DONE:
+        return "done"
+    if splits == STATUS_ERROR or weekly == STATUS_ERROR:
+        return "error"
+    if splits == STATUS_DONE or weekly == STATUS_DONE:
+        return "partial"
+    return "pending"
+
+
+def order_symbols_for_bootstrap(store: StateStore, symbols: list[str]) -> list[str]:
+    """Fair queue: pending → partial → transient errors (stable within class)."""
+    priority = {"pending": 0, "partial": 1, "error": 2, "done": 3}
+    indexed = list(enumerate(symbols))
+    indexed.sort(key=lambda item: (priority[classify_symbol_work(store, item[1])], item[0]))
+    return [symbol for _, symbol in indexed]
+
+
+def symbols_done_from_store(store: StateStore, symbols: list[str]) -> list[str]:
+    """Symbols whose checkpoint shows both endpoints done (universe order)."""
+    return [symbol for symbol in symbols if classify_symbol_work(store, symbol) == "done"]
+
+
+def symbols_remaining_from_store(store: StateStore, symbols: list[str]) -> list[str]:
+    """Symbols not fully done (pending / partial / error), universe order."""
+    return [symbol for symbol in symbols if classify_symbol_work(store, symbol) != "done"]
 
 
 class SplitsStoreError(RuntimeError):
@@ -99,29 +135,26 @@ class BootstrapRunner:
             wanted = set(symbols_filter)
             symbols = [symbol for symbol in symbols if symbol in wanted]
         if not symbols:
-            return self._report(symbols, "complete", 0, 0, 0, [], [], [])
+            return self._report(symbols, "complete", 0, 0, 0, [])
         self._store.load()
         if dry_run:
             # Planning mode: never touches the provider or D1 writes.
-            pending = self._store.pending_symbols(symbols)
-            return self._report(symbols, "plan", 0, 0, 0,
-                                [s for s in symbols if s in pending], [], [s for s in symbols if s not in pending])
+            return self._report(symbols, "plan", 0, 0, 0, [])
 
         self._store.load()
-        done: list[str] = []
-        remaining: list[str] = []
         errors: list[str] = []
         weekly_fetched = 0
         splits_fetched = 0
         rows_written = 0
 
-        for symbol in symbols:
+        # Fairness: never-tried/pending first, then partial, then old errors.
+        work_order = order_symbols_for_bootstrap(self._store, symbols)
+
+        for symbol in work_order:
             if self._store.symbol_status(symbol, "splits") == STATUS_DONE \
                     and self._store.symbol_status(symbol, "weekly") == STATUS_DONE:
-                done.append(symbol)
                 continue
             if limit is not None and self._provider.requests_this_run >= limit:
-                remaining = [s for s in symbols if s not in done]
                 break
 
             # --- SPLITS (must precede WEEKLY so adjustment is correct) ---
@@ -138,13 +171,18 @@ class BootstrapRunner:
                     splits_fetched += 1
                 except QuotaExhaustedError:
                     self._store.save()
-                    remaining = [s for s in symbols if s not in done]
                     return self._report(symbols, "quota", weekly_fetched, splits_fetched,
-                                        rows_written, remaining, errors, done)
+                                        rows_written, errors)
+                except ThrottleExhaustedError:
+                    # Provider-wide throttle: stop immediately. Do NOT mark the
+                    # symbol as a permanent/ticker error — leave pending so
+                    # fairness can still prefer never-tried symbols next run.
+                    self._store.save()
+                    return self._report(symbols, "throttled", weekly_fetched, splits_fetched,
+                                        rows_written, errors)
                 except (ProviderError, AllKeysFailedError) as exc:
                     self._store.mark_symbol(symbol, "splits", STATUS_ERROR)
                     errors.append(f"{symbol} splits: {str(exc)[:160]}")
-                    remaining.append(symbol)
                     self._store.save()
                     continue
 
@@ -164,14 +202,16 @@ class BootstrapRunner:
                     self._splits_cache[symbol] = events
                 except QuotaExhaustedError:
                     self._store.save()
-                    remaining = [s for s in symbols if s not in done]
                     return self._report(symbols, "quota", weekly_fetched, splits_fetched,
-                                        rows_written, remaining, errors, done)
+                                        rows_written, errors)
+                except ThrottleExhaustedError:
+                    self._store.save()
+                    return self._report(symbols, "throttled", weekly_fetched, splits_fetched,
+                                        rows_written, errors)
                 except (ProviderError, AllKeysFailedError, SplitsStoreError) as exc:
                     if isinstance(exc, SplitsStoreError):
                         self._store.mark_symbol(symbol, "splits", STATUS_ERROR)
                     errors.append(f"{symbol} splits store: {str(exc)[:160]}")
-                    remaining.append(symbol)
                     self._store.save()
                     continue
 
@@ -210,18 +250,17 @@ class BootstrapRunner:
                         if write.failed:
                             raise ProviderError(f"technical_metrics write failed: {write.error}")
                     self._store.mark_symbol(symbol, "weekly", STATUS_DONE)
-                    done.append(symbol)
                 except QuotaExhaustedError:
                     self._store.save()
-                    remaining = [s for s in symbols if s not in done]
                     return self._report(symbols, "quota", weekly_fetched, splits_fetched,
-                                        rows_written, remaining, errors, done)
+                                        rows_written, errors)
+                except ThrottleExhaustedError:
+                    self._store.save()
+                    return self._report(symbols, "throttled", weekly_fetched, splits_fetched,
+                                        rows_written, errors)
                 except (ProviderError, AllKeysFailedError) as exc:
                     self._store.mark_symbol(symbol, "weekly", STATUS_ERROR)
                     errors.append(f"{symbol} weekly: {str(exc)[:160]}")
-                    remaining.append(symbol)
-            else:
-                done.append(symbol)
 
             if not dry_run:
                 self._store.save()
@@ -230,11 +269,13 @@ class BootstrapRunner:
         # metrics row may be missing (crash between weekly write and metrics
         # write) — reads D1 and upserts idempotently.
         if not dry_run:
-            self._reconcile_previous_metrics(symbols, done)
+            done_now = symbols_done_from_store(self._store, symbols)
+            self._reconcile_previous_metrics(symbols, done_now)
 
+        remaining = symbols_remaining_from_store(self._store, symbols)
         status = "complete" if not remaining else "partial"
         return self._report(symbols, status, weekly_fetched, splits_fetched,
-                            rows_written, remaining, errors, done)
+                            rows_written, errors)
 
     # -------------------------------------------------------------- helpers
 
@@ -313,11 +354,15 @@ class BootstrapRunner:
         weekly_fetched: int,
         splits_fetched: int,
         rows_written: int,
-        remaining: list[str],
         errors: list[str],
-        done: list[str],
     ) -> dict:
+        # Counts always come from the durable checkpoint — never from which
+        # symbols the current loop iteration managed to visit before an early
+        # stop (throttle / quota / request limit).
+        done = symbols_done_from_store(self._store, universe)
+        remaining = symbols_remaining_from_store(self._store, universe)
         keys_used = [{"index": k.get("index"), "used": k.get("used", 0)} for k in self._store.state.keys]
+        attempt_log = list(getattr(self._provider, "attempt_log", []) or [])
         return {
             "status": status,
             "universe_total": len(universe),
@@ -330,5 +375,7 @@ class BootstrapRunner:
             "rows_written": rows_written,
             "keys_used": keys_used,
             "quota_exhausted": status == "quota",
+            "throttled": status == "throttled",
             "errors": errors,
+            "attempt_log": attempt_log,
         }
