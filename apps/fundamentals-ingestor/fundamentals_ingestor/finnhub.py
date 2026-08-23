@@ -1,4 +1,4 @@
-"""Minimal Finnhub client for reference market fundamentals."""
+"""Minimal Finnhub client for Stock Detail fundamentals."""
 
 from __future__ import annotations
 
@@ -21,12 +21,17 @@ class FinnhubError(RuntimeError):
 
 @dataclass(frozen=True)
 class MarketData:
+    # Keep the original six fields first for backwards-compatible tests/callers.
     market_cap: float | None
     pe_ttm: float | None
     beta: float | None
     eps_ttm: float | None
     dividend_yield: float | None
     checked_at: str | None
+    roic_pct: float | None = None
+    fcf_margin_pct: float | None = None
+    debt_to_equity: float | None = None
+    fcf_per_share_ttm: float | None = None
 
 
 def _finite_number(value: Any) -> float | None:
@@ -39,12 +44,42 @@ def _finite_number(value: Any) -> float | None:
     return number if math.isfinite(number) else None
 
 
+def _latest_series_value(payload: dict[str, Any], cadence: str, field: str) -> float | None:
+    series = payload.get("series")
+    if not isinstance(series, dict):
+        return None
+    bucket = series.get(cadence)
+    if not isinstance(bucket, dict):
+        return None
+    rows = bucket.get(field)
+    if not isinstance(rows, list):
+        return None
+
+    candidates: list[tuple[str, float]] = []
+    undated: list[float] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        value = _finite_number(row.get("v", row.get("value")))
+        if value is None:
+            continue
+        period = row.get("period")
+        if isinstance(period, str) and period.strip():
+            candidates.append((period.strip(), value))
+        else:
+            undated.append(value)
+    if candidates:
+        return max(candidates, key=lambda item: item[0])[1]
+    return undated[-1] if undated else None
+
+
 def normalize_metric(payload: Any, checked_at: str | None = None) -> MarketData:
     if not isinstance(payload, dict):
         return MarketData(None, None, None, None, None, checked_at)
     metric = payload.get("metric")
     if not isinstance(metric, dict):
-        metric = payload
+        metric = {}
+
     market_cap_millions = _finite_number(metric.get("marketCapitalization"))
     pe_ttm = _finite_number(metric.get("peTTM"))
     beta = _finite_number(metric.get("beta"))
@@ -52,11 +87,37 @@ def normalize_metric(payload: Any, checked_at: str | None = None) -> MarketData:
     dividend_yield = _finite_number(
         metric.get("dividendYieldTTM", metric.get("dividendYieldIndicatedAnnual", metric.get("dividendYield"))),
     )
-    # Finnhub reports marketCapitalization in millions. This is only a provider
+
+    # Finnhub series ratios are decimal ratios (e.g. 0.25 = 25%). Store the
+    # two percentage-labelled D1 fields in percentage points for the UI.
+    roic_ratio = (
+        _latest_series_value(payload, "quarterly", "roicTTM")
+        or _latest_series_value(payload, "annual", "roic")
+    )
+    fcf_margin_ratio = (
+        _latest_series_value(payload, "quarterly", "fcfMargin")
+        or _latest_series_value(payload, "annual", "fcfMargin")
+    )
+    debt_to_equity = _latest_series_value(payload, "quarterly", "totalDebtToEquity")
+    if debt_to_equity is None:
+        debt_to_equity = _finite_number(metric.get("totalDebt/totalEquityQuarterly"))
+    fcf_per_share_ttm = _latest_series_value(payload, "quarterly", "fcfPerShareTTM")
+
+    # Finnhub reports marketCapitalization in millions. This is only provider
     # unit normalization; no quote-based valuation is performed here.
     market_cap = market_cap_millions * 1_000_000 if market_cap_millions is not None else None
-    pe = pe_ttm
-    return MarketData(market_cap, pe, beta, eps_ttm, dividend_yield, checked_at)
+    return MarketData(
+        market_cap=market_cap,
+        pe_ttm=pe_ttm,
+        beta=beta,
+        eps_ttm=eps_ttm,
+        dividend_yield=dividend_yield,
+        checked_at=checked_at,
+        roic_pct=roic_ratio * 100 if roic_ratio is not None else None,
+        fcf_margin_pct=fcf_margin_ratio * 100 if fcf_margin_ratio is not None else None,
+        debt_to_equity=debt_to_equity,
+        fcf_per_share_ttm=fcf_per_share_ttm,
+    )
 
 
 class FinnhubClient:
@@ -95,14 +156,22 @@ class FinnhubClient:
             raise FinnhubError("finnhub_request_failed") from exc
 
     def fetch(self, symbol: str) -> MarketData:
-        metric_payload = self._get("stock/metric", symbol, {"metric": "all"})
-        if not isinstance(metric_payload, dict) or metric_payload.get("error"):
-            raise FinnhubError("finnhub_invalid_metric_payload")
-        metric = metric_payload.get("metric")
-        if not isinstance(metric, dict) or not metric or not {"marketCapitalization", "peTTM"}.intersection(metric):
+        payload = self._get("stock/metric", symbol, {"metric": "all"})
+        if not isinstance(payload, dict) or payload.get("error"):
             raise FinnhubError("finnhub_invalid_metric_payload")
         checked_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
-        normalized = normalize_metric(metric_payload, checked_at)
-        if all(value is None for value in (normalized.market_cap, normalized.pe_ttm, normalized.beta, normalized.eps_ttm, normalized.dividend_yield)):
+        normalized = normalize_metric(payload, checked_at)
+        direct_values = (
+            normalized.market_cap,
+            normalized.pe_ttm,
+            normalized.beta,
+            normalized.eps_ttm,
+            normalized.dividend_yield,
+            normalized.roic_pct,
+            normalized.fcf_margin_pct,
+            normalized.debt_to_equity,
+            normalized.fcf_per_share_ttm,
+        )
+        if all(value is None for value in direct_values):
             raise FinnhubError("finnhub_invalid_metric_payload")
         return normalized
