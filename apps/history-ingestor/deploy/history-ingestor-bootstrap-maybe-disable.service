@@ -1,0 +1,19 @@
+# Root-only completion gate triggered after a successful bootstrap oneshot.
+# This unit intentionally has NO EnvironmentFile directives, so the privileged
+# helper never inherits Hermes-controlled provider/D1 environment variables.
+[Unit]
+Description=Disable history bootstrap timer when canonical coverage is complete
+After=history-ingestor-bootstrap.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/usr/local/sbin/history-ingestor-bootstrap-maybe-disable
+PrivateTmp=true
+ProtectHome=true
+NoNewPrivileges=true
+# runuser needs only SETUID/SETGID to drop from root to hermes. No DAC bypass,
+# network, mount, or other capabilities are retained by the root service.
+CapabilityBoundingSet=CAP_SETUID CAP_SETGID
+UMask=0077

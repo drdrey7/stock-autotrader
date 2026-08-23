@@ -2,20 +2,23 @@
 #
 # Resumes the durable D1 checkpoint, skips completed symbols, respects the
 # per-key daily Alpha Vantage quota and exits cleanly when quota is exhausted.
-# Once bootstrap is complete, future runs are zero-provider no-ops and the
-# timer can be disabled.
+# On successful exit, OnSuccess starts a separate root-only completion gate;
+# that unit has no EnvironmentFile and disables this timer only at 50/50.
+# Production checkout: /opt/stock-autotrader (origin/main only).
 
 [Unit]
 Description=Stock Autotrader history bootstrap (daily resume until complete)
 After=network-online.target
 Wants=network-online.target
 Before=history-ingestor-maintenance.service history-ingestor-due-split.service
+OnSuccess=history-ingestor-bootstrap-maybe-disable.service
 
 [Service]
 Type=oneshot
 User=hermes
 Group=hermes
-WorkingDirectory=/home/hermes/projects/stock-autotrader/apps/history-ingestor
+WorkingDirectory=/opt/stock-autotrader/apps/history-ingestor
+Environment=PYTHONPATH=/opt/stock-autotrader/apps/history-ingestor
 EnvironmentFile=/etc/stock-autotrader/alpha-vantage.env
 EnvironmentFile=/etc/stock-autotrader/cloudflare.env
 Environment=HISTORY_INGESTOR_STATE=/var/lib/history-ingestor/checkpoint.json
