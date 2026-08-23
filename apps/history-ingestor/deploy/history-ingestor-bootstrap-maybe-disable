@@ -1,0 +1,107 @@
+#!/bin/bash
+# Idempotent post-bootstrap helper (root via a separate root-only systemd unit).
+#
+# Privilege boundary:
+# - the triggering root service has no EnvironmentFile directives;
+# - history-ingestor/status and EnvironmentFile evaluation run as hermes;
+# - root parses status only as JSON with isolated Python;
+# - root is used only for the final idempotent systemctl disable --now.
+set -euo pipefail
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+APP=/opt/stock-autotrader/apps/history-ingestor
+STATE=/var/lib/history-ingestor/checkpoint.json
+ALPHA_ENV=/etc/stock-autotrader/alpha-vantage.env
+CLOUDFLARE_ENV=/etc/stock-autotrader/cloudflare.env
+TIMER=history-ingestor-bootstrap.timer
+LOG_TAG=history-ingestor-bootstrap-maybe-disable
+RUNUSER=$(command -v runuser 2>/dev/null || true)
+status_file=""
+
+log() {
+  /usr/bin/logger -t "$LOG_TAG" -- "$*" 2>/dev/null || true
+  /usr/bin/printf '%s\n' "$*"
+}
+
+cleanup() {
+  if [[ -n "$status_file" ]]; then
+    /usr/bin/rm -f -- "$status_file"
+  fi
+}
+
+# Never fail the bootstrap flow because of completion-helper issues.
+on_error() {
+  cleanup
+  log "helper soft-exit after error"
+  exit 0
+}
+trap on_error ERR
+trap cleanup EXIT
+
+[[ -d "$APP" ]] || { log "skip: missing $APP"; exit 0; }
+[[ -n "$RUNUSER" ]] || { log "skip: runuser not available"; exit 0; }
+
+status_file=$(/usr/bin/mktemp)
+
+# The env files are opened/evaluated only after runuser has dropped to hermes.
+# Even if hermes controls those files, any shell content executes with hermes
+# privileges, never root. env -i removes BASH_ENV and other inherited variables
+# before the unprivileged shell starts.
+"$RUNUSER" -u hermes -- /usr/bin/env -i \
+  PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+  HOME=/home/hermes \
+  /bin/bash --noprofile --norc -c '
+    set -euo pipefail
+    set -a
+    source "$1"
+    source "$2"
+    set +a
+    export PYTHONPATH="$3"
+    export HISTORY_INGESTOR_STATE="$4"
+    cd "$3"
+    exec /usr/bin/python3 -m history_ingestor status
+  ' _ "$ALPHA_ENV" "$CLOUDFLARE_ENV" "$APP" "$STATE" >"$status_file" 2>/dev/null || {
+    log "skip: unprivileged status/env load failed"
+    exit 0
+  }
+
+read -r bootstrap_done bootstrap_pending universe_total < <(
+  /usr/bin/python3 -I - "$status_file" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+try:
+    text = Path(sys.argv[1]).read_text(encoding="utf-8").strip().splitlines()
+    payload = None
+    for line in reversed(text):
+        line = line.strip()
+        if line.startswith("{") and line.endswith("}"):
+            try:
+                payload = json.loads(line)
+                break
+            except json.JSONDecodeError:
+                continue
+    if not isinstance(payload, dict):
+        raise ValueError("status did not contain a JSON object")
+    print(
+        int(payload.get("bootstrap_done", -1)),
+        int(payload.get("bootstrap_pending", -1)),
+        int(payload.get("universe_total", -1)),
+    )
+except (OSError, TypeError, ValueError):
+    print(-1, -1, -1)
+PY
+)
+
+if [[ "$universe_total" -ne 50 || "$bootstrap_pending" -ne 0 || "$bootstrap_done" -ne 50 ]]; then
+  log "bootstrap not complete (done=$bootstrap_done pending=$bootstrap_pending total=$universe_total); leave timer"
+  exit 0
+fi
+
+before_enabled=$(/usr/bin/systemctl is-enabled "$TIMER" 2>/dev/null || true)
+before_active=$(/usr/bin/systemctl is-active "$TIMER" 2>/dev/null || true)
+/usr/bin/systemctl disable --now "$TIMER"
+log "bootstrap complete (50/50); disabled+stopped $TIMER (was enablement=$before_enabled active=$before_active; maintenance/due-split untouched)"
+exit 0

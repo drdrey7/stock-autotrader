@@ -165,19 +165,24 @@ Provision the existing secret files first:
 - `/etc/stock-autotrader/alpha-vantage.env`
 - `/etc/stock-autotrader/cloudflare.env`
 
-They remain outside Git and are never modified by the installer. Then stop any
-currently active history-ingestor timers in a planned maintenance window and
-install the packaged units:
+They remain outside Git and are never modified by the installer. Production
+code lives under `/opt/stock-autotrader`; development checkouts under
+`/home/hermes/projects/...` must not be used as systemd `WorkingDirectory`.
 
-```bash
-sudo systemctl stop history-ingestor-bootstrap.timer history-ingestor-maintenance.timer history-ingestor-due-split.timer
-sudo ./deploy/install-history-ingestor-root.sh
-```
+For routine production updates, use the deterministic procedure in
+`deploy/DEPLOY.md`. The privileged installer is launched from a sanitized
+environment and installs the root-owned auto-disable helper plus **seven** unit
+files. It validates staged units first, snapshots timer and destination state,
+quiesces active timers, installs, runs `daemon-reload`, then restores each
+timer's exact prior enablement/activity state.
 
-The installer only validates prerequisites, installs the six systemd unit files
-and runs `daemon-reload`. It deliberately does **not** enable or start timers,
-so installation itself cannot consume Alpha Vantage quota. Activate explicitly
-when ready:
+The installer is transactional: if a failure occurs after quiescing, it
+restores the previous helper/unit files and best-effort restores timer state.
+An active timer that cannot be stopped causes an immediate abort. Masked or
+unsupported timer states also fail closed.
+
+On a **fresh installation**, explicitly enable/start the timers you want only
+after reviewing the schedules:
 
 ```bash
 sudo systemctl enable history-ingestor-bootstrap.timer history-ingestor-maintenance.timer history-ingestor-due-split.timer
@@ -185,12 +190,14 @@ sudo systemctl start history-ingestor-bootstrap.timer history-ingestor-maintenan
 sudo systemctl list-timers --all | grep history-ingestor
 ```
 
-Bootstrap is resumable and becomes a zero-provider no-op once complete; at that
-point disable its temporary timer with:
-
-```bash
-sudo systemctl disable --now history-ingestor-bootstrap.timer
-```
+Bootstrap is resumable. A successful bootstrap triggers the separate
+`history-ingestor-bootstrap-maybe-disable.service` through systemd `OnSuccess=`.
+That root-only completion gate has no provider/D1 `EnvironmentFile`; it drops
+to `hermes` before loading the existing env files and running read-only
+`history_ingestor status`, then parses the JSON with isolated Python. Only when
+`bootstrap_done=50`, `bootstrap_pending=0`, and `universe_total=50` does root
+run the idempotent `systemctl disable --now history-ingestor-bootstrap.timer`.
+Maintenance and due-split are never touched by the completion gate.
 
 Service ordering serializes bootstrap → maintenance → due-split when persistent
 timers catch up together after an outage. For production manual runs, prefer
@@ -200,7 +207,7 @@ module directly so the same ordering rules apply.
 ## Tests
 
 ```bash
-cd apps/history-ingestor && python3 -m unittest discover -s tests -v    # 149 tests
+cd apps/history-ingestor && python3 -m unittest discover -s tests -v    # 161 tests
 cd <repo root> && ruff check .                                            # lint
 ```
 
