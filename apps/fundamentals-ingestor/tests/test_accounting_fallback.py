@@ -43,47 +43,36 @@ class FakeFacts:
         return types.SimpleNamespace(value=self.ttm_values.get(concept))
 
 
-QUARTERS = ["Q2 2026", "Q1 2026", "Q4 2025", "Q3 2025"]
-PERIODS = [(2026, "Q2"), (2026, "Q1"), (2025, "Q4"), (2025, "Q3")]
-
-
-def row(label, values, concept=None):
-    result = {"label": label}
-    if concept is not None:
-        result["concept"] = concept
-    result.update(dict(zip(QUARTERS, values)))
-    return result
-
-
 class AccountingFallbackTests(unittest.TestCase):
-    def test_empty_native_ttm_uses_four_contiguous_quarters(self):
-        income_rows = [
-            row("Total Revenue", [100, 90, 80, 70]),
-            row("Operating Income", [20, 18, 17, 15]),
-            row("Income Before Tax", [18, 16, 15, 13]),
-            row("Income Tax Expense", [4, 3, 3, 2]),
-            row("Net Income", [14, 13, 12, 11]),
-        ]
-        cash_rows = [
-            row("Net Cash Provided by (Used in) Operating Activities", [50, 45, 40, 35]),
-            row("Payments to Acquire Property, Plant, and Equipment", [-10, -9, -8, -7]),
-            row("Depreciation and Amortization", [8, 7, 6, 5]),
-        ]
+    def test_empty_native_ttm_uses_duration_aware_facts_not_quarter_sums(self):
+        ttm_values = {
+            "us-gaap:Revenues": 340,
+            "us-gaap:OperatingIncomeLoss": 70,
+            "us-gaap:IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments": 62,
+            "us-gaap:IncomeTaxExpenseBenefit": 12,
+            "us-gaap:NetIncomeLoss": 50,
+            "us-gaap:EarningsPerShareDiluted": 5,
+            "us-gaap:DepreciationDepletionAndAmortization": 26,
+            "us-gaap:NetCashProvidedByUsedInOperatingActivities": 170,
+            "us-gaap:PaymentsToAcquireProductiveAssets": -34,
+        }
 
         class Company:
             def __init__(self, symbol):
-                self.facts = FakeFacts()
+                self.facts = FakeFacts(ttm_values)
 
             def income_statement(self, period, periods=None):
                 if period == "ttm":
                     return FakeStatement([], [(2026, "Q2")])
-                self.assert_period = period
-                return FakeStatement(income_rows, PERIODS)
+                # Deliberately cumulative-looking values. The fallback may use
+                # this statement only as a period anchor, never sum the values.
+                return FakeStatement([
+                    {"label": "Total Revenue", "Q2 2026": 250, "Q1 2026": 100},
+                    {"label": "Operating Income", "Q2 2026": 55, "Q1 2026": 20},
+                ], [(2026, "Q2")])
 
             def cash_flow_statement(self, period, periods=None):
-                if period == "ttm":
-                    return FakeStatement([], [(2026, "Q2")])
-                return FakeStatement(cash_rows, PERIODS)
+                return FakeStatement([], [(2026, "Q2")])
 
             def balance_sheet(self, period, periods=None):
                 if period == "annual":
@@ -94,8 +83,8 @@ class AccountingFallbackTests(unittest.TestCase):
                     {"concept": "CashAndCashEquivalentsAtCarryingValue", "label": "Cash and Cash Equivalents", "Q2 2026": 40},
                     {"concept": "Debt", "label": "Total Debt", "Q2 2026": 50},
                     {"concept": "StockholdersEquity", "label": "Total Stockholders' Equity", "Q2 2026": 200},
-                    {"concept": "AssetsCurrent", "label": "Current Assets", "Q2 2026": 150},
-                    {"concept": "LiabilitiesCurrent", "label": "Current Liabilities", "Q2 2026": 75},
+                    {"concept": "us-gaap:AssetsCurrent", "label": "Current Assets", "Q2 2026": 150},
+                    {"concept": "us-gaap:LiabilitiesCurrent", "label": "Current Liabilities", "Q2 2026": 75},
                 ], [(2026, "Q2")])
 
         fake_edgar = types.SimpleNamespace(Company=Company, set_identity=lambda identity: None)
@@ -115,22 +104,20 @@ class AccountingFallbackTests(unittest.TestCase):
         self.assertEqual(result.cash, 40)
         self.assertEqual(result.total_debt, 50)
         self.assertEqual(result.shareholders_equity, 200)
+        self.assertEqual(result.current_assets, 150)
+        self.assertEqual(result.current_liabilities, 75)
         self.assertTrue(result.periods_compatible)
 
-    def test_foreign_issuer_without_four_safe_quarters_is_unsupported(self):
+    def test_foreign_issuer_with_incomplete_native_ttm_is_unsupported(self):
         class Company:
             def __init__(self, symbol):
                 self.facts = FakeFacts()
 
             def income_statement(self, period, periods=None):
-                if period == "ttm":
-                    return FakeStatement([], [(2026, "Q2")])
-                return FakeStatement([row("Total Revenue", [100, 90, None, None])], PERIODS[:2])
+                return FakeStatement([], [(2026, "Q2")])
 
             def cash_flow_statement(self, period, periods=None):
-                if period == "ttm":
-                    return FakeStatement([], [(2026, "Q2")])
-                return FakeStatement([], PERIODS[:2])
+                return FakeStatement([], [(2026, "Q2")])
 
             def balance_sheet(self, period, periods=None):
                 return FakeStatement([], [(2026, "Q2")])
@@ -175,7 +162,7 @@ class UnsupportedRunTests(unittest.TestCase):
             ),
             patch(
                 "fundamentals_ingestor.main.fetch_accounting_inputs",
-                side_effect=AccountingUnsupportedError("accounting_quarterly_basis_unsupported"),
+                side_effect=AccountingUnsupportedError("accounting_current_basis_unsupported"),
             ),
         ):
             counts = run(self.settings())
@@ -185,7 +172,62 @@ class UnsupportedRunTests(unittest.TestCase):
         self.assertEqual(counts["written"], 1)
         values = d1.writes[0]
         self.assertEqual(values[SNAPSHOT_COLUMNS.index("accounting_refresh_status")], "unsupported")
+        self.assertEqual(values[SNAPSHOT_COLUMNS.index("accounting_filing_accession")], "accession")
         self.assertEqual(values[SNAPSHOT_COLUMNS.index("market_cap")], 100.0)
+
+    def test_new_unsupported_accession_preserves_values_and_records_new_state(self):
+        existing = {
+            "symbol": "ASML",
+            "market_cap": 90.0,
+            "pe_ttm": 18.0,
+            "beta": 1.0,
+            "eps_ttm": 4.0,
+            "dividend_yield": 0.4,
+            "revenue_ttm": 123.0,
+            "accounting_as_of": "2025-12-31",
+            "accounting_filing_accession": "old-accession",
+            "accounting_filing_form": "20-F",
+            "accounting_refresh_status": "ok",
+            "accounting_periods_compatible": 1,
+            "market_checked_at": "old",
+        }
+
+        class D1:
+            def __init__(self, *args, **kwargs):
+                self.writes = []
+
+            def get_snapshot(self, symbol):
+                return existing
+
+            def get_annual_years(self, symbol):
+                return {2025}
+
+            def upsert(self, values):
+                self.writes.append(values)
+
+        d1 = D1()
+        with (
+            patch("fundamentals_ingestor.main.load_universe", return_value=["ASML"]),
+            patch("fundamentals_ingestor.main.FinnhubClient", FakeFinnhub),
+            patch("fundamentals_ingestor.main.D1Client", return_value=d1),
+            patch(
+                "fundamentals_ingestor.main.fetch_latest_filing_metadata",
+                return_value=FilingMetadata("new-accession", "2026-06-30", "6-K", "2026-07-30"),
+            ),
+            patch(
+                "fundamentals_ingestor.main.fetch_accounting_inputs",
+                side_effect=AccountingUnsupportedError("accounting_current_basis_unsupported"),
+            ),
+        ):
+            counts = run(self.settings())
+
+        self.assertEqual(counts["failed"], 0)
+        values = d1.writes[0]
+        self.assertEqual(values[SNAPSHOT_COLUMNS.index("revenue_ttm")], 123.0)
+        self.assertEqual(values[SNAPSHOT_COLUMNS.index("accounting_as_of")], "2025-12-31")
+        self.assertEqual(values[SNAPSHOT_COLUMNS.index("accounting_filing_accession")], "new-accession")
+        self.assertEqual(values[SNAPSHOT_COLUMNS.index("accounting_filing_form")], "6-K")
+        self.assertEqual(values[SNAPSHOT_COLUMNS.index("accounting_refresh_status")], "unsupported")
 
     def test_same_accession_reuses_unsupported_without_annual_history(self):
         existing = {
@@ -195,7 +237,7 @@ class UnsupportedRunTests(unittest.TestCase):
             "beta": 1.1,
             "eps_ttm": 5.0,
             "dividend_yield": 0.5,
-            "accounting_as_of": "2026-06-30",
+            "accounting_as_of": "2025-12-31",
             "accounting_filing_accession": "accession",
             "accounting_filing_form": "6-K",
             "accounting_refresh_status": "unsupported",
