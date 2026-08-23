@@ -54,5 +54,9 @@ def accounting_inputs_from_snapshot(row: dict[str, object]) -> AccountingInputs:
         current_liabilities=number("current_liabilities"),
         accounting_as_of=row.get("accounting_as_of") if isinstance(row.get("accounting_as_of"), str) else None,
         periods_compatible=row.get("accounting_periods_compatible") == 1,
-        extraction_status=row.get("accounting_refresh_status") if row.get("accounting_refresh_status") in {"ok", "unknown", "incomplete"} else "unknown",
+        extraction_status=(
+            row.get("accounting_refresh_status")
+            if row.get("accounting_refresh_status") in {"ok", "unknown", "incomplete", "unsupported"}
+            else "unknown"
+        ),
     )
