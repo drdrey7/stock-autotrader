@@ -1,10 +1,15 @@
-# Gitleaks configuration
-# The .dev.vars.example file is a local-only template shipped with placeholder
-# comments (never real secrets). Allowlist its path so Gitleaks ignores the
-# example-key comments that the template must contain to guide local setup.
+[extend]
+useDefault = true
 
+# Narrow, documented false-positive exception.
+# Commit d3ba470c introduced apps/web/.dev.vars.example with a high-entropy
+# placeholder value for BETTER_AUTH_SECRET (generic-api-key hit). The
+# placeholder is required so the template guides local setup.
+# NOTE: Gitleaks v8.30.0 excludes an entire file if a path allowlist matches.
+# To ensure a future real credential in the same file is still detected, this
+# exception is scoped by regex ONLY — matching the exact placeholder value —
+# not by path. This allowlists the known placeholder wherever it appears, but
+# any other secret in any file (including .dev.vars.example) is still caught.
 [allowlist]
-  description = "Local-only example env templates with intentional placeholder comments"
-  paths = [
-    '''apps/web/\.dev\.vars\.example''',
-  ]
+description = "Known false-positive placeholder in local-only .dev.vars.example"
+regexes = ['''replace-with-32-char-secret''']
