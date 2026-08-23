@@ -37,7 +37,9 @@ class Settings:
     cloudflare_api_token: str
     cloudflare_account_id: str
     cloudflare_d1_database_id: str
-    edgar_identity: str
+    # Legacy adapter field retained so old focused Edgar tests/callers do not
+    # break. The daily runtime no longer requires or reads EDGAR_IDENTITY.
+    edgar_identity: str = ""
     universe_path: Path = field(default_factory=lambda: Path(__file__).resolve().parents[3] / "packages/contracts/src/core-universe.v1.json")
     request_timeout_seconds: float = 30.0
     finnhub_min_interval_seconds: float = 1.05
@@ -47,8 +49,7 @@ class Settings:
             "Settings(finnhub_api_key='<redacted>', "
             "cloudflare_api_token='<redacted>', "
             f"cloudflare_account_id={self.cloudflare_account_id!r}, "
-            f"cloudflare_d1_database_id={self.cloudflare_d1_database_id!r}, "
-            "edgar_identity='<redacted>')"
+            f"cloudflare_d1_database_id={self.cloudflare_d1_database_id!r})"
         )
 
 
@@ -59,7 +60,7 @@ def from_env(environ: dict[str, str] | None = None) -> Settings:
         cloudflare_api_token=_required("CLOUDFLARE_API_TOKEN", values),
         cloudflare_account_id=_required("CLOUDFLARE_ACCOUNT_ID", values),
         cloudflare_d1_database_id=_required("CLOUDFLARE_D1_DATABASE_ID", values),
-        edgar_identity=_required("EDGAR_IDENTITY", values),
+        edgar_identity=values.get("EDGAR_IDENTITY", "").strip(),
         universe_path=Path(values.get(
             "FUNDAMENTALS_UNIVERSE",
             str(Path(__file__).resolve().parents[3] / "packages/contracts/src/core-universe.v1.json"),

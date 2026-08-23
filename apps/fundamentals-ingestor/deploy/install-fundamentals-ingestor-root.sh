@@ -16,8 +16,6 @@ command -v pip3 >/dev/null
 [ -d "$APP" ] || { echo "ERROR: missing deployed app: $APP" >&2; exit 1; }
 [ -r "$CONF_DIR/finnhub.env" ] || { echo "ERROR: missing $CONF_DIR/finnhub.env" >&2; exit 1; }
 [ -r "$CONF_DIR/cloudflare.env" ] || { echo "ERROR: missing $CONF_DIR/cloudflare.env" >&2; exit 1; }
-[ -r "$CONF_DIR/edgar.env" ] || { echo "ERROR: provision $CONF_DIR/edgar.env from the secure operator configuration" >&2; exit 1; }
-grep -Eq '^EDGAR_IDENTITY=[^[:space:]].*' "$CONF_DIR/edgar.env" || { echo "ERROR: EDGAR_IDENTITY is missing" >&2; exit 1; }
 grep -Eq '^FINNHUB_API_KEY=[^[:space:]].*' "$CONF_DIR/finnhub.env" || { echo "ERROR: FINNHUB_API_KEY is missing" >&2; exit 1; }
 for key in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_D1_DATABASE_ID; do
   grep -Eq "^${key}=[^[:space:]].*" "$CONF_DIR/cloudflare.env" || { echo "ERROR: $key is missing" >&2; exit 1; }
@@ -34,4 +32,4 @@ for unit in "${UNITS[@]}"; do
   install -o root -g root -m 0644 "$APP/deploy/$unit" "$SYSTEMD_DIR/$unit"
 done
 systemctl daemon-reload
-echo "Fundamentals units installed and verified; timer was not enabled or started."
+echo "Finnhub fundamentals units installed and verified; timer was not enabled or started."
