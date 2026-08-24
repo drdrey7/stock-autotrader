@@ -32,14 +32,19 @@ class QueueFailingOpener:
         raise urllib.error.URLError("connection reset after a server-side pull")
 
 
-def queue_payload(body: str, content_type: str = "text", attempts: Any = 2) -> dict[str, Any]:
+def queue_payload(
+    body: str,
+    content_type: str = "text",
+    attempts: Any = 2,
+    lease_id: Any = "opaque-lease",
+) -> dict[str, Any]:
     return {
         "success": True,
         "result": {
             "messages": [{
                 "id": "message-1",
                 "attempts": attempts,
-                "lease_id": "opaque-lease",
+                "lease_id": lease_id,
                 "body": body,
                 "metadata": {"CF-Content-Type": content_type},
                 "timestamp_ms": 1_800_000_000_000,
@@ -103,6 +108,15 @@ class QueueClientTests(unittest.TestCase):
             with self.subTest(payload=payload):
                 with self.assertRaises(QueueProtocolError):
                     self.make_client(QueueOpener([payload])).pull()
+
+    def test_malformed_poison_without_usable_lease_is_rejected_without_settlement(self) -> None:
+        payload = queue_payload(
+            "not-json",
+            lease_id=None,
+        )
+        with self.assertRaisesRegex(QueueProtocolError, "queue_lease_invalid") as raised:
+            self.make_client(QueueOpener([payload])).pull()
+        self.assertNotIsInstance(raised.exception, LeasedQueueProtocolError)
 
     def test_ack_and_retry_use_lease_only(self) -> None:
         analysis_id = str(uuid.uuid4())

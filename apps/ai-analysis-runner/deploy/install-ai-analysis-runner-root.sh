@@ -128,6 +128,11 @@ rollback() {
       echo "ROLLBACK FAILED: could not stop $SERVICE" >&2; failed=1
     fi
   fi
+  if [ -e "$unit_backup" ]; then
+    if rm -f "$unit_backup"; then :; else
+      echo "ROLLBACK FAILED: could not remove temporary unit backup" >&2; failed=1
+    fi
+  fi
   if [ "$failed" -eq 1 ]; then
     echo "ROLLBACK FAILED: one or more restoration steps failed" >&2
     exit 1

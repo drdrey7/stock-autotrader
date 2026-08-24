@@ -656,7 +656,14 @@ describe("AI Analysis Worker API", () => {
     // UNIQUE/CAS conflict-and-recovery path rather than just Promise.all.
     let arrivals = 0;
     let releaseBarrier;
-    const gate = new Promise((resolve) => { releaseBarrier = resolve; });
+    let barrierTimer;
+    const gate = new Promise((resolve, reject) => {
+      barrierTimer = setTimeout(() => reject(new Error("interleave barrier timeout")), 1000);
+      releaseBarrier = () => {
+        clearTimeout(barrierTimer);
+        resolve();
+      };
+    });
     db.interleaveBefore = async () => {
       arrivals += 1;
       if (arrivals >= 3) releaseBarrier();

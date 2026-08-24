@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import random
 import time
 import urllib.error
@@ -12,6 +13,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any
+
+MAX_RETRY_AFTER_SECONDS = 60.0
 
 
 @dataclass(frozen=True)
@@ -62,13 +65,17 @@ def post_json(
                 value = exc.headers.get("Retry-After") if exc.headers is not None else None
                 if value:
                     try:
-                        retry_after_seconds = max(0.0, float(value))
-                    except ValueError:
+                        numeric = float(value)
+                        if math.isfinite(numeric):
+                            retry_after_seconds = min(MAX_RETRY_AFTER_SECONDS, max(0.0, numeric))
+                    except (ValueError, OverflowError):
                         try:
                             retry_at = parsedate_to_datetime(value)
                             if retry_at.tzinfo is None:
                                 retry_at = retry_at.replace(tzinfo=UTC)
-                            retry_after_seconds = max(0.0, (retry_at - datetime.now(UTC)).total_seconds())
+                            date_delay = (retry_at - datetime.now(UTC)).total_seconds()
+                            if math.isfinite(date_delay):
+                                retry_after_seconds = min(MAX_RETRY_AFTER_SECONDS, max(0.0, date_delay))
                         except (TypeError, ValueError, OverflowError):
                             pass
         except (urllib.error.URLError, TimeoutError, OSError):
