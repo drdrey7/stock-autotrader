@@ -26,7 +26,7 @@ def settings(state_dir: Path, **overrides: Any) -> Settings:
         openai_quick_model="gpt-5.4-mini",
         openai_deep_model="gpt-5.5",
         state_dir=state_dir,
-        queue_visibility_timeout_ms=3_600_000,
+        queue_visibility_timeout_ms=300_000,
         queue_request_timeout_seconds=30,
         d1_request_timeout_seconds=30,
         http_max_attempts=1,

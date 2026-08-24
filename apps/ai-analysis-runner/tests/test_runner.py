@@ -16,6 +16,7 @@ from ai_analysis_runner.engine import EngineFailure
 from ai_analysis_runner.http import HttpError
 from ai_analysis_runner.models import Analysis, QueueMessage
 from ai_analysis_runner.normalize import normalize_result
+from ai_analysis_runner.queue_client import LeasedQueueProtocolError
 from ai_analysis_runner.runner import AnalysisRunner
 
 from tests.helpers import output, settings
@@ -26,13 +27,20 @@ NOW = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
 class FakeQueue:
     def __init__(self) -> None:
         self.acked: list[str] = []
+        self.acked_leases: list[str] = []
         self.retried: list[tuple[str, int]] = []
 
     def ack(self, message: QueueMessage) -> None:
         self.acked.append(message.id)
 
+    def ack_lease(self, lease_id: str) -> None:
+        self.acked_leases.append(lease_id)
+
     def retry(self, message: QueueMessage, delay: int) -> None:
         self.retried.append((message.id, delay))
+
+    def retry_lease(self, lease_id: str, delay: int) -> None:
+        self.retried.append((lease_id, delay))
 
 
 class PullQueue(FakeQueue):
@@ -149,7 +157,7 @@ class RunnerTests(unittest.TestCase):
             assert d1.completed_result_json is not None
             self.assertEqual(json.loads(d1.completed_result_json)["symbol"], "AAPL")
 
-    def test_lost_lease_abandons_without_ack_fail_or_requeue(self) -> None:
+    def test_lost_d1_lease_explicitly_retries_queue_message(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             current = analysis()
             engine = FakeEngine()
@@ -171,7 +179,18 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(d1.fail_calls, 0)
             self.assertEqual(d1.requeue_calls, 0)
             self.assertEqual(queue.acked, [])
-            self.assertEqual(queue.retried, [])
+            self.assertEqual(queue.retried, [("message-1", 60)])
+
+    def test_zero_attempt_first_delivery_is_processed_and_acked(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            current = analysis()
+            engine = FakeEngine()
+            runner, queue, d1 = self.build(directory, current, engine)
+            first_delivery = QueueMessage("message-1", 0, "secret-lease", current.id)
+            runner.process_message(first_delivery)
+            self.assertEqual(engine.calls, 1)
+            self.assertEqual(d1.analysis.attempt_count, 1)
+            self.assertEqual(queue.acked, ["message-1"])
 
     def test_redelivery_recovers_normalized_checkpoint_without_paid_call(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -257,6 +276,27 @@ class RunnerTests(unittest.TestCase):
                 runner.run_forever()
 
             self.assertEqual(processed, ["message-1", "message-2"])
+            self.assertEqual(runner.queue.retried, [("message-1", 60)])
+
+    def test_leased_protocol_rejection_is_terminally_acked(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            current = analysis()
+            runner, _, _ = self.build(directory, current, FakeEngine())
+            queue = FakeQueue()
+            pulls = 0
+
+            def pull() -> QueueMessage | None:
+                nonlocal pulls
+                pulls += 1
+                if pulls == 1:
+                    raise LeasedQueueProtocolError("queue_attempts_invalid", "poison-lease")
+                runner.stop_event.set()
+                return None
+
+            queue.pull = pull  # type: ignore[attr-defined]
+            runner.queue = queue
+            runner.run_forever()
+            self.assertEqual(queue.acked_leases, ["poison-lease"])
 
 
 if __name__ == "__main__":

@@ -8,7 +8,7 @@ import uuid
 from typing import Any
 
 from ai_analysis_runner.http import HttpError
-from ai_analysis_runner.queue_client import QueueClient, QueueProtocolError
+from ai_analysis_runner.queue_client import LeasedQueueProtocolError, QueueClient, QueueProtocolError
 
 from tests.helpers import FakeResponse
 
@@ -52,7 +52,7 @@ class QueueClientTests(unittest.TestCase):
     def make_client(self, opener: QueueOpener) -> QueueClient:
         return QueueClient(
             "secret", "account", "queue",
-            visibility_timeout_ms=3_600_000,
+            visibility_timeout_ms=300_000,
             timeout_seconds=30,
             max_attempts=1,
             opener=opener,
@@ -65,7 +65,7 @@ class QueueClientTests(unittest.TestCase):
         self.assertIsNotNone(message)
         self.assertEqual(message.analysis_id, analysis_id)
         self.assertEqual(message.attempts, 2)
-        self.assertEqual(opener.requests[0]["body"], {"batch_size": 1, "visibility_timeout_ms": 3_600_000})
+        self.assertEqual(opener.requests[0]["body"], {"batch_size": 1, "visibility_timeout_ms": 300_000})
 
     def test_accepts_cloudflare_zero_based_first_delivery_attempt(self) -> None:
         analysis_id = str(uuid.uuid4())
@@ -78,8 +78,9 @@ class QueueClientTests(unittest.TestCase):
         body = json.dumps({"schemaVersion": 1, "analysisId": analysis_id})
         for attempts in (-1, True, "0", None):
             with self.subTest(attempts=attempts):
-                with self.assertRaisesRegex(QueueProtocolError, "queue_attempts_invalid"):
+                with self.assertRaisesRegex(LeasedQueueProtocolError, "queue_attempts_invalid") as raised:
                     self.make_client(QueueOpener([queue_payload(body, attempts=attempts)])).pull()
+                self.assertEqual(raised.exception.lease_id, "opaque-lease")
 
     def test_safely_decodes_json_and_bytes_base64(self) -> None:
         analysis_id = str(uuid.uuid4())
@@ -128,7 +129,7 @@ class QueueClientTests(unittest.TestCase):
         opener = QueueFailingOpener()
         client = QueueClient(
             "secret", "account", "queue",
-            visibility_timeout_ms=3_600_000,
+            visibility_timeout_ms=300_000,
             timeout_seconds=30,
             max_attempts=3,  # a response lost after a server-side pull must not lease another message
             opener=opener,

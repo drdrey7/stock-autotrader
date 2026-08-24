@@ -24,6 +24,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(value.primary_provider, "google")
         self.assertEqual(value.quick_model, "gemini-3.1-flash-lite")
         self.assertEqual(value.deep_model, "gemini-3.5-flash")
+        self.assertEqual(value.queue_visibility_timeout_ms, 300_000)
         self.assertFalse(value.openai_fallback_enabled)
 
     def test_openai_primary_requires_only_openai_key_and_gets_openai_defaults(self) -> None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import random
 import threading
+import time
 import uuid
 from collections.abc import Callable
 from datetime import timedelta
@@ -17,7 +18,7 @@ from .engine import EngineFailure, TradingAgentsEngine
 from .http import HttpError
 from .models import Analysis, QueueMessage
 from .normalize import ResultValidationError, normalize_result, serialize_result, validate_result
-from .queue_client import QueueClient, QueueProtocolError
+from .queue_client import LeasedQueueProtocolError, QueueClient, QueueProtocolError
 from .structured_logging import log_event
 from .time_utils import iso_utc, utc_now
 
@@ -151,7 +152,8 @@ class AnalysisRunner:
             self._queue_retry(message)
             return
         if current.status in _TERMINAL:
-            self._ack_if_terminal(message)
+            if not self._ack_if_terminal(message):
+                self._queue_retry(message)
             return
 
         now = self._now()
@@ -201,7 +203,22 @@ class AnalysisRunner:
                 except OSError:
                     pass
             if result is None:
-                output = self.engine.run(claimed.id, claimed.symbol, claimed.analysis_date)
+                engine_started = time.monotonic()
+                log_event(
+                    "analysis_engine_started",
+                    analysis_id=claimed.id,
+                    provider=self.settings.primary_provider,
+                    quick_model=self.settings.quick_model,
+                    deep_model=self.settings.deep_model,
+                )
+                try:
+                    output = self.engine.run(claimed.id, claimed.symbol, claimed.analysis_date)
+                finally:
+                    log_event(
+                        "analysis_engine_finished",
+                        analysis_id=claimed.id,
+                        duration_ms=round((time.monotonic() - engine_started) * 1000),
+                    )
                 result = normalize_result(claimed.symbol, claimed.analysis_date, iso_utc(self._now()), output)
                 validate_result(result, max_bytes=self.settings.result_max_bytes)
                 self.checkpoints.save(claimed.id, result)
@@ -227,6 +244,7 @@ class AnalysisRunner:
 
         if heartbeat.lost.is_set():
             log_event("analysis_abandoned_after_lease_loss", level=logging.WARNING, analysis_id=claimed.id)
+            self._queue_retry(message)
             return
         if failure is not None:
             self._handle_failure(claimed, message, execution_token, *failure)
@@ -253,7 +271,8 @@ class AnalysisRunner:
                 self._queue_retry(message)
             return
         log_event("analysis_completed", analysis_id=claimed.id, symbol=claimed.symbol, provider=result["engine"]["provider"])
-        self._ack_if_terminal(message)
+        if not self._ack_if_terminal(message):
+            self._queue_retry(message)
 
     def _handle_failure(
         self,
@@ -282,7 +301,8 @@ class AnalysisRunner:
                     except OSError:
                         pass
                     log_event("analysis_failed", analysis_id=claimed.id, attempt=claimed.attempt_count, code=code)
-                self._ack_if_terminal(message)
+                if not self._ack_if_terminal(message):
+                    self._queue_retry(message)
                 return
             transitioned = self.d1.requeue(
                 claimed.id,
@@ -308,6 +328,19 @@ class AnalysisRunner:
         while not self.stop_event.is_set():
             try:
                 message = self.queue.pull()
+            except LeasedQueueProtocolError as exc:
+                log_event("queue_protocol_rejected", level=logging.WARNING, code=str(exc))
+                try:
+                    self.queue.ack_lease(exc.lease_id)
+                    log_event("queue_poison_acked", code=str(exc))
+                except (HttpError, QueueProtocolError):
+                    log_event("queue_poison_ack_failed", level=logging.WARNING, code="queue_unavailable")
+                    try:
+                        self.queue.retry_lease(exc.lease_id, self.settings.retry_delay_seconds)
+                    except (HttpError, QueueProtocolError):
+                        log_event("queue_poison_retry_failed", level=logging.WARNING, code="queue_unavailable")
+                empty_delay = self.settings.empty_poll_min_seconds
+                continue
             except QueueProtocolError as exc:
                 log_event("queue_protocol_rejected", level=logging.WARNING, code=str(exc))
                 self.stop_event.wait(empty_delay)
@@ -324,11 +357,16 @@ class AnalysisRunner:
                 empty_delay = min(self.settings.empty_poll_max_seconds, empty_delay * 2)
                 continue
             empty_delay = self.settings.empty_poll_min_seconds
+            log_event(
+                "queue_message_received",
+                analysis_id=message.analysis_id,
+                message_id=message.id,
+                delivery_attempt=message.attempts,
+                published_at_ms=message.timestamp_ms,
+            )
             try:
                 self.process_message(message)
             except Exception as exc:
-                # Leave a poison message unacked until its visibility timeout;
-                # one unexpected failure must not terminate the consumer.
                 log_event(
                     "message_processing_unexpected",
                     level=logging.ERROR,
@@ -336,4 +374,5 @@ class AnalysisRunner:
                     message_id=message.id,
                     error_type=type(exc).__name__,
                 )
+                self._queue_retry(message)
         log_event("runner_stopped")

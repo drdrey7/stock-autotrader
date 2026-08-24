@@ -6,14 +6,17 @@ It does not run TradingAgents' CLI, accept arbitrary tickers/prompts, expose Lan
 
 ## Runtime flow
 
-1. Pull one Queue message with a one-hour visibility lease.
+1. Pull one Queue message with a five-minute visibility lease. Longer engine
+   runs remain single-execution because the D1 heartbeat/CAS lease is the
+   authority; an expired Queue delivery can only be retried or terminally
+   acknowledged by another consumer.
 2. Decode the strict text JSON job `{ "schemaVersion": 1, "analysisId": "<uuid>" }`. JSON/bytes pull bodies are accepted only after strict RFC 4648 base64 decoding; V8 bodies are rejected.
 3. Atomically claim `queued` (or stale `running`) D1 state with a random execution token and Queue message ID.
 4. Heartbeat that compare-and-swap lease while TradingAgents runs.
 5. Save the normalized result locally and atomically before the D1 completion CAS.
 6. Mark D1 `completed`, re-read terminal state, and only then acknowledge the Queue lease.
 
-Retryable failures first CAS the row back to `queued`, then request a delayed Queue retry. The last or definitive failure CASes to `failed`; the backend-owned D1 trigger performs the exactly-once credit refund. The runner never edits credits. Ambiguous writes are re-read, short-retried, and recovered from the local normalized checkpoint without another model call.
+Retryable failures first CAS the row back to `queued`, then request a delayed Queue retry. The last or definitive failure CASes to `failed`; the backend-owned D1 trigger performs the exactly-once credit refund. The runner never edits credits. Ambiguous writes are re-read, short-retried, and recovered from the local normalized checkpoint without another model call. Every valid lease is explicitly settled: immutable poison is acknowledged, unexpected processing failures are retried, and terminal rows are acknowledged.
 
 All TradingAgents state is isolated below `jobs/<analysis-id>/<provider>/` (cache, LangGraph checkpoints, reports, and memory). Google-to-OpenAI fallback uses a different subtree. The service processes one analysis at a time.
 

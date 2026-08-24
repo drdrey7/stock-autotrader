@@ -23,6 +23,14 @@ class QueueProtocolError(RuntimeError):
     """A poison or unsupported Queue message that must not reach the engine."""
 
 
+class LeasedQueueProtocolError(QueueProtocolError):
+    """A rejected message whose valid lease can still be settled."""
+
+    def __init__(self, code: str, lease_id: str) -> None:
+        super().__init__(code)
+        self.lease_id = lease_id
+
+
 class QueueClient:
     def __init__(
         self,
@@ -71,7 +79,17 @@ class QueueClient:
             return None
         if len(messages) != 1 or not isinstance(messages[0], dict):
             raise QueueProtocolError("queue_pull_response_invalid")
-        return self._parse_message(messages[0])
+        raw = messages[0]
+        try:
+            return self._parse_message(raw)
+        except QueueProtocolError as exc:
+            # A returned message is invisible until its lease is settled or
+            # expires. Preserve a syntactically valid lease even when the
+            # immutable payload is poison, so the runner can settle it now.
+            lease_id = raw.get("lease_id")
+            if isinstance(lease_id, str) and lease_id and len(lease_id) <= 2048:
+                raise LeasedQueueProtocolError(str(exc), lease_id) from exc
+            raise
 
     def _parse_message(self, raw: dict[str, Any]) -> QueueMessage:
         message_id = raw.get("id")
@@ -133,10 +151,16 @@ class QueueClient:
         return QueueMessage(message_id, attempts, lease_id, canonical_id, timestamp_ms)
 
     def ack(self, message: QueueMessage) -> None:
-        self._post("ack", {"acks": [{"lease_id": message.lease_id}], "retries": []})
+        self.ack_lease(message.lease_id)
+
+    def ack_lease(self, lease_id: str) -> None:
+        self._post("ack", {"acks": [{"lease_id": lease_id}], "retries": []})
 
     def retry(self, message: QueueMessage, delay_seconds: int) -> None:
+        self.retry_lease(message.lease_id, delay_seconds)
+
+    def retry_lease(self, lease_id: str, delay_seconds: int) -> None:
         self._post(
             "ack",
-            {"acks": [], "retries": [{"lease_id": message.lease_id, "delay_seconds": delay_seconds}]},
+            {"acks": [], "retries": [{"lease_id": lease_id, "delay_seconds": delay_seconds}]},
         )
