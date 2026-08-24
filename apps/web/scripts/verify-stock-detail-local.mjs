@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const WRANGLER = ["--yes", "wrangler@4.123.0"];
+const WRANGLER = [];
 const DB = "stock-autotrader-db";
 const PORT = 8792;
 const ORIGIN = `http://127.0.0.1:${PORT}`;
@@ -78,7 +78,7 @@ ${weeklyRows()};
   const file = join(temp, "fixtures.sql");
   writeFileSync(file, sql);
   try {
-    const result = spawnSync("npx", [...WRANGLER, "d1", "execute", DB, "--local", "--file", file], {
+    const result = spawnSync("npx", [...WRANGLER, "wrangler", "d1", "execute", DB, "--local", "--file", file], {
       cwd: process.cwd(),
       encoding: "utf8",
       stdio: "pipe",
@@ -147,7 +147,7 @@ async function stopWorker(child) {
 
 async function main() {
   installFixtures();
-  const child = spawn("npx", [...WRANGLER, "dev", "--local", "--port", String(PORT)], {
+  const child = spawn("npx", [...WRANGLER, "wrangler", "dev", "--local", "--port", String(PORT)], {
     cwd: process.cwd(),
     stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, CI: "1" },
