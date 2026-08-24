@@ -150,8 +150,16 @@ def from_env(environ: dict[str, str] | None = None) -> Settings:
     if fallback and not openai_api_key:
         raise ConfigError("OPENAI_API_KEY is required when the OpenAI fallback is enabled")
 
-    quick_defaults = {"google": "gemini-3.1-flash-lite", "openai": "gpt-5.4-mini", "openai_compatible": "glm-5.3"}
-    deep_defaults = {"google": "gemini-3.5-flash", "openai": "gpt-5.5", "openai_compatible": "glm-5.3"}
+    quick_defaults = {
+        "google": "gemini-3.1-flash-lite",
+        "openai": "gpt-5.4-mini",
+        "openai_compatible": "deepseek-v4-flash",
+    }
+    deep_defaults = {
+        "google": "gemini-3.5-flash",
+        "openai": "gpt-5.5",
+        "openai_compatible": "deepseek-v4-flash",
+    }
 
     heartbeat = _integer("AI_ANALYSIS_HEARTBEAT_INTERVAL_SECONDS", 60, values, minimum=10, maximum=600)
     stale = _integer("AI_ANALYSIS_STALE_LEASE_SECONDS", 300, values, minimum=30, maximum=86_400)

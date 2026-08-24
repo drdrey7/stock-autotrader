@@ -34,12 +34,15 @@ The D1 engine version is exactly `v0.3.1+01477f9afb7a47b849ed4c9259d3a9a4738d9fd
 
 ## Providers
 
-The primary provider is configurable as `google` (default) or `openai`. Current defaults are:
+The primary provider is configurable as `google` (default), `openai`, or
+`openai_compatible`. OpenCode Go uses the OpenAI-compatible endpoint
+`https://opencode.ai/zen/go/v1`. Current defaults are:
 
 | Provider | Quick model | Deep model |
 | --- | --- | --- |
 | Google | `gemini-3.1-flash-lite` | `gemini-3.5-flash` |
 | OpenAI | `gpt-5.4-mini` | `gpt-5.5` |
+| OpenCode Go | `deepseek-v4-flash` | `deepseek-v4-flash` |
 
 The OpenAI fallback is disabled by default, valid only with a Google primary, and attempted at most once after a retryable Google failure. This bounds both cost and provider switching. TradingAgents' own per-request SDK retry budget is separately bounded by `TRADINGAGENTS_LLM_MAX_RETRIES`.
 
@@ -72,4 +75,3 @@ See [deploy/DEPLOY.md](deploy/DEPLOY.md) for Queue and VPS setup.
 - [Cloudflare Queues HTTP pull consumers](https://developers.cloudflare.com/queues/configuration/pull-consumers/)
 - [Cloudflare Queues pull API](https://developers.cloudflare.com/api/resources/queues/subresources/messages/methods/pull/)
 - [Cloudflare D1 REST query API](https://developers.cloudflare.com/api/resources/d1/subresources/database/methods/query/)
-

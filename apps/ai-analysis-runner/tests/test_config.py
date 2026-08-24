@@ -57,8 +57,8 @@ class ConfigTests(unittest.TestCase):
         value = from_env(environ)
         self.assertEqual(value.primary_provider, "openai_compatible")
         self.assertEqual(value.llm_backend_url, "https://opencode.ai/zen/go/v1")
-        self.assertEqual(value.quick_model, "glm-5.3")
-        self.assertEqual(value.deep_model, "glm-5.3")
+        self.assertEqual(value.quick_model, "deepseek-v4-flash")
+        self.assertEqual(value.deep_model, "deepseek-v4-flash")
 
     def test_fallback_is_opt_in_bounded_and_requires_key(self) -> None:
         environ = base_env() | {"AI_ANALYSIS_OPENAI_FALLBACK_ENABLED": "true"}

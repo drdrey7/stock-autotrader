@@ -75,8 +75,8 @@ class EngineTests(unittest.TestCase):
                 Path(directory),
                 primary_provider="openai_compatible",
                 llm_backend_url="https://opencode.ai/zen/go/v1",
-                quick_model="glm-5.3",
-                deep_model="glm-5.3",
+                quick_model="deepseek-v4-flash",
+                deep_model="deepseek-v4-flash",
             )
             TradingAgentsEngine(value, RecordingGraph).run(str(uuid.uuid4()), "AAPL", "2026-08-21")
             config = RecordingGraph.calls[0]["config"]
