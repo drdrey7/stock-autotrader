@@ -1,12 +1,15 @@
--- 0028_ai_analysis.sql — globally shared TradingAgents analyses, per-user
+-- 0029_ai_analysis.sql — globally shared TradingAgents analyses, per-user
 -- acquisitions, credit entitlements, and a transactional Queue outbox.
 --
 -- All timestamps are canonical UTC ISO-8601 TEXT values with milliseconds
 -- and a trailing Z. That makes ordinary lexical comparisons chronological.
 -- Credit accounting deliberately lives outside Better Auth's tables.
+-- IF NOT EXISTS also reconciles production environments where this schema was
+-- briefly applied under the colliding 0028 filename before the Better Auth
+-- 0028 migration landed. The backfill below still runs for existing users.
 PRAGMA foreign_keys = ON;
 
-CREATE TABLE user_ai_entitlements (
+CREATE TABLE IF NOT EXISTS user_ai_entitlements (
   user_id TEXT PRIMARY KEY NOT NULL,
   credits_remaining INTEGER NOT NULL DEFAULT 1 CHECK (credits_remaining >= 0),
   credits_granted INTEGER NOT NULL DEFAULT 1 CHECK (credits_granted >= 0),
@@ -36,7 +39,7 @@ FROM `user`
 WHERE 1
 ON CONFLICT (user_id) DO NOTHING;
 
-CREATE TRIGGER user_ai_entitlements_after_user_insert
+CREATE TRIGGER IF NOT EXISTS user_ai_entitlements_after_user_insert
 AFTER INSERT ON `user`
 FOR EACH ROW
 BEGIN
@@ -57,7 +60,7 @@ BEGIN
   ) ON CONFLICT (user_id) DO NOTHING;
 END;
 
-CREATE TABLE ai_analyses (
+CREATE TABLE IF NOT EXISTS ai_analyses (
   id TEXT PRIMARY KEY NOT NULL,
   symbol TEXT NOT NULL CHECK (
     length(symbol) BETWEEN 1 AND 12
@@ -99,18 +102,18 @@ CREATE TABLE ai_analyses (
 
 -- This is the global computation lock. SQLite/D1 serializes writers and the
 -- partial unique index is the final authority when requests arrive together.
-CREATE UNIQUE INDEX idx_ai_analyses_one_active_per_symbol
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_analyses_one_active_per_symbol
   ON ai_analyses (symbol)
   WHERE status IN ('dispatching', 'queued', 'running');
 
-CREATE INDEX idx_ai_analyses_reusable
+CREATE INDEX IF NOT EXISTS idx_ai_analyses_reusable
   ON ai_analyses (symbol, completed_at DESC, valid_until)
   WHERE status = 'completed';
 
-CREATE INDEX idx_ai_analyses_status_heartbeat
+CREATE INDEX IF NOT EXISTS idx_ai_analyses_status_heartbeat
   ON ai_analyses (status, heartbeat_at);
 
-CREATE TABLE user_ai_analysis_runs (
+CREATE TABLE IF NOT EXISTS user_ai_analysis_runs (
   id TEXT PRIMARY KEY NOT NULL,
   user_id TEXT NOT NULL,
   analysis_id TEXT NOT NULL,
@@ -139,26 +142,26 @@ CREATE TABLE user_ai_analysis_runs (
   CHECK (credit_refunded_at IS NULL OR (status = 'failed' AND credit_cost = 1))
 );
 
-CREATE UNIQUE INDEX idx_user_ai_analysis_runs_idempotency
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_ai_analysis_runs_idempotency
   ON user_ai_analysis_runs (user_id, idempotency_key);
 
-CREATE UNIQUE INDEX idx_user_ai_analysis_runs_ownership
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_ai_analysis_runs_ownership
   ON user_ai_analysis_runs (user_id, analysis_id);
 
 -- Protects double-clicks that somehow carry different keys while the same
 -- user's symbol is still active. Historical completed runs are unaffected.
-CREATE UNIQUE INDEX idx_user_ai_analysis_runs_one_active_symbol
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_ai_analysis_runs_one_active_symbol
   ON user_ai_analysis_runs (user_id, symbol)
   WHERE status IN ('queued', 'running');
 
-CREATE INDEX idx_user_ai_analysis_runs_history
+CREATE INDEX IF NOT EXISTS idx_user_ai_analysis_runs_history
   ON user_ai_analysis_runs (user_id, acquired_at DESC, id DESC)
   WHERE status = 'completed';
 
-CREATE INDEX idx_user_ai_analysis_runs_analysis
+CREATE INDEX IF NOT EXISTS idx_user_ai_analysis_runs_analysis
   ON user_ai_analysis_runs (analysis_id, status);
 
-CREATE TABLE ai_analysis_dispatches (
+CREATE TABLE IF NOT EXISTS ai_analysis_dispatches (
   id TEXT PRIMARY KEY NOT NULL,
   analysis_id TEXT NOT NULL UNIQUE,
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sending', 'sent', 'failed')),
@@ -173,12 +176,12 @@ CREATE TABLE ai_analysis_dispatches (
   CHECK (status <> 'sent' OR sent_at IS NOT NULL)
 );
 
-CREATE INDEX idx_ai_analysis_dispatches_claimable
+CREATE INDEX IF NOT EXISTS idx_ai_analysis_dispatches_claimable
   ON ai_analysis_dispatches (status, claim_expires_at, created_at);
 
 -- Every canonical row and its outbox record are born in the same D1
 -- transaction. A failed user-run insert rolls both back with the batch.
-CREATE TRIGGER ai_analysis_dispatch_after_analysis_insert
+CREATE TRIGGER IF NOT EXISTS ai_analysis_dispatch_after_analysis_insert
 AFTER INSERT ON ai_analyses
 FOR EACH ROW
 BEGIN
@@ -202,7 +205,7 @@ END;
 -- IMPORTANT: API acquisition must use a plain INSERT, never INSERT OR IGNORE.
 -- A uniqueness failure then aborts the statement and rolls this trigger's
 -- debit back. D1 batch() also rolls back any speculative canonical/outbox.
-CREATE TRIGGER user_ai_analysis_runs_before_insert_debit
+CREATE TRIGGER IF NOT EXISTS user_ai_analysis_runs_before_insert_debit
 BEFORE INSERT ON user_ai_analysis_runs
 FOR EACH ROW
 WHEN NEW.credit_cost = 1
@@ -222,7 +225,7 @@ END;
 
 -- Terminal analyses may never be resurrected or overwritten. Retriable work
 -- may move running -> queued; all other allowed transitions are explicit.
-CREATE TRIGGER ai_analyses_before_invalid_status_transition
+CREATE TRIGGER IF NOT EXISTS ai_analyses_before_invalid_status_transition
 BEFORE UPDATE OF status ON ai_analyses
 FOR EACH ROW
 WHEN NOT (
@@ -235,7 +238,7 @@ BEGIN
   SELECT RAISE(ABORT, 'invalid_ai_analysis_status_transition');
 END;
 
-CREATE TRIGGER user_ai_analysis_runs_before_invalid_status_transition
+CREATE TRIGGER IF NOT EXISTS user_ai_analysis_runs_before_invalid_status_transition
 BEFORE UPDATE OF status ON user_ai_analysis_runs
 FOR EACH ROW
 WHEN NOT (
@@ -247,7 +250,7 @@ BEGIN
   SELECT RAISE(ABORT, 'invalid_user_ai_analysis_run_status_transition');
 END;
 
-CREATE TRIGGER ai_analyses_after_queued
+CREATE TRIGGER IF NOT EXISTS ai_analyses_after_queued
 AFTER UPDATE OF status ON ai_analyses
 FOR EACH ROW
 WHEN NEW.status = 'queued' AND OLD.status = 'running'
@@ -259,7 +262,7 @@ BEGIN
     AND status = 'running';
 END;
 
-CREATE TRIGGER ai_analyses_after_running
+CREATE TRIGGER IF NOT EXISTS ai_analyses_after_running
 AFTER UPDATE OF status ON ai_analyses
 FOR EACH ROW
 WHEN NEW.status = 'running' AND OLD.status <> 'running'
@@ -271,7 +274,7 @@ BEGIN
     AND status = 'queued';
 END;
 
-CREATE TRIGGER ai_analyses_after_completed
+CREATE TRIGGER IF NOT EXISTS ai_analyses_after_completed
 AFTER UPDATE OF status ON ai_analyses
 FOR EACH ROW
 WHEN NEW.status = 'completed' AND OLD.status <> 'completed'
@@ -287,7 +290,7 @@ END;
 -- Refund every still-pending acquisition exactly once. The canonical status
 -- transition is terminal and each (user, analysis) pair is unique; the
 -- credit_refunded_at predicate additionally makes manual/replayed updates safe.
-CREATE TRIGGER ai_analyses_after_failed
+CREATE TRIGGER IF NOT EXISTS ai_analyses_after_failed
 AFTER UPDATE OF status ON ai_analyses
 FOR EACH ROW
 WHEN NEW.status = 'failed' AND OLD.status <> 'failed'

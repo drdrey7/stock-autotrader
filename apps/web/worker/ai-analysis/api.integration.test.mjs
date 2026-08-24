@@ -7,7 +7,7 @@ import { CORE_UNIVERSE } from "@stock-autotrader/contracts";
 import { handleAiAnalysisApi } from "./api";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const migrationPath = resolve(__dirname, "../../migrations/0028_ai_analysis.sql");
+const migrationPath = resolve(__dirname, "../../migrations/0029_ai_analysis.sql");
 const migrationSql = readFileSync(migrationPath, "utf8");
 const ENGINE_VERSION = "v0.3.1+01477f9afb7a47b849ed4c9259d3a9a4738d9fda";
 const COMMIT = "01477f9afb7a47b849ed4c9259d3a9a4738d9fda";
@@ -293,7 +293,7 @@ async function responseJson(response) {
   return response.json();
 }
 
-describe("0028 AI Analysis migration invariants", () => {
+describe("0029 AI Analysis migration invariants", () => {
   it("backfills existing accounts and gives every newly inserted account one credit", () => {
     const db = setupDatabase(["existing-user"]);
     expect(db.sqlite.prepare("SELECT credits_remaining, credits_granted, credits_used FROM user_ai_entitlements WHERE user_id = ?")
