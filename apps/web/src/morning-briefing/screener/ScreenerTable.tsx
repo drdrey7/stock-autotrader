@@ -9,6 +9,7 @@ import type {
   ScreenerSortDirection,
   ScreenerSortKey,
 } from "./screener-filter";
+import { distanceCell, smaCell } from "./ScreenerSmaCells";
 import "./screener.css";
 
 const isUp = (row: ScreenerRow): boolean | null => row.changePct === null ? null : row.changePct > 0;
@@ -78,22 +79,6 @@ function ivDistanceCell(row: ScreenerRow): ReactNode {
       ? "scr-down"
       : "scr-flat";
   return <span className={className}>{formatSigned(intrinsicValue.distancePct, 2)}%</span>;
-}
-
-function distanceCell(row: ScreenerRow): ReactNode {
-  const distance = row.distanceToSma200wPct ?? null;
-  if (distance === null) return <span className="scr-flat">—</span>;
-  const state = row.sma200wState ?? "Unavailable";
-  const className = state === "Above" ? "scr-up" : state === "Below" ? "scr-down" : "scr-near";
-  return <span className={className} title={state}>{formatSigned(distance, 1)}%</span>;
-}
-
-function smaCell(row: ScreenerRow): ReactNode {
-  const sma = row.sma200w ?? null;
-  if (sma === null) {
-    return <span className="scr-flat" title={row.sma200wState === "NotEnoughHistory" ? "Fewer than 199 completed weeks" : undefined}>—</span>;
-  }
-  return <span className="scr-price">{sma.toFixed(2)}</span>;
 }
 
 function sortIndicator(

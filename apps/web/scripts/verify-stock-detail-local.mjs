@@ -51,8 +51,8 @@ INSERT OR REPLACE INTO stock_fundamentals_snapshot
 VALUES ('ADBE', 109431750000, 15.1379, 25198000000, 9090000000, 9111000000,
  1882000000, 10481000000, 201000000, 10280000000, 4919000000,
  707000000, NULL, 11518000000, NULL, 40.79688864195571,
- NULL, '2026-05-29', '2026-08-21T20:00:00Z', 'edgartools', 'finnhub',
- '0000796343-26-000112', '2026-08-21T20:01:00Z');
+ NULL, '2026-05-29', datetime('now'), 'edgartools', 'finnhub',
+ '0000796343-26-000112', datetime('now'));
 DELETE FROM split_events WHERE symbol = 'MSFT';
 DELETE FROM weekly_prices WHERE symbol = 'MSFT';
 INSERT OR REPLACE INTO latest_quotes
@@ -125,7 +125,6 @@ function signalWorkerGroup(child, signal) {
 
 async function stopWorker(child) {
   if (child.exitCode !== null || child.signalCode !== null) return;
-
   const waitForExit = async (timeoutMs) => {
     if (child.exitCode !== null || child.signalCode !== null) return true;
     let onExit;
@@ -137,13 +136,11 @@ async function stopWorker(child) {
     if (!result && onExit) child.off("exit", onExit);
     return result;
   };
-
   signalWorkerGroup(child, "SIGTERM");
   if (!(await waitForExit(3_000))) {
     signalWorkerGroup(child, "SIGKILL");
     await waitForExit(2_000);
   }
-
   child.stdout?.destroy();
   child.stderr?.destroy();
 }
