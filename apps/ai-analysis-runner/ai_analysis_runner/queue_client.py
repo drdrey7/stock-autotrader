@@ -81,7 +81,10 @@ class QueueClient:
             raise QueueProtocolError("queue_message_id_invalid")
         if not isinstance(lease_id, str) or not lease_id or len(lease_id) > 2048:
             raise QueueProtocolError("queue_lease_invalid")
-        if isinstance(attempts, bool) or not isinstance(attempts, int) or attempts < 1:
+        # Cloudflare reports 0 for the first HTTP-pull delivery in production,
+        # then increments the counter on redelivery. Keep booleans, negatives,
+        # and non-integers fail-closed while accepting that valid boundary.
+        if isinstance(attempts, bool) or not isinstance(attempts, int) or attempts < 0:
             raise QueueProtocolError("queue_attempts_invalid")
 
         metadata = raw.get("metadata")

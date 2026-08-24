@@ -32,13 +32,13 @@ class QueueFailingOpener:
         raise urllib.error.URLError("connection reset after a server-side pull")
 
 
-def queue_payload(body: str, content_type: str = "text") -> dict[str, Any]:
+def queue_payload(body: str, content_type: str = "text", attempts: Any = 2) -> dict[str, Any]:
     return {
         "success": True,
         "result": {
             "messages": [{
                 "id": "message-1",
-                "attempts": 2,
+                "attempts": attempts,
                 "lease_id": "opaque-lease",
                 "body": body,
                 "metadata": {"CF-Content-Type": content_type},
@@ -66,6 +66,20 @@ class QueueClientTests(unittest.TestCase):
         self.assertEqual(message.analysis_id, analysis_id)
         self.assertEqual(message.attempts, 2)
         self.assertEqual(opener.requests[0]["body"], {"batch_size": 1, "visibility_timeout_ms": 3_600_000})
+
+    def test_accepts_cloudflare_zero_based_first_delivery_attempt(self) -> None:
+        analysis_id = str(uuid.uuid4())
+        payload = queue_payload(json.dumps({"schemaVersion": 1, "analysisId": analysis_id}), attempts=0)
+        message = self.make_client(QueueOpener([payload])).pull()
+        self.assertEqual(message.attempts, 0)
+
+    def test_rejects_invalid_delivery_attempts(self) -> None:
+        analysis_id = str(uuid.uuid4())
+        body = json.dumps({"schemaVersion": 1, "analysisId": analysis_id})
+        for attempts in (-1, True, "0", None):
+            with self.subTest(attempts=attempts):
+                with self.assertRaisesRegex(QueueProtocolError, "queue_attempts_invalid"):
+                    self.make_client(QueueOpener([queue_payload(body, attempts=attempts)])).pull()
 
     def test_safely_decodes_json_and_bytes_base64(self) -> None:
         analysis_id = str(uuid.uuid4())
@@ -126,4 +140,3 @@ class QueueClientTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
