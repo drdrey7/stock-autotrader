@@ -216,7 +216,7 @@ class MaintenanceCycleTests(unittest.TestCase):
             report2 = runner2.reconcile_splits(symbols_filter=["NVDA"])
             # Error surfaced in the report.
             self.assertTrue(any("splits" in a for a in report2["anomalies"]))
-            self.assertEqual(store2.state.symbol_status("NVDA", "splits"), "error")
+            self.assertEqual(runner2._get_reconcile_store().state.status("NVDA"), "error")
             # Existing durable events intact; factors/adjusted EXACTLY unchanged.
             self.assertEqual(d1.read_split_events("NVDA")[0]["split_factor"], 10.0)
             for r in d1.weekly["NVDA"]:
@@ -402,7 +402,7 @@ class SplitReconcileRetryTests(unittest.TestCase):
             report = runner2.reconcile_splits(symbols_filter=["NVDA"])
             self.assertEqual(report["symbols"]["NVDA"]["splits"], "error")
             self.assertTrue(any("split" in a.lower() for a in report["anomalies"]))
-            self.assertEqual(store2.state.symbol_status("NVDA", "splits"), "error")
+            self.assertEqual(runner2._get_reconcile_store().state.status("NVDA"), "error")
 
             # Run 2: SPLITS write succeeds -> retried -> done.
             d1.split_write_fail = False
@@ -413,7 +413,7 @@ class SplitReconcileRetryTests(unittest.TestCase):
             runner3, store3 = make_runner(d1, provider2, tmp, MON_1)
             report3 = runner3.reconcile_splits(symbols_filter=["NVDA"])
             self.assertEqual(report3["status"], "complete")
-            self.assertEqual(store3.state.symbol_status("NVDA", "splits"), "done")
+            self.assertEqual(runner3._get_reconcile_store().state.status("NVDA"), "done")
             self.assertEqual(d1.read_split_events("NVDA")[0]["split_factor"], 10.0)
 
     def test_reconcile_splits_error_does_not_block_other_symbols(self):
@@ -443,8 +443,8 @@ class SplitReconcileRetryTests(unittest.TestCase):
             # blocks the other symbol from being visited).
             runner2, store2 = make_runner(d1, provider, tmp, MON_1)
             report2 = runner2.reconcile_splits(symbols_filter=["NVDA", "AAPL"])
-            self.assertEqual(store2.state.symbol_status("NVDA", "splits"), "error")
-            self.assertEqual(store2.state.symbol_status("AAPL", "splits"), "error")
+            self.assertEqual(runner2._get_reconcile_store().state.status("NVDA"), "error")
+            self.assertEqual(runner2._get_reconcile_store().state.status("AAPL"), "error")
             self.assertIn("NVDA", report2["symbols"])
             self.assertIn("AAPL", report2["symbols"])
 
@@ -463,8 +463,8 @@ class SplitReconcileRetryTests(unittest.TestCase):
             runner3, store3 = make_runner(d1, provider2, tmp, MON_1)
             report3 = runner3.reconcile_splits(symbols_filter=["NVDA", "AAPL"])
             self.assertEqual(report3["status"], "complete")
-            self.assertEqual(store3.state.symbol_status("NVDA", "splits"), "done")
-            self.assertEqual(store3.state.symbol_status("AAPL", "splits"), "done")
+            self.assertEqual(runner3._get_reconcile_store().state.status("NVDA"), "done")
+            self.assertEqual(runner3._get_reconcile_store().state.status("AAPL"), "done")
 
 
 class WeeklyCatchUpTests(unittest.TestCase):
@@ -810,7 +810,11 @@ class D1MetricsWriteFailureTests(unittest.TestCase):
 
 
 class ReconcileSplitsTests(unittest.TestCase):
-    """reconcile-splits: dry-run is provider-free; progress persists across runs."""
+    """reconcile-splits: dedicated persistent state, dry-run provider-free, resume-safe."""
+
+    def _rstate(self, runner):
+        """Return the runner's dedicated ReconcileStore state."""
+        return runner._get_reconcile_store().state
 
     def test_reconcile_splits_dry_run_makes_zero_provider_calls(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -819,7 +823,7 @@ class ReconcileSplitsTests(unittest.TestCase):
                 weekly_payloads={"NVDA": weekly_payload("NVDA")},
                 splits_payloads={"NVDA": splits_payload("NVDA")},
             )
-            runner, store = make_runner(d1, provider, tmp, MON_1)
+            runner, _ = make_runner(d1, provider, tmp, MON_1)
             report = runner.reconcile_splits(symbols_filter=["NVDA"], dry_run=True)
             # Plan only: zero provider calls, zero D1 writes, no status change.
             self.assertEqual(report["status"], "plan")
@@ -828,7 +832,7 @@ class ReconcileSplitsTests(unittest.TestCase):
             self.assertEqual(provider.weekly_calls, [])
             self.assertEqual(d1.written_rows, 0)
             self.assertEqual(d1.read_split_events("NVDA"), [])
-            self.assertEqual(store.state.symbol_status("NVDA", "splits"), "pending")
+            self.assertEqual(self._rstate(runner).status("NVDA"), "pending")
 
     def test_reconcile_splits_progress_persists_across_capped_runs(self):
         # A capped run processes some symbols; the next run resumes from where
@@ -841,27 +845,20 @@ class ReconcileSplitsTests(unittest.TestCase):
                 weekly_payloads={"NVDA": weekly_payload("NVDA"), "AAPL": weekly_payload("AAPL")},
                 splits_payloads={"NVDA": splits_payload("NVDA"), "AAPL": splits_payload("AAPL")},
             )
-            runner1, store1 = make_runner(d1, provider1, tmp, MON_1)
+            runner1, _ = make_runner(d1, provider1, tmp, MON_1)
             report1 = runner1.reconcile_splits(symbols_filter=["NVDA", "AAPL"], limit=1)
             self.assertEqual(report1["status"], "partial")
             self.assertEqual(report1["requests_used_total"], 1)
-            # First symbol reconciled (done), second still pending.
-            done = sorted(
-                s for s in ("NVDA", "AAPL")
-                if store1.state.symbol_status(s, "splits") == "done"
-            )
-            pending = sorted(
-                s for s in ("NVDA", "AAPL")
-                if store1.state.symbol_status(s, "splits") != "done"
-            )
+            # First symbol reconciled (done), second still pending (dedicated state).
+            r1 = self._rstate(runner1)
+            done = sorted(s for s in ("NVDA", "AAPL") if r1.status(s) == "done")
+            pending = sorted(s for s in ("NVDA", "AAPL") if r1.status(s) != "done")
             self.assertEqual(len(done), 1)
             self.assertEqual(len(pending), 1)
             # The visited symbol is in the report; the unvisited one is NOT
             # (it was never fetched), and stays pending in the durable store.
             self.assertIn(done[0], report1["symbols"])
-            self.assertEqual(
-                store1.state.symbol_status(pending[0], "splits"), "pending"
-            )
+            self.assertEqual(r1.status(pending[0]), "pending")
 
             # Run 2: fresh provider, resumes the pending symbol (done one skipped).
             remaining_sym = pending[0]
@@ -869,13 +866,14 @@ class ReconcileSplitsTests(unittest.TestCase):
                 weekly_payloads={"NVDA": weekly_payload("NVDA"), "AAPL": weekly_payload("AAPL")},
                 splits_payloads={"NVDA": splits_payload("NVDA"), "AAPL": splits_payload("AAPL")},
             )
-            runner2, store2 = make_runner(d1, provider2, tmp, MON_1)
+            runner2, _ = make_runner(d1, provider2, tmp, MON_1)
             report2 = runner2.reconcile_splits(symbols_filter=["NVDA", "AAPL"], limit=10)
             self.assertEqual(report2["status"], "complete")
             self.assertEqual(report2["requests_used_total"], 1)  # only the pending one fetched
             self.assertEqual(provider2.splits_calls, [remaining_sym])
-            self.assertEqual(store2.state.symbol_status("NVDA", "splits"), "done")
-            self.assertEqual(store2.state.symbol_status("AAPL", "splits"), "done")
+            r2 = self._rstate(runner2)
+            self.assertEqual(r2.status("NVDA"), "done")
+            self.assertEqual(r2.status("AAPL"), "done")
 
     def test_reconcile_splits_done_symbol_never_refetched(self):
         # A symbol already reconciled in a previous run is skipped (no re-fetch)
@@ -886,15 +884,80 @@ class ReconcileSplitsTests(unittest.TestCase):
                 weekly_payloads={"NVDA": weekly_payload("NVDA"), "AAPL": weekly_payload("AAPL")},
                 splits_payloads={"NVDA": splits_payload("NVDA"), "AAPL": splits_payload("AAPL")},
             )
-            runner, store = make_runner(d1, provider, tmp, MON_1)
-            # Mark NVDA splits done durably (as if a prior run reconciled it).
-            store.state.symbols.setdefault("NVDA", {})["splits"] = "done"
-            store.save()
+            runner, _ = make_runner(d1, provider, tmp, MON_1)
+            runner._get_reconcile_store().state.mark("NVDA", "done")
+            runner._get_reconcile_store().save()
             runner.reconcile_splits(symbols_filter=["NVDA", "AAPL"], limit=10)
             # Only AAPL was fetched; NVDA was skipped because it was already done.
             self.assertEqual(provider.splits_calls, ["AAPL"])
-            self.assertEqual(store.state.symbol_status("NVDA", "splits"), "done")
-            self.assertEqual(store.state.symbol_status("AAPL", "splits"), "done")
+            r = self._rstate(runner)
+            self.assertEqual(r.status("NVDA"), "done")
+            self.assertEqual(r.status("AAPL"), "done")
+
+    def test_reconcile_splits_survives_weekly_cycle_rollover(self):
+        # The maintenance cycle_week reset (new completed week) must NOT erase
+        # the dedicated reconciliation progress — capped partial work resumes
+        # across a weekly rollover instead of re-fetching everything.
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            # Week 1 (MON_1): reconcile capped at 1 -> only NVDA done, AAPL pending.
+            provider1 = FakeProvider(
+                weekly_payloads={"NVDA": weekly_payload("NVDA"), "AAPL": weekly_payload("AAPL")},
+                splits_payloads={"NVDA": splits_payload("NVDA"), "AAPL": splits_payload("AAPL")},
+            )
+            runner1, mstore1 = make_runner(d1, provider1, tmp, MON_1)
+            runner1.reconcile_splits(symbols_filter=["NVDA", "AAPL"], limit=1)
+            r1 = self._rstate(runner1)
+            done1 = sorted(s for s in ("NVDA", "AAPL") if r1.status(s) == "done")
+            pend1 = sorted(s for s in ("NVDA", "AAPL") if r1.status(s) != "done")
+            self.assertEqual(len(done1), 1)
+            self.assertEqual(len(pend1), 1)
+            # Simulate the maintenance cycle advancing to a new week (MON_2):
+            # reset_cycle wipes the maintenance store's symbol endpoints.
+            mstore1.reset_cycle("W35", ["NVDA", "AAPL"])
+            mstore1.save()
+
+            # Week 2: reconcile resumes in the SAME dedicated state — only the
+            # one pending symbol is fetched; the done one is NOT re-fetched.
+            provider2 = FakeProvider(
+                weekly_payloads={"NVDA": weekly_payload("NVDA"), "AAPL": weekly_payload("AAPL")},
+                splits_payloads={"NVDA": splits_payload("NVDA"), "AAPL": splits_payload("AAPL")},
+            )
+            runner2, _ = make_runner(d1, provider2, tmp, MON_2)
+            report2 = runner2.reconcile_splits(symbols_filter=["NVDA", "AAPL"], limit=10)
+            self.assertEqual(report2["status"], "complete")
+            self.assertEqual(provider2.splits_calls, pend1)  # {done1} survived rollover
+            r2 = self._rstate(runner2)
+            self.assertEqual(r2.status("NVDA"), "done")
+            self.assertEqual(r2.status("AAPL"), "done")
+
+    def test_reconcile_splits_no_tail_starvation(self):
+        # After a full pass completes, the NEXT invocation must re-check the
+        # whole universe (start a new pass) so no symbol at the end of the list
+        # is permanently starved.
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            provider = FakeProvider(
+                weekly_payloads={"NVDA": weekly_payload("NVDA"), "AAPL": weekly_payload("AAPL")},
+                splits_payloads={"NVDA": splits_payload("NVDA"), "AAPL": splits_payload("AAPL")},
+            )
+            runner, _ = make_runner(d1, provider, tmp, MON_1)
+            # First pass: reconcile everything (complete).
+            report1 = runner.reconcile_splits(symbols_filter=["NVDA", "AAPL"], limit=10)
+            self.assertEqual(report1["status"], "complete")
+            # Next invocation starts a NEW pass: both symbols are pending again.
+            runner._get_reconcile_store().state.mark("NVDA", "done")
+            runner._get_reconcile_store().state.mark("AAPL", "done")
+            runner._get_reconcile_store().save()
+            provider2 = FakeProvider(
+                weekly_payloads={"NVDA": weekly_payload("NVDA"), "AAPL": weekly_payload("AAPL")},
+                splits_payloads={"NVDA": splits_payload("NVDA"), "AAPL": splits_payload("AAPL")},
+            )
+            runner2, _ = make_runner(d1, provider2, tmp, MON_1)
+            report2 = runner2.reconcile_splits(symbols_filter=["NVDA", "AAPL"], limit=10)
+            # A new pass was started so both symbols were re-fetched (complete).
+            self.assertEqual(report2["status"], "complete")
+            self.assertCountEqual(provider2.splits_calls, ["NVDA", "AAPL"])
 
     def test_reconcile_splits_changed_split_reports_metrics_updated(self):
         # A split-history change rewrites metrics; the report must reflect it.
@@ -916,6 +979,35 @@ class ReconcileSplitsTests(unittest.TestCase):
             # The affected symbol's metrics were recomputed and reported.
             self.assertEqual(report["metrics_updated"], 1)
             self.assertTrue(report["symbols"]["NVDA"]["metrics_updated"])
+
+    def test_reconcile_splits_respects_configured_cap(self):
+        # RECONCILE_SPLITS_MAX_REQUESTS caps a run even when no --limit is given;
+        # draws from the shared provider quota but never exceeds its own residual
+        # budget, so it can't overrun the day ahead of maintenance.
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            settings = Settings(
+                alpha_vantage_keys=["K1", "K2"],
+                cloudflare_api_token="t", cloudflare_account_id="a", cloudflare_d1_database_id="d",
+                av_min_interval_seconds=0.0, av_max_retries=1, av_retry_base_seconds=0.0,
+                reconcile_splits_max_requests=1,
+            )
+            mstore = MaintenanceStore(settings, d1, state_path=Path(tmp) / "maintenance.json")
+            provider = FakeProvider(
+                weekly_payloads={"NVDA": weekly_payload("NVDA"), "AAPL": weekly_payload("AAPL")},
+                splits_payloads={"NVDA": splits_payload("NVDA"), "AAPL": splits_payload("AAPL")},
+            )
+            runner = MaintenanceRunner(settings, d1, provider, mstore, now_fn=lambda: MON_1)
+            report = runner.reconcile_splits(symbols_filter=["NVDA", "AAPL"])  # no --limit
+            self.assertEqual(report["status"], "partial")
+            self.assertEqual(report["requests_used_total"], 1)  # capped at config
+            # The configured cap bounds even a run with no explicit --limit: the
+            # first symbol was processed, the second left pending.
+            r = runner._get_reconcile_store().state
+            done = [s for s in ("NVDA", "AAPL") if r.status(s) == "done"]
+            pend = [s for s in ("NVDA", "AAPL") if r.status(s) == "pending"]
+            self.assertEqual(len(done), 1)
+            self.assertEqual(len(pend), 1)
 
 
 if __name__ == "__main__":

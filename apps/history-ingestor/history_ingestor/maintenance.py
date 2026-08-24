@@ -39,7 +39,12 @@ from typing import Any
 
 from .config import Settings
 from .d1 import D1QueryError
-from .maintenance_state import STATUS_DONE, STATUS_ERROR, STATUS_PENDING
+from .maintenance_state import (
+    STATUS_DONE,
+    STATUS_ERROR,
+    STATUS_PENDING,
+    ReconcileStore,
+)
 from .parser import SplitEvent, WeeklyBar
 from .provider import (
     AllKeysFailedError,
@@ -97,7 +102,18 @@ class MaintenanceRunner:
         self._provider = provider
         self._store = store
         self._key_store = key_store
+        self._reconcile_store: ReconcileStore | None = None
         self._now = now_fn or (lambda: dt.datetime.now(dt.UTC))
+
+    def _get_reconcile_store(self) -> ReconcileStore:
+        if self._reconcile_store is None:
+            # Derive the reconcile checkpoint path from the maintenance store's
+            # checkpoint location (same StateDirectory in prod, same tmp in tests)
+            # so tests stay isolated and prod keeps both in /var/lib/history-ingestor.
+            base = getattr(self._store, "_state_path", None) or self._settings.maintenance_state_path
+            self._reconcile_store = ReconcileStore(self._settings, self._d1, state_path=base.with_name("reconcile.json"))
+            self._reconcile_store.load()
+        return self._reconcile_store
 
     # ------------------------------------------------------------------ core
 
@@ -256,12 +272,12 @@ class MaintenanceRunner:
 
             if split_events_equal(fresh_events, stored_events):
                 # Unchanged history: no weekly rewrite, no provider refetch.
-                self._store.state.mark_symbol(symbol, "splits", STATUS_DONE)
+                self._get_reconcile_store().state.mark(symbol, STATUS_DONE)
                 return result
 
             result["split_changed"] = True
             if dry_run:
-                self._store.state.mark_symbol(symbol, "splits", STATUS_DONE)
+                self._get_reconcile_store().state.mark(symbol, STATUS_DONE)
                 return result
 
             # Reconcile the durable store: upsert the new set, then delete
@@ -275,7 +291,7 @@ class MaintenanceRunner:
             # the new factors — never a mixed adjustment regime. No provider
             # WEEKLY request needed: the raw history is already in D1.
             self._rewrite_history_from_stored(symbol, fresh_events, result)
-            self._store.state.mark_symbol(symbol, "splits", STATUS_DONE)
+            self._get_reconcile_store().state.mark(symbol, STATUS_DONE)
             return result
         except QuotaExhaustedError:
             result["quota"] = True
@@ -288,7 +304,7 @@ class MaintenanceRunner:
             result["splits"] = "pending"
             return result
         except (ProviderError, AllKeysFailedError) as exc:
-            self._store.state.mark_symbol(symbol, "splits", STATUS_ERROR)
+            self._get_reconcile_store().state.mark(symbol, STATUS_ERROR)
             result["splits"] = STATUS_ERROR
             result["anomalies"].append(f"{symbol} splits: {str(exc)[:200]}")
             return result
@@ -573,14 +589,16 @@ class MaintenanceRunner:
         splits whose effective date has been reached from stored events; this
         method is the only provider-fetching SPLITS path.
 
-        PROGRESS IS PERSISTENT: each symbol whose split set is reconciled is
-        marked ``splits=done`` in the durable maintenance store (saved after
-        every symbol). A capped/early-stopped run leaves unprocessed symbols
-        ``pending``; the next run SKIPS already-done symbols and resumes from
-        the first unfinished one. Status is ``partial`` while any selected
-        symbol remains pending/error, and only ``complete`` when every selected
-        symbol is done — the completion check reads the durable STORE, not the
-        per-run ``report`` (which omits symbols not yet visited).
+        PROGRESS IS PERSISTENT IN A DEDICATED STATE: each reconciled symbol is
+        marked done in the durable ``ReconcileStore`` (``app_meta
+        historyReconcileSplitState``), which is a SEPARATE responsibility from
+        the weekly maintenance cycle. It therefore survives
+        ``MaintenanceStore.reset_cycle()`` (weekly rollover never erases
+        reconciliation progress). A capped/early-stopped run leaves the rest
+        pending; the next run SKIPS done symbols and resumes from the first
+        unfinished one. When every symbol is done the pass is complete, and the
+        next invocation deliberately starts a NEW reconciliation pass so new
+        splits are re-checked on the next cadence.
 
         ``dry_run`` is provider-free: it returns a plan with zero provider
         calls and zero D1 writes.
@@ -590,11 +608,12 @@ class MaintenanceRunner:
             wanted = set(symbols_filter)
             symbols = [symbol for symbol in symbols if symbol in wanted]
         self._store.load()
+        rstore = self._get_reconcile_store()
 
         if dry_run:
             return {
                 "status": "plan",
-                "symbols": {symbol: {"splits": self._store.state.symbol_status(symbol, "splits"),
+                "symbols": {symbol: {"splits": rstore.state.status(symbol),
                                      "plan": "reconcile-splits"} for symbol in symbols},
                 "requests_used_total": 0,
                 "keys_used": [],
@@ -605,6 +624,21 @@ class MaintenanceRunner:
                 "metrics_updated": 0,
                 "anomalies": [],
             }
+
+        # A completed pass means EVERY selected symbol is already reconciled; start a
+        # NEW pass (reset to pending) so the next cadence re-checks. Otherwise
+        # ensure every selected symbol is tracked — a capped/partial previous
+        # run left some symbols unvisited, so they stay pending and the run
+        # reports partial and resumes them next time.
+        selected_all_done = rstore.state.splits and all(
+            rstore.state.status(s) == STATUS_DONE for s in symbols
+        )
+        if selected_all_done:
+            rstore.start_new_pass(symbols)
+        else:
+            for symbol in symbols:
+                if symbol not in rstore.state.splits:
+                    rstore.state.splits[symbol] = STATUS_PENDING
 
         report: dict = {
             "status": "complete",
@@ -618,15 +652,26 @@ class MaintenanceRunner:
             "metrics_updated": 0,
             "anomalies": [],
         }
+        # Effective per-invocation provider cap: reconciliation draws from the shared
+        # per-key daily ledger, but this job is hard-bounded per run so it can
+        # never overrun the whole day ahead of maintenance. An explicit --limit
+        # and the configured RECONCILE_SPLITS_MAX_REQUESTS are both enforced as
+        # an upper bound (never add, always clamp to the smaller).
+        configured_cap = self._settings.reconcile_splits_max_requests
+        if configured_cap is not None and limit is not None:
+            effective_limit = min(limit, configured_cap)
+        elif configured_cap is None:
+            effective_limit = limit
+        else:
+            effective_limit = configured_cap
         for symbol in symbols:
-            # SKIP already-reconciled symbols (durable progress) — a previous
-            # capped run may have completed some symbols; never re-fetch them.
-            if self._store.state.symbol_status(symbol, "splits") == STATUS_DONE:
-                report["symbols"][symbol] = self._status_only(symbol)
+            # SKIP already-reconciled symbols (dedicated durable progress).
+            if rstore.state.status(symbol) == STATUS_DONE:
+                report["symbols"][symbol] = {"splits": STATUS_DONE}
                 continue
             # Provider budget is checked IMMEDIATELY before the fetch so a
             # single symbol cannot blow past the cap mid-iteration.
-            if limit is not None and self._provider.requests_this_run >= limit:
+            if effective_limit is not None and self._provider.requests_this_run >= effective_limit:
                 report["anomalies"].append("run stopped by request limit before finishing SPLITS reconciliation")
                 break
             symbol_report = self._reconcile_splits(symbol, dry_run=False)
@@ -642,13 +687,11 @@ class MaintenanceRunner:
             if symbol_report.get("throttled"):
                 report["throttled"] = True
                 break
-            self._store.save()
-        # Completion reads the DURABLE store across the FULL selected universe
+            # Persist dedicated reconciliation progress after every symbol.
+            rstore.save()
+        # Completion reads the dedicated state across the FULL selected universe
         # (never the per-run `report`, which omits unvisited symbols after a cap).
-        remaining = [
-            symbol for symbol in symbols
-            if self._store.state.symbol_status(symbol, "splits") != STATUS_DONE
-        ]
+        remaining = rstore.state.pending_in(symbols)
         report["requests_used_total"] = self._provider.requests_this_run
         report["keys_used"] = [
             {"index": k.get("index"), "used": k.get("used", 0)}
@@ -656,7 +699,7 @@ class MaintenanceRunner:
         ]
         if self._key_store is not None:
             self._key_store.save()
-        self._store.save()
+        rstore.save()
         if report["quota_exhausted"]:
             report["status"] = "quota"
         elif report["throttled"]:

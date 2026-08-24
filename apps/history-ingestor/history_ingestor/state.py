@@ -31,6 +31,7 @@ class Checkpoint:
     day: str = ""  # UTC date the per-key usage refers to ("YYYY-MM-DD")
     keys: list[dict] = field(default_factory=list)  # [{"index": 0, "used": 12, "status": "ok"}]
     symbols: dict[str, dict[str, str]] = field(default_factory=dict)
+    bootstrap_daily_used: int = 0  # bootstrap-only provider requests used this UTC day (residual cap)
     started_at: str = ""
     updated_at: str = ""
 
@@ -40,6 +41,7 @@ class Checkpoint:
             "day": self.day,
             "keys": self.keys,
             "symbols": self.symbols,
+            "bootstrap_daily_used": self.bootstrap_daily_used,
             "started_at": self.started_at,
             "updated_at": self.updated_at,
         }
@@ -59,10 +61,15 @@ class Checkpoint:
             for sym, raw in symbols.items()
             if isinstance(raw, dict)
         }
+        try:
+            bootstrap_daily_used = int(payload.get("bootstrap_daily_used", 0))
+        except (TypeError, ValueError):
+            bootstrap_daily_used = 0
         return cls(
             day=day,
             keys=keys,
             symbols=symbols,
+            bootstrap_daily_used=max(0, bootstrap_daily_used),
             started_at=str(payload.get("started_at", "")),
             updated_at=str(payload.get("updated_at", "")),
         )
@@ -136,6 +143,8 @@ class StateStore:
                 {"index": index, "used": 0, "status": "ok"}
                 for index in range(self._settings.key_count)
             ]
+            # Bootstrap's residual daily budget also resets on UTC day change.
+            self._state.bootstrap_daily_used = 0
         # Ensure one entry per configured key (keys added/removed between runs).
         by_index = {int(k.get("index", -1)): k for k in self._state.keys}
         self._state.keys = [
@@ -184,6 +193,19 @@ class StateStore:
             for symbol in symbols
             if any(self.symbol_status(symbol, endpoint) != STATUS_DONE for endpoint in ENDPOINTS)
         ]
+
+    def bootstrap_daily_used(self) -> int:
+        """Bootstrap-only provider requests consumed so far this UTC day."""
+        return int(getattr(self._state, "bootstrap_daily_used", 0))
+
+    def mark_bootstrap_daily_used(self, delta: int = 1) -> None:
+        """Persist bootstrap's residual daily request consumption."""
+        self._state.bootstrap_daily_used += delta
+        self._state.updated_at = _utc_now_iso()
+
+    def save_bootstrap_daily_used(self) -> None:
+        """Persist the bootstrap daily counter (best-effort, mirror+D1)."""
+        self.save()
 
     def save(self) -> bool:
         """Persist to D1 (primary) and the local file (mirror). Best effort."""

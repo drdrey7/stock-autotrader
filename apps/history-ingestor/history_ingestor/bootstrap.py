@@ -144,10 +144,17 @@ class BootstrapRunner:
         # capped so a single problem symbol can never exhaust the day's quota
         # ahead of the maintenance (which has strict priority). Honest progress
         # still happens across days via the checkpoint.
-        # An explicit --limit is CLAMPED to the configured cap (never bypasses
-        # it) — prefer a safe, predictable clamp over rejection.
+        #
+        # The cap is enforced against a PERSISTED bootstrap-only daily counter
+        # (StateStore.bootstrap_daily_used), which resets only on a UTC day
+        # change. Multiple processes/runs within the same UTC day SHARE the same
+        # budget: each provider request is persisted to the counter immediately,
+        # so a later process never re-consumes quota the current one already
+        # spent. An explicit --limit is CLAMPED to the configured cap (min,
+        # never bypasses it); lower explicit limits are respected.
         cap = self._settings.bootstrap_max_requests_per_day
         limit = cap if limit is None else min(limit, cap)
+        self._combat_budget_limit = limit
 
         self._store.load()
         errors: list[str] = []
@@ -159,13 +166,24 @@ class BootstrapRunner:
         work_order = order_symbols_for_bootstrap(self._store, symbols)
 
         def _budget_exhausted() -> bool:
-            """True when the run has consumed the configured request cap.
+            """True when bootstrap has consumed the daily cap.
 
-            Checked IMMEDIATELY before every provider call (SPLITS, legacy
-            split backfill, WEEKLY) so a single symbol can never exceed the cap
-            by issuing SPLITS then WEEKLY in one iteration.
+            Reads the PERSISTED per-UTC-day counter (shared across processes),
+            not a per-process counter. Checked IMMEDIATELY before every provider
+            call (SPLITS, legacy split backfill, WEEKLY) so a single symbol can
+            never exceed the cap by issuing SPLITS then WEEKLY in one iteration.
             """
-            return self._provider.requests_this_run >= limit
+            return self._store.bootstrap_daily_used() >= self._combat_budget_limit
+
+        def _consume_budget() -> None:
+            """Persist one provider request against bootstrap's UTC-day budget.
+
+            Called immediately AFTER each successful provider call so a crash
+            between calls cannot lose the counter and let a later process
+            re-spend the same quota.
+            """
+            self._store.mark_bootstrap_daily_used()
+            self._store.save()
 
         for symbol in work_order:
             if self._store.symbol_status(symbol, "splits") == STATUS_DONE \
@@ -178,6 +196,7 @@ class BootstrapRunner:
                     break
                 try:
                     _, events, _ = self._provider.fetch_splits(symbol)
+                    _consume_budget()
                     # Durable FIRST: only mark complete once the provider
                     # history is persisted — a crash before the write leaves
                     # the status pending so the next run re-does it (idempotent
@@ -216,6 +235,7 @@ class BootstrapRunner:
                         if _budget_exhausted():
                             break
                         _, events, _ = self._provider.fetch_splits(symbol)
+                        _consume_budget()
                         self._persist_splits(symbol, events)
                         splits_fetched += 1
                     self._splits_cache[symbol] = events
@@ -240,6 +260,7 @@ class BootstrapRunner:
                     break
                 try:
                     _, bars, _ = self._provider.fetch_weekly(symbol)
+                    _consume_budget()
                     completed, _ = completed_bars_filter(
                         [bar.week_end_date for bar in bars], self._now()
                     )

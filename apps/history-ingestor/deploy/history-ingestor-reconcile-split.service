@@ -3,9 +3,17 @@
 # Decoupled from the weekly maintenance so split discovery NEVER blocks or
 # starves the WEEKLY SMA refresh. Shares the same alpha-vantage budget ledger,
 # so its per-symbol SPLITS calls are quota-aware and circuit-broken.
+#
+# QUOTA: this job is hard request-bounded (RECONCILE_SPLITS_MAX_REQUESTS). It
+# runs in a RESIDUAL window (Mon 09:00 UTC) AFTER the priority weekly
+# maintenance (07:00, ~50 req for 50 symbols) and the residual bootstrap
+# (08:00, capped 6/day). The per-invocation cap keeps it well within the day's
+# two-key budget (50 requests/key, 100 total) so it can never consume quota the
+# maintenance needs. Reconciliation draws from the SHARED per-key ledger, so a
+# fresh UTC day resets it alongside maintenance/bootstrap.
 [Unit]
 Description=Stock Autotrader SPLITS reconciliation (low-frequency provider check)
-After=network-online.target history-ingestor-maintenance.service
+After=network-online.target history-ingestor-maintenance.service history-ingestor-bootstrap.service
 Wants=network-online.target
 
 [Service]
@@ -18,6 +26,10 @@ EnvironmentFile=/etc/stock-autotrader/alpha-vantage.env
 EnvironmentFile=/etc/stock-autotrader/cloudflare.env
 Environment=HISTORY_INGESTOR_STATE=/var/lib/history-ingestor/checkpoint.json
 Environment=HISTORY_INGESTOR_MAINTENANCE_STATE=/var/lib/history-ingestor/maintenance.json
+# Hard per-invocation provider cap: reconciliation stops at 20 requests a run,
+# well inside the day's residual quota, and resumes (dedicated durable state)
+# on the next run. Never unbounded.
+Environment=RECONCILE_SPLITS_MAX_REQUESTS=20
 StateDirectory=history-ingestor
 ExecStart=/usr/bin/flock /var/lib/history-ingestor/run.lock /usr/bin/python3 -m history_ingestor reconcile-splits
 # Same protection as the maintenance service.
