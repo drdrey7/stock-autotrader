@@ -8,6 +8,12 @@ Review findings use the following priority contract:
   accepted. An accepted unresolved P2/P3 finding must be preserved as a GitHub
   Issue after the PR merges so it cannot be lost.
 
+For AI-generated changes that affect persistence, quotas, provider APIs, retries,
+timers, background jobs, authentication, deployment, or production infrastructure,
+reviewers must also verify the invariants in `.github/AI_ENGINEERING_RULES.md`.
+Passing the existing test suite alone is not sufficient evidence that a stateful
+or scheduled workflow is safe to merge.
+
 To mark a review thread for deferred follow-up, add a reply containing one
 standalone marker on its own line:
 
