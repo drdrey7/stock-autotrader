@@ -292,6 +292,22 @@ describe("computeLiveSma200w — honest null handling", () => {
     expect(result.sma200wHistoryWeeks).toBe(250);
   });
 
+  it("LAST-KNOWN-GOOD does NOT apply on a split-scale mismatch (regression)", () => {
+    // The stale-SMA fallback must NEVER serve the previously-valid value when
+    // the current state is Unavailable due to a split-scale mismatch. The
+    // mismatch guard runs before the delta>1 branch, so even a stored closed
+    // SMA with delta>1 must read Unavailable — not the value from a different
+    // split scale.
+    const splitMap = new Map([["NVDA", "2026-08-20"]]);
+    const result = computeLiveSma200w(
+      quote(110, "2026-08-28T15:00:00.000Z"),                                        // W35, post-split
+      metrics({ anchor_week: "2026-08-14", closed_sma_200w: 100, calculated_at: "2026-08-19T06:00:00.000Z" }), // pre-split metrics, W33 anchor
+      splitMap,
+    );
+    expect(result.sma200w).toBeNull();
+    expect(result.sma200wState).toBe("Unavailable");
+  });
+
   it("Unavailable on unparseable quote timestamp or anchor", () => {
     expect(computeLiveSma200w(quote(110, "garbage"), metrics()).sma200wState).toBe("Unavailable");
     expect(computeLiveSma200w(quote(110, W34_QUOTE), metrics({ anchor_week: "not-a-date" })).sma200wState).toBe("Unavailable");

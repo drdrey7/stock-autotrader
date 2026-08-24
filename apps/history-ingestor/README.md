@@ -184,8 +184,11 @@ SMA refresh is never starved):
   catch-up that no-ops (zero provider requests) once the cycle is complete.
 - **bootstrap: `*-*-* 08:00 UTC`** daily, residual, runs AFTER maintenance,
   request-capped (default 6/day).
-- **reconcile-split: `Sun *-*-* 08:30 UTC`** (weekly, decoupled provider SPLITS
-  check).
+- **reconcile-split: `Mon *-*-* 09:00 UTC`** weekly, decoupled provider SPLITS
+  check, runs AFTER maintenance/bootstrap (never preempts them). `Persistent=false`
+  so a missed run is never auto-caught-up at boot into the same window as
+  maintenance — the daily zero-provider apply-due-splits keeps stored rules
+  applied regardless.
 - **due-split: `Tue..Sat 13:10 UTC`** (zero-provider reconciliation).
 
 Rationale for weekly (not daily) maintenance: the 200W SMA basis only changes
@@ -219,8 +222,8 @@ On a **fresh installation**, explicitly enable/start the timers you want only
 after reviewing the schedules:
 
 ```bash
-sudo systemctl enable history-ingestor-bootstrap.timer history-ingestor-maintenance.timer history-ingestor-due-split.timer
-sudo systemctl start history-ingestor-bootstrap.timer history-ingestor-maintenance.timer history-ingestor-due-split.timer
+sudo systemctl enable history-ingestor-bootstrap.timer history-ingestor-maintenance.timer history-ingestor-reconcile-split.timer history-ingestor-due-split.timer
+sudo systemctl start history-ingestor-bootstrap.timer history-ingestor-maintenance.timer history-ingestor-reconcile-split.timer history-ingestor-due-split.timer
 sudo systemctl list-timers --all | grep history-ingestor
 ```
 

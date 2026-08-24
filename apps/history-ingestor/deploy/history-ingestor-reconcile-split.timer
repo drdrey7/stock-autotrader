@@ -1,27 +1,31 @@
-# LOW-FREQUENCY provider SPLITS reconciliation — SUNDAY 08:30 UTC (decoupled).
+# LOW-FREQUENCY provider SPLITS reconciliation — MONDAY 09:00 UTC (after maintenance).
 #
 # This is the SEPARATE split-forwarding responsibility, independent of the
 # weekly SMA refresh. Stock splits are rare, so the provider SPLITS check runs
-# weekly — never daily. It fetches SPLITS per symbol (bounded, quota-aware),
-# compares against the durable split_events store and rewrites ONLY the
-# affected symbol's history/metrics on change.
+# once per week — never daily. It fetches SPLITS per symbol, compares against
+# the durable split_events store and rewrites ONLY the affected symbol's
+# history/metrics on change.
 #
-# It is intentionally separated from Monday's WEEKLY maintenance (07:00 UTC):
-# the two jobs never share a UTC slot, so the weekly SMA refresh is never
-# blocked by or starved for split reconciliation. Completed/idempotent
-# work performs ZERO provider calls; a run simply confirms stored split_events
-# match the provider.
+# ORDERING (MAINTENANCE HAS ABSOLUTE PRIORITY):
+#   maintenance  -- daily 07:00 UTC (weekly refresh on Monday; Tue-Sat noop when complete)
+#   bootstrap    -- daily 08:00 UTC (residual, request-capped)
+#   reconcile    -- Monday 09:00 UTC (this job; AFTER maintenance/bootstrap)
+#   due-split    -- Tue-Sat 13:10 UTC (zero-provider)
+# No two provider-fetching jobs share a UTC slot, and this job never runs
+# before maintenance on any day, so it can never consume shared Alpha Vantage
+# quota ahead of the weekly SMA refresh.
 #
-# Note: `apply-due-splits` (Tue-Sat, zero-provider) is a different job — it
-# applies already-stored future-dated splits whose effective date has been
-# reached. There is NO duplicate split work between these two jobs.
+# Persistent=false: a missed run is NOT auto-caught-up at boot. Splits are rare
+# and the daily zero-provider apply-due-splits keeps stored split_events applied
+# regardless, so a permanent (non-persistent) schedule is the simplest way to
+# guarantee this job can never preempt maintenance after a downtime.
 [Unit]
-Description=Stock Autotrader SPLITS reconciliation (low-frequency provider check; decoupled from weekly maintenance)
+Description=Stock Autotrader SPLITS reconciliation (weekly; after maintenance; non-persistent)
 
 [Timer]
-OnCalendar=Sun *-*-* 08:30:00 UTC
+OnCalendar=Mon *-*-* 09:00:00 UTC
 RandomizedDelaySec=15m
-Persistent=true
+Persistent=false
 
 [Install]
 WantedBy=timers.target

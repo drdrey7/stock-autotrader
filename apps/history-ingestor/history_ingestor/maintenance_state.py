@@ -110,6 +110,7 @@ class MaintenanceState:
         """
         for symbol in self.symbols:
             if (self.symbol_status(symbol, "weekly") == STATUS_PENDING
+                    or self.symbol_status(symbol, "weekly") == STATUS_ERROR
                     or self.symbol_status(symbol, "metrics") == STATUS_PENDING):
                 return "weekly"
         return "complete"

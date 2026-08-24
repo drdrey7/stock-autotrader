@@ -144,8 +144,10 @@ class BootstrapRunner:
         # capped so a single problem symbol can never exhaust the day's quota
         # ahead of the maintenance (which has strict priority). Honest progress
         # still happens across days via the checkpoint.
-        if limit is None:
-            limit = self._settings.bootstrap_max_requests_per_day
+        # An explicit --limit is CLAMPED to the configured cap (never bypasses
+        # it) — prefer a safe, predictable clamp over rejection.
+        cap = self._settings.bootstrap_max_requests_per_day
+        limit = cap if limit is None else min(limit, cap)
 
         self._store.load()
         errors: list[str] = []
@@ -156,15 +158,24 @@ class BootstrapRunner:
         # Fairness: never-tried/pending first, then partial, then old errors.
         work_order = order_symbols_for_bootstrap(self._store, symbols)
 
+        def _budget_exhausted() -> bool:
+            """True when the run has consumed the configured request cap.
+
+            Checked IMMEDIATELY before every provider call (SPLITS, legacy
+            split backfill, WEEKLY) so a single symbol can never exceed the cap
+            by issuing SPLITS then WEEKLY in one iteration.
+            """
+            return self._provider.requests_this_run >= limit
+
         for symbol in work_order:
             if self._store.symbol_status(symbol, "splits") == STATUS_DONE \
                     and self._store.symbol_status(symbol, "weekly") == STATUS_DONE:
                 continue
-            if limit is not None and self._provider.requests_this_run >= limit:
-                break
 
             # --- SPLITS (must precede WEEKLY so adjustment is correct) ---
             if self._store.symbol_status(symbol, "splits") != STATUS_DONE:
+                if _budget_exhausted():
+                    break
                 try:
                     _, events, _ = self._provider.fetch_splits(symbol)
                     # Durable FIRST: only mark complete once the provider
@@ -202,6 +213,8 @@ class BootstrapRunner:
                         # Legacy symbol (completed before split_events existed):
                         # its history proves adjustment but the durable store is
                         # empty — one bounded refetch backfills the record.
+                        if _budget_exhausted():
+                            break
                         _, events, _ = self._provider.fetch_splits(symbol)
                         self._persist_splits(symbol, events)
                         splits_fetched += 1
@@ -223,6 +236,8 @@ class BootstrapRunner:
 
             # --- WEEKLY ---
             if self._store.symbol_status(symbol, "weekly") != STATUS_DONE:
+                if _budget_exhausted():
+                    break
                 try:
                     _, bars, _ = self._provider.fetch_weekly(symbol)
                     completed, _ = completed_bars_filter(

@@ -7,7 +7,6 @@
 Description=Stock Autotrader SPLITS reconciliation (low-frequency provider check)
 After=network-online.target history-ingestor-maintenance.service
 Wants=network-online.target
-Before=history-ingestor-due-split.service
 
 [Service]
 Type=oneshot

@@ -471,6 +471,9 @@ class MaintenanceRunner:
         # Recompute metrics from the full set on the new factors.
         metrics = compute_technical_metrics(symbol, [(bar, close) for bar, _f, close in adjusted_full])
         self._upsert_metrics(symbol, metrics)
+        # Successful recompute is reported so the caller/counter reflects it.
+        result["metrics_updated"] = True
+        result["metrics"] = STATUS_DONE
         # Mark which splits were NOT yet applied (future-dated) so the
         # daily due-split reconciliation knows what to pick up.
         future_splits = [e for e in events if date_from_iso(e.effective_date) > as_of]
@@ -569,12 +572,40 @@ class MaintenanceRunner:
         NOT duplicated: ``apply_due_splits`` (zero-provider, daily) applies
         splits whose effective date has been reached from stored events; this
         method is the only provider-fetching SPLITS path.
+
+        PROGRESS IS PERSISTENT: each symbol whose split set is reconciled is
+        marked ``splits=done`` in the durable maintenance store (saved after
+        every symbol). A capped/early-stopped run leaves unprocessed symbols
+        ``pending``; the next run SKIPS already-done symbols and resumes from
+        the first unfinished one. Status is ``partial`` while any selected
+        symbol remains pending/error, and only ``complete`` when every selected
+        symbol is done — the completion check reads the durable STORE, not the
+        per-run ``report`` (which omits symbols not yet visited).
+
+        ``dry_run`` is provider-free: it returns a plan with zero provider
+        calls and zero D1 writes.
         """
         symbols = load_core_universe(self._settings.universe_path)
         if symbols_filter is not None:
             wanted = set(symbols_filter)
             symbols = [symbol for symbol in symbols if symbol in wanted]
         self._store.load()
+
+        if dry_run:
+            return {
+                "status": "plan",
+                "symbols": {symbol: {"splits": self._store.state.symbol_status(symbol, "splits"),
+                                     "plan": "reconcile-splits"} for symbol in symbols},
+                "requests_used_total": 0,
+                "keys_used": [],
+                "quota_exhausted": False,
+                "throttled": False,
+                "split_changes": 0,
+                "rows_updated": 0,
+                "metrics_updated": 0,
+                "anomalies": [],
+            }
+
         report: dict = {
             "status": "complete",
             "symbols": {},
@@ -588,10 +619,17 @@ class MaintenanceRunner:
             "anomalies": [],
         }
         for symbol in symbols:
+            # SKIP already-reconciled symbols (durable progress) — a previous
+            # capped run may have completed some symbols; never re-fetch them.
+            if self._store.state.symbol_status(symbol, "splits") == STATUS_DONE:
+                report["symbols"][symbol] = self._status_only(symbol)
+                continue
+            # Provider budget is checked IMMEDIATELY before the fetch so a
+            # single symbol cannot blow past the cap mid-iteration.
             if limit is not None and self._provider.requests_this_run >= limit:
                 report["anomalies"].append("run stopped by request limit before finishing SPLITS reconciliation")
                 break
-            symbol_report = self._reconcile_splits(symbol, dry_run=dry_run)
+            symbol_report = self._reconcile_splits(symbol, dry_run=False)
             report["symbols"][symbol] = symbol_report
             report["anomalies"].extend(symbol_report["anomalies"])
             report["split_changes"] += 1 if symbol_report.get("split_changed") else 0
@@ -604,8 +642,13 @@ class MaintenanceRunner:
             if symbol_report.get("throttled"):
                 report["throttled"] = True
                 break
-            if not dry_run:
-                self._store.save()
+            self._store.save()
+        # Completion reads the DURABLE store across the FULL selected universe
+        # (never the per-run `report`, which omits unvisited symbols after a cap).
+        remaining = [
+            symbol for symbol in symbols
+            if self._store.state.symbol_status(symbol, "splits") != STATUS_DONE
+        ]
         report["requests_used_total"] = self._provider.requests_this_run
         report["keys_used"] = [
             {"index": k.get("index"), "used": k.get("used", 0)}
@@ -613,15 +656,15 @@ class MaintenanceRunner:
         ]
         if self._key_store is not None:
             self._key_store.save()
+        self._store.save()
         if report["quota_exhausted"]:
             report["status"] = "quota"
         elif report["throttled"]:
             report["status"] = "throttled"
+        elif remaining:
+            report["status"] = "partial"
         else:
-            report["status"] = "complete" if not any(
-                r.get("splits") == "pending" or r.get("splits") == "error"
-                for r in report["symbols"].values()
-            ) else "partial"
+            report["status"] = "complete"
         return report
 
     def _upsert_metrics(self, symbol: str, metrics) -> None:
