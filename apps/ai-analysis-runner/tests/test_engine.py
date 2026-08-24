@@ -48,6 +48,27 @@ class EngineTests(unittest.TestCase):
             self.assertIn(f"jobs/{analysis_id}/google/memory/trading_memory.md", config["memory_log_path"])
             self.assertEqual(result.provider, "google")
 
+    def test_every_state_directory_level_is_private(self) -> None:
+        import stat
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            value = settings(root)
+            analysis_id = str(uuid.uuid4())
+            TradingAgentsEngine(value, RecordingGraph).run(analysis_id, "AAPL", "2026-08-21")
+            job_root = root / "jobs" / analysis_id / "google"
+            private_levels = (
+                root / "jobs",
+                root / "jobs" / analysis_id,
+                job_root,
+                job_root / "cache",
+                job_root / "results",
+                job_root / "memory",
+            )
+            for level in private_levels:
+                self.assertTrue(level.is_dir(), level)
+                self.assertEqual(stat.S_IMODE(level.stat().st_mode), 0o700, level)
+
     def test_one_bounded_openai_fallback_has_separate_cache(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             value = settings(Path(directory), openai_fallback_enabled=True, openai_api_key="secret")

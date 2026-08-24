@@ -175,7 +175,7 @@ export function AiAnalysisAccount() {
           <ol className="investor-ai-history-list">
             {history.items.map((item) => (
               <li key={item.runId}>
-                <Link to={`/ai-analysis/runs/${encodeURIComponent(item.runId)}`} aria-label={`Open ${item.symbol} report from ${formatCompletedAt(item.completedAt)}`}>
+                <Link to={`/ai-analysis/runs/${encodeURIComponent(item.runId)}`} aria-label={`Open ${item.symbol} ${item.recommendation} report from ${formatCompletedAt(item.completedAt)}`}>
                   <span className="investor-ai-history-symbol">
                     <strong>{item.symbol}</strong>
                     <span>{item.company}</span>

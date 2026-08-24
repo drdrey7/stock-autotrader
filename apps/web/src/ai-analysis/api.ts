@@ -47,6 +47,9 @@ async function request<T>(
   const externalSignal = init.signal;
   const abort = () => controller.abort();
   externalSignal?.addEventListener("abort", abort, { once: true });
+  // A listener never fires for a signal that is already aborted, so honor an
+  // already-aborted caller signal immediately, before fetch starts.
+  if (externalSignal?.aborted) controller.abort();
   const timeout = window.setTimeout(abort, REQUEST_TIMEOUT_MS);
 
   try {

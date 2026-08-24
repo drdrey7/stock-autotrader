@@ -65,7 +65,7 @@ def _number(name: str, default: float, values: dict[str, str], *, minimum: float
 
 
 def _model(name: str, default: str, values: dict[str, str]) -> str:
-    value = values.get(name, default).strip()
+    value = values.get(name, "").strip() or default
     if not value or len(value) > 128 or any(char.isspace() for char in value):
         raise ConfigError(f"{name} has an invalid model identifier")
     return value

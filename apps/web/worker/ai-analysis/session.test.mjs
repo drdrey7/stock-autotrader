@@ -38,8 +38,10 @@ describe("AI Analysis Better Auth session boundary", () => {
     expect(getSessionMock).toHaveBeenCalledWith({ headers: request.headers });
   });
 
-  it("returns null for no session and sanitizes adapter failures", async () => {
+  it("returns null for an unusable session/empty id and sanitizes adapter failures", async () => {
     getSessionMock.mockResolvedValueOnce(null);
+    await expect(readAuthenticatedAiUser(request, configuredEnv)).resolves.toBeNull();
+    getSessionMock.mockResolvedValueOnce({ user: { id: "" }, session: { id: "session-1" } });
     await expect(readAuthenticatedAiUser(request, configuredEnv)).resolves.toBeNull();
     getSessionMock.mockRejectedValueOnce(new Error("database/token detail"));
     await expect(readAuthenticatedAiUser(request, configuredEnv)).rejects.toBeInstanceOf(AiAnalysisAuthUnavailableError);

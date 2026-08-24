@@ -3,9 +3,11 @@ from __future__ import annotations
 import base64
 import json
 import unittest
+import urllib.error
 import uuid
 from typing import Any
 
+from ai_analysis_runner.http import HttpError
 from ai_analysis_runner.queue_client import QueueClient, QueueProtocolError
 
 from tests.helpers import FakeResponse
@@ -19,6 +21,15 @@ class QueueOpener:
     def __call__(self, request: Any, timeout: float) -> FakeResponse:
         self.requests.append({"url": request.full_url, "body": json.loads(request.data), "timeout": timeout})
         return FakeResponse(self.payloads.pop(0))
+
+
+class QueueFailingOpener:
+    def __init__(self) -> None:
+        self.attempts = 0
+
+    def __call__(self, request: Any, timeout: float) -> FakeResponse:
+        self.attempts += 1
+        raise urllib.error.URLError("connection reset after a server-side pull")
 
 
 def queue_payload(body: str, content_type: str = "text") -> dict[str, Any]:
@@ -97,6 +108,19 @@ class QueueClientTests(unittest.TestCase):
     def test_empty_pull_is_none(self) -> None:
         client = self.make_client(QueueOpener([{"success": True, "result": {"messages": []}}]))
         self.assertIsNone(client.pull())
+
+    def test_pull_uses_exactly_one_http_attempt(self) -> None:
+        opener = QueueFailingOpener()
+        client = QueueClient(
+            "secret", "account", "queue",
+            visibility_timeout_ms=3_600_000,
+            timeout_seconds=30,
+            max_attempts=3,  # a response lost after a server-side pull must not lease another message
+            opener=opener,
+        )
+        with self.assertRaises(HttpError):
+            client.pull()
+        self.assertEqual(opener.attempts, 1)
 
 
 if __name__ == "__main__":

@@ -146,7 +146,7 @@ function RunPage({
         {connectionInterrupted ? (
           <p className="ai-connection-note" role="status">Connection interrupted. We’ll keep trying.</p>
         ) : null}
-        <AnalysisJourney status={run.status} symbol={run.symbol} onComplete={finishJourney} />
+        <AnalysisJourney key={run.runId} status={run.status} symbol={run.symbol} onComplete={finishJourney} />
       </>
     );
   }

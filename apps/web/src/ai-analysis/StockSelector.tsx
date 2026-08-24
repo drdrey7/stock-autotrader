@@ -29,6 +29,7 @@ export function StockSelector({ stocks, selected, ownedSymbols, onSelect }: Stoc
   const [activeIndex, setActiveIndex] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const activeOptionRef = useRef<HTMLLIElement | null>(null);
   const listboxId = "ai-analysis-stock-options";
 
   const filtered = useMemo(
@@ -43,6 +44,14 @@ export function StockSelector({ stocks, selected, ownedSymbols, onSelect }: Stoc
   useEffect(() => {
     setActiveIndex((current) => Math.min(current, Math.max(0, filtered.length - 1)));
   }, [filtered.length]);
+
+  useEffect(() => {
+    if (!open) return;
+    const activeOption = activeOptionRef.current;
+    if (activeOption && typeof activeOption.scrollIntoView === "function") {
+      activeOption.scrollIntoView({ block: "nearest" });
+    }
+  }, [activeIndex, open]);
 
   useEffect(() => {
     if (!open) return;
@@ -137,6 +146,7 @@ export function StockSelector({ stocks, selected, ownedSymbols, onSelect }: Stoc
               const owned = ownedSymbols.has(stock.symbol);
               return (
                 <li
+                  ref={index === activeIndex ? activeOptionRef : undefined}
                   id={`ai-analysis-stock-${stock.symbol}`}
                   key={stock.symbol}
                   role="option"

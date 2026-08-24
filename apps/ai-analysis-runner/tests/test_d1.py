@@ -6,6 +6,7 @@ from typing import Any
 
 from ai_analysis_runner.constants import ENGINE_DB_VERSION
 from ai_analysis_runner.d1 import D1Client
+from ai_analysis_runner.http import HttpError
 
 from tests.helpers import FakeResponse
 
@@ -19,6 +20,14 @@ class D1Opener:
         body = json.loads(request.data)
         self.requests.append({"sql": body["sql"], "params": body["params"], "timeout": timeout})
         return FakeResponse({"success": True, "result": [{"success": True, "results": self.rows}]})
+
+
+class D1ErrorOpener:
+    def __init__(self, error: dict[str, Any]) -> None:
+        self.error = error
+
+    def __call__(self, request: Any, timeout: float) -> FakeResponse:
+        return FakeResponse({"success": False, "errors": [self.error]})
 
 
 def analysis_row(status: str = "running") -> dict[str, Any]:
@@ -85,6 +94,45 @@ class D1ClientTests(unittest.TestCase):
         self.assertIn("execution_token = NULL", sql)
         self.assertIn("execution_message_id = NULL", sql)
         self.assertIn("heartbeat_at = NULL", sql)
+        self.assertEqual(
+            opener.requests[0]["params"],
+            [
+                analysis_row()["id"], "message", "token",
+                "engine_failed", "Analysis failed.", "2026-08-23T12:00:00.000Z",
+            ],
+        )
+
+    def test_d1_classifies_transient_and_permanent_messages(self) -> None:
+        identifier = analysis_row()["id"]
+        transient = D1Client(
+            "secret", "account", "database", timeout_seconds=30, max_attempts=1,
+            opener=D1ErrorOpener({"code": 1000, "message": "Network connection lost"}),
+        )
+        with self.assertRaises(HttpError) as transient_error:
+            transient.get_analysis(identifier)
+        self.assertEqual(transient_error.exception.code, "d1_query_failed")
+        self.assertTrue(transient_error.exception.retryable)
+        self.assertEqual(transient_error.exception.upstream_code, 1000)
+        self.assertEqual(transient_error.exception.upstream_message, "Network connection lost")
+        self.assertNotIn("Network connection lost", str(transient_error.exception))
+
+        permanent = D1Client(
+            "secret", "account", "database", timeout_seconds=30, max_attempts=1,
+            opener=D1ErrorOpener({"code": 1014, "message": "A permanent constraint was violated"}),
+        )
+        with self.assertRaises(HttpError) as permanent_error:
+            permanent.get_analysis(identifier)
+        self.assertFalse(permanent_error.exception.retryable)
+        self.assertEqual(permanent_error.exception.upstream_code, 1014)
+        self.assertNotIn("permanent constraint", str(permanent_error.exception))
+
+    def test_d1_does_not_retry_on_numeric_code_based_classification(self) -> None:
+        identifier = analysis_row()["id"]
+        opener = D1ErrorOpener({"code": 7500, "message": "Unrecognized remote service query"})
+        client = D1Client("secret", "account", "database", timeout_seconds=30, max_attempts=1, opener=opener)
+        with self.assertRaises(HttpError) as error:
+            client.get_analysis(identifier)
+        self.assertFalse(error.exception.retryable)
 
 
 if __name__ == "__main__":

@@ -81,6 +81,28 @@ def _price_target(value: str | None) -> float | None:
     return price if math.isfinite(price) and price > 0 else None
 
 
+def _recommendation(decision: Any, rating: str | None) -> str:
+    """Derive a valid recommendation, exact first then tolerant only on known tokens.
+
+    Order per application contract: (a) an exact valid recommendation from the
+    engine decision; (b) an exact valid recommendation from the parsed portfolio
+    Rating header; (c) tolerant token parsing only when necessary. Tolerant
+    parsing never turns arbitrary text into a recommendation — it only returns a
+    value when a token exactly matches a known recommendation string.
+    """
+
+    for candidate in (decision, rating):
+        if isinstance(candidate, str) and candidate.strip().upper() in _RECOMMENDATIONS:
+            return candidate.strip().upper()
+    for candidate in (decision, rating):
+        if isinstance(candidate, str):
+            for token in re.findall(r"[A-Za-z]+", candidate):
+                upper = token.upper()
+                if upper in _RECOMMENDATIONS:
+                    return upper
+    return ""
+
+
 def normalize_result(symbol: str, analysis_date: str, generated_at: str, output: EngineOutput) -> dict[str, Any]:
     state = output.final_state
     if not isinstance(state, dict):
@@ -90,7 +112,7 @@ def normalize_result(symbol: str, analysis_date: str, generated_at: str, output:
     sections = _portfolio_sections(portfolio)
     investment = _state_dict(state.get("investment_debate_state"))
     risk = _state_dict(state.get("risk_debate_state"))
-    recommendation = output.decision.strip().upper() if isinstance(output.decision, str) else ""
+    recommendation = _recommendation(output.decision, sections.get("Rating"))
     result = {
         "schemaVersion": RESULT_SCHEMA_VERSION,
         "symbol": symbol,

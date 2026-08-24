@@ -37,15 +37,15 @@ jobs:
         working-directory: apps/web
         run: |
           node -e 'const fs=require("node:fs"); const config=JSON.parse(fs.readFileSync("wrangler.jsonc", "utf8")); const expected=["*/15 * * * *", "0 6 * * *"]; const actual=config.triggers?.crons ?? []; if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error(`Expected exactly two production cron triggers, got ${JSON.stringify(actual)}`); console.log(`Production cron triggers (${actual.length}): ${actual.join(", ")}`);'
-          npx --yes wrangler@4.123.0 deploy --dry-run
+          npx wrangler deploy --dry-run
       - name: Validate preview Worker config and dry-run
         working-directory: apps/web
         run: |
           node -e 'const fs=require("node:fs"); const config=JSON.parse(fs.readFileSync("wrangler.preview.jsonc", "utf8")); if (config.name !== "stock-autotrader-preview") throw new Error(`Unexpected preview Worker name: ${config.name}`); if (config.main !== "preview-worker.ts") throw new Error(`Unexpected preview entrypoint: ${config.main}`); if ((config.triggers?.crons ?? []).length !== 0) throw new Error("Preview Worker must have zero cron triggers"); const d1=config.d1_databases ?? []; if (JSON.stringify(d1.map(({binding,database_name}) => ({binding,database_name}))) !== JSON.stringify([{binding:"DB",database_name:"stock-autotrader-preview-db"}])) throw new Error(`Preview must use only the dedicated preview D1: ${JSON.stringify(d1)}`); if (d1[0]?.database_id === "b5a7f345-f5ec-4200-ab41-0a37a01560f2") throw new Error("Preview must not bind production D1"); for (const key of ["kv_namespaces","r2_buckets","durable_objects","queues","secrets"]) if (Object.hasOwn(config,key)) throw new Error(`Preview config must not contain ${key}`); if (config.compatibility_flags?.includes("global_fetch_strictly_public")) throw new Error("Preview Worker must not use public global fetch"); const services=config.services ?? []; if (JSON.stringify(services) !== JSON.stringify([{binding:"PRODUCTION_API",service:"stock-autotrader-web"}])) throw new Error(`Preview must have exactly one production service binding: ${JSON.stringify(services)}`); const vars=Object.keys(config.vars ?? {}).sort(); if (vars.join(",") !== "ENVIRONMENT") throw new Error(`Unexpected preview vars: ${vars.join(",")}`); if (config.vars.ENVIRONMENT !== "preview") throw new Error("Preview ENVIRONMENT must be preview"); const workerFirst=config.assets?.run_worker_first ?? []; if (JSON.stringify(workerFirst) !== JSON.stringify(["/api","/api/*","/__preview/diagnostics"])) throw new Error(`Worker-first routes changed: ${JSON.stringify(workerFirst)}`); const serialized=JSON.stringify(config); if (/PUBLIC_API_ORIGIN|INGEST_SECRET|FINNHUB_API_KEY|FMP_API_KEY|SEC_USER_AGENT|broker/i.test(serialized)) throw new Error("Preview config contains a public-origin or production secret name"); console.log("Preview config uses only the dedicated D1, zero triggers, one production service binding and no secrets");'
-          npx --yes wrangler@4.123.0 deploy --config wrangler.preview.jsonc --dry-run
+          npx wrangler deploy --config wrangler.preview.jsonc --dry-run
       - name: Validate D1 migrations (local)
         working-directory: apps/web
-        run: npx --yes wrangler@4.123.0 d1 migrations apply stock-autotrader-db --local
+        run: npx wrangler d1 migrations apply stock-autotrader-db --local
       - name: Validate seed against local D1
         working-directory: apps/web
         run: node scripts/verify-local-seed.mjs --local --expect-clean
@@ -80,10 +80,16 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Lint runner
         run: |
           python3 -m pip install --quiet "ruff==0.16.0"
           ruff check apps/ai-analysis-runner
+      - name: Syntax-check installer and run rollback harness
+        run: |
+          bash -n apps/ai-analysis-runner/deploy/install-ai-analysis-runner-root.sh
+          bash apps/ai-analysis-runner/tests/test_installer_rollback.sh
       - name: Test runner without paid calls
         working-directory: apps/ai-analysis-runner
         run: PYTHONPATH=. python3 -m unittest discover -s tests -v

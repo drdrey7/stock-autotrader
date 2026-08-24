@@ -179,4 +179,29 @@ describe("Investor Hub", () => {
 
     await waitFor(() => expect(screen.getByLabelText("Current route")).toHaveTextContent("/ai-analysis?symbol=NVDA"));
   });
+
+  it("never honors a non-allowlisted returnTo after sign-in", async () => {
+    function LocationView() {
+      return <output aria-label="Current route">{useLocation().pathname}{useLocation().search}</output>;
+    }
+
+    for (const malicious of ["//evil.example", "https://evil.example", "/ai-analysis-evil"]) {
+      const { unmount } = render(
+        <MemoryRouter initialEntries={[{ pathname: "/account", state: { returnTo: malicious } }]}>
+          <Routes>
+            <Route path="*" element={<><InvestorHubPage /><LocationView /></>} />
+          </Routes>
+        </MemoryRouter>,
+      );
+      const form = screen.getByRole("form", { name: "Sign in form" });
+      fireEvent.change(within(form).getByLabelText("Email"), { target: { value: "person@example.com" } });
+      fireEvent.change(within(form).getByLabelText("Password"), { target: { value: "password123" } });
+      fireEvent.click(within(form).getByRole("button", { name: "Sign in" }));
+
+      await waitFor(() => expect(screen.getByLabelText("Current route")).toHaveTextContent("/account"));
+      expect(screen.getByLabelText("Current route")).not.toHaveTextContent("evil");
+      expect(screen.getByLabelText("Current route")).not.toHaveTextContent("https://");
+      unmount();
+    }
+  });
 });

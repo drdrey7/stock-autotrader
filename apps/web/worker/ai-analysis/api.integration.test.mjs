@@ -28,7 +28,12 @@ class SqliteD1Statement {
   executeBatch() {
     const statement = this.owner.sqlite.prepare(this.sql);
     if (statement.columns().length > 0) {
-      return { success: true, results: statement.all(...this.values), meta: { changes: 0 } };
+      const rows = statement.all(...this.values);
+      // D1 reports the change count for a RETURNING statement from SQLite's
+      // changes() after execution, matching the rows actually modified — not a
+      // hard-coded 0 and not an assumption that all() row length equals changes.
+      const changes = Number(this.owner.sqlite.prepare("SELECT changes() AS c").get().c ?? 0);
+      return { success: true, results: rows, meta: { changes } };
     }
     const result = statement.run(...this.values);
     return { success: true, results: [], meta: { changes: Number(result.changes) } };
@@ -53,6 +58,7 @@ class SqliteD1 {
     this.sqlite = new DatabaseSync(":memory:");
     this.sqlite.exec("PRAGMA foreign_keys = ON");
     this.failNextBatchContaining = null;
+    this.interleaveBefore = null;
   }
 
   prepare(sql) {
@@ -60,6 +66,10 @@ class SqliteD1 {
   }
 
   async batch(statements) {
+    // Controlled interleaving seam: a test may pause every batch before any
+    // transaction begins so that concurrent acquireAnalysis calls genuinely
+    // reach the acquisition code together instead of running in near-serial order.
+    if (this.interleaveBefore) await this.interleaveBefore();
     if (
       this.failNextBatchContaining
       && statements.some((statement) => statement.sql.includes(this.failNextBatchContaining))
@@ -604,19 +614,33 @@ describe("AI Analysis Worker API", () => {
     expect(count(db, "ai_analyses")).toBe(2);
   });
 
-  it("serializes three same-symbol users into one canonical, one Queue send, and three independent debits", async () => {
+  it("interleaves three same-symbol users into one canonical, one Queue send, and three independent debits", async () => {
     const db = setupDatabase(["user-a", "user-b", "user-c"]);
     const queue = new FakeQueue();
+    // D1 batch() on a synchronous DatabaseSync would run these in near-serial
+    // order. Use a controlled three-way barrier so every acquireAnalysis call
+    // genuinely reaches the acquisition code before any commits, exercising the
+    // UNIQUE/CAS conflict-and-recovery path rather than just Promise.all.
+    let arrivals = 0;
+    let releaseBarrier;
+    const gate = new Promise((resolve) => { releaseBarrier = resolve; });
+    db.interleaveBefore = async () => {
+      arrivals += 1;
+      if (arrivals >= 3) releaseBarrier();
+      await gate;
+    };
     const responses = await Promise.all([
       postRun(db, queue, "user-a", "MSFT", crypto.randomUUID()),
       postRun(db, queue, "user-b", "MSFT", crypto.randomUUID()),
       postRun(db, queue, "user-c", "MSFT", crypto.randomUUID()),
     ]);
+    // All three arrivals must have reached the acquisition gate before any committed.
+    expect(arrivals).toBeGreaterThanOrEqual(3);
     expect(responses.map((response) => response.status)).toEqual([202, 202, 202]);
-    expect(count(db, "ai_analyses")).toBe(1);
+    expect(count(db, "ai_analyses")).toBe(1); // single canonical => a single logical LLM computation
     expect(count(db, "ai_analysis_dispatches")).toBe(1);
     expect(count(db, "user_ai_analysis_runs")).toBe(3);
-    expect(queue.messages).toHaveLength(1);
+    expect(queue.messages).toHaveLength(1); // one logical dispatch job
     expect(db.sqlite.prepare("SELECT SUM(credits_remaining) AS remaining, SUM(credits_used) AS used FROM user_ai_entitlements").get())
       .toMatchObject({ remaining: 0, used: 3 });
 
@@ -689,5 +713,51 @@ describe("AI Analysis Worker API", () => {
     );
     expect(response.status).toBe(503);
     expect(await responseJson(response)).toEqual({ error: "ai_analysis_result_unavailable" });
+  });
+
+  it("keeps completed run/history visible when the universe row is missing, inactive, or non-core", async () => {
+    const db = setupDatabase(["user-1"]);
+    const queue = new FakeQueue();
+    setCredits(db, "user-1", 2);
+    const created = await postRun(db, queue, "user-1", "MSFT", crypto.randomUUID());
+    const body = await responseJson(created);
+    const analysisId = db.sqlite.prepare("SELECT analysis_id FROM user_ai_analysis_runs WHERE id = ?").get(body.runId).analysis_id;
+    transitionToCompleted(db, analysisId, "2026-08-23T12:05:00.000Z");
+
+    const runCompany = () => handleAiAnalysisApi(
+      new Request(`https://app.test/api/ai-analysis/runs/${body.runId}`),
+      envFor(db, queue),
+      dependenciesFor("user-1"),
+    ).then(async (response) => ({ status: response.status, body: await response.json() }));
+
+    // Missing universe row must not hide the historical run; company falls back to symbol.
+    db.sqlite.prepare("DELETE FROM earnings_universe WHERE symbol = 'MSFT'").run();
+    const missing = await runCompany();
+    expect(missing.status).toBe(200);
+    expect(missing.body.company).toBe("MSFT");
+
+    // A non-core active row for the same symbol must not be joined (source='core'
+    // restriction), so the run stays visible with the symbol fallback.
+    db.sqlite.prepare("INSERT INTO earnings_universe (symbol, company, source, active, universe_version) VALUES ('MSFT', 'MSFT Trending', 'trending', 1, 1)").run();
+    const nonCore = await runCompany();
+    expect(nonCore.status).toBe(200);
+    expect(nonCore.body.company).toBe("MSFT");
+
+    // An inactive core row must not hide the run either.
+    db.sqlite.prepare("UPDATE earnings_universe SET source = 'core', active = 0 WHERE symbol = 'MSFT'").run();
+    const inactive = await runCompany();
+    expect(inactive.status).toBe(200);
+    expect(inactive.body.company).toBe("MSFT");
+
+    // History still lists the run exactly once (no pagination duplication).
+    const history = await handleAiAnalysisApi(
+      new Request("https://app.test/api/ai-analysis/history"),
+      envFor(db, queue),
+      dependenciesFor("user-1"),
+    );
+    expect(history.status).toBe(200);
+    const historyBody = await responseJson(history);
+    expect(historyBody.items.filter((item) => item.runId === body.runId)).toHaveLength(1);
+    expect(historyBody.items[0].company).toBe("MSFT");
   });
 });

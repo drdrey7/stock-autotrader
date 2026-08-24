@@ -93,19 +93,23 @@ function methodNotAllowed(allow: string): Response {
   return response;
 }
 
-function parseStoredResult(run: StoredRunView): AiAnalysisResultV1 {
-  if (!run.resultJson) throw new InvalidStoredAiAnalysisResultError();
+function parseResultJson(resultJson: string | null, symbol: string): AiAnalysisResultV1 {
+  if (!resultJson) throw new InvalidStoredAiAnalysisResultError();
   let parsedJson: unknown;
   try {
-    parsedJson = JSON.parse(run.resultJson);
+    parsedJson = JSON.parse(resultJson);
   } catch {
     throw new InvalidStoredAiAnalysisResultError();
   }
   const parsed = aiAnalysisResultV1Schema.safeParse(parsedJson);
-  if (!parsed.success || parsed.data.symbol !== run.symbol) {
+  if (!parsed.success || parsed.data.symbol !== symbol) {
     throw new InvalidStoredAiAnalysisResultError();
   }
   return parsed.data;
+}
+
+function parseStoredResult(run: StoredRunView): AiAnalysisResultV1 {
+  return parseResultJson(run.resultJson, run.symbol);
 }
 
 function runResponse(run: StoredRunView): AiAnalysisRunResponse {
@@ -159,12 +163,50 @@ function isJsonRequest(request: Request): boolean {
   return request.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() === "application/json";
 }
 
+async function readBoundedBody(request: Request, limit: number): Promise<string | null> {
+  const reader = request.body?.getReader();
+  if (!reader) return null;
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        total += value.byteLength;
+        if (total > limit) {
+          // Reject as soon as the limit is exceeded; never buffer the whole
+          // oversized body into memory.
+          await reader.cancel();
+          return null;
+        }
+        chunks.push(value);
+      }
+    }
+  } catch {
+    return null;
+  } finally {
+    reader.releaseLock();
+  }
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(merged);
+}
+
 async function readRequestedSymbol(request: Request): Promise<string | null> {
+  // Content-Length is a fast rejection, not the only authority: chunked or
+  // missing content-length bodies are still bounded by reading the stream.
   const contentLength = Number(request.headers.get("content-length") ?? "0");
   if (Number.isFinite(contentLength) && contentLength > MAX_RUN_REQUEST_BYTES) return null;
+  const text = await readBoundedBody(request, MAX_RUN_REQUEST_BYTES);
+  if (text === null) return null;
   let value: unknown;
   try {
-    value = await request.json();
+    value = JSON.parse(text);
   } catch {
     return null;
   }
@@ -243,7 +285,9 @@ async function handleCatalog(request: Request, env: Env): Promise<Response> {
     return publicJson(catalog, 200, request.method === "HEAD");
   } catch (error) {
     safeLog("catalog", error);
-    return publicJson({ error: "ai_analysis_catalog_unavailable" }, 503, request.method === "HEAD");
+    const response = publicJson({ error: "ai_analysis_catalog_unavailable" }, 503, request.method === "HEAD");
+    response.headers.set("cache-control", "no-store");
+    return response;
   }
 }
 
@@ -277,11 +321,18 @@ async function handleCreateRun(
   const symbol = await readRequestedSymbol(request);
   if (!symbol) return privateJson({ error: "invalid_symbol" }, 400);
 
+  let acquiredRunId: string | null = null;
   try {
     // Membership comes from the checked-in Core config; the active Core row is
     // also required so response company names use the existing D1 source.
     if (!await readActiveCoreCompany(env.DB, symbol)) {
       throw new AiAnalysisCatalogUnavailableError();
+    }
+    // Dispatch must be possible before any credit is debited. When the Queue
+    // binding is absent this is a definitive, request-time state: respond 503
+    // without creating a run, a canonical analysis, or an outbox row.
+    if (!env.AI_ANALYSIS_QUEUE) {
+      return privateJson({ error: "ai_analysis_dispatch_unavailable" }, 503);
     }
     const now = dependencies.now();
     const acquisition = await acquireAnalysis(env.DB, {
@@ -290,11 +341,9 @@ async function handleCreateRun(
       idempotencyKey,
       now,
     });
+    acquiredRunId = acquisition.run.runId;
 
     if (acquisition.run.analysisStatus === "dispatching") {
-      if (!env.AI_ANALYSIS_QUEUE) {
-        return privateJson({ error: "ai_analysis_dispatch_unavailable" }, 503);
-      }
       await dispatchAnalysis(env.DB, env.AI_ANALYSIS_QUEUE, acquisition.run.analysisId, now);
       const refreshed = await readRunForUser(env.DB, user.id, acquisition.run.runId);
       if (refreshed) acquisition.run = refreshed;
@@ -317,7 +366,12 @@ async function handleCreateRun(
     }
     if (error instanceof AiAnalysisDispatchUnavailableError) {
       safeLog(error.uncertain ? "dispatch-persistence" : "dispatch-send", error);
-      return privateJson({ error: "ai_analysis_dispatch_unavailable" }, 503);
+      return privateJson(
+        error.uncertain && acquiredRunId !== null
+          ? { error: "ai_analysis_dispatch_unavailable", runId: acquiredRunId }
+          : { error: "ai_analysis_dispatch_unavailable" },
+        503,
+      );
     }
     if (error instanceof InvalidStoredAiAnalysisResultError) {
       safeLog("stored-result", error);
@@ -357,7 +411,10 @@ async function handleReadRun(
   } catch (error) {
     if (error instanceof AiAnalysisDispatchUnavailableError) {
       safeLog(error.uncertain ? "read-dispatch-persistence" : "read-dispatch-send", error);
-      return privateJson({ error: "ai_analysis_dispatch_unavailable" }, 503);
+      return privateJson(
+        error.uncertain ? { error: "ai_analysis_dispatch_unavailable", runId } : { error: "ai_analysis_dispatch_unavailable" },
+        503,
+      );
     }
     if (error instanceof InvalidStoredAiAnalysisResultError) {
       safeLog("stored-result", error);
@@ -385,28 +442,13 @@ async function handleHistory(
       return privateJson({ error: "invalid_history_limit" }, 400);
     }
     const page = await readHistoryPage(env.DB, user.id, cursor, limit);
-    const items = page.rows.map((row) => {
-      const run: StoredRunView = {
-        runId: row.runId,
-        analysisId: "history",
-        symbol: row.symbol,
-        company: row.company,
-        requestedAt: row.acquiredAt,
-        runStatus: "completed",
-        analysisStatus: "completed",
-        completedAt: row.completedAt,
-        resultJson: row.resultJson,
-        creditRefundedAt: null,
-        creditsRemaining: 0,
-      };
-      return {
-        runId: row.runId,
-        symbol: row.symbol,
-        company: row.company,
-        recommendation: parseStoredResult(run).recommendation,
-        completedAt: row.completedAt,
-      };
-    });
+    const items = page.rows.map((row) => ({
+      runId: row.runId,
+      symbol: row.symbol,
+      company: row.company,
+      recommendation: parseResultJson(row.resultJson, row.symbol).recommendation,
+      completedAt: row.completedAt,
+    }));
     const last = page.rows.at(-1);
     const response: AiAnalysisHistoryResponse = aiAnalysisHistoryResponseSchema.parse({
       schemaVersion: 1,

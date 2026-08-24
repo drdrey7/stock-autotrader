@@ -16,6 +16,17 @@ ANALYSIS_COLUMNS = (
     "execution_message_id", "heartbeat_at",
 )
 
+# Documented transient Cloudflare D1 conditions (see D1 retry documentation).
+# Classification is message-based on purpose: Cloudflare does not document a
+# numeric retryable D1 error code, so no numeric code set is used.
+_TRANSIENT_D1_MESSAGES = (
+    "network connection lost",
+    "d1 db reset because its code was updated",
+    "internal error while connecting to d1",
+    "storage operation caused object to be reset",
+    "transient issue on remote node",
+)
+
 
 class D1ProtocolError(RuntimeError):
     """D1 returned a success response that violated the expected shape."""
@@ -48,7 +59,20 @@ class D1Client:
             opener=self._opener,
         )
         if payload.get("success") is not True:
-            raise HttpError("d1_query_failed", retryable=False)
+            errors = payload.get("errors")
+            first_error = errors[0] if isinstance(errors, list) and errors and isinstance(errors[0], dict) else {}
+            upstream_code = first_error.get("code") if isinstance(first_error, dict) else None
+            upstream_message = first_error.get("message") if isinstance(first_error, dict) else None
+            retryable = False
+            if isinstance(upstream_message, str):
+                lowered = upstream_message.lower()
+                retryable = any(marker in lowered for marker in _TRANSIENT_D1_MESSAGES)
+            raise HttpError(
+                "d1_query_failed",
+                retryable=retryable,
+                upstream_code=upstream_code,
+                upstream_message=upstream_message,
+            )
         result = payload.get("result")
         if not isinstance(result, list) or len(result) != 1 or not isinstance(result[0], dict):
             raise D1ProtocolError("d1_result_invalid")

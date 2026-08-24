@@ -69,6 +69,14 @@ class ConfigTests(unittest.TestCase):
                 "AI_ANALYSIS_STALE_LEASE_SECONDS": "120",
             })
 
+    def test_empty_model_variables_fall_back_to_defaults(self) -> None:
+        environ = base_env()
+        environ["TRADINGAGENTS_QUICK_THINK_LLM"] = ""
+        environ["AI_ANALYSIS_OPENAI_QUICK_MODEL"] = ""
+        value = from_env(environ)
+        self.assertEqual(value.quick_model, "gemini-3.1-flash-lite")
+        self.assertEqual(value.openai_quick_model, "gpt-5.4-mini")
+
 
 if __name__ == "__main__":
     unittest.main()

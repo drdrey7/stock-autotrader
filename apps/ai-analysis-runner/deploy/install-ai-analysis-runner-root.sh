@@ -75,20 +75,59 @@ systemctl is-enabled --quiet "$SERVICE" && was_enabled=1 || true
 rollback() {
   local exit_code=$?
   trap - ERR INT TERM
-  set +e
+  # Do NOT disable errexit. Every restoration step is checked explicitly; if a
+  # critical step fails the rollback reports ROLLBACK FAILED and exits non-zero.
+  local failed=0
   if [ "$swapped" -eq 1 ]; then
     failed_venv="${VENV_DIR}.failed.$$"
-    [ -e "$VENV_DIR" ] && mv "$VENV_DIR" "$failed_venv"
-    [ -n "$rollback_venv" ] && [ -e "$rollback_venv" ] && mv "$rollback_venv" "$VENV_DIR"
+    if [ -e "$VENV_DIR" ]; then
+      if mv "$VENV_DIR" "$failed_venv"; then :; else
+        echo "ROLLBACK FAILED: could not move current environment aside" >&2; failed=1
+      fi
+    fi
+    if [ -n "$rollback_venv" ] && [ -e "$rollback_venv" ]; then
+      if mv "$rollback_venv" "$VENV_DIR"; then :; else
+        echo "ROLLBACK FAILED: could not restore previous environment" >&2; failed=1
+      fi
+    fi
   fi
+  # Restore or remove the previous unit.
   if [ "$had_unit" -eq 1 ]; then
-    install -o root -g root -m 0644 "$unit_backup" "$UNIT_TARGET"
+    if install -o root -g root -m 0644 "$unit_backup" "$UNIT_TARGET"; then :; else
+      echo "ROLLBACK FAILED: could not restore previous unit" >&2; failed=1
+    fi
   else
-    rm -f "$UNIT_TARGET"
+    if rm -f "$UNIT_TARGET"; then :; else
+      echo "ROLLBACK FAILED: could not remove installed unit" >&2; failed=1
+    fi
   fi
-  systemctl daemon-reload
-  [ "$was_enabled" -eq 1 ] && systemctl enable "$SERVICE" >/dev/null
-  [ "$was_active" -eq 1 ] && systemctl start "$SERVICE"
+  if systemctl daemon-reload; then :; else
+    echo "ROLLBACK FAILED: daemon-reload failed" >&2; failed=1
+  fi
+  # Restore ENABLED state explicitly (both directions).
+  if [ "$was_enabled" -eq 1 ]; then
+    if systemctl enable "$SERVICE" >/dev/null 2>&1; then :; else
+      echo "ROLLBACK FAILED: could not re-enable $SERVICE" >&2; failed=1
+    fi
+  else
+    if systemctl disable "$SERVICE" >/dev/null 2>&1; then :; else
+      echo "ROLLBACK FAILED: could not disable $SERVICE" >&2; failed=1
+    fi
+  fi
+  # Restore ACTIVE state independently, only after unit and enable state are set.
+  if [ "$was_active" -eq 1 ]; then
+    if systemctl start "$SERVICE" >/dev/null 2>&1; then :; else
+      echo "ROLLBACK FAILED: could not start $SERVICE" >&2; failed=1
+    fi
+  elif systemctl is-active --quiet "$SERVICE" 2>/dev/null; then
+    if systemctl stop "$SERVICE" >/dev/null 2>&1; then :; else
+      echo "ROLLBACK FAILED: could not stop $SERVICE" >&2; failed=1
+    fi
+  fi
+  if [ "$failed" -eq 1 ]; then
+    echo "ROLLBACK FAILED: one or more restoration steps failed" >&2
+    exit 1
+  fi
   echo "ERROR: installation rolled back; failed environment retained at ${failed_venv:-$new_venv}" >&2
   exit "$exit_code"
 }

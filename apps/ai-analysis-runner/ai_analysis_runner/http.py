@@ -17,6 +17,10 @@ class HttpError(RuntimeError):
     code: str
     status: int | None = None
     retryable: bool = False
+    # Internal upstream diagnostic detail (e.g. D1 errors[].code/message).
+    # These are never surfaced to end users; __str__ only returns the app code.
+    upstream_code: int | str | None = None
+    upstream_message: str | None = None
 
     def __str__(self) -> str:
         return self.code

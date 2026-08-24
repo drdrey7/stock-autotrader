@@ -14,6 +14,8 @@ const ALLOWED_ELEMENTS = [
   "h2",
   "h3",
   "h4",
+  "h5",
+  "h6",
   "hr",
   "li",
   "ol",
@@ -34,7 +36,10 @@ function TableScroller({ children }: { children?: ReactNode }) {
 }
 
 const components: Components = {
-  a: ({ href = "", children, ...props }) => {
+  a: ({ href = "", children, node, ...props }) => {
+    // node is the HAST element from react-markdown; discard it before spreading
+    // so it never reaches the DOM as an invalid attribute.
+    void node;
     const safeHref = safeMarkdownUrl(href);
     if (!safeHref) return <span>{children}</span>;
     const external = safeHref.startsWith("http://") || safeHref.startsWith("https://");

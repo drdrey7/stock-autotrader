@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import tempfile
+import time
 import unittest
 import uuid
 from dataclasses import replace
@@ -39,6 +41,8 @@ class FakeD1:
         self.fail_calls = 0
         self.requeue_calls = 0
         self.complete_error = False
+        self.heartbeat_ok = True
+        self.completed_result_json: str | None = None
 
     def get_analysis(self, _analysis_id: str) -> Analysis:
         return self.analysis
@@ -58,7 +62,7 @@ class FakeD1:
         return self.analysis
 
     def heartbeat(self, *_args: Any) -> bool:
-        return True
+        return self.heartbeat_ok
 
     def complete(self, _id: str, _message: str, token: str, result_json: str, _completed: str, _valid: str) -> bool:
         self.complete_calls += 1
@@ -66,7 +70,7 @@ class FakeD1:
             raise HttpError("d1_request_failed", retryable=True)
         if self.analysis.execution_token != token:
             return False
-        self.assert_result_json = result_json
+        self.completed_result_json = result_json
         self.analysis = replace(self.analysis, status="completed")
         return True
 
@@ -128,6 +132,30 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(queue.acked, ["message-1"])
             self.assertEqual(d1.analysis.status, "completed")
             self.assertFalse((Path(directory) / "pending-results" / f"{current.id}.json").exists())
+            assert d1.completed_result_json is not None
+            self.assertEqual(json.loads(d1.completed_result_json)["symbol"], "AAPL")
+
+    def test_lost_lease_abandons_without_ack_fail_or_requeue(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            current = analysis()
+            engine = FakeEngine()
+            original_run = engine.run
+
+            def slow_run(*_args: str) -> Any:
+                # Let the background heartbeat thread observe the lost lease
+                # before the synchronous engine work completes.
+                time.sleep(0.05)
+                return original_run()
+
+            engine.run = slow_run
+            runner, queue, d1 = self.build(directory, current, engine, heartbeat_interval_seconds=0)
+            d1.heartbeat_ok = False
+            runner.process_message(message(current))
+            self.assertEqual(d1.complete_calls, 0)
+            self.assertEqual(d1.fail_calls, 0)
+            self.assertEqual(d1.requeue_calls, 0)
+            self.assertEqual(queue.acked, [])
+            self.assertEqual(queue.retried, [])
 
     def test_redelivery_recovers_normalized_checkpoint_without_paid_call(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

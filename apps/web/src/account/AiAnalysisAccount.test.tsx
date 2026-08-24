@@ -39,7 +39,7 @@ describe("Investor Hub AI Analysis account section", () => {
     render(<MemoryRouter><AiAnalysisAccount /></MemoryRouter>);
 
     expect(await screen.findByText("2", { selector: "strong" })).toBeInTheDocument();
-    const reportLinks = await screen.findAllByRole("link", { name: /Open AAPL report from/ });
+    const reportLinks = await screen.findAllByRole("link", { name: /Open AAPL (BUY|HOLD) report from/ });
     expect(reportLinks).toHaveLength(2);
     expect(reportLinks[0]).toHaveAttribute("href", `/ai-analysis/runs/${firstRun}`);
     expect(reportLinks[1]).toHaveAttribute("href", `/ai-analysis/runs/${secondRun}`);
@@ -63,7 +63,7 @@ describe("Investor Hub AI Analysis account section", () => {
     render(<MemoryRouter><AiAnalysisAccount /></MemoryRouter>);
     fireEvent.click(await screen.findByRole("button", { name: "Load more reports" }));
 
-    await waitFor(() => expect(screen.getAllByRole("link", { name: /Open AAPL report from/ })).toHaveLength(2));
+    await waitFor(() => expect(screen.getAllByRole("link", { name: /Open AAPL (BUY|SELL) report from/ })).toHaveLength(2));
     expect(apiMocks.getHistory).toHaveBeenLastCalledWith("next-page", expect.any(AbortSignal));
   });
 

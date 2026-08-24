@@ -1,12 +1,15 @@
 import {
+  aiAnalysisEngineName,
+  aiAnalysisOwnedSymbolsLimit,
+  aiAnalysisResultSchemaVersion,
   CORE_UNIVERSE,
   CORE_UNIVERSE_VERSION,
   type AiAnalysisCatalogResponse,
 } from "@stock-autotrader/contracts";
 
-export const AI_ANALYSIS_ENGINE = "TradingAgents" as const;
+export const AI_ANALYSIS_ENGINE = aiAnalysisEngineName;
 export const AI_ANALYSIS_ENGINE_VERSION = "v0.3.1+01477f9afb7a47b849ed4c9259d3a9a4738d9fda" as const;
-export const AI_ANALYSIS_RESULT_SCHEMA_VERSION = 1 as const;
+export const AI_ANALYSIS_RESULT_SCHEMA_VERSION = aiAnalysisResultSchemaVersion;
 
 export interface AiAnalysisQueuePayload {
   schemaVersion: 1;
@@ -174,7 +177,7 @@ const RUN_VIEW_SQL = `
     run.id AS run_id,
     run.analysis_id,
     run.symbol,
-    universe.company,
+    COALESCE(universe.company, run.symbol) AS company,
     run.requested_at,
     run.status AS run_status,
     analysis.status AS analysis_status,
@@ -185,7 +188,12 @@ const RUN_VIEW_SQL = `
   FROM user_ai_analysis_runs AS run
   JOIN ai_analyses AS analysis ON analysis.id = run.analysis_id
   JOIN user_ai_entitlements AS entitlement ON entitlement.user_id = run.user_id
-  JOIN earnings_universe AS universe ON universe.symbol = run.symbol
+  LEFT JOIN (
+    SELECT symbol, company
+    FROM earnings_universe
+    WHERE source = 'core' AND active = 1
+    GROUP BY symbol
+  ) AS universe ON universe.symbol = run.symbol
 `;
 
 export async function readRunForUser(
@@ -434,6 +442,7 @@ export async function readViewerState(db: D1Database, userId: string): Promise<V
       FROM user_ai_analysis_runs
       WHERE user_id = ? AND status = 'completed'
       ORDER BY symbol ASC
+      LIMIT ${aiAnalysisOwnedSymbolsLimit}
     `).bind(userId).all<OwnedSymbolRow>(),
   ]);
   if (!entitlement) throw new Error("ai_analysis_entitlement_missing");
@@ -481,13 +490,18 @@ export async function readHistoryPage(
     SELECT
       run.id AS run_id,
       run.symbol,
-      universe.company,
+      COALESCE(universe.company, run.symbol) AS company,
       run.acquired_at,
       analysis.completed_at,
       analysis.result_json
     FROM user_ai_analysis_runs AS run
     JOIN ai_analyses AS analysis ON analysis.id = run.analysis_id
-    JOIN earnings_universe AS universe ON universe.symbol = run.symbol
+    LEFT JOIN (
+      SELECT symbol, company
+      FROM earnings_universe
+      WHERE source = 'core' AND active = 1
+      GROUP BY symbol
+    ) AS universe ON universe.symbol = run.symbol
     WHERE run.user_id = ?
       AND run.status = 'completed'
       AND analysis.status = 'completed'
@@ -511,6 +525,26 @@ export async function readHistoryPage(
 }
 
 export type DispatchResult = "not-needed" | "claimed-elsewhere" | "sent";
+
+// The send timeout must be strictly shorter than the dispatch claim lease
+// (60s) so a stalled send resolves to the uncertain path instead of holding
+// the request open past the claim.
+const QUEUE_SEND_TIMEOUT_MS = 5_000;
+const QUEUE_SEND_TIMED_OUT = Symbol("queue_send_timed_out");
+
+async function sendWithTimeout(queue: Queue<string>, payload: string): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      queue.send(payload, { contentType: "text" }),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(QUEUE_SEND_TIMED_OUT), QUEUE_SEND_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
 
 /**
  * Claims the transactional outbox row before sending. The Queue promise is
@@ -572,8 +606,18 @@ export async function dispatchAnalysis(
   const queuePayload: AiAnalysisQueuePayload = { schemaVersion: 1, analysisId };
   const payload = JSON.stringify(queuePayload);
   try {
-    await queue.send(payload, { contentType: "text" });
-  } catch {
+    await sendWithTimeout(queue, payload);
+  } catch (sendError) {
+    if (sendError === QUEUE_SEND_TIMED_OUT) {
+      // A send timeout does NOT prove the message was not enqueued. Do not mark
+      // the analysis failed and do not refund the credit. The outbox claim stays
+      // 'sending' for its 60s lease, so a later re-dispatch can reclaim it and
+      // the analysis/run remain valid while reconciliation happens. The client
+      // keeps the run id and can poll or re-dispatch via the read path.
+      throw new AiAnalysisDispatchUnavailableError(true);
+    }
+    // A definitive pre-enqueue failure can use the failed/refund path because
+    // the send did not dispatch a message we can prove.
     try {
       await db.batch([
         db.prepare(`

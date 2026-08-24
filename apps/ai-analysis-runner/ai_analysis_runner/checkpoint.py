@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .normalize import ResultValidationError, serialize_result, validate_result
+from .private import ensure_private_directory
 
 
 class CheckpointError(RuntimeError):
@@ -43,7 +44,7 @@ class ResultCheckpointStore:
             "sha256": hashlib.sha256(result_json.encode("utf-8")).hexdigest(),
             "result": result,
         }
-        self._directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        ensure_private_directory(self._directory)
         descriptor, temporary = tempfile.mkstemp(prefix=".pending-", suffix=".tmp", dir=self._directory)
         try:
             with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
@@ -52,6 +53,11 @@ class ResultCheckpointStore:
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(temporary, self._path(analysis_id))
+            directory_descriptor = os.open(self._directory, os.O_RDONLY)
+            try:
+                os.fsync(directory_descriptor)
+            finally:
+                os.close(directory_descriptor)
         except BaseException:
             try:
                 os.unlink(temporary)

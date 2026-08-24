@@ -1,8 +1,10 @@
 import { z } from "zod";
+import { CORE_UNIVERSE } from "./core-universe";
 import { isoTimestampSchema, marketDateSchema } from "./primitives";
 
 export const aiAnalysisResultSchemaVersion = 1 as const;
 export const aiAnalysisEngineName = "TradingAgents" as const;
+export const aiAnalysisOwnedSymbolsLimit = CORE_UNIVERSE.length;
 
 export const aiAnalysisRecommendationValues = [
   "BUY",
@@ -107,12 +109,12 @@ export const aiAnalysisCatalogResponseSchema = z.strictObject({
   stocks: z.array(z.strictObject({
     symbol: stockSymbolSchema,
     company: companyNameSchema,
-  })).length(50),
+  })).length(aiAnalysisOwnedSymbolsLimit),
 });
 export type AiAnalysisCatalogResponse = z.infer<typeof aiAnalysisCatalogResponseSchema>;
 
 export const aiAnalysisHistoryItemSchema = z.strictObject({
-  runId: z.string().uuid(),
+  runId: z.uuid(),
   symbol: stockSymbolSchema,
   company: companyNameSchema,
   recommendation: z.enum(aiAnalysisRecommendationValues),
@@ -123,13 +125,13 @@ export type AiAnalysisHistoryItem = z.infer<typeof aiAnalysisHistoryItemSchema>;
 export const aiAnalysisViewerResponseSchema = z.strictObject({
   schemaVersion: z.literal(1),
   creditsRemaining: z.number().int().nonnegative(),
-  ownedSymbols: z.array(stockSymbolSchema).max(50),
+  ownedSymbols: z.array(stockSymbolSchema).max(aiAnalysisOwnedSymbolsLimit),
 });
 export type AiAnalysisViewerResponse = z.infer<typeof aiAnalysisViewerResponseSchema>;
 
 const aiAnalysisRunBaseSchema = z.strictObject({
   schemaVersion: z.literal(1),
-  runId: z.string().uuid(),
+  runId: z.uuid(),
   symbol: stockSymbolSchema,
   company: companyNameSchema,
   requestedAt: isoTimestampSchema,

@@ -9,6 +9,7 @@ from typing import Any
 
 from .config import Settings
 from .models import EngineOutput
+from .private import ensure_private_directory
 
 
 class EngineFailure(RuntimeError):
@@ -61,7 +62,7 @@ class TradingAgentsEngine:
         results_dir = job_root / "results"
         memory_path = job_root / "memory" / "trading_memory.md"
         for directory in (cache_dir, results_dir, memory_path.parent):
-            directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+            ensure_private_directory(directory)
         config.update({
             "data_cache_dir": str(cache_dir),
             "results_dir": str(results_dir),

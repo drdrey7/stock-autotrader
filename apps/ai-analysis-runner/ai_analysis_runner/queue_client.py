@@ -42,13 +42,13 @@ class QueueClient:
         self._max_attempts = max_attempts
         self._opener = opener
 
-    def _post(self, action: str, body: dict[str, Any]) -> dict[str, Any]:
+    def _post(self, action: str, body: dict[str, Any], *, max_attempts: int | None = None) -> dict[str, Any]:
         payload = post_json(
             self._base.format(action=action),
             self._token,
             body,
             timeout_seconds=self._timeout,
-            max_attempts=self._max_attempts,
+            max_attempts=self._max_attempts if max_attempts is None else max_attempts,
             opener=self._opener,
         )
         if payload.get("success") is not True:
@@ -59,6 +59,7 @@ class QueueClient:
         payload = self._post(
             "pull",
             {"batch_size": 1, "visibility_timeout_ms": self._visibility_timeout_ms},
+            max_attempts=1,
         )
         result = payload.get("result")
         messages = result.get("messages") if isinstance(result, dict) else None
