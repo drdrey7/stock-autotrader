@@ -79,8 +79,15 @@ python3 -m history_ingestor bootstrap
 python3 -m history_ingestor bootstrap --limit 20 --symbols NVDA AAPL MSFT
 python3 -m history_ingestor bootstrap --dry-run        # no provider calls, no D1 writes
 
-# Weekly maintenance: refresh + split reconciliation + metrics + coverage:
+# Weekly maintenance: WEEKLY refresh + metrics (PRIORITY provider worker;
+# never fetches SPLITS — decoupled):
 python3 -m history_ingestor maintenance
+
+# LOW-FREQUENCY provider SPLITS reconciliation (decoupled from weekly; weekly/monthly):
+python3 -m history_ingestor reconcile-splits
+
+# Daily zero-provider split application (apply due future-dated splits):
+python3 -m history_ingestor apply-due-splits
 
 # Checkpoint + D1 coverage summary:
 python3 -m history_ingestor status
@@ -143,22 +150,49 @@ before L, so it honestly reports `NotEnoughHistory`.
 
 ## Weekly maintenance
 
-`maintenance` refetches the full series per symbol (one request each at this
-scale), reconciles split history by recomputing factors from the FRESH split
-list and rewriting every row whose factor/adjusted close changed (a new or
-changed split rewrites the whole affected history — no mixed adjustment
-regimes), recomputes `technical_metrics`, verifies coverage (row counts,
-week-sequence gaps via ISO-week Mondays, `<199` weeks) and writes a report to
-`app_meta.historyMaintenanceReport`. It respects the same per-key quota
-policies, so a full pass can spread across days under free-tier limits.
+`maintenance` is the **priority** provider worker. It refetches
+`TIME_SERIES_WEEKLY` per symbol, adjusts from the DURABLE `split_events` store,
+upserts only changed/new weekly rows, recomputes `technical_metrics`, verifies
+coverage and writes a report to `app_meta.historyMaintenanceReport`. It NEVER
+fetches `SPLITS` — split reconciliation is a separate, low-frequency
+responsibility (`reconcile-splits`), and the daily `apply-due-splits` is the
+zero-provider application of due future-dated splits. **The weekly SMA refresh
+never depends on split reconciliation and is never blocked by it.**
+
+`maintenance` respects the same per-key quota policies, so a full pass can
+spread across days under free-tier limits.
+
+### LAST-KNOWN-GOOD (preserved SMA)
+
+Once a symbol has a valid 200-week SMA basis (`technical_metrics.closed_sma_200w`),
+that basis is never discarded. If a weekly refresh lags (the anchor week is one
+or more weeks behind the quote's week), the Worker/API/UI keeps serving the last
+valid SMA value — it is never nulled or flipped to `Unavailable` purely because
+the newest week is missing. The stale state remains observable internally via
+`historical_data_as_of` / `sma200wAsOf`, but the user simply sees the last
+available value. Only symbols that never accumulated a valid 200-week basis
+report `NotEnoughHistory` (`N/A`). See `reference` of the Worker maths in
+`apps/web/worker/sma/metrics.ts`.
 
 ### systemd deployment (documented — install requires root)
 
-Production uses three timers, all explicitly UTC:
+Production uses four timers, all explicitly UTC, non-overlapping (so the weekly
+SMA refresh is never starved):
 
-- bootstrap: `06:00 UTC` daily, temporary until initial coverage completes;
-- maintenance: `07:00 UTC` daily, permanent long-term path;
-- due-split: `13:10 UTC` Tue-Sat, zero-provider reconciliation.
+- **maintenance: `*-*-* 07:00 UTC`** daily, effectively weekly (PRIORITY over
+  bootstrap). Monday refreshes the just-closed week; Tue–Sat are automatic
+  catch-up that no-ops (zero provider requests) once the cycle is complete.
+- **bootstrap: `*-*-* 08:00 UTC`** daily, residual, runs AFTER maintenance,
+  request-capped (default 6/day).
+- **reconcile-split: `Sun *-*-* 08:30 UTC`** (weekly, decoupled provider SPLITS
+  check).
+- **due-split: `Tue..Sat 13:10 UTC`** (zero-provider reconciliation).
+
+Rationale for weekly (not daily) maintenance: the 200W SMA basis only changes
+when a new week closes, so a single Monday refresh (~50 requests, one per
+symbol) fits the two-key 50/day budget, leaving the rest of the week free for
+the residual bootstrap and the weekly split check. MAINTENANCE RUNS BEFORE
+BOOTSTRAP so bootstrap can never consume quota ahead of the weekly refresh.
 
 Provision the existing secret files first:
 
@@ -171,7 +205,7 @@ code lives under `/opt/stock-autotrader`; development checkouts under
 
 For routine production updates, use the deterministic procedure in
 `deploy/DEPLOY.md`. The privileged installer is launched from a sanitized
-environment and installs the root-owned auto-disable helper plus **seven** unit
+environment and installs the root-owned auto-disable helper plus **nine** unit
 files. It validates staged units first, snapshots timer and destination state,
 quiesces active timers, installs, runs `daemon-reload`, then restores each
 timer's exact prior enablement/activity state.

@@ -31,6 +31,8 @@ UNITS=(
   history-ingestor-bootstrap-maybe-disable.service
   history-ingestor-maintenance.service
   history-ingestor-maintenance.timer
+  history-ingestor-reconcile-split.service
+  history-ingestor-reconcile-split.timer
   history-ingestor-due-split.service
   history-ingestor-due-split.timer
 )
@@ -38,11 +40,13 @@ SERVICES=(
   history-ingestor-bootstrap.service
   history-ingestor-bootstrap-maybe-disable.service
   history-ingestor-maintenance.service
+  history-ingestor-reconcile-split.service
   history-ingestor-due-split.service
 )
 TIMERS=(
   history-ingestor-bootstrap.timer
   history-ingestor-maintenance.timer
+  history-ingestor-reconcile-split.timer
   history-ingestor-due-split.timer
 )
 

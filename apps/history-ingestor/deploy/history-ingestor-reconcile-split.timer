@@ -1,0 +1,27 @@
+# LOW-FREQUENCY provider SPLITS reconciliation — SUNDAY 08:30 UTC (decoupled).
+#
+# This is the SEPARATE split-forwarding responsibility, independent of the
+# weekly SMA refresh. Stock splits are rare, so the provider SPLITS check runs
+# weekly — never daily. It fetches SPLITS per symbol (bounded, quota-aware),
+# compares against the durable split_events store and rewrites ONLY the
+# affected symbol's history/metrics on change.
+#
+# It is intentionally separated from Monday's WEEKLY maintenance (07:00 UTC):
+# the two jobs never share a UTC slot, so the weekly SMA refresh is never
+# blocked by or starved for split reconciliation. Completed/idempotent
+# work performs ZERO provider calls; a run simply confirms stored split_events
+# match the provider.
+#
+# Note: `apply-due-splits` (Tue-Sat, zero-provider) is a different job — it
+# applies already-stored future-dated splits whose effective date has been
+# reached. There is NO duplicate split work between these two jobs.
+[Unit]
+Description=Stock Autotrader SPLITS reconciliation (low-frequency provider check; decoupled from weekly maintenance)
+
+[Timer]
+OnCalendar=Sun *-*-* 08:30:00 UTC
+RandomizedDelaySec=15m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

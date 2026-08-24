@@ -99,14 +99,15 @@ class MaintenanceState:
     def phase(self) -> str:
         """Current cycle phase derived from per-symbol status (self-healing).
 
-        ``pending`` work blocks its phase; a symbol in ``error`` does NOT
-        block progression — maintenance falls back to the preserved durable
-        state (e.g. stored split_events) and the error is reported/retried
-        rather than deadlocking the whole cycle.
+        Phase is driven by the WEEKLY refresh + metrics recomputation ONLY.
+        Split reconciliation is a SEPARATE low-frequency responsibility
+        (``reconcile-splits`` / daily ``apply-due-splits``) and never blocks the
+        weekly SMA refresh — a bare weekly cycle must always roll the anchor
+        forward even if splits have not yet been re-checked. A symbol in
+        ``error`` does NOT block progression — maintenance falls back to the
+        preserved durable state (e.g. stored split_events) and the error is
+        reported/retried rather than deadlocking the whole cycle.
         """
-        for symbol in self.symbols:
-            if self.symbol_status(symbol, "splits") == STATUS_PENDING:
-                return "splits"
         for symbol in self.symbols:
             if (self.symbol_status(symbol, "weekly") == STATUS_PENDING
                     or self.symbol_status(symbol, "metrics") == STATUS_PENDING):

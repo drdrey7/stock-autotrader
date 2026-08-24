@@ -56,6 +56,12 @@ export function quoteHistoryScaleState(
 /** 199 completed weeks are required BEFORE the quote's week. */
 const MIN_BASIS_WEEKS = 199;
 
+function classifyDistance(distance: number): Sma200wState {
+  if (distance < 0) return "Below";
+  if (distance <= 3 + 1e-9) return "Near";
+  return "Above";
+}
+
 export function computeLiveSma200w(
   quote: QuoteInput | null,
   metrics: TechnicalMetricsRow | null,
@@ -89,8 +95,18 @@ export function computeLiveSma200w(
     return { sma200w: null, distanceToSma200wPct: null, sma200wState: "Unavailable", sma200wHistoryWeeks: historyWeeks, sma200wAsOf: asOf };
   }
 
-  let basis: number;
   const delta = weekDiffDays(quoteWeek, anchorWeek) / 7;
+  // delta === 1: quote one week past the anchor — the normal live case
+  //   (199 basis closes + the quote).
+  // delta === 0: quote in the same week as the anchor — true 200-week basis.
+  // delta > 1: the weekly refresh has LAGGED (anchor week is more than one
+  //   week behind the quote). This is a coverage/staleness state, not a
+  //   missing basis. If a previously-valid closed SMA exists, keep serving it
+  //   (LAST-KNOWN-GOOD) rather than turning the value null. Only symbols that
+  //   never accumulated a valid 200-week basis fall through to
+  //   NotEnoughHistory. delta < 0 (quote older than the basis) is inconsistent
+  //   and stays Unavailable — the basis newer than the quote must not be used.
+  let basis: number;
   if (delta === 1) {
     basis = metrics.sum_199;
   } else if (delta === 0) {
@@ -98,16 +114,29 @@ export function computeLiveSma200w(
       return { sma200w: null, distanceToSma200wPct: null, sma200wState: "NotEnoughHistory", sma200wHistoryWeeks: historyWeeks, sma200wAsOf: asOf };
     }
     basis = metrics.closed_sma_200w * 200 - metrics.anchor_close;
+  } else if (delta > 1) {
+    // Last-known-good: the latest completed week has not been written yet.
+    // The stored closed SMA is the last valid value — keep showing it.
+    if (metrics.closed_sma_200w === null) {
+      return { sma200w: null, distanceToSma200wPct: null, sma200wState: "NotEnoughHistory", sma200wHistoryWeeks: historyWeeks, sma200wAsOf: asOf };
+    }
+    const sma200w = metrics.closed_sma_200w;
+    const distance = (quote.price / sma200w - 1) * 100;
+    return {
+      sma200w,
+      distanceToSma200wPct: distance,
+      sma200wState: classifyDistance(distance),
+      sma200wHistoryWeeks: historyWeeks,
+      sma200wAsOf: asOf,
+    };
   } else {
+    // delta < 0: inconsistent persisted state (basis newer than the quote).
+    // Never fabricate or backdate.
     return { sma200w: null, distanceToSma200wPct: null, sma200wState: "Unavailable", sma200wHistoryWeeks: historyWeeks, sma200wAsOf: asOf };
   }
 
   const sma200w = (basis + quote.price) / 200;
   const distance = (quote.price / sma200w - 1) * 100;
-  let state: Sma200wState;
-  if (distance < 0) state = "Below";
-  else if (distance <= 3 + 1e-9) state = "Near";
-  else state = "Above";
 
-  return { sma200w, distanceToSma200wPct: distance, sma200wState: state, sma200wHistoryWeeks: historyWeeks, sma200wAsOf: asOf };
+  return { sma200w, distanceToSma200wPct: distance, sma200wState: classifyDistance(distance), sma200wHistoryWeeks: historyWeeks, sma200wAsOf: asOf };
 }

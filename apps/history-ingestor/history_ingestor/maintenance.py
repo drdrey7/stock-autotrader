@@ -182,28 +182,11 @@ class MaintenanceRunner:
             self._finalize_report(report)
             return report
 
-        # ---- SPLITS phase (any day; resumes the first unfinished symbol) ----
-        if self._store.state.phase() == "splits":
-            for symbol in symbols:
-                if self._store.state.symbol_status(symbol, "splits") == STATUS_DONE:
-                    continue
-                if limit is not None and self._provider.requests_this_run >= limit:
-                    report["anomalies"].append("run stopped by request limit before finishing SPLITS")
-                    break
-                symbol_report = self._reconcile_splits(symbol, dry_run=dry_run)
-                report["symbols"][symbol] = symbol_report
-                report["anomalies"].extend(symbol_report["anomalies"])
-                report["split_changes"] += 1 if symbol_report.get("split_changed") else 0
-                if symbol_report["quota"]:
-                    report["quota_exhausted"] = True
-                    break
-                if symbol_report.get("throttled"):
-                    report["throttled"] = True
-                    break
-                if not dry_run:
-                    self._store.save()
-
-        # ---- WEEKLY phase (catch-up allowed after target week closes) ----
+        # ---- WEEKLY phase (the priority; independent of split status) ----
+        # The weekly SMA refresh never depends on split reconciliation. It
+        # adjusts from the durable split_events store (D1) with whatever split
+        # state is present; new splits are discovered separately by the
+        # low-frequency `reconcile-splits` / daily `apply-due-splits` paths.
         if self._store.state.phase() == "weekly":
             if is_weekly_phase_ready(now, target):
                 for symbol in symbols:
@@ -213,11 +196,6 @@ class MaintenanceRunner:
                     if self._store.state.symbol_status(symbol, "weekly") == STATUS_DONE:
                         # Weekly history already stored — defer metrics repair to
                         # the zero-provider _reconcile_metrics_gaps path.
-                        continue
-                    if self._store.state.symbol_status(symbol, "splits") != STATUS_DONE:
-                        report["anomalies"].append(
-                            f"{symbol}: WEEKLY skipped — splits not confirmed done (empty/error store)"
-                        )
                         continue
                     if limit is not None and self._provider.requests_this_run >= limit:
                         report["anomalies"].append("run stopped by request limit before finishing WEEKLY")
@@ -576,6 +554,74 @@ class MaintenanceRunner:
             report["metrics_updated"] += 1
             report["splits_applied"] += 1
             report["status"] = "applied"
+        return report
+
+    def reconcile_splits(self, symbols_filter: list[str] | None = None, dry_run: bool = False, limit: int | None = None) -> dict:
+        """LOW-FREQUENCY (weekly/monthly) provider SPLITS reconciliation.
+
+        This is the SEPARATE split-checking responsibility, decoupled from the
+        weekly SMA refresh. It fetches the provider SPLITS endpoint per symbol
+        (bounded, quota-aware), compares against the durable ``split_events``
+        store and, only on a change, rewrites that symbol's history + metrics.
+        It shares the exact compare/rewrite logic with the week's maintenance
+        but is invoked explicitly (never as a blocking precursor to WEEKLY).
+
+        NOT duplicated: ``apply_due_splits`` (zero-provider, daily) applies
+        splits whose effective date has been reached from stored events; this
+        method is the only provider-fetching SPLITS path.
+        """
+        symbols = load_core_universe(self._settings.universe_path)
+        if symbols_filter is not None:
+            wanted = set(symbols_filter)
+            symbols = [symbol for symbol in symbols if symbol in wanted]
+        self._store.load()
+        report: dict = {
+            "status": "complete",
+            "symbols": {},
+            "requests_used_total": 0,
+            "keys_used": [],
+            "quota_exhausted": False,
+            "throttled": False,
+            "split_changes": 0,
+            "rows_updated": 0,
+            "metrics_updated": 0,
+            "anomalies": [],
+        }
+        for symbol in symbols:
+            if limit is not None and self._provider.requests_this_run >= limit:
+                report["anomalies"].append("run stopped by request limit before finishing SPLITS reconciliation")
+                break
+            symbol_report = self._reconcile_splits(symbol, dry_run=dry_run)
+            report["symbols"][symbol] = symbol_report
+            report["anomalies"].extend(symbol_report["anomalies"])
+            report["split_changes"] += 1 if symbol_report.get("split_changed") else 0
+            report["rows_updated"] += symbol_report.get("rows_updated", 0)
+            if symbol_report.get("metrics_updated"):
+                report["metrics_updated"] += 1
+            if symbol_report["quota"]:
+                report["quota_exhausted"] = True
+                break
+            if symbol_report.get("throttled"):
+                report["throttled"] = True
+                break
+            if not dry_run:
+                self._store.save()
+        report["requests_used_total"] = self._provider.requests_this_run
+        report["keys_used"] = [
+            {"index": k.get("index"), "used": k.get("used", 0)}
+            for k in (self._key_store.state.keys if self._key_store is not None else [])
+        ]
+        if self._key_store is not None:
+            self._key_store.save()
+        if report["quota_exhausted"]:
+            report["status"] = "quota"
+        elif report["throttled"]:
+            report["status"] = "throttled"
+        else:
+            report["status"] = "complete" if not any(
+                r.get("splits") == "pending" or r.get("splits") == "error"
+                for r in report["symbols"].values()
+            ) else "partial"
         return report
 
     def _upsert_metrics(self, symbol: str, metrics) -> None:

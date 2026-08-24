@@ -1,16 +1,18 @@
-# Temporary initial bootstrap — recurring daily until core-universe coverage completes.
+# Residual bootstrap — recurring daily, AFTER maintenance, request-capped.
 #
-# Resumes the durable D1 checkpoint, skips completed symbols, respects the
-# per-key daily Alpha Vantage quota and exits cleanly when quota is exhausted.
+# Runs strictly AFTER the priority weekly maintenance so it can never consume
+# the day's Alpha Vantage quota ahead of the weekly SMA refresh. A hard daily
+# cap (BOOTSTRAP_MAX_REQUESTS_PER_DAY, default 6) is applied by the CLI so one
+# problem symbol cannot exhaust quota. Checkpoint stays honest until 50/50.
 # On successful exit, OnSuccess starts a separate root-only completion gate;
 # that unit has no EnvironmentFile and disables this timer only at 50/50.
 # Production checkout: /opt/stock-autotrader (origin/main only).
 
 [Unit]
-Description=Stock Autotrader history bootstrap (daily resume until complete)
-After=network-online.target
+Description=Stock Autotrader history bootstrap (daily residual run; after maintenance; request-capped)
+After=network-online.target history-ingestor-maintenance.service
 Wants=network-online.target
-Before=history-ingestor-maintenance.service history-ingestor-due-split.service
+Before=history-ingestor-due-split.service
 OnSuccess=history-ingestor-bootstrap-maybe-disable.service
 
 [Service]

@@ -428,6 +428,29 @@ describe("Stock Detail D1 read model", () => {
     expect(detail.technical.sma200wHistory.at(-1)!.value).toBeCloseTo(359.5, 10);
   });
 
+  it("LAST-KNOWN-GOOD: previously-valid SMA stays visible when the weekly anchor is stale", async () => {
+    // Anchor is 2026-08-14 (W33, from the fixture metric), but the quote is now
+    // 2026-08-28 (W35) — the weekly refresh LAGGED by one week (no W34 stored).
+    // The previously-valid closed SMA (400) MUST keep being served — never
+    // flipped to Unavailable/null because the latest week is missing.
+    const STALE_NOW = new Date("2026-08-28T15:00:00.000Z");
+    storageMock.readStockDetailStorageSnapshot.mockResolvedValue(baseSnapshot({
+      quote: {
+        ...baseSnapshot().quote!,
+        price: 550,
+        provider_timestamp: "2026-08-28T14:59:00.000Z",
+        updated_at: "2026-08-28T14:59:05.000Z",
+      },
+      metric: metric(), // anchor_week 2026-08-14, closed_sma_200w 400
+    }));
+    const detail = await readStockDetailApi(env, "MSFT", STALE_NOW);
+    // delta 2 (quote W35 vs anchor W33) -> last-known-good serves closed_sma.
+    expect(detail.technical.sma200w).toBeCloseTo(400, 10);
+    expect(detail.technical.sma200wState).not.toBe("Unavailable");
+    expect(detail.technical.sma200wState).not.toBe("NotEnoughHistory");
+    expect(detail.technical.sma200wHistoryWeeks).toBe(459);
+  });
+
   it("omits the split-week candle once the split has been reconciled", async () => {
     const rows = applySplitToHistory(weeklyHistory(459), "2026-08-10", 2);
     storageMock.readStockDetailStorageSnapshot.mockResolvedValue(baseSnapshot({

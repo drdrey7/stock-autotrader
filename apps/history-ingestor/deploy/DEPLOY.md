@@ -50,7 +50,7 @@ timer, backs up the currently installed helper/unit files, then quiesces only
 timers that were active. Active timers must stop successfully; a stop failure
 aborts the deployment.
 
-After installing the helper and seven systemd unit files, it runs
+After installing the helper and nine systemd unit files, it runs
 `daemon-reload` and restores each timer's exact prior state:
 
 - previously enabled + active → enabled + active again;

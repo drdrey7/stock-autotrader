@@ -140,6 +140,12 @@ class BootstrapRunner:
         if dry_run:
             # Planning mode: never touches the provider or D1 writes.
             return self._report(symbols, "plan", 0, 0, 0, [])
+        # Residual worker: even without an explicit --limit, bootstrap is hard
+        # capped so a single problem symbol can never exhaust the day's quota
+        # ahead of the maintenance (which has strict priority). Honest progress
+        # still happens across days via the checkpoint.
+        if limit is None:
+            limit = self._settings.bootstrap_max_requests_per_day
 
         self._store.load()
         errors: list[str] = []

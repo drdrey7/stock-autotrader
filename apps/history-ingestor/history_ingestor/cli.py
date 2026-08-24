@@ -102,6 +102,18 @@ def cmd_apply_due_splits(settings: Settings, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_reconcile_splits(settings: Settings, args: argparse.Namespace) -> int:
+    d1, provider, store = _build(settings)
+    store.load()
+    mstore = MaintenanceStore(settings, d1)
+    runner = MaintenanceRunner(settings, d1, provider, mstore, key_store=store)
+    report = runner.reconcile_splits(symbols_filter=args.symbols, dry_run=args.dry_run, limit=args.limit)
+    _emit("reconcile_splits_report", **report)
+    # Quota / throttle / partial are expected outcomes (free-tier) — exit 0, no
+    # retry loop. Only genuine failures surface as non-zero from _settings().
+    return 0
+
+
 def cmd_status(settings: Settings) -> int:
     d1, provider, store = _build(settings)
     state = store.load()
@@ -205,6 +217,12 @@ def main(argv: list[str] | None = None) -> int:
     p_due = sub.add_parser("apply-due-splits", help="daily ZERO-PROVIDER split reconciliation (apply splits whose effective date is reached)")
     p_due.add_argument("--symbols", nargs="*", default=None, help="restrict to these symbols")
     p_due.set_defaults(handler=cmd_apply_due_splits)
+
+    p_recon = sub.add_parser("reconcile-splits", help="LOW-FREQUENCY provider SPLITS check (decoupled from weekly maintenance)")
+    p_recon.add_argument("--dry-run", action="store_true", help="plan only — no provider calls, no D1 writes")
+    p_recon.add_argument("--limit", type=int, default=None, help="cap total provider requests")
+    p_recon.add_argument("--symbols", nargs="*", default=None, help="restrict to these symbols")
+    p_recon.set_defaults(handler=cmd_reconcile_splits)
 
     p_status = sub.add_parser("status", help="checkpoint + D1 coverage summary")
     p_status.set_defaults(handler=lambda _s, _a: cmd_status(_s))

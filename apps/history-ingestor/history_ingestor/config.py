@@ -126,6 +126,11 @@ class Settings:
             str(Path.home() / ".local" / "state" / "history-ingestor" / "maintenance.json"),
         )
     ))
+    # Hard daily cap on bootstrap's provider requests once it is the residual
+    # worker. One problem symbol (quota/throttle survivor) must never be able
+    # to exhaust the whole day's Alpha Vantage quota ahead of maintenance. Low
+    # but enough to make slow, honest progress on the remaining symbols.
+    bootstrap_max_requests_per_day: int = 6
     log_flush_summaries: bool = True
 
     @property
@@ -149,6 +154,7 @@ def from_env(environ: os._Environ | dict[str, str] | None = None) -> Settings:
             av_max_retries=_positive_int("AV_MAX_RETRIES", 3),
             av_retry_base_seconds=_float_env("AV_RETRY_BASE_SECONDS", 10.0),
             av_budget_per_key_per_day=_positive_int("AV_BUDGET_PER_KEY_PER_DAY", 25),
+            bootstrap_max_requests_per_day=_positive_int("BOOTSTRAP_MAX_REQUESTS_PER_DAY", 6),
             d1_max_retries=_positive_int("D1_MAX_RETRIES", 3),
             d1_batch_max_rows=_positive_int("D1_BATCH_MAX_ROWS", 10),
             universe_path=Path(os.environ.get(

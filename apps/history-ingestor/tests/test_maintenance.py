@@ -42,23 +42,23 @@ class MaintenanceCycleTests(unittest.TestCase):
     def test_first_run_ingests_whole_cycle_monday(self):
         with tempfile.TemporaryDirectory() as tmp:
             d1 = FakeD1()
-            provider = FakeProvider(
-                weekly_payloads={"NVDA": weekly_payload("NVDA")},
-                splits_payloads={"NVDA": splits_payload("NVDA")},
-            )
+            # Split_events come from the DURABLE store (bootstrap/reconcile-splits
+            # already wrote them) — maintenance reads them, never fetches SPLITS.
+            d1.upsert_split_events([("NVDA", "2024-06-10", 10.0, "2026-08-19T00:00:00Z")])
+            provider = FakeProvider(weekly_payloads={"NVDA": weekly_payload("NVDA")})
             runner, store = make_runner(d1, provider, tmp, MON_1)
             report = runner.run(universe=["NVDA"])
             self.assertEqual(report["status"], "complete")
             self.assertEqual(report["cycle_week"], "2026-W33")
             self.assertEqual(report["phase"], "complete")
-            # split_events durable, weekly factors correct, metrics present.
+            # split_events durable (unchanged), weekly factors correct, metrics present.
             self.assertEqual(len(d1.read_split_events("NVDA")), 1)
             rows = d1.weekly["NVDA"]
             self.assertEqual(len(rows), 260)
             self.assertTrue(any(r[7] == 10.0 for r in rows))
             self.assertIn("NVDA", d1.metrics)
-            # splits fetched once, weekly fetched once (Monday).
-            self.assertEqual(provider.splits_calls, ["NVDA"])
+            # Maintenance fetches WEEKLY only; it NEVER fetches SPLITS (decoupled).
+            self.assertEqual(provider.splits_calls, [])
             self.assertEqual(provider.weekly_calls, ["NVDA"])
 
     def test_complete_cycle_second_run_makes_zero_provider_calls(self):
@@ -78,33 +78,28 @@ class MaintenanceCycleTests(unittest.TestCase):
             self.assertEqual(provider.requests_this_run, used)  # ZERO new requests
             self.assertEqual(report["rows_updated"], 0)
 
-    def test_sunday_runs_splits_but_never_fetches_weekly(self):
+    def test_sunday_in_progress_week_blocks_weekly(self):
         with tempfile.TemporaryDirectory() as tmp:
             d1 = FakeD1()
-            provider = FakeProvider(
-                weekly_payloads={"NVDA": weekly_payload("NVDA")},
-                splits_payloads={"NVDA": splits_payload("NVDA")},
-            )
+            provider = FakeProvider(weekly_payloads={"NVDA": weekly_payload("NVDA")})
             runner, store = make_runner(d1, provider, tmp, SUN_1)
             report = runner.run(universe=["NVDA"])
-            self.assertEqual(report["status"], "partial")  # weekly still pending
-            self.assertEqual(provider.splits_calls, ["NVDA"])
-            self.assertEqual(provider.weekly_calls, [])  # never fetched on Sunday
+            # Sunday: the just-closed week is still the current NY week, so the
+            # WEEKLY bucket is not storable yet -> weekly stays pending.
+            self.assertEqual(report["status"], "partial")
+            self.assertEqual(provider.weekly_calls, [])
             self.assertTrue(any("Monday" in a for a in report["anomalies"]))
-            # The week is not storable Sunday; no weekly rows were written.
+            # No weekly rows written Sunday; no SPLITS fetched by maintenance.
             self.assertNotIn("NVDA", d1.weekly)
-            self.assertEqual(store.state.symbol_status("NVDA", "splits"), "done")
+            self.assertEqual(provider.splits_calls, [])
 
-            # Monday resumes SPLITS (already done) and finishes WEEKLY.
-            provider2 = FakeProvider(
-                weekly_payloads={"NVDA": weekly_payload("NVDA")},
-                splits_payloads={"NVDA": splits_payload("NVDA")},
-            )
-            runner2, store2 = make_runner(d1, provider2, tmp, MON_1)
+            # Monday resumes and finishes WEEKLY.
+            provider2 = FakeProvider(weekly_payloads={"NVDA": weekly_payload("NVDA")})
+            runner2, _ = make_runner(d1, provider2, tmp, MON_1)
             report2 = runner2.run(universe=["NVDA"])
             self.assertEqual(report2["status"], "complete")
-            self.assertEqual(provider2.splits_calls, [])          # no repeat
             self.assertEqual(provider2.weekly_calls, ["NVDA"])    # weekly only
+            self.assertEqual(provider2.splits_calls, [])           # never splits
             self.assertIn("NVDA", d1.weekly)
 
     def test_new_week_second_monday_writes_exactly_one_row(self):
@@ -137,57 +132,56 @@ class MaintenanceCycleTests(unittest.TestCase):
             self.assertIn("2026-08-21", d1.metrics["NVDA"]["anchor_week"])
 
     def test_quota_resume_across_days(self):
-        # Sunday SPLITS quota-blocked mid-way; next permitted run (Monday)
-        # resumes splits then completes weekly without repeating done work.
+        # Monday WEEKLY quota-blocked mid-way; next run resumes the remaining
+        # symbols' weekly without repeating done work — and never fetches SPLITS.
         with tempfile.TemporaryDirectory() as tmp:
             d1 = FakeD1()
             provider1 = FakeProvider(
                 weekly_payloads={s: weekly_payload(s) for s in ("A", "B")},
-                splits_payloads={s: splits_payload(s) for s in ("A", "B")},
-                quota_after=1,  # A splits ok (1); B splits hits quota (2)
+                quota_after=1,  # A weekly ok (1); B weekly hits quota (2)
             )
-            runner1, store1 = make_runner(d1, provider1, tmp, SUN_1)
+            runner1, store1 = make_runner(d1, provider1, tmp, MON_1)
             report1 = runner1.run(universe=["A", "B"])
             self.assertTrue(report1["quota_exhausted"])
             self.assertEqual(report1["status"], "quota")
-            self.assertEqual(store1.state.symbol_status("A", "splits"), "done")
-            self.assertEqual(store1.state.symbol_status("B", "splits"), "pending")
+            self.assertEqual(store1.state.symbol_status("A", "weekly"), "done")
+            self.assertEqual(store1.state.symbol_status("B", "weekly"), "pending")
 
             provider2 = FakeProvider(
                 weekly_payloads={s: weekly_payload(s) for s in ("A", "B")},
-                splits_payloads={s: splits_payload(s) for s in ("A", "B")},
             )
             runner2, store2 = make_runner(d1, provider2, tmp, MON_1)
             report2 = runner2.run(universe=["A", "B"])
             self.assertEqual(report2["status"], "complete")
-            # A splits NOT repeated; B splits resumed; both weekly on Monday.
-            self.assertEqual(provider2.splits_calls, ["B"])
-            self.assertEqual(sorted(provider2.weekly_calls), ["A", "B"])
+            # A weekly NOT repeated; B weekly resumed. No SPLITS fetched.
+            self.assertEqual(provider2.weekly_calls, ["B"])
+            self.assertNotIn("A", provider2.weekly_calls[0:0] or [])
+            self.assertEqual(provider2.splits_calls, [])
             self.assertIn("A", d1.weekly)
             self.assertIn("B", d1.weekly)
             self.assertEqual(store2.state.phase(), "complete")
 
     def test_split_history_change_rewrites_affected_rows_and_metrics(self):
+        # Split reconciliation is now the SEPARATE low-frequency responsibility
+        # (reconcile_splits). Populate weekly first (no splits -> factor 1), then
+        # a changed split rewrites only the affected history + metrics.
         with tempfile.TemporaryDirectory() as tmp:
             d1 = FakeD1()
-            # Week 1: no splits.
-            provider = FakeProvider(
-                weekly_payloads={"NVDA": weekly_payload("NVDA")},
-                splits_payloads={"NVDA": {"symbol": "NVDA", "data": []}},
-            )
+            # Week 1: weekly maintenance with no splits -> all factor 1.0.
+            provider = FakeProvider(weekly_payloads={"NVDA": weekly_payload("NVDA")})
             runner, _ = make_runner(d1, provider, tmp, MON_1)
             runner.run(universe=["NVDA"])
             self.assertEqual(len(d1.weekly["NVDA"]), 260)
             self.assertTrue(all(r[7] == 1.0 for r in d1.weekly["NVDA"]))
 
-            # Next cycle: a 10:1 split appears — pre-split rows rewrite; no
-            # mixed regime; metrics recomputed; no weekly provider row changes.
+            # Next: reconcile-splits discovers a 10:1 split -> pre-split rows
+            # rewrite; no mixed regime; metrics recomputed.
             provider2 = FakeProvider(
                 weekly_payloads={"NVDA": weekly_payload("NVDA")},
                 splits_payloads={"NVDA": splits_payload("NVDA")},
             )
-            runner2, store2 = make_runner(d1, provider2, tmp, MON_2)
-            report2 = runner2.run(universe=["NVDA"])
+            runner2, store2 = make_runner(d1, provider2, tmp, MON_1)
+            report2 = runner2.reconcile_splits(symbols_filter=["NVDA"])
             self.assertEqual(report2["status"], "complete")
             rows = d1.weekly["NVDA"]
             pre = [r for r in rows if r[1] < "2024-06-10"]
@@ -197,32 +191,29 @@ class MaintenanceCycleTests(unittest.TestCase):
             # split_events durable and reconciled.
             self.assertEqual(len(d1.read_split_events("NVDA")), 1)
             self.assertEqual(d1.read_split_events("NVDA")[0]["split_factor"], 10.0)
-            self.assertEqual(store2.state.phase(), "complete")
 
     def test_malformed_splits_keep_existing_events_history_intact(self):
         # Spec #5: NVDA has stored split_events + adjusted history; the provider
-        # returns a MALFORMED SPLITS payload. Existing events MUST survive, the
-        # adjusted history MUST survive (no factor-1 rewrite), and maintenance
-        # must report the error.
+        # returns a MALFORMED SPLITS payload during reconcile-splits. Existing
+        # events MUST survive, the adjusted history MUST survive, and the
+        # reconcile must report the error without a weekly provider call.
         with tempfile.TemporaryDirectory() as tmp:
             d1 = FakeD1()
-            provider = FakeProvider(
-                weekly_payloads={"NVDA": weekly_payload("NVDA")},
-                splits_payloads={"NVDA": splits_payload("NVDA")},
-            )
+            d1.upsert_split_events([("NVDA", "2024-06-10", 10.0, "2026-08-19T00:00:00Z")])
+            provider = FakeProvider(weekly_payloads={"NVDA": weekly_payload("NVDA")})
             runner, _ = make_runner(d1, provider, tmp, MON_1)
             runner.run(universe=["NVDA"])
             self.assertEqual(len(d1.read_split_events("NVDA")), 1)
             pre_factors = {r[1]: r[7] for r in d1.weekly["NVDA"]}
             pre_adjs = {r[1]: r[8] for r in d1.weekly["NVDA"]}
 
-            # New cycle; SPLITS payload is now garbage (data: "oops").
+            # reconcile-splits: SPLITS payload is now garbage (data: "oops").
             provider2 = FakeProvider(
                 weekly_payloads={"NVDA": weekly_payload("NVDA")},
                 splits_payloads={"NVDA": {"symbol": "NVDA", "data": "oops"}},
             )
-            runner2, store2 = make_runner(d1, provider2, tmp, MON_2)
-            report2 = runner2.run(universe=["NVDA"])
+            runner2, store2 = make_runner(d1, provider2, tmp, MON_1)
+            report2 = runner2.reconcile_splits(symbols_filter=["NVDA"])
             # Error surfaced in the report.
             self.assertTrue(any("splits" in a for a in report2["anomalies"]))
             self.assertEqual(store2.state.symbol_status("NVDA", "splits"), "error")
@@ -233,28 +224,25 @@ class MaintenanceCycleTests(unittest.TestCase):
                 self.assertEqual(r[8], pre_adjs[r[1]])
 
     def test_unchanged_splits_do_not_rewrite_history(self):
-        # The Sunday SPLITS pass with an UNCHANGED history performs no
-        # historical rewrite and no metrics change beyond the normal pass.
+        # A reconcile-splits with an UNCHANGED split history performs no
+        # historical rewrite and no metrics change.
         with tempfile.TemporaryDirectory() as tmp:
             d1 = FakeD1()
-            provider = FakeProvider(
-                weekly_payloads={"NVDA": weekly_payload("NVDA")},
-                splits_payloads={"NVDA": splits_payload("NVDA")},
-            )
+            d1.upsert_split_events([("NVDA", "2024-06-10", 10.0, "2026-08-19T00:00:00Z")])
+            provider = FakeProvider(weekly_payloads={"NVDA": weekly_payload("NVDA")})
             runner, _ = make_runner(d1, provider, tmp, MON_1)
             runner.run(universe=["NVDA"])
 
-            # Monday of the next week, same split history -> no rewrite of
-            # existing rows beyond the single new week.
+            # reconcile-splits with the SAME split history -> no rewrite.
             provider2 = FakeProvider(
                 weekly_payloads={"NVDA": weekly_payload("NVDA", n_weeks=261, end="2026-08-21")},
                 splits_payloads={"NVDA": splits_payload("NVDA")},
             )
-            runner2, _ = make_runner(d1, provider2, tmp, MON_2)
-            report2 = runner2.run(universe=["NVDA"])
-            nv = report2["symbols"]["NVDA"]
-            self.assertFalse(nv["split_changed"])
-            self.assertEqual(nv["rows_updated"], 1)
+            runner2, _ = make_runner(d1, provider2, tmp, MON_1)
+            report2 = runner2.reconcile_splits(symbols_filter=["NVDA"])
+            nv_detail = report2["symbols"].get("NVDA", {})
+            self.assertFalse(nv_detail.get("split_changed", False))
+            self.assertEqual(nv_detail.get("rows_updated", 0), 0)
 
     def test_dry_run_never_touches_provider_or_d1(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -271,7 +259,7 @@ class MaintenanceCycleTests(unittest.TestCase):
             self.assertEqual(d1.read_split_events("NVDA"), [])
 
     def test_shared_key_ledger_store_is_loaded_before_provider_use(self):
-        # Regression (cmd_maintenance path): the provider's per-key ldger wraps
+        # Regression (cmd_maintenance path): the provider's per-key ledger wraps
         # the bootstrap StateStore, which arrives UNloaded. MaintenanceRunner
         # must load it before the first provider request or the first
         # KeyBudgetLedger.remaining() call IndexErrors on an empty Checkpoint.
@@ -288,8 +276,7 @@ class MaintenanceCycleTests(unittest.TestCase):
             key_store = StateStore(settings, d1, state_path=Path(tmp) / "checkpoint.json")
             ledger = KeyBudgetLedger(key_store)
             url = RecordingURL([
-                ({"function": "SPLITS", "symbol": "NVDA"},
-                 {"symbol": "NVDA", "data": [{"effective_date": "2024-06-10", "split_factor": "10.0000"}]}),
+                # Maintenance fetches WEEKLY only (SPLITS is decoupled).
                 ({"function": "TIME_SERIES_WEEKLY", "symbol": "NVDA", "outputsize": "full"}, weekly_payload("NVDA")),
             ])
             provider = AlphaVantageClient(settings, ledger, sleep_fn=lambda _: None, urlopen=url)
@@ -297,11 +284,11 @@ class MaintenanceCycleTests(unittest.TestCase):
             runner = MaintenanceRunner(settings, d1, provider, mstore, key_store=key_store, now_fn=lambda: MON_1)
             report = runner.run(universe=["NVDA"])
             self.assertEqual(report["status"], "complete")
-            # Per-key budget worked: exactly one SPLITS + one WEEKLY used.
-            self.assertEqual(report["requests_used_total"], 2)
+            # Per-key budget worked: exactly one WEEKLY used (maintenance never
+            # fetches SPLITS — that is the separate reconcile-splits path).
+            self.assertEqual(report["requests_used_total"], 1)
             self.assertEqual(len(report["keys_used"]), 2)
-            self.assertEqual(sum(k["used"] for k in report["keys_used"]), 2)
-            self.assertTrue(d1.read_split_events("NVDA"))
+            self.assertEqual(sum(k["used"] for k in report["keys_used"]), 1)
             self.assertIn("NVDA", d1.weekly)
 
     def test_maintenance_persists_shared_key_budget_ledger(self):
@@ -347,33 +334,52 @@ class MaintenanceCycleTests(unittest.TestCase):
             self.assertEqual(store.state.phase(), "complete")
 
 
-class WeeklySkipOnUnconfirmedSplitsTests(unittest.TestCase):
-    """WEEKLY phase must skip symbols whose splits are not confirmed done."""
+class WeeklyIndependenceOfSplitsTests(unittest.TestCase):
+    """The WEEKLY SMA refresh MUST run independently of split status.
 
-    def test_weekly_skips_symbol_with_split_error(self):
-        # If SPLITS fetch errored for a symbol, the WEEKLY phase must NOT
-        # write unadjusted weekly rows + metrics (Worker guard can't detect).
+    Split reconciliation is a SEPARATE low-frequency responsibility
+    (reconcile-splits / apply-due-splits). A symbol whose split store is
+    missing/errored must still have its weekly rows + metrics refreshed from
+    the stored split_events it does have — the anchor must always roll forward.
+    """
+
+    def test_weekly_runs_even_when_split_store_missing(self):
+        # No split_events in the durable store at all: weekly still runs, using
+        # an empty split set (factor 1) and recomputes metrics. Never blocked.
         with tempfile.TemporaryDirectory() as tmp:
             d1 = FakeD1()
-            d1.split_write_fail = True  # SPLITS fetch will fail → splits=error
-            provider = FakeProvider(
-                weekly_payloads={"NVDA": weekly_payload("NVDA")},
-                splits_payloads={"NVDA": splits_payload("NVDA")},
-            )
+            provider = FakeProvider(weekly_payloads={"NVDA": weekly_payload("NVDA")})
             runner, store = make_runner(d1, provider, tmp, MON_1)
             report = runner.run(universe=["NVDA"])
-            # Splits failed → weekly rows NOT written for NVDA.
-            self.assertNotIn("NVDA", d1.weekly)
-            self.assertNotIn("NVDA", d1.metrics)
-            # Anomaly reported explaining the skip.
-            self.assertTrue(any("splits not confirmed done" in a for a in report["anomalies"]))
+            self.assertEqual(report["status"], "complete")
+            self.assertIn("NVDA", d1.weekly)         # weekly rows written
+            self.assertIn("NVDA", d1.metrics)        # metrics recomputed
+            self.assertEqual(store.state.phase(), "complete")
+            # Maintenance never fetched SPLITS (decoupled).
+            self.assertEqual(provider.splits_calls, [])
+
+    def test_weekly_runs_even_with_stored_empty_split_events(self):
+        # split_events durable and explicitly EMPTY (verified zero splits):
+        # weekly still runs with factor 1.
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            d1.upsert_split_events([("NVDA", "2024-06-10", 10.0, "2026-08-19T00:00:00Z")])
+            provider = FakeProvider(weekly_payloads={"NVDA": weekly_payload("NVDA")})
+            runner, store = make_runner(d1, provider, tmp, MON_1)
+            report = runner.run(universe=["NVDA"])
+            self.assertEqual(report["status"], "complete")
+            self.assertIn("NVDA", d1.weekly)
+            # No "splits not confirmed" or "weekly skipped" anomalies.
+            self.assertFalse(any("weekly skipped" in a for a in report["anomalies"]))
+            self.assertEqual(provider.splits_calls, [])
 
 
-class SplitErrorRetryTests(unittest.TestCase):
-    """A transient SPLITS error must be retried on the next run."""
+class SplitReconcileRetryTests(unittest.TestCase):
+    """A transient reconcile-splits SPLITS error is retried on a later run."""
 
-    def test_split_error_retried_on_next_run(self):
-        # Run 1: B SPLITS fails → splits=error, WEEKLY not written.
+    def test_reconcile_splits_error_retried_on_next_run(self):
+        # Run 1: reconcile-splits SPLITS write fails -> splits=error, but the
+        # WEEKLY maintenance still runs independently.
         with tempfile.TemporaryDirectory() as tmp:
             d1 = FakeD1()
             d1.split_write_fail = True
@@ -382,27 +388,37 @@ class SplitErrorRetryTests(unittest.TestCase):
                 splits_payloads={"NVDA": splits_payload("NVDA")},
             )
             runner, store = make_runner(d1, provider, tmp, MON_1)
+            # Weekly maintenance: independent of splits — succeeds even though
+            # split_events writes fail.
             runner.run(universe=["NVDA"])
-            self.assertEqual(store.state.symbol_status("NVDA", "splits"), "error")
-            self.assertNotIn("NVDA", d1.weekly)
+            self.assertIn("NVDA", d1.weekly)
+            self.assertEqual(store.state.phase(), "complete")
 
-            # Run 2: provider succeeds → error retried → splits=DONE → WEEKLY proceeds.
+            # reconcile-splits on the same store: SPLITS write fails -> error.
+            runner2, store2 = make_runner(d1, provider, tmp, MON_1)
+            report = runner2.reconcile_splits(symbols_filter=["NVDA"])
+            self.assertEqual(report["symbols"]["NVDA"]["splits"], "error")
+            self.assertTrue(any("split" in a.lower() for a in report["anomalies"]))
+            self.assertEqual(store2.state.symbol_status("NVDA", "splits"), "error")
+
+            # Run 2: SPLITS write succeeds -> retried -> done.
             d1.split_write_fail = False
             provider2 = FakeProvider(
                 weekly_payloads={"NVDA": weekly_payload("NVDA")},
                 splits_payloads={"NVDA": splits_payload("NVDA")},
             )
-            runner2, store2 = make_runner(d1, provider2, tmp, MON_1)
-            runner2.run(universe=["NVDA"])
-            self.assertEqual(store2.state.symbol_status("NVDA", "splits"), "done")
-            self.assertIn("NVDA", d1.weekly)
+            runner3, store3 = make_runner(d1, provider2, tmp, MON_1)
+            report3 = runner3.reconcile_splits(symbols_filter=["NVDA"])
+            self.assertEqual(report3["status"], "complete")
+            self.assertEqual(store3.state.symbol_status("NVDA", "splits"), "done")
+            self.assertEqual(d1.read_split_events("NVDA")[0]["split_factor"], 10.0)
 
-    def test_persistent_split_error_does_not_block_other_symbols(self):
-        # A persistent SPLITS error for B must NOT block other symbols,
-        # and B must never store unconfirmed/unadjusted WEEKLY data.
+    def test_reconcile_splits_error_does_not_block_other_symbols(self):
+        # A persistent SPLITS error for one symbol must NOT block others'
+        # SPLITS, and must never block the WEEKLY maintenance.
         with tempfile.TemporaryDirectory() as tmp:
             d1 = FakeD1()
-            d1.split_write_fail = True  # B always fails
+            d1.split_write_fail = True  # all SPLITS writes fail
             provider = FakeProvider(
                 weekly_payloads={
                     "NVDA": weekly_payload("NVDA"),
@@ -414,14 +430,22 @@ class SplitErrorRetryTests(unittest.TestCase):
                 },
             )
             runner, store = make_runner(d1, provider, tmp, MON_1)
-            runner.run(universe=["NVDA", "AAPL"])
-            # Both fail (split_write_fail is global) → both error, no weekly.
-            self.assertEqual(store.state.symbol_status("NVDA", "splits"), "error")
-            self.assertEqual(store.state.symbol_status("AAPL", "splits"), "error")
-            self.assertNotIn("NVDA", d1.weekly)
-            self.assertNotIn("AAPL", d1.weekly)
+            # Weekly maintenance still fully completes (independent of splits).
+            report = runner.run(universe=["NVDA", "AAPL"])
+            self.assertEqual(report["status"], "complete")
+            self.assertIn("NVDA", d1.weekly)
+            self.assertIn("AAPL", d1.weekly)
 
-            # Run 2: both succeed → both retried → both done.
+            # reconcile-splits: both write-fail -> both error (but neither
+            # blocks the other symbol from being visited).
+            runner2, store2 = make_runner(d1, provider, tmp, MON_1)
+            report2 = runner2.reconcile_splits(symbols_filter=["NVDA", "AAPL"])
+            self.assertEqual(store2.state.symbol_status("NVDA", "splits"), "error")
+            self.assertEqual(store2.state.symbol_status("AAPL", "splits"), "error")
+            self.assertIn("NVDA", report2["symbols"])
+            self.assertIn("AAPL", report2["symbols"])
+
+            # Run 2: writes succeed -> both retried -> both done.
             d1.split_write_fail = False
             provider2 = FakeProvider(
                 weekly_payloads={
@@ -433,12 +457,11 @@ class SplitErrorRetryTests(unittest.TestCase):
                     "AAPL": splits_payload("AAPL"),
                 },
             )
-            runner2, store2 = make_runner(d1, provider2, tmp, MON_1)
-            runner2.run(universe=["NVDA", "AAPL"])
-            self.assertEqual(store2.state.symbol_status("NVDA", "splits"), "done")
-            self.assertEqual(store2.state.symbol_status("AAPL", "splits"), "done")
-            self.assertIn("NVDA", d1.weekly)
-            self.assertIn("AAPL", d1.weekly)
+            runner3, store3 = make_runner(d1, provider2, tmp, MON_1)
+            report3 = runner3.reconcile_splits(symbols_filter=["NVDA", "AAPL"])
+            self.assertEqual(report3["status"], "complete")
+            self.assertEqual(store3.state.symbol_status("NVDA", "splits"), "done")
+            self.assertEqual(store3.state.symbol_status("AAPL", "splits"), "done")
 
 
 class WeeklyCatchUpTests(unittest.TestCase):

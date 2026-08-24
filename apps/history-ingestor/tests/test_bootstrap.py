@@ -784,5 +784,61 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual(report["remaining_symbols"], [])
 
 
+class BootstrapResidualBudgetTests(unittest.TestCase):
+    """Once residual, bootstrap is hard request-capped so one problem symbol
+    can never exhaust the day's Alpha Vantage quota ahead of maintenance."""
+
+    def test_no_explicit_limit_applies_default_residual_cap(self):
+        # Two symbols need 2 requests each (SPLITS+WEEKLY). Default cap 6 would
+        # allow both — but set a tight default (2) and prove only 2 requests run,
+        # leaving B pending.
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            settings = Settings(
+                alpha_vantage_keys=["K1", "K2"],
+                cloudflare_api_token="t", cloudflare_account_id="a", cloudflare_d1_database_id="d",
+                av_min_interval_seconds=0.0, av_max_retries=1, av_retry_base_seconds=0.0,
+                bootstrap_max_requests_per_day=2,
+            )
+            store = StateStore(settings, d1, state_path=Path(tmp) / "checkpoint.json")
+            provider = FakeProvider(
+                weekly_payloads={"A": weekly_payload("A"), "B": weekly_payload("B")},
+                splits_payloads={"A": splits_payload("A"), "B": splits_payload("B")},
+            )
+            # No --limit passed: the residual default caps the run at 2 requests.
+            report = BootstrapRunner(settings, d1, provider, store, now_fn=lambda: NOW).run(
+                universe=["A", "B"]
+            )
+            self.assertEqual(report["status"], "partial")
+            self.assertEqual(provider.requests_this_run, 2)
+            self.assertEqual(report["requests_used_total"], 2)
+            # A done; B pending (not exhausted by a runaway problem symbol).
+            self.assertEqual(report["symbols_done"], 1)
+            self.assertEqual(report["remaining_symbols"], ["B"])
+            # B still honest pending — next day resumes it.
+            self.assertEqual(store.symbol_status("B", "weekly"), "pending")
+
+    def test_explicit_limit_overrides_default(self):
+        # An explicit --limit larger than the default lets a full run complete.
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            settings = Settings(
+                alpha_vantage_keys=["K1", "K2"],
+                cloudflare_api_token="t", cloudflare_account_id="a", cloudflare_d1_database_id="d",
+                av_min_interval_seconds=0.0, av_max_retries=1, av_retry_base_seconds=0.0,
+                bootstrap_max_requests_per_day=1,
+            )
+            store = StateStore(settings, d1, state_path=Path(tmp) / "checkpoint.json")
+            provider = FakeProvider(
+                weekly_payloads={"A": weekly_payload("A"), "B": weekly_payload("B")},
+                splits_payloads={"A": splits_payload("A"), "B": splits_payload("B")},
+            )
+            report = BootstrapRunner(settings, d1, provider, store, now_fn=lambda: NOW).run(
+                universe=["A", "B"], limit=10
+            )
+            self.assertEqual(report["status"], "complete")
+            self.assertEqual(report["symbols_done"], 2)
+
+
 if __name__ == "__main__":
     unittest.main()
