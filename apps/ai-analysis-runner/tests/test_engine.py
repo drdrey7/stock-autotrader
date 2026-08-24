@@ -28,6 +28,16 @@ class RecordingGraph:
         return final_state(), "Buy"
 
 
+class GoUsageLimitError(RuntimeError):
+    status_code = 429
+    body = {"error": {"type": "GoUsageLimitError"}}
+
+
+class UsageLimitedGraph(RecordingGraph):
+    def propagate(self, symbol: str, analysis_date: str, asset_type: str) -> tuple[dict[str, Any], str]:
+        raise GoUsageLimitError("upstream text must stay private")
+
+
 class EngineTests(unittest.TestCase):
     def setUp(self) -> None:
         RecordingGraph.calls = []
@@ -82,6 +92,21 @@ class EngineTests(unittest.TestCase):
             config = RecordingGraph.calls[0]["config"]
             self.assertEqual(config["llm_provider"], "openai_compatible")
             self.assertEqual(config["backend_url"], "https://opencode.ai/zen/go/v1")
+
+    def test_opencode_go_usage_limit_is_definitive_and_safe(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            value = settings(
+                Path(directory),
+                primary_provider="openai_compatible",
+                llm_backend_url="https://opencode.ai/zen/go/v1",
+                quick_model="deepseek-v4-flash",
+                deep_model="deepseek-v4-flash",
+            )
+            with self.assertRaises(EngineFailure) as raised:
+                TradingAgentsEngine(value, UsageLimitedGraph).run(str(uuid.uuid4()), "AAPL", "2026-08-21")
+            self.assertEqual(raised.exception.code, "provider_usage_limit")
+            self.assertFalse(raised.exception.retryable)
+            self.assertNotIn("upstream", raised.exception.safe_message)
 
     def test_one_bounded_openai_fallback_has_separate_cache(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

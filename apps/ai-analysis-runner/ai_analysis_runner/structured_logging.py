@@ -32,6 +32,8 @@ _ALLOWED_FIELDS = frozenset({
     "event", "level", "message_id", "provider", "status", "symbol",
     "timestamp", "error_type", "error_code", "queue_depth",
     "heartbeat_age_seconds", "stale", "reused", "checkpoint",
+    "delivery_attempt", "published_at_ms", "duration_ms", "quick_model",
+    "deep_model",
 })
 
 

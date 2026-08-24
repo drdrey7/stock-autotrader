@@ -20,6 +20,23 @@ class EngineFailure(RuntimeError):
         self.retryable = retryable
 
 
+def _execution_failure(exc: Exception) -> EngineFailure:
+    """Classify provider exhaustion without exposing upstream response text."""
+
+    status_code = getattr(exc, "status_code", None)
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        error = body.get("error") if isinstance(body.get("error"), dict) else body
+        provider_type = error.get("type")
+        if status_code == 429 and provider_type == "GoUsageLimitError":
+            return EngineFailure(
+                "provider_usage_limit",
+                "Analysis provider usage limit has been reached.",
+                retryable=False,
+            )
+    return EngineFailure("engine_execution_failed", "Analysis engine execution failed.", retryable=True)
+
+
 class TradingAgentsEngine:
     """Runs a single graph at a time with per-analysis state isolation."""
 
@@ -88,7 +105,7 @@ class TradingAgentsEngine:
         except EngineFailure:
             raise
         except Exception as exc:
-            raise EngineFailure("engine_execution_failed", "Analysis engine execution failed.", retryable=True) from exc
+            raise _execution_failure(exc) from exc
         if not isinstance(final_state, dict) or not isinstance(decision, str):
             raise EngineFailure("engine_output_invalid", "Analysis engine returned an invalid result.", retryable=True)
         return EngineOutput(final_state, decision, provider, quick_model, deep_model)
