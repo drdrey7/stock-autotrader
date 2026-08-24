@@ -16,7 +16,11 @@ const migration0020 = readFileSync(
   resolve(__dirname, "../../migrations/0020_better_auth_account_identity.sql"),
   "utf8",
 );
-const migrationSequence = `${migration0019}\n${migration0020}`;
+const migration0028 = readFileSync(
+  resolve(__dirname, "../../migrations/0028_better_auth_camelcase_columns.sql"),
+  "utf8",
+);
+const migrationSequence = `${migration0019}\n${migration0020}\n${migration0028}`;
 
 function tableDefinition(sql: string, table: string): string {
   const marker = "CREATE TABLE `" + table + "` (";
@@ -71,6 +75,79 @@ describe("Better Auth migration sequence", () => {
     expect(migrationSequence).not.toContain("`organization`");
     expect(migrationSequence).not.toContain("`stripe`");
     expect(migrationSequence).not.toContain("`ai_credit`");
+  });
+
+  it("rebuilds user table with camelCase physical columns (0028)", () => {
+    const user = tableDefinition(migration0028, "user");
+    // exact Better Auth 1.7 default camelCase field names
+    for (const col of ["id", "name", "email", "emailVerified", "image", "createdAt", "updatedAt"]) {
+      expect(user).toContain(`\`${col}\``);
+    }
+    expect(user).toContain("`emailVerified` integer NOT NULL DEFAULT false");
+    // old incompatible snake_case columns must be gone
+    expect(user).not.toContain("email_verified");
+    expect(user).not.toContain("created_at");
+    expect(user).not.toContain("updated_at");
+    // uniques preserved
+    expect(migration0028).toContain("CREATE UNIQUE INDEX `user_email_unique` ON `user` (`email`)");
+  });
+
+  it("rebuilds session table with camelCase columns and FK cascade (0028)", () => {
+    const session = tableDefinition(migration0028, "session");
+    for (const col of ["id", "expiresAt", "token", "createdAt", "updatedAt", "ipAddress", "userAgent", "userId"]) {
+      expect(session).toContain(`\`${col}\``);
+    }
+    expect(session).toContain(
+      "FOREIGN KEY (`userId`) REFERENCES `user`(`id`) ON UPDATE no action ON DELETE cascade",
+    );
+    expect(session).not.toContain("user_id");
+    expect(migration0028).toContain("CREATE UNIQUE INDEX `session_token_unique` ON `session` (`token`)");
+  });
+
+  it("rebuilds account table with camelCase columns, issuer NOT NULL, unique identity (0028)", () => {
+    const account = tableDefinition(migration0028, "account");
+    for (const col of [
+      "id",
+      "accountId",
+      "issuer",
+      "providerId",
+      "userId",
+      "accessToken",
+      "refreshToken",
+      "idToken",
+      "accessTokenExpiresAt",
+      "refreshTokenExpiresAt",
+      "scope",
+      "password",
+      "createdAt",
+      "updatedAt",
+    ]) {
+      expect(account).toContain(`\`${col}\``);
+    }
+    expect(account).toContain("`issuer` text NOT NULL");
+    expect(account).toContain(
+      "FOREIGN KEY (`userId`) REFERENCES `user`(`id`) ON UPDATE no action ON DELETE cascade",
+    );
+    expect(migration0028).toContain(
+      "CREATE UNIQUE INDEX `account_issuer_accountId_uidx` ON `account` (`issuer`, `accountId`)",
+    );
+    // old snake_case names gone
+    expect(account).not.toContain("account_id");
+    expect(account).not.toContain("provider_id");
+  });
+
+  it("rebuilds verification table with camelCase columns (0028)", () => {
+    const verification = tableDefinition(migration0028, "verification");
+    for (const col of ["id", "identifier", "value", "expiresAt", "createdAt", "updatedAt"]) {
+      expect(verification).toContain(`\`${col}\``);
+    }
+  });
+
+  it("0028 does not reference or leak plugin-only tables", () => {
+    expect(migration0028).not.toContain("`twoFactor`");
+    expect(migration0028).not.toContain("`organization`");
+    expect(migration0028).not.toContain("`stripe`");
+    expect(migration0028).not.toContain("`ai_credit`");
   });
 
   it("does not contain any inline secret or credential values", () => {
