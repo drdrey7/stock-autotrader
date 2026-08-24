@@ -33,5 +33,13 @@
       "migrations_dir": "migrations"
     }
   ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "AI_ANALYSIS_QUEUE",
+        "queue": "stock-autotrader-ai-analysis"
+      }
+    ]
+  },
   "observability": { "enabled": true, "head_sampling_rate": 1 }
 }

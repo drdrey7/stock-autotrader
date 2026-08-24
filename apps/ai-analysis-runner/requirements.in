@@ -1,0 +1,7 @@
+# Official TradingAgents v0.3.1, pinned to its immutable release commit.
+tradingagents @ https://github.com/TauricResearch/TradingAgents/archive/01477f9afb7a47b849ed4c9259d3a9a4738d9fda.tar.gz
+
+# TradingAgents v0.3.1 requires setuptools>=80.9.0 (build backend). Keep it pinned
+# in the lock so deployment never resolves it outside the lock.
+setuptools>=80.9.0
+

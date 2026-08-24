@@ -12,6 +12,10 @@ vi.mock("./morning-briefing/stock-detail/StockDetailPage", () => ({
   default: () => <div className="stock-detail-test-route"><h1>Stock detail route</h1><p>Dynamic stock detail page</p></div>,
 }));
 
+vi.mock("./ai-analysis/AiAnalysisPage", () => ({
+  default: () => <div><h1>AI Analysis route</h1><p>Dedicated analysis page</p></div>,
+}));
+
 beforeEach(() => {
   localStorage.clear();
   // A fixed instant for the data fetches; the hero's local-time greeting/date
@@ -84,6 +88,11 @@ it("keeps Stock Detail and Lightweight Charts behind the lazy route boundary", (
   expect(appSource).not.toMatch(/from\s+["']\.\/morning-briefing\/stock-detail\/StockDetailPage["']/);
 });
 
+it("keeps the dedicated AI Analysis experience behind a lazy route boundary", () => {
+  expect(appSource).toContain('lazy(() => import("./ai-analysis/AiAnalysisPage"))');
+  expect(appSource).not.toMatch(/from\s+["']\.\/ai-analysis\/AiAnalysisPage["']/);
+});
+
 it("shows an accessible recovery state when a lazy page fails", async () => {
   const FailedPage = lazy(() => Promise.reject(new Error("chunk failed")));
   const ReadyPage = () => <h1>Recovered page</h1>;
@@ -133,6 +142,15 @@ describe("Morning Briefing public experience", () => {
     expect(screen.getByRole("navigation", { name: "Primary navigation" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Screener/ })).toBeInTheDocument();
   });
+
+  it.each(["/ai-analysis", "/ai-analysis/runs/11111111-1111-4111-8111-111111111111"])(
+    "opens the dedicated AI Analysis route at %s",
+    async (path) => {
+      render(<MemoryRouter initialEntries={[path]}><App /></MemoryRouter>);
+      expect(await screen.findByRole("heading", { name: "AI Analysis route" })).toBeInTheDocument();
+      expect(screen.getByRole("navigation", { name: "Primary navigation" })).toBeInTheDocument();
+    },
+  );
 
   it.each([
     "/signals", "/strategies",

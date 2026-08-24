@@ -101,6 +101,12 @@ describe("desktop sidebar navigation", () => {
     expect(sidebarLink("Dashboard")).not.toHaveAttribute("aria-current");
   });
 
+  it("keeps AI Analysis active on an exact historical report route", () => {
+    renderShell("/ai-analysis/runs/11111111-1111-4111-8111-111111111111");
+    expect(sidebarLink("AI Analysis")).toHaveAttribute("aria-current", "page");
+    expect(sidebarLink("Dashboard")).not.toHaveAttribute("aria-current");
+  });
+
   it("treats the home route as the Dashboard destination", () => {
     renderShell("/");
     expect(sidebarLink("Dashboard")).toHaveAttribute("aria-current", "page");
@@ -114,6 +120,9 @@ describe("desktop sidebar navigation", () => {
     expect(findActiveNavItem("/x")).toBeUndefined();
     expect(findActiveNavItem("/account")?.label).toBe("Investor Hub");
     expect(findActiveNavItem("/earnings")?.label).toBe("Earnings");
+    expect(findActiveNavItem("/ai-analysis")?.label).toBe("AI Analysis");
+    expect(findActiveNavItem("/ai-analysis/runs/example")?.label).toBe("AI Analysis");
+    expect(findActiveNavItem("/ai-analysis-old")).toBeUndefined();
     expect(findActiveNavItem("/unknown")).toBeUndefined();
   });
 });

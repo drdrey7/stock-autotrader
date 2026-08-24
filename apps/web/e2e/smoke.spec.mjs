@@ -4,6 +4,7 @@ const routes = [
   { path: "/", label: "Dashboard", inNavigation: true },
   { path: "/x", label: "X Pulse", inNavigation: false },
   { path: "/earnings", label: "Earnings", inNavigation: true },
+  { path: "/ai-analysis", label: "AI Analysis", inNavigation: true },
   { path: "/status", label: "Status", inNavigation: true },
 ];
 

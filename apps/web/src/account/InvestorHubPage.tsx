@@ -1,6 +1,8 @@
 import { type FormEvent, useState } from "react";
 import { CircleUserRound, LogOut, ShieldCheck } from "lucide-react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { authClient } from "../lib/auth-client";
+import { AiAnalysisAccount } from "./AiAnalysisAccount";
 import "./investor-hub.css";
 
 type AuthMode = "sign-in" | "sign-up";
@@ -19,7 +21,20 @@ function initials(name: string, email: string): string {
   return parts.slice(0, 2).map((part) => part[0]?.toUpperCase() ?? "").join("") || "U";
 }
 
+function safeAccountReturnTo(state: unknown): string | null {
+  if (typeof state !== "object" || state === null || !("returnTo" in state)) return null;
+  const returnTo = (state as { returnTo?: unknown }).returnTo;
+  if (typeof returnTo !== "string" || returnTo.startsWith("//")) return null;
+  return returnTo === "/ai-analysis"
+    || returnTo.startsWith("/ai-analysis?")
+    || returnTo.startsWith("/ai-analysis/")
+    ? returnTo
+    : null;
+}
+
 export default function InvestorHubPage() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const { data: session, isPending, error: sessionError, refetch } = authClient.useSession();
   const [mode, setMode] = useState<AuthMode>("sign-in");
   const [name, setName] = useState("");
@@ -65,6 +80,8 @@ export default function InvestorHubPage() {
 
       setPassword("");
       await refetch();
+      const returnTo = safeAccountReturnTo(location.state);
+      if (returnTo) navigate(returnTo, { replace: true });
     } catch (error) {
       setFormError(errorMessage(error, mode === "sign-up" ? "Unable to create your account." : "Unable to sign in."));
     } finally {
@@ -133,7 +150,7 @@ export default function InvestorHubPage() {
         <div className="investor-hub-shell">
           <p className="investor-hub-kicker">Account</p>
           <h1>Investor Hub</h1>
-          <p className="investor-hub-intro">Your account is active and ready for future personalized features.</p>
+          <p className="investor-hub-intro">Manage your AI Analysis credits and reopen every completed report.</p>
 
           <div className="investor-hub-card investor-hub-profile-card">
             <div className="investor-hub-avatar" aria-hidden="true">
@@ -158,6 +175,7 @@ export default function InvestorHubPage() {
           </div>
 
           {formError ? <p className="investor-hub-error" role="alert">{formError}</p> : null}
+          <AiAnalysisAccount />
         </div>
       </section>
     );
@@ -171,7 +189,7 @@ export default function InvestorHubPage() {
         <p className="investor-hub-kicker">Account</p>
         <h1>Investor Hub</h1>
         <p className="investor-hub-intro">
-          Create an account to prepare for personalized AI analyses, billing and saved features.
+          Create an account to run private AI analyses and keep every completed report in one place.
         </p>
 
         <div className="investor-hub-card investor-hub-auth-card">
