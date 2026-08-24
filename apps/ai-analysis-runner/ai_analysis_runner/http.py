@@ -9,6 +9,8 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 
@@ -45,6 +47,7 @@ def post_json(
         method="POST",
     )
     for attempt in range(1, max_attempts + 1):
+        retry_after_seconds = 0.0
         try:
             with opener(request, timeout=timeout_seconds) as response:
                 raw = response.read()
@@ -55,12 +58,25 @@ def post_json(
         except urllib.error.HTTPError as exc:
             retryable = exc.code == 429 or 500 <= exc.code <= 599
             error = HttpError("http_request_failed", exc.code, retryable)
+            if exc.code == 429:
+                value = exc.headers.get("Retry-After") if exc.headers is not None else None
+                if value:
+                    try:
+                        retry_after_seconds = max(0.0, float(value))
+                    except ValueError:
+                        try:
+                            retry_at = parsedate_to_datetime(value)
+                            if retry_at.tzinfo is None:
+                                retry_at = retry_at.replace(tzinfo=UTC)
+                            retry_after_seconds = max(0.0, (retry_at - datetime.now(UTC)).total_seconds())
+                        except (TypeError, ValueError, OverflowError):
+                            pass
         except (urllib.error.URLError, TimeoutError, OSError):
             error = HttpError("http_request_failed", None, True)
         except (UnicodeDecodeError, json.JSONDecodeError):
             error = HttpError("http_response_invalid", None, False)
         if not error.retryable or attempt >= max_attempts:
             raise error
-        sleeper(min(8.0, 0.5 * (2 ** (attempt - 1))) * (0.75 + rand() * 0.5))
+        local_backoff = min(8.0, 0.5 * (2 ** (attempt - 1))) * (0.75 + rand() * 0.5)
+        sleeper(max(local_backoff, retry_after_seconds))
     raise HttpError("http_request_failed", None, True)
-

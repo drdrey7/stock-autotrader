@@ -70,7 +70,7 @@ class TradingAgentsEngine:
             "llm_provider": provider,
             "quick_think_llm": quick_model,
             "deep_think_llm": deep_model,
-            "backend_url": None,
+            "backend_url": self._settings.llm_backend_url if provider == self._settings.primary_provider else None,
             "checkpoint_enabled": True,
             "output_language": "English",
             "max_debate_rounds": 1,

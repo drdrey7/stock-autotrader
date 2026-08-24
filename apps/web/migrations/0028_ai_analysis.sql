@@ -214,9 +214,10 @@ BEGIN
   WHERE user_id = NEW.user_id
     AND credits_remaining > 0;
 
-  SELECT CASE
-    WHEN changes() <> 1 THEN RAISE(ABORT, 'ai_credit_exhausted')
-  END;
+  -- Keep the trigger body compatible with Wrangler/D1's migration statement
+  -- parser: an inner CASE ... END; can be mistaken for the trigger terminator.
+  SELECT RAISE(ABORT, 'ai_credit_exhausted')
+  WHERE changes() <> 1;
 END;
 
 -- Terminal analyses may never be resurrected or overwritten. Retriable work

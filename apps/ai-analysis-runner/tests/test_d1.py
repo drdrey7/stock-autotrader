@@ -48,11 +48,12 @@ class D1ClientTests(unittest.TestCase):
         return D1Client("secret", "account", "database", timeout_seconds=30, max_attempts=1, opener=opener)
 
     def test_claim_is_atomic_for_queued_or_stale_running_and_increments_attempt(self) -> None:
-        opener = D1Opener([analysis_row()])
+        opener = D1Opener([analysis_row() | {"attempt_count": 2}])
         claimed = self.client(opener).claim(
             analysis_row()["id"], "message", "token", "2026-08-23T12:00:00.000Z", "2026-08-23T11:55:00.000Z",
         )
-        self.assertEqual(claimed.attempt_count, 1)
+        assert claimed is not None
+        self.assertEqual(claimed.attempt_count, 2)
         sql = opener.requests[0]["sql"]
         self.assertIn("attempt_count = attempt_count + 1", sql)
         self.assertIn("status = 'queued'", sql)
@@ -151,4 +152,3 @@ class D1ClientTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

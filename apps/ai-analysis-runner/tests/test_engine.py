@@ -69,6 +69,20 @@ class EngineTests(unittest.TestCase):
                 self.assertTrue(level.is_dir(), level)
                 self.assertEqual(stat.S_IMODE(level.stat().st_mode), 0o700, level)
 
+    def test_openai_compatible_base_url_is_forwarded_to_graph(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            value = settings(
+                Path(directory),
+                primary_provider="openai_compatible",
+                llm_backend_url="https://opencode.ai/zen/go/v1",
+                quick_model="glm-5.3",
+                deep_model="glm-5.3",
+            )
+            TradingAgentsEngine(value, RecordingGraph).run(str(uuid.uuid4()), "AAPL", "2026-08-21")
+            config = RecordingGraph.calls[0]["config"]
+            self.assertEqual(config["llm_provider"], "openai_compatible")
+            self.assertEqual(config["backend_url"], "https://opencode.ai/zen/go/v1")
+
     def test_one_bounded_openai_fallback_has_separate_cache(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             value = settings(Path(directory), openai_fallback_enabled=True, openai_api_key="secret")

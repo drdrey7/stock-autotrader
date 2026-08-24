@@ -142,9 +142,9 @@ run_scenario() {
   printf 'enabled=%s\nactive=%s\n' "$was_enabled" "$was_active" > "$mockdir/systemctl.state"
   : > "$mockdir/systemctl.log"
   touch "$mockdir/fail.verify"
-  [ "$fail_start" = "1" ] && touch "$mockdir/fail.start"
+  if [ "$fail_start" = "1" ]; then touch "$mockdir/fail.start"; fi
 
-  local ok=1 output rc=""
+  local ok=1
   set +e
   output="$( env -i \
       PATH="$mockdir:/usr/bin:/bin" \

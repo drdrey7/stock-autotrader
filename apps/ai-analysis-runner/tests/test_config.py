@@ -44,6 +44,22 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "OPENAI_API_KEY"):
             from_env(environ)
 
+    def test_openai_compatible_requires_its_own_key_and_https_base_url(self) -> None:
+        environ = base_env()
+        environ.pop("GOOGLE_API_KEY")
+        environ["TRADINGAGENTS_LLM_PROVIDER"] = "openai_compatible"
+        with self.assertRaisesRegex(ConfigError, "OPENAI_COMPATIBLE_API_KEY"):
+            from_env(environ)
+        environ["OPENAI_COMPATIBLE_API_KEY"] = "compatible-secret"
+        with self.assertRaisesRegex(ConfigError, "TRADINGAGENTS_LLM_BACKEND_URL"):
+            from_env(environ)
+        environ["TRADINGAGENTS_LLM_BACKEND_URL"] = "https://opencode.ai/zen/go/v1"
+        value = from_env(environ)
+        self.assertEqual(value.primary_provider, "openai_compatible")
+        self.assertEqual(value.llm_backend_url, "https://opencode.ai/zen/go/v1")
+        self.assertEqual(value.quick_model, "glm-5.3")
+        self.assertEqual(value.deep_model, "glm-5.3")
+
     def test_fallback_is_opt_in_bounded_and_requires_key(self) -> None:
         environ = base_env() | {"AI_ANALYSIS_OPENAI_FALLBACK_ENABLED": "true"}
         with self.assertRaisesRegex(ConfigError, "OPENAI_API_KEY"):
@@ -55,9 +71,15 @@ class ConfigTests(unittest.TestCase):
             from_env(environ)
 
     def test_repr_redacts_every_secret(self) -> None:
-        environ = base_env() | {"OPENAI_API_KEY": "openai-super-secret"}
+        environ = base_env() | {
+            "OPENAI_API_KEY": "openai-super-secret",
+            "OPENAI_COMPATIBLE_API_KEY": "compatible-super-secret",
+        }
         rendered = repr(from_env(environ))
-        for secret in ("d1-super-secret", "queue-super-secret", "google-super-secret", "openai-super-secret"):
+        for secret in (
+            "d1-super-secret", "queue-super-secret", "google-super-secret",
+            "openai-super-secret", "compatible-super-secret",
+        ):
             self.assertNotIn(secret, rendered)
 
     def test_rejects_relative_state_and_unsafe_ranges(self) -> None:
@@ -80,4 +102,3 @@ class ConfigTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

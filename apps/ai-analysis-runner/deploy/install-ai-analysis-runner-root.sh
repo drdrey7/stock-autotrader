@@ -57,7 +57,11 @@ provider=$(sed -n 's/^TRADINGAGENTS_LLM_PROVIDER=//p' "$CONF_DIR/ai-analysis.env
 case "$provider" in
   google) require_env_key "$CONF_DIR/ai-analysis.env" GOOGLE_API_KEY ;;
   openai) require_env_key "$CONF_DIR/ai-analysis.env" OPENAI_API_KEY ;;
-  *) echo "ERROR: TRADINGAGENTS_LLM_PROVIDER must be google or openai" >&2; exit 1 ;;
+  openai_compatible)
+    require_env_key "$CONF_DIR/ai-analysis.env" OPENAI_COMPATIBLE_API_KEY
+    require_env_key "$CONF_DIR/ai-analysis.env" TRADINGAGENTS_LLM_BACKEND_URL
+    ;;
+  *) echo "ERROR: unsupported TRADINGAGENTS_LLM_PROVIDER" >&2; exit 1 ;;
 esac
 
 new_venv=$(mktemp -d "${VENV_DIR}.new.XXXXXX")
@@ -109,7 +113,7 @@ rollback() {
     if systemctl enable "$SERVICE" >/dev/null 2>&1; then :; else
       echo "ROLLBACK FAILED: could not re-enable $SERVICE" >&2; failed=1
     fi
-  else
+  elif [ "$had_unit" -eq 1 ]; then
     if systemctl disable "$SERVICE" >/dev/null 2>&1; then :; else
       echo "ROLLBACK FAILED: could not disable $SERVICE" >&2; failed=1
     fi

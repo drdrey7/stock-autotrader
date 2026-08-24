@@ -17,6 +17,7 @@ describe("SafeMarkdown", () => {
     expect(safeMarkdownUrl("javascript:alert(1)")).toBe("");
     expect(safeMarkdownUrl("data:text/html,hello")).toBe("");
     expect(safeMarkdownUrl("//evil.example/steal")).toBe("");
+    expect(safeMarkdownUrl("/\\\\attacker.example")).toBe("");
 
     render(<SafeMarkdown>{"[unsafe](//evil.example/steal) [script](javascript:alert(1))"}</SafeMarkdown>);
     expect(screen.queryByRole("link", { name: "unsafe" })).not.toBeInTheDocument();

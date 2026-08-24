@@ -76,6 +76,7 @@ jobs:
         run: python3 -m unittest discover -s tests -v
 
   ai-analysis-runner:
+    name: ai-analysis-runner
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -135,7 +136,7 @@ jobs:
           PY
       - name: Verify hardened systemd service
         run: |
-          sudo useradd --system --no-create-home hermes
+          id hermes >/dev/null 2>&1 || sudo useradd --system --no-create-home hermes
           sudo install -d /opt/stock-autotrader/apps /opt/stock-autotrader-ai-analysis/bin /etc/stock-autotrader
           sudo ln -s "$GITHUB_WORKSPACE/apps/ai-analysis-runner" /opt/stock-autotrader/apps/ai-analysis-runner
           sudo ln -s "${RUNNER_TEMP}/ai-analysis-venv/bin/python" /opt/stock-autotrader-ai-analysis/bin/python

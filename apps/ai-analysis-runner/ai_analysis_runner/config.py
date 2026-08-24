@@ -6,6 +6,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
 
 class ConfigError(RuntimeError):
@@ -71,6 +72,14 @@ def _model(name: str, default: str, values: dict[str, str]) -> str:
     return value
 
 
+def _https_url(name: str, values: dict[str, str]) -> str:
+    value = _required(name, values)
+    parsed = urlparse(value)
+    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise ConfigError(f"{name} must be an HTTPS base URL without credentials, query, or fragment")
+    return value.rstrip("/")
+
+
 @dataclass(frozen=True)
 class Settings:
     cloudflare_api_token: str
@@ -81,6 +90,7 @@ class Settings:
     google_api_key: str
     openai_api_key: str
     primary_provider: str
+    llm_backend_url: str | None
     quick_model: str
     deep_model: str
     openai_fallback_enabled: bool
@@ -118,8 +128,8 @@ def from_env(environ: dict[str, str] | None = None) -> Settings:
 
     values = dict(os.environ if environ is None else environ)
     primary_provider = values.get("TRADINGAGENTS_LLM_PROVIDER", "google").strip().lower()
-    if primary_provider not in {"google", "openai"}:
-        raise ConfigError("TRADINGAGENTS_LLM_PROVIDER must be google or openai")
+    if primary_provider not in {"google", "openai", "openai_compatible"}:
+        raise ConfigError("TRADINGAGENTS_LLM_PROVIDER must be google, openai, or openai_compatible")
 
     google_api_key = values.get("GOOGLE_API_KEY", "").strip()
     openai_api_key = values.get("OPENAI_API_KEY", "").strip()
@@ -127,14 +137,21 @@ def from_env(environ: dict[str, str] | None = None) -> Settings:
         raise ConfigError("GOOGLE_API_KEY is required for the Google provider")
     if primary_provider == "openai" and not openai_api_key:
         raise ConfigError("OPENAI_API_KEY is required for the OpenAI provider")
+    if primary_provider == "openai_compatible" and not values.get("OPENAI_COMPATIBLE_API_KEY", "").strip():
+        raise ConfigError("OPENAI_COMPATIBLE_API_KEY is required for the OpenAI-compatible provider")
+    llm_backend_url = (
+        _https_url("TRADINGAGENTS_LLM_BACKEND_URL", values)
+        if primary_provider == "openai_compatible"
+        else None
+    )
     fallback = _boolean("AI_ANALYSIS_OPENAI_FALLBACK_ENABLED", False, values)
     if fallback and primary_provider != "google":
         raise ConfigError("the OpenAI fallback is only valid with the Google primary provider")
     if fallback and not openai_api_key:
         raise ConfigError("OPENAI_API_KEY is required when the OpenAI fallback is enabled")
 
-    quick_default = "gemini-3.1-flash-lite" if primary_provider == "google" else "gpt-5.4-mini"
-    deep_default = "gemini-3.5-flash" if primary_provider == "google" else "gpt-5.5"
+    quick_defaults = {"google": "gemini-3.1-flash-lite", "openai": "gpt-5.4-mini", "openai_compatible": "glm-5.3"}
+    deep_defaults = {"google": "gemini-3.5-flash", "openai": "gpt-5.5", "openai_compatible": "glm-5.3"}
 
     heartbeat = _integer("AI_ANALYSIS_HEARTBEAT_INTERVAL_SECONDS", 60, values, minimum=10, maximum=600)
     stale = _integer("AI_ANALYSIS_STALE_LEASE_SECONDS", 300, values, minimum=30, maximum=86_400)
@@ -159,8 +176,9 @@ def from_env(environ: dict[str, str] | None = None) -> Settings:
         google_api_key=google_api_key,
         openai_api_key=openai_api_key,
         primary_provider=primary_provider,
-        quick_model=_model("TRADINGAGENTS_QUICK_THINK_LLM", quick_default, values),
-        deep_model=_model("TRADINGAGENTS_DEEP_THINK_LLM", deep_default, values),
+        llm_backend_url=llm_backend_url,
+        quick_model=_model("TRADINGAGENTS_QUICK_THINK_LLM", quick_defaults[primary_provider], values),
+        deep_model=_model("TRADINGAGENTS_DEEP_THINK_LLM", deep_defaults[primary_provider], values),
         openai_fallback_enabled=fallback,
         openai_quick_model=_model("AI_ANALYSIS_OPENAI_QUICK_MODEL", "gpt-5.4-mini", values),
         openai_deep_model=_model("AI_ANALYSIS_OPENAI_DEEP_MODEL", "gpt-5.5", values),

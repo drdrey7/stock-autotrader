@@ -9,6 +9,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 from ai_analysis_runner.checkpoint import ResultCheckpointStore
 from ai_analysis_runner.engine import EngineFailure
@@ -32,6 +33,15 @@ class FakeQueue:
 
     def retry(self, message: QueueMessage, delay: int) -> None:
         self.retried.append((message.id, delay))
+
+
+class PullQueue(FakeQueue):
+    def __init__(self, messages: list[QueueMessage]) -> None:
+        super().__init__()
+        self.messages = messages
+
+    def pull(self) -> QueueMessage | None:
+        return self.messages.pop(0) if self.messages else None
 
 
 class FakeD1:
@@ -226,6 +236,27 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(engine.calls, 0)
             self.assertEqual(d1.complete_calls, 0)
             self.assertEqual(queue.acked, ["message-1"])
+
+    def test_poison_message_does_not_stop_next_message(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            first = analysis()
+            second = analysis()
+            first_message = QueueMessage("message-1", 1, "lease-1", first.id)
+            second_message = QueueMessage("message-2", 1, "lease-2", second.id)
+            runner, _, _ = self.build(directory, first, FakeEngine())
+            runner.queue = PullQueue([first_message, second_message])
+            processed: list[str] = []
+
+            def process(current: QueueMessage) -> None:
+                processed.append(current.id)
+                if current.id == "message-1":
+                    raise KeyError("poison")
+                runner.stop_event.set()
+
+            with patch.object(runner, "process_message", side_effect=process):
+                runner.run_forever()
+
+            self.assertEqual(processed, ["message-1", "message-2"])
 
 
 if __name__ == "__main__":

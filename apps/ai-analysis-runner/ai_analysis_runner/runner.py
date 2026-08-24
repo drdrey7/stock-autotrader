@@ -213,7 +213,14 @@ class AnalysisRunner:
             failure = ("result_invalid", "Analysis engine returned an invalid result.", True)
         except (CheckpointError, OSError):
             failure = ("checkpoint_failed", "Analysis result could not be checkpointed.", True)
-        except Exception:
+        except Exception as exc:
+            log_event(
+                "analysis_execution_unexpected",
+                level=logging.ERROR,
+                analysis_id=claimed.id,
+                message_id=message.id,
+                error_type=type(exc).__name__,
+            )
             failure = ("runner_error", "Analysis execution failed.", True)
         finally:
             heartbeat.stop()
@@ -317,5 +324,16 @@ class AnalysisRunner:
                 empty_delay = min(self.settings.empty_poll_max_seconds, empty_delay * 2)
                 continue
             empty_delay = self.settings.empty_poll_min_seconds
-            self.process_message(message)
+            try:
+                self.process_message(message)
+            except Exception as exc:
+                # Leave a poison message unacked until its visibility timeout;
+                # one unexpected failure must not terminate the consumer.
+                log_event(
+                    "message_processing_unexpected",
+                    level=logging.ERROR,
+                    analysis_id=message.analysis_id,
+                    message_id=message.id,
+                    error_type=type(exc).__name__,
+                )
         log_event("runner_stopped")
