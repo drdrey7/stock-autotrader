@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import tempfile
-import time
+import threading
 import unittest
 import uuid
 from dataclasses import replace
@@ -43,6 +43,7 @@ class FakeD1:
         self.complete_error = False
         self.heartbeat_ok = True
         self.completed_result_json: str | None = None
+        self.leaseLost = threading.Event()
 
     def get_analysis(self, _analysis_id: str) -> Analysis:
         return self.analysis
@@ -62,7 +63,10 @@ class FakeD1:
         return self.analysis
 
     def heartbeat(self, *_args: Any) -> bool:
-        return self.heartbeat_ok
+        if not self.heartbeat_ok:
+            self.leaseLost.set()
+            return False
+        return True
 
     def complete(self, _id: str, _message: str, token: str, result_json: str, _completed: str, _valid: str) -> bool:
         self.complete_calls += 1
@@ -139,18 +143,20 @@ class RunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             current = analysis()
             engine = FakeEngine()
+            runner, queue, d1 = self.build(directory, current, engine, heartbeat_interval_seconds=0)
+            d1.heartbeat_ok = False
             original_run = engine.run
 
             def slow_run(*_args: str) -> Any:
-                # Let the background heartbeat thread observe the lost lease
-                # before the synchronous engine work completes.
-                time.sleep(0.05)
+                # Deterministic barrier: block the engine until the background
+                # heartbeat thread has actually observed the lost lease, instead
+                # of racing a sleep against thread scheduling.
+                d1.leaseLost.wait(timeout=2)
                 return original_run()
 
             engine.run = slow_run
-            runner, queue, d1 = self.build(directory, current, engine, heartbeat_interval_seconds=0)
-            d1.heartbeat_ok = False
             runner.process_message(message(current))
+            self.assertTrue(d1.leaseLost.is_set())
             self.assertEqual(d1.complete_calls, 0)
             self.assertEqual(d1.fail_calls, 0)
             self.assertEqual(d1.requeue_calls, 0)

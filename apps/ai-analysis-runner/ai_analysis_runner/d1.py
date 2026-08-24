@@ -49,13 +49,13 @@ class D1Client:
         self._max_attempts = max_attempts
         self._opener = opener
 
-    def _query(self, sql: str, params: list[Any] | None = None) -> list[dict[str, Any]]:
+    def _query(self, sql: str, params: list[Any] | None = None, *, max_attempts: int | None = None) -> list[dict[str, Any]]:
         payload = post_json(
             self._url,
             self._token,
             {"sql": sql, "params": params or []},
             timeout_seconds=self._timeout,
-            max_attempts=self._max_attempts,
+            max_attempts=self._max_attempts if max_attempts is None else max_attempts,
             opener=self._opener,
         )
         if payload.get("success") is not True:
@@ -138,6 +138,7 @@ class D1Client:
             RETURNING {', '.join(ANALYSIS_COLUMNS)}
             """.strip(),
             [analysis_id, message_id, execution_token, now, stale_before],
+            max_attempts=1,
         )
         return self._analysis(rows[0]) if rows else None
 
@@ -151,6 +152,7 @@ class D1Client:
             RETURNING id
             """.strip(),
             [analysis_id, message_id, execution_token, now],
+            max_attempts=1,
         )
         return bool(rows)
 
@@ -178,6 +180,7 @@ class D1Client:
             RETURNING id
             """.strip(),
             [analysis_id, message_id, execution_token, safe_error_code, safe_error_message, now],
+            max_attempts=1,
         )
         return bool(rows)
 
@@ -212,6 +215,7 @@ class D1Client:
                 analysis_id, message_id, execution_token, ENGINE_NAME, ENGINE_DB_VERSION,
                 RESULT_SCHEMA_VERSION, result_json, completed_at, valid_until,
             ],
+            max_attempts=1,
         )
         return bool(rows)
 
@@ -242,5 +246,6 @@ class D1Client:
             RETURNING id
             """.strip(),
             [analysis_id, message_id, execution_token, now, safe_error_code, safe_error_message],
+            max_attempts=1,
         )
         return bool(rows)

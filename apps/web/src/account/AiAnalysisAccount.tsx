@@ -57,6 +57,10 @@ export function AiAnalysisAccount() {
   const reload = useCallback(() => setRequestVersion((version) => version + 1), []);
 
   useEffect(() => {
+    // Abort any in-flight "load more" request first so a stale response cannot
+    // append its old cursor page into the freshly reloaded first page.
+    moreControllerRef.current?.abort();
+    moreControllerRef.current = null;
     const controller = new AbortController();
     setViewerLoading(true);
     setViewerError(false);

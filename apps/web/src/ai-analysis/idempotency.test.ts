@@ -41,4 +41,12 @@ describe("analysis request idempotency", () => {
     clearPendingAnalysisKey(firstKey);
     expect(pendingAnalysisKey("AAPL", 3_000)).toBe(secondKey);
   });
+
+  it("preserves one pending key per symbol", () => {
+    expect(pendingAnalysisKey("AAPL", 1_000)).toBe(firstKey);
+    expect(pendingAnalysisKey("MSFT", 2_000)).toBe(secondKey);
+    // Starting MSFT must not overwrite the still-pending AAPL key.
+    clearPendingAnalysisKey(secondKey);
+    expect(pendingAnalysisKey("AAPL", 3_000)).toBe(firstKey);
+  });
 });

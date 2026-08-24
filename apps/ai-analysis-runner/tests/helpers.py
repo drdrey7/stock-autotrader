@@ -59,7 +59,7 @@ def final_state(portfolio: str | None = None) -> dict[str, Any]:
             "neutral_history": "Neutral case",
             "conservative_history": "Conservative case",
         },
-        "final_trade_decision": portfolio or (
+        "final_trade_decision": portfolio if portfolio is not None else (
             "**Rating**: BUY\n\n"
             "**Executive Summary**: Strong setup.\n\n"
             "**Investment Thesis**: Durable growth.\n\n"

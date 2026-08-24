@@ -97,10 +97,12 @@ class FakeQueue {
   constructor() {
     this.messages = [];
     this.fail = false;
+    this.stall = false;
   }
 
   async send(body, options) {
     if (this.fail) throw new Error("queue unavailable");
+    if (this.stall) return new Promise(() => {}); // never resolves -> send timeout
     this.messages.push({ body, options });
     await Promise.resolve();
     return { outcome: "success" };
@@ -547,6 +549,37 @@ describe("AI Analysis Worker API", () => {
     expect(await responseJson(invalidLimit)).toEqual({ error: "invalid_history_limit" });
   });
 
+  it("degrades per row: omits an unreadable stored result yet keeps paging past it", async () => {
+    const db = setupDatabase(["user-1"]);
+    const queue = new FakeQueue();
+    const good = seedCompletedCanonical(db, "MSFT", "2026-08-18T12:00:00.000Z");
+    const goodRun = acquireCompletedForUser(db, "user-1", good, "2026-08-18T12:01:00.000Z");
+    const bad = seedCompletedCanonical(db, "NVDA", "2026-08-20T12:00:00.000Z");
+    acquireCompletedForUser(db, "user-1", bad, "2026-08-20T12:01:00.000Z");
+    // Corrupt one stored result (valid JSON, invalid result schema).
+    db.sqlite.prepare("UPDATE ai_analyses SET result_json = ? WHERE id = ?").run("{}", bad);
+
+    const first = await handleAiAnalysisApi(
+      new Request("https://app.test/api/ai-analysis/history?limit=1"),
+      envFor(db, queue),
+      dependenciesFor("user-1"),
+    );
+    expect(first.status).toBe(200);
+    const firstBody = await responseJson(first);
+    expect(firstBody.items).toEqual([]);
+    expect(firstBody.nextCursor).toEqual(expect.any(String));
+
+    const second = await handleAiAnalysisApi(
+      new Request(`https://app.test/api/ai-analysis/history?limit=1&cursor=${encodeURIComponent(firstBody.nextCursor)}`),
+      envFor(db, queue),
+      dependenciesFor("user-1"),
+    );
+    expect(second.status).toBe(200);
+    const secondBody = await responseJson(second);
+    expect(secondBody.items.map((item) => item.runId)).toEqual([goodRun]);
+    expect(secondBody.nextCursor).toBeNull();
+  });
+
   it("refunds known Queue-send failures and definitive runner failures exactly once", async () => {
     const db = setupDatabase(["dispatch-user", "runner-user"]);
     const failedQueue = new FakeQueue();
@@ -698,6 +731,21 @@ describe("AI Analysis Worker API", () => {
     expect(queue.messages).toHaveLength(2);
     expect(db.sqlite.prepare("SELECT status FROM ai_analyses WHERE id = ?").get(row.analysis_id).status).toBe("queued");
   });
+
+  it("keeps a send timeout uncertain: analysis stays dispatching and no credit is refunded", async () => {
+    const db = setupDatabase(["user-1"]);
+    const stalled = new FakeQueue();
+    stalled.stall = true;
+    const response = await postRun(db, stalled, "user-1", "MSFT", crypto.randomUUID());
+    expect(response.status).toBe(503);
+    const body = await responseJson(response);
+    expect(body).toMatchObject({ error: "ai_analysis_dispatch_unavailable", runId: expect.any(String) });
+    // Timeout does not prove enqueue failed: nothing is failed or refunded, the
+    // analysis stays dispatching, and the outbox claim remains for re-dispatch.
+    expect(db.sqlite.prepare("SELECT status FROM ai_analyses WHERE symbol = 'MSFT'").get().status).toBe("dispatching");
+    expect(db.sqlite.prepare("SELECT status FROM ai_analysis_dispatches").get().status).toBe("sending");
+    expect(db.sqlite.prepare("SELECT credits_used FROM user_ai_entitlements WHERE user_id = 'user-1'").get().credits_used).toBe(1);
+  }, 10_000);
 
   it("fails closed instead of exposing malformed stored result JSON", async () => {
     const db = setupDatabase(["user-1"]);

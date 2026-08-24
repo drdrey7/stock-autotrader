@@ -65,13 +65,22 @@ class NormalizeTests(unittest.TestCase):
         )
         self.assertEqual(result["recommendation"], "BUY")
 
-    def test_recommendation_tolerant_token_only_on_known_words(self) -> None:
+    def test_recommendation_leading_token_fallback(self) -> None:
         portfolio = "**Rating**: Strong\n\n**Executive Summary**: Summary."
         result = normalize_result(
             "AAPL", "2026-08-21", "2026-08-23T12:34:56Z",
-            EngineOutput(final_state(portfolio), "We recommend a BUY: strong setup", "google", "gemini-3.1-flash-lite", "gemini-3.5-flash"),
+            EngineOutput(final_state(portfolio), "BUY: strong setup", "google", "gemini-3.1-flash-lite", "gemini-3.5-flash"),
         )
         self.assertEqual(result["recommendation"], "BUY")
+
+    def test_recommendation_rejects_negated_or_incidental_mention(self) -> None:
+        portfolio = "**Rating**: Strong\n\n**Executive Summary**: Summary."
+        for decision in ("Do not BUY at this level", "We recommend a BUY: strong setup"):
+            with self.subTest(decision=decision), self.assertRaisesRegex(ResultValidationError, "recommendation"):
+                normalize_result(
+                    "AAPL", "2026-08-21", "2026-08-23T12:34:56Z",
+                    EngineOutput(final_state(portfolio), decision, "google", "gemini-3.1-flash-lite", "gemini-3.5-flash"),
+                )
 
     def test_recommendation_rejects_when_no_known_token(self) -> None:
         portfolio = "**Rating**: Strong\n\n**Executive Summary**: Summary."

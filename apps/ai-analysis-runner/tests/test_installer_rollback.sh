@@ -108,7 +108,7 @@ case "${1:-}" in
   enable)  sed -i 's/^enabled=.*/enabled=1/' "$statefile"; printf 'enable\n' >> "$logfile" ;;
   disable) sed -i 's/^enabled=.*/enabled=0/' "$statefile"; printf 'disable\n' >> "$logfile" ;;
   daemon-reload) printf 'daemon-reload\n' >> "$logfile" ;;
-  *) printf 'unexpected: %s\n' "$*" >> "$logfile" ; return 0 ;;
+  *) printf 'unexpected: %s\n' "$*" >> "$logfile" ; exit 0 ;;
 esac
 EOF
 

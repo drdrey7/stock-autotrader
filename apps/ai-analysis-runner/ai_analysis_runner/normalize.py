@@ -82,13 +82,14 @@ def _price_target(value: str | None) -> float | None:
 
 
 def _recommendation(decision: Any, rating: str | None) -> str:
-    """Derive a valid recommendation, exact first then tolerant only on known tokens.
+    """Derive a valid recommendation, exact first then a conservative fallback.
 
     Order per application contract: (a) an exact valid recommendation from the
     engine decision; (b) an exact valid recommendation from the parsed portfolio
-    Rating header; (c) tolerant token parsing only when necessary. Tolerant
-    parsing never turns arbitrary text into a recommendation — it only returns a
-    value when a token exactly matches a known recommendation string.
+    Rating header; (c) tolerant fallback only when the leading token of a
+    candidate is itself a known recommendation. Anchoring the tolerant match to
+    the leading token accepts ``BUY: strong setup`` while rejecting incidental
+    or negated mentions such as "Do not BUY at this level".
     """
 
     for candidate in (decision, rating):
@@ -96,10 +97,9 @@ def _recommendation(decision: Any, rating: str | None) -> str:
             return candidate.strip().upper()
     for candidate in (decision, rating):
         if isinstance(candidate, str):
-            for token in re.findall(r"[A-Za-z]+", candidate):
-                upper = token.upper()
-                if upper in _RECOMMENDATIONS:
-                    return upper
+            leading = re.match(r"[A-Za-z]+", candidate.strip())
+            if leading is not None and leading.group(0).upper() in _RECOMMENDATIONS:
+                return leading.group(0).upper()
     return ""
 
 

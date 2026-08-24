@@ -116,8 +116,10 @@ class QueueClient:
         if job.get("schemaVersion") != JOB_SCHEMA_VERSION or isinstance(job.get("schemaVersion"), bool):
             raise QueueProtocolError("queue_job_version_unsupported")
         analysis_id = job.get("analysisId")
+        if not isinstance(analysis_id, str):
+            raise QueueProtocolError("queue_analysis_id_invalid")
         try:
-            canonical_id = str(uuid.UUID(analysis_id)) if isinstance(analysis_id, str) else ""
+            canonical_id = str(uuid.UUID(analysis_id))
         except ValueError as exc:
             raise QueueProtocolError("queue_analysis_id_invalid") from exc
         if canonical_id != analysis_id.lower():

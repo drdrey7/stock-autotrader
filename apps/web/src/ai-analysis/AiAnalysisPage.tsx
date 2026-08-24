@@ -218,7 +218,13 @@ function SelectionPage({
       const apiError = reason instanceof AiAnalysisApiError
         ? reason
         : new AiAnalysisApiError("analysis_unavailable");
-      if (apiError.status !== null) clearPendingAnalysisKey(key);
+      // Clear the pending key only for a definitive terminal client error. Keep it
+      // for retryable outcomes (409, 5xx, unknown) so a retry reuses the same
+      // idempotency key and the server can deduplicate instead of creating a
+      // second, credit-consuming run.
+      if (apiError.status !== null && apiError.status !== 409 && apiError.status < 500) {
+        clearPendingAnalysisKey(key);
+      }
       setStartError(startErrorMessage(apiError));
     } finally {
       startingRef.current = false;

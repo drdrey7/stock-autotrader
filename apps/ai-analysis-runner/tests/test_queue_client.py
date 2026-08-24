@@ -82,6 +82,7 @@ class QueueClientTests(unittest.TestCase):
             queue_payload("not-base64!", "json"),
             queue_payload(json.dumps({"schemaVersion": 1, "analysisId": analysis_id, "extra": True})),
             queue_payload(json.dumps({"schemaVersion": 2, "analysisId": analysis_id})),
+            queue_payload(json.dumps({"schemaVersion": 1, "analysisId": 123})),
         ]
         for payload in cases:
             with self.subTest(payload=payload):

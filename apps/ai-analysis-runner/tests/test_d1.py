@@ -4,7 +4,7 @@ import json
 import unittest
 from typing import Any
 
-from ai_analysis_runner.constants import ENGINE_DB_VERSION
+from ai_analysis_runner.constants import ENGINE_DB_VERSION, ENGINE_NAME, RESULT_SCHEMA_VERSION
 from ai_analysis_runner.d1 import D1Client
 from ai_analysis_runner.http import HttpError
 
@@ -70,6 +70,13 @@ class D1ClientTests(unittest.TestCase):
         self.assertIn("status = 'completed'", request["sql"])
         self.assertIn("execution_message_id = ?2 AND execution_token = ?3", request["sql"])
         self.assertEqual(request["params"][4], ENGINE_DB_VERSION)
+        self.assertEqual(
+            request["params"],
+            [
+                analysis_row()["id"], "message", "token", ENGINE_NAME, ENGINE_DB_VERSION,
+                RESULT_SCHEMA_VERSION, "{}", "2026-08-23T12:00:00.000Z", "2026-08-28T12:00:00.000Z",
+            ],
+        )
 
     def test_definitive_failure_preserves_not_null_result_schema_for_refund_trigger(self) -> None:
         opener = D1Opener([{"id": analysis_row()["id"]}])
@@ -83,6 +90,13 @@ class D1ClientTests(unittest.TestCase):
         self.assertNotIn("result_schema_version = NULL", sql)
         self.assertIn("execution_message_id = ?2 AND execution_token = ?3", sql)
         self.assertNotIn("credit", sql.lower())
+        self.assertEqual(
+            opener.requests[0]["params"],
+            [
+                analysis_row()["id"], "message", "token", "2026-08-23T12:00:00.000Z",
+                "engine_failed", "Analysis failed.",
+            ],
+        )
 
     def test_requeue_clears_lease_only_under_current_cas(self) -> None:
         opener = D1Opener([{"id": analysis_row()["id"]}])

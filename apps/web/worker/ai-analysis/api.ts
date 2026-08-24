@@ -442,13 +442,23 @@ async function handleHistory(
       return privateJson({ error: "invalid_history_limit" }, 400);
     }
     const page = await readHistoryPage(env.DB, user.id, cursor, limit);
-    const items = page.rows.map((row) => ({
-      runId: row.runId,
-      symbol: row.symbol,
-      company: row.company,
-      recommendation: parseResultJson(row.resultJson, row.symbol).recommendation,
-      completedAt: row.completedAt,
-    }));
+    // History is a list: degrade per row instead of failing closed for the whole
+    // page. Omit an unreadable stored result so the remaining reports and the
+    // cursor stay usable, and the user can still page past the bad row.
+    const items: AiAnalysisHistoryResponse["items"] = [];
+    for (const row of page.rows) {
+      try {
+        items.push({
+          runId: row.runId,
+          symbol: row.symbol,
+          company: row.company,
+          recommendation: parseResultJson(row.resultJson, row.symbol).recommendation,
+          completedAt: row.completedAt,
+        });
+      } catch {
+        // Unreadable stored result — skip this row only.
+      }
+    }
     const last = page.rows.at(-1);
     const response: AiAnalysisHistoryResponse = aiAnalysisHistoryResponseSchema.parse({
       schemaVersion: 1,

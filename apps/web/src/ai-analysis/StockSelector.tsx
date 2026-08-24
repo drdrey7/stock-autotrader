@@ -169,7 +169,7 @@ export function StockSelector({ stocks, selected, ownedSymbols, onSelect }: Stoc
                 </li>
               );
             }) : (
-              <li className="ai-stock-no-results" role="option" aria-disabled="true">
+              <li className="ai-stock-no-results" role="presentation">
                 No matching Core Universe stock.
               </li>
             )}

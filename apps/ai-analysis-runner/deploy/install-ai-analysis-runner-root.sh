@@ -145,8 +145,10 @@ if [ -e "$VENV_DIR" ]; then
   rollback_venv="${VENV_DIR}.rollback.$$"
   mv "$VENV_DIR" "$rollback_venv"
 fi
-mv "$new_venv" "$VENV_DIR"
+# Once the prior environment has been moved aside, mark the swap so rollback
+# restores it even if the subsequent move of the new environment fails.
 swapped=1
+mv "$new_venv" "$VENV_DIR"
 systemd-analyze verify "$UNIT_SOURCE" >/dev/null
 install -o root -g root -m 0644 "$UNIT_SOURCE" "$UNIT_TARGET"
 systemctl daemon-reload
