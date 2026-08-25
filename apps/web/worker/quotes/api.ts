@@ -38,24 +38,26 @@ interface CompanyRow {
   logo_url: string | null;
   industry: string | null;
   pe_ttm: number | null;
+  eps_ttm: number | null;
   market_cap: number | null;
   shareholders_equity: number | null;
+  shares_outstanding: number | null;
   market_as_of: string | null;
   market_checked_at: string | null;
-  updated_at: string;
+  updated_at: string | null;
 }
 
 /**
  * Core Universe company + slow valuation inputs in one D1 query. The LEFT JOIN
  * keeps fundamentals best-effort and avoids a second query/read loop for the
- * Screener fallback IV. Freshness is evaluated by the same canonical helper
- * used by Stock Detail before any automatic value can be served.
+ * Screener fallback IV. Freshness and per-share eligibility are evaluated by
+ * the same canonical helper used by Stock Detail.
  */
 async function readCoreCompanies(db: D1Database): Promise<CompanyRow[]> {
   try {
     const result = await db.prepare(
       `SELECT u.symbol, u.company, u.logo_url, u.industry,
-        f.pe_ttm, f.market_cap, f.shareholders_equity,
+        f.pe_ttm, f.eps_ttm, f.market_cap, f.shareholders_equity, f.shares_outstanding,
         f.market_as_of, f.market_checked_at, f.updated_at
        FROM earnings_universe AS u
        LEFT JOIN stock_fundamentals_snapshot AS f ON f.symbol = u.symbol
@@ -78,8 +80,6 @@ async function readCoreCompanies(db: D1Database): Promise<CompanyRow[]> {
 function wsCollectorStateToSourceState(state: WSCollectorState, marketState: ScreenerMarketState): SourceState {
   switch (state) {
     case "Healthy":
-      // Only DURING the regular session is the collector "Live"; after it
-      // (post_close / closed) the prices are the final session snapshot.
       return marketState === "regular" ? "Live" : "Cached";
     case "Degraded":
       return "Cached";
@@ -90,14 +90,6 @@ function wsCollectorStateToSourceState(state: WSCollectorState, marketState: Scr
   }
 }
 
-/**
- * P2 #2 conservative cross-check: Finnhub has no per-symbol subscription ack,
- * so a Healthy WS with ZERO live rows during the regular session means the
- * subscriptions may have silently failed (heartbeat fresh, socket connected,
- * no data arriving). In that pathological case we refuse to claim global
- * "Live" and degrade to Cached. Deliberately NOT triggered by one quiet
- * symbol, no recent NET/SNOW trade, or 49/50 live — only live === 0.
- */
 function safeguardWsCollectorState(
   base: SourceState,
   wsState: WSCollectorState,
@@ -110,12 +102,11 @@ function safeguardWsCollectorState(
 
 /**
  * Screener read model: canonical Core Universe (50) combined with the latest
- * quote state. Pure D1 reads — opening /screener never touches Finnhub; the
- * collector is fully independent of frontend traffic.
+ * quote state. Pure D1 reads — opening /screener never touches Finnhub.
  *
  * IV selection is deliberately centralized and deterministic:
  *   1. split-safe Manual IV from D1;
- *   2. otherwise Automatic Base from fresh persisted fundamentals;
+ *   2. otherwise Automatic Base from fresh persisted per-share fundamentals;
  *   3. otherwise unavailable.
  */
 export async function readScreenerApi(env: Env, now = new Date()): Promise<ScreenerApiResponse> {
@@ -130,8 +121,6 @@ export async function readScreenerApi(env: Env, now = new Date()): Promise<Scree
     readManualSupportLevels(env.DB),
     readManualIntrinsicValues(env.DB),
   ]);
-  // REST shard health is only used as a fallback (manual/diagnostic runs)
-  // when the WebSocket collector has never written a record.
   const restHealth = wsHealth ? null : await readQuotesHealth(env.DB);
   const quoteBySymbol = new Map(quotes.map((quote) => [quote.symbol, quote]));
   const companyBySymbol = new Map(companies.map((company) => [company.symbol, company]));
@@ -188,11 +177,6 @@ export async function readScreenerApi(env: Env, now = new Date()): Promise<Scree
   });
 
   const counts = countQuoteStates(rows);
-  // Global collector freshness comes from the WebSocket ingestor's D1
-  // heartbeat + TTL (P2 #1/#2B) — NOT from per-symbol row age, so a quiet
-  // symbol (zero trades for 15+ min) can never demote the whole collector.
-  // Without a WS record (never installed / REST rollback) we fall back to the
-  // legacy row-derived collector state.
   const wsCollector = wsHealth ? collectorStateFromWsHealth(wsHealth, now) : "Unavailable";
   const collectorState = wsHealth
     ? safeguardWsCollectorState(
@@ -205,7 +189,7 @@ export async function readScreenerApi(env: Env, now = new Date()): Promise<Scree
   const quotesHealth: ScreenerQuotesHealth = {
     state: collectorState,
     provider: wsHealth ? "finnhub-websocket" : (restHealth?.provider ?? "unavailable"),
-    lastSuccessAt: wsHealth ? wsHealth.lastSuccessfulFlushAt : (restHealth?.lastSuccessAt ?? null),
+    lastSuccessAt: wsHealth ? wsHealth.lastSuccessfulFlushAt : (restHealth?.lastAttemptAt ?? null),
     lastAttemptAt: wsHealth ? wsHealth.lastFlushAt : (restHealth?.lastAttemptAt ?? null),
     error: wsHealth ? wsHealth.lastError : (restHealth?.lastError ?? null),
     counts,
