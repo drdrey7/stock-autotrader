@@ -97,7 +97,7 @@ export const financialGlossary = Object.freeze({
     shortDescription:
       "Compares the company's debt with the money invested by shareholders. It gives you a quick idea of how much the business relies on debt.",
     interpretation:
-      "Lower is generally safer, but normal debt levels can be very different from one industry to another.",
+      "For positive ratios, lower is generally safer, but normal debt levels vary a lot by industry. A negative ratio usually means shareholders' equity is negative, so it needs a separate look — do not treat it as safer just because the number is lower.",
   },
   eps: {
     title: "EPS",
