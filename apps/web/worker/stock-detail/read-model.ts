@@ -12,6 +12,12 @@ import {
 import { isoWeekOfDateKey, weekDiffDays } from "../sma/weeks";
 import { buildIntrinsicValue, buildSupportLevels } from "../stocks/derived";
 import { nyDateKeyOf, quoteState, quotesMarketState } from "../quotes/freshness";
+import {
+  AUTOMATIC_IV_MARKET_STALE_AFTER_SECONDS,
+  automaticValuationFundamentalsAreFresh,
+  calculateAutomaticIntrinsicValueFromPersistedFundamentals,
+  priceToBookFromPersistedFundamentals,
+} from "../intrinsic-values/automatic";
 import type { Env } from "../index";
 import {
   readStockDetailStorageSnapshot,
@@ -26,7 +32,7 @@ const SMA_WINDOW_WEEKS = 200;
 const CLOSE_CROSSCHECK_RELATIVE_TOLERANCE = 1e-6;
 const CLOSE_CROSSCHECK_ABSOLUTE_TOLERANCE = 1e-8;
 const FINNHUB_BASIC_FINANCIALS_SOURCE = "finnhub-basic-financials";
-export const FUNDAMENTALS_MARKET_STALE_AFTER_SECONDS = 3 * 24 * 60 * 60;
+export const FUNDAMENTALS_MARKET_STALE_AFTER_SECONDS = AUTOMATIC_IV_MARKET_STALE_AFTER_SECONDS;
 
 interface AdjustedClosePoint {
   time: string;
@@ -142,19 +148,6 @@ function toValidChronologicalCandles(
 function approximatelyEqual(left: number, right: number): boolean {
   const tolerance = Math.max(1e-8, Math.abs(right) * 1e-6);
   return Math.abs(left - right) <= tolerance;
-}
-
-function marketFundamentalsAreFresh(
-  fundamentals: StockDetailStorageSnapshot["fundamentals"],
-  now: Date,
-): boolean {
-  if (!fundamentals) return false;
-  const updatedMs = Date.parse(fundamentals.updated_at);
-  const marketAsOfMs = Date.parse(fundamentals.market_checked_at ?? fundamentals.market_as_of ?? "");
-  if (!Number.isFinite(updatedMs) || !Number.isFinite(marketAsOfMs)) return false;
-  const oldestTimestamp = Math.min(marketAsOfMs, updatedMs);
-  const ageSeconds = (now.getTime() - oldestTimestamp) / 1000;
-  return ageSeconds >= 0 && ageSeconds <= FUNDAMENTALS_MARKET_STALE_AFTER_SECONDS;
 }
 
 export interface AccountingCardMetrics {
@@ -294,10 +287,10 @@ export function servedSplitScaleState(
   const splitMs = Date.parse(`${latestEffectiveSplit.effective_date}T00:00:00.000Z`);
   if (!Number.isFinite(splitMs)) return "unknown";
   if (weeklyRows.length === 0) return quoteSplitState(quote, splitMs);
-  const historyState = servedHistoryScaleState(weeklyRows, effectiveSplits);
+  const historyState = servedHistorySplitState(weeklyRows, effectiveSplits);
   if (historyState !== "safe") return historyState;
-  const quoteState = quoteSplitState(quote, splitMs);
-  if (quoteState !== "safe" || metricCalculatedAt === null) return quoteState;
+  const quoteStateValue = quoteSplitState(quote, splitMs);
+  if (quoteStateValue !== "safe" || metricCalculatedAt === null) return quoteStateValue;
   const metricMs = Date.parse(metricCalculatedAt);
   if (!Number.isFinite(metricMs)) return "unknown";
   return metricMs >= splitMs ? "safe" : "mismatch";
@@ -325,7 +318,7 @@ export async function readStockDetailApi(
     ? await readStockDetailStorageSnapshot(env.DB, symbol, STOCK_DETAIL_HISTORY_LIMIT, "preview")
     : await readStockDetailStorageSnapshot(env.DB, symbol);
 
-  const marketFundamentalsFresh = marketFundamentalsAreFresh(fundamentals, now);
+  const marketFundamentalsFresh = automaticValuationFundamentalsAreFresh(fundamentals, now);
   const cardMetrics = calculateAccountingCardMetrics(fundamentals);
   const marketCap = marketFundamentalsFresh ? fundamentals?.market_cap ?? null : null;
   const formattedMarketCap = marketCap === null
@@ -335,10 +328,8 @@ export async function readStockDetailApi(
       : marketCap >= 1_000_000_000
         ? `$${(marketCap / 1_000_000_000).toFixed(1)}B`
         : `$${(marketCap / 1_000_000).toFixed(0)}M`;
-  const priceToBook = marketCap !== null
-    && finite(fundamentals?.shareholders_equity)
-    && fundamentals.shareholders_equity > 0
-    ? marketCap / fundamentals.shareholders_equity
+  const priceToBook = marketFundamentalsFresh
+    ? priceToBookFromPersistedFundamentals(fundamentals)
     : null;
 
   const validSplitEvents = splitEvents.filter((event) => isoWeekOfDateKey(event.effective_date) !== null);
@@ -373,24 +364,57 @@ export async function readStockDetailApi(
     effectiveSplitAsOf ?? undefined,
     currentMarketDate,
   );
-  const screenerIntrinsicValue = buildIntrinsicValue(
+  const screenerManualIntrinsicValue = buildIntrinsicValue(
     currentPrice,
     intrinsicRaw,
     effectiveSplitAsOf ?? undefined,
     currentMarketDate,
   );
-  const intrinsicValue = screenerIntrinsicValue
+  const manualIntrinsicValue = screenerManualIntrinsicValue
     ? {
-        low: screenerIntrinsicValue.low,
-        base: screenerIntrinsicValue.base,
-        high: screenerIntrinsicValue.high,
-        method: screenerIntrinsicValue.method,
-        asOf: screenerIntrinsicValue.asOf,
+        low: screenerManualIntrinsicValue.low,
+        base: screenerManualIntrinsicValue.base,
+        high: screenerManualIntrinsicValue.high,
+        method: screenerManualIntrinsicValue.method,
+        asOf: screenerManualIntrinsicValue.asOf,
         upsidePct: currentPrice !== null && currentPrice > 0
-          ? (screenerIntrinsicValue.base / currentPrice - 1) * 100
+          ? (screenerManualIntrinsicValue.base / currentPrice - 1) * 100
           : null,
       }
     : null;
+  const automaticModel = calculateAutomaticIntrinsicValueFromPersistedFundamentals(
+    symbol,
+    company?.industry?.trim() || null,
+    currentPrice,
+    fundamentals,
+    now,
+  );
+  const automatic = automaticModel
+    ? {
+        bear: automaticModel.bear,
+        base: automaticModel.base,
+        bull: automaticModel.bull,
+        method: automaticModel.method,
+        bearMultiple: automaticModel.bearMultiple,
+        baseMultiple: automaticModel.baseMultiple,
+        bullMultiple: automaticModel.bullMultiple,
+        bearUpsidePct: automaticModel.bearUpsidePct,
+        baseUpsidePct: automaticModel.baseUpsidePct,
+        bullUpsidePct: automaticModel.bullUpsidePct,
+      }
+    : null;
+  const automaticSelectedIntrinsicValue = automaticModel
+    ? {
+        low: automaticModel.bear,
+        base: automaticModel.base,
+        high: automaticModel.bull,
+        method: `automatic-${automaticModel.method.toLowerCase().replaceAll("/", "-")}`,
+        asOf: currentMarketDate,
+        upsidePct: automaticModel.baseUpsidePct,
+      }
+    : null;
+  // One canonical selection rule for every consumer: Manual > Automatic Base > unavailable.
+  const selectedIntrinsicValue = manualIntrinsicValue ?? automaticSelectedIntrinsicValue;
 
   const allCloseHistory = historyScaleSafe ? toValidChronologicalCloseHistory(weeklyRows) : [];
   const visibleStartIndex = Math.max(0, allCloseHistory.length - STOCK_DETAIL_VISIBLE_WEEKS);
@@ -426,7 +450,11 @@ export async function readStockDetailApi(
       marketState: quotesMarketState(now),
       scaleState,
     },
-    valuation: { intrinsicValue },
+    valuation: {
+      intrinsicValue: manualIntrinsicValue,
+      automatic,
+      selectedIntrinsicValue,
+    },
     fundamentals: {
       marketCap: formattedMarketCap,
       peTtm: marketFundamentalsFresh ? fundamentals?.pe_ttm ?? null : null,
@@ -452,7 +480,7 @@ export async function readStockDetailApi(
     freshness: {
       quoteAsOf: quote?.provider_timestamp ?? null,
       historyAsOf,
-      valuationAsOf: intrinsicValue?.asOf ?? null,
+      valuationAsOf: selectedIntrinsicValue?.asOf ?? null,
       technicalAsOf: metric?.calculated_at ?? null,
     },
   });
