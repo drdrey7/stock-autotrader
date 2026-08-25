@@ -58,10 +58,9 @@ describe("FinancialInfoHint", () => {
   });
 
   it("keeps the popover inside the viewport and flips above when needed", () => {
-    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function () {
-      const element = this as HTMLElement;
-      if (element.classList.contains("financial-info-trigger")) return rect(900, 700, 24, 24);
-      if (element.classList.contains("financial-info-popover")) return rect(0, 0, 260, 180);
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this.classList.contains("financial-info-trigger")) return rect(900, 700, 24, 24);
+      if (this.classList.contains("financial-info-popover")) return rect(0, 0, 260, 180);
       return rect(0, 0, 0, 0);
     });
 
