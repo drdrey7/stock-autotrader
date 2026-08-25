@@ -2,7 +2,24 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import FinancialInfoHint from "./FinancialInfoHint";
 
-afterEach(() => cleanup());
+function rect(left: number, top: number, width: number, height: number): DOMRect {
+  return {
+    x: left,
+    y: top,
+    left,
+    top,
+    right: left + width,
+    bottom: top + height,
+    width,
+    height,
+    toJSON: () => ({}),
+  } as DOMRect;
+}
+
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 describe("FinancialInfoHint", () => {
   it("is closed by default and opens with the matching glossary content", () => {
@@ -38,6 +55,27 @@ describe("FinancialInfoHint", () => {
     fireEvent.click(screen.getByRole("button", { name: "Learn what Market Cap means" }));
 
     expect(screen.getByRole("dialog", { name: "Market Cap" })).toHaveFocus();
+  });
+
+  it("keeps the popover inside the viewport and flips above when needed", () => {
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function () {
+      const element = this as HTMLElement;
+      if (element.classList.contains("financial-info-trigger")) return rect(900, 700, 24, 24);
+      if (element.classList.contains("financial-info-popover")) return rect(0, 0, 260, 180);
+      return rect(0, 0, 0, 0);
+    });
+
+    render(<FinancialInfoHint term="adjustedEps" />);
+    fireEvent.click(screen.getByRole("button", { name: "Learn what Adjusted EPS means" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Adjusted EPS" });
+    const left = Number.parseFloat(dialog.style.left);
+    const top = Number.parseFloat(dialog.style.top);
+
+    expect(dialog.parentElement).toBe(document.body);
+    expect(left).toBeLessThanOrEqual(window.innerWidth - 12 - 260);
+    expect(left).toBeGreaterThanOrEqual(12);
+    expect(top).toBeLessThan(700);
   });
 
   it("closes with Escape and restores focus to the trigger", () => {
