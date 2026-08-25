@@ -11,9 +11,16 @@ export type ValuationFamily =
 export type AutomaticValuationMethod = "P/E" | "P/B";
 
 export interface AutomaticIntrinsicValueInput {
+  /** Current quote. Used for upside/downside only when stable per-share inputs are supplied. */
   price: number | null;
+  /** Persisted trailing P/E. Kept only for rolling-preview compatibility and bank legacy fallback. */
   peTtm: number | null;
+  /** Persisted trailing EPS. Canonical P/E valuation anchor in production. */
+  epsTtm?: number | null;
+  /** Persisted current P/B. Legacy/rolling-preview bank fallback only. */
   priceToBook?: number | null;
+  /** Shareholders' equity / shares outstanding. Canonical P/B valuation anchor in production. */
+  bookValuePerShare?: number | null;
 }
 
 export interface AutomaticIntrinsicValue {
@@ -139,29 +146,38 @@ function buildResult(
  * Justified P/B relationship used for balance-sheet financials:
  *   P/B = (ROE - g) / (r - g)
  *
- * ROE is recovered from two already-available market ratios:
- *   ROE = (P/B) / (P/E)
+ * Production obtains ROE from stable per-share fundamentals:
+ *   ROE ≈ EPS TTM / Book Value Per Share.
  *
- * Bear uses a higher required return / lower growth assumption; Bull uses the
- * opposite. Guardrails keep edge cases from producing absurd multiples.
+ * A P/E + P/B reconstruction is retained only for rolling-preview compatibility
+ * with old API responses that do not expose EPS/BVPS to the browser.
  */
-function bankMultiples(peTtm: number, priceToBook: number): MultipleRange | null {
-  if (peTtm <= 0 || peTtm > 60 || priceToBook <= 0 || priceToBook > 10) return null;
-  const roe = priceToBook / peTtm;
+function bankMultiplesFromRoe(roe: number): MultipleRange | null {
   if (!Number.isFinite(roe) || roe <= 0 || roe > 0.5) return null;
-
   const bear = clamp((roe - 0.02) / (0.12 - 0.02), 0.35, 3);
   const bull = clamp((roe - 0.035) / (0.09 - 0.035), 0.5, 4);
   if (bull < bear) return null;
   return { bear, bull };
 }
 
+function legacyBankMultiples(peTtm: number, priceToBook: number): MultipleRange | null {
+  if (peTtm <= 0 || peTtm > 60 || priceToBook <= 0 || priceToBook > 10) return null;
+  return bankMultiplesFromRoe(priceToBook / peTtm);
+}
+
 /**
- * Excel-style, presentation-time IV. No provider calls, persistence or timers.
+ * Deterministic per-share automatic IV. No provider calls or persistence.
  *
- * Non-financials: IV = Price × Target P/E ÷ Current P/E.
- * Banks:          IV = Price × Target P/B ÷ Current P/B, where target P/B is
- *                 linked to ROE through a justified-P/B relationship.
+ * Canonical production path:
+ *   Non-financials: IV = EPS TTM × Target P/E.
+ *   Banks:          IV = Book Value Per Share × justified Target P/B.
+ *
+ * Current price is deliberately excluded from those valuation equations and is
+ * used only for upside/downside. This prevents the estimated intrinsic value
+ * from mechanically moving with an intraday quote.
+ *
+ * The Price/P-E and Price/P-B paths below are compatibility fallbacks for old
+ * preview responses only. Worker adapters require EPS (and BVPS for banks).
  */
 export function calculateAutomaticIntrinsicValue(
   symbol: string,
@@ -172,8 +188,22 @@ export function calculateAutomaticIntrinsicValue(
   const family = classifyValuationFamily(symbol, industry);
 
   if (family === "bank") {
+    if (positiveFinite(input.epsTtm) && positiveFinite(input.bookValuePerShare)) {
+      const multiples = bankMultiplesFromRoe(input.epsTtm / input.bookValuePerShare);
+      if (!multiples) return null;
+      return buildResult(
+        family,
+        "P/B",
+        input.price,
+        input.bookValuePerShare * multiples.bear,
+        input.bookValuePerShare * multiples.bull,
+        multiples.bear,
+        multiples.bull,
+      );
+    }
+
     if (!positiveFinite(input.peTtm) || !positiveFinite(input.priceToBook)) return null;
-    const multiples = bankMultiples(input.peTtm, input.priceToBook);
+    const multiples = legacyBankMultiples(input.peTtm, input.priceToBook);
     if (!multiples) return null;
     return buildResult(
       family,
@@ -186,9 +216,22 @@ export function calculateAutomaticIntrinsicValue(
     );
   }
 
-  if (!positiveFinite(input.peTtm) || input.peTtm < 3 || input.peTtm > 150) return null;
   const multiples = PE_MULTIPLES[family];
   if (!multiples) return null;
+  if (positiveFinite(input.epsTtm)) {
+    return buildResult(
+      family,
+      "P/E",
+      input.price,
+      input.epsTtm * multiples.bear,
+      input.epsTtm * multiples.bull,
+      multiples.bear,
+      multiples.bull,
+    );
+  }
+
+  // Rolling-preview compatibility for an older Stock Detail API contract.
+  if (!positiveFinite(input.peTtm) || input.peTtm < 3 || input.peTtm > 150) return null;
   return buildResult(
     family,
     "P/E",
