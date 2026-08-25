@@ -335,6 +335,11 @@ export async function readStockDetailApi(
       : marketCap >= 1_000_000_000
         ? `$${(marketCap / 1_000_000_000).toFixed(1)}B`
         : `$${(marketCap / 1_000_000).toFixed(0)}M`;
+  const priceToBook = marketCap !== null
+    && finite(fundamentals?.shareholders_equity)
+    && fundamentals.shareholders_equity > 0
+    ? marketCap / fundamentals.shareholders_equity
+    : null;
 
   const validSplitEvents = splitEvents.filter((event) => isoWeekOfDateKey(event.effective_date) !== null);
   const effectiveSplitEvents = validSplitEvents.filter((event) => event.effective_date <= currentMarketDate);
@@ -425,6 +430,7 @@ export async function readStockDetailApi(
     fundamentals: {
       marketCap: formattedMarketCap,
       peTtm: marketFundamentalsFresh ? fundamentals?.pe_ttm ?? null : null,
+      priceToBook,
       roicPct: cardMetrics.roicPct,
       fcfMarginPct: cardMetrics.fcfMarginPct,
       debtToEquity: cardMetrics.debtToEquity,
