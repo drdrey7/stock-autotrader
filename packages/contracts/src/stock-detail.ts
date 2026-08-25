@@ -44,6 +44,30 @@ export const stockDetailIntrinsicValueSchema = z.object({
 export type StockDetailIntrinsicValue = z.infer<typeof stockDetailIntrinsicValueSchema>;
 
 /**
+ * Canonical automatic valuation scenarios computed by the serving Worker from
+ * persisted fundamentals. This is separate from the manual D1 row so callers
+ * can show both while still honoring a deterministic selected-IV priority.
+ */
+export const stockDetailAutomaticIntrinsicValueSchema = z.object({
+  bear: z.number().positive().finite(),
+  base: z.number().positive().finite(),
+  bull: z.number().positive().finite(),
+  method: z.enum(["P/E", "P/B"]),
+  bearMultiple: z.number().positive().finite(),
+  baseMultiple: z.number().positive().finite(),
+  bullMultiple: z.number().positive().finite(),
+  bearUpsidePct: z.number().finite().nullable(),
+  baseUpsidePct: z.number().finite().nullable(),
+  bullUpsidePct: z.number().finite().nullable(),
+})
+  .refine((value) => value.bear <= value.base && value.base <= value.bull, "automatic IV scenarios must be ordered")
+  .refine(
+    (value) => value.bearMultiple <= value.baseMultiple && value.baseMultiple <= value.bullMultiple,
+    "automatic IV multiples must be ordered",
+  );
+export type StockDetailAutomaticIntrinsicValue = z.infer<typeof stockDetailAutomaticIntrinsicValueSchema>;
+
+/**
  * Stock Detail fundamentals exposed to the browser. `priceToBook` is an
  * internal bank-valuation input, not a visible card. Omit missing or implausible
  * values so stale/unit-mismatched accounting data can never reach the P/B model.
@@ -96,7 +120,12 @@ export const stockDetailApiResponseSchema = z.object({
     scaleState: z.enum(stockDetailQuoteScaleStateValues),
   }),
   valuation: z.object({
+    /** Legacy/manual D1 valuation. Kept separate for explicit user priority. */
     intrinsicValue: stockDetailIntrinsicValueSchema.nullable(),
+    /** New canonical automatic scenarios; optional only for rolling-deploy compatibility. */
+    automatic: stockDetailAutomaticIntrinsicValueSchema.nullable().optional(),
+    /** Manual first, otherwise Automatic Base; optional only for rolling-deploy compatibility. */
+    selectedIntrinsicValue: stockDetailIntrinsicValueSchema.nullable().optional(),
   }),
   fundamentals: stockDetailFundamentalsSchema,
   technical: z.object({
