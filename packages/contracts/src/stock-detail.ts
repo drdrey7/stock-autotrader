@@ -52,7 +52,7 @@ export const stockDetailAutomaticIntrinsicValueSchema = z.object({
   bear: z.number().positive().finite(),
   base: z.number().positive().finite(),
   bull: z.number().positive().finite(),
-  method: z.enum(["P/E", "P/B"]),
+  method: z.enum(["P/E", "P/B", "P/FCF"]),
   bearMultiple: z.number().positive().finite(),
   baseMultiple: z.number().positive().finite(),
   bullMultiple: z.number().positive().finite(),
