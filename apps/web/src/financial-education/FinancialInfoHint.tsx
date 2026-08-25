@@ -17,6 +17,14 @@ interface PopoverPosition {
 const POPOVER_GAP = 6;
 const VIEWPORT_PADDING = 12;
 const POPOVER_MAX_WIDTH = 260;
+const FOCUSABLE_SELECTOR = 'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/** Return the keyboard-focusable controls owned by the open explanation dialog. */
+function popoverFocusableElements(popover: HTMLElement): HTMLElement[] {
+  return [...popover.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)].filter(
+    (element) => !element.hasAttribute("hidden") && element.getAttribute("aria-hidden") !== "true",
+  );
+}
 
 export function FinancialInfoHint({ term, className = "" }: FinancialInfoHintProps) {
   const entry = financialGlossary[term];
@@ -84,6 +92,29 @@ export function FinancialInfoHint({ term, className = "" }: FinancialInfoHintPro
       if (!rootRef.current?.contains(target) && !popoverRef.current?.contains(target)) setOpen(false);
     };
     const onKeyDown = (event: KeyboardEvent) => {
+      const popover = popoverRef.current;
+
+      if (event.key === "Tab" && popover?.contains(document.activeElement)) {
+        const focusable = popoverFocusableElements(popover);
+        const activeIndex = focusable.indexOf(document.activeElement as HTMLElement);
+        const nextIndex = event.shiftKey
+          ? activeIndex <= 0
+            ? focusable.length - 1
+            : activeIndex - 1
+          : activeIndex < 0 || activeIndex >= focusable.length - 1
+            ? 0
+            : activeIndex + 1;
+
+        event.preventDefault();
+        event.stopPropagation();
+        if (focusable.length > 0) {
+          focusable[nextIndex]?.focus();
+        } else {
+          popover.focus();
+        }
+        return;
+      }
+
       if (event.key !== "Escape") return;
       event.preventDefault();
       event.stopPropagation();
@@ -92,7 +123,8 @@ export function FinancialInfoHint({ term, className = "" }: FinancialInfoHintPro
     };
 
     document.addEventListener("pointerdown", onPointerDown);
-    // Capture Escape before parent drawers/dialogs so the hint closes first.
+    // Capture keyboard handling before parent drawers/dialogs. The portal lives
+    // outside their DOM subtree, so Tab must also remain inside this dialog.
     document.addEventListener("keydown", onKeyDown, true);
     return () => {
       document.removeEventListener("pointerdown", onPointerDown);
