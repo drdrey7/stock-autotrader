@@ -18,7 +18,8 @@ export interface AutomaticValuationFundamentals {
   shareholders_equity: number | null;
   market_as_of?: string | null;
   market_checked_at: string | null;
-  updated_at: string;
+  /** Nullable because Screener obtains these columns through a LEFT JOIN. */
+  updated_at: string | null;
 }
 
 function finite(value: number | null | undefined): value is number {
@@ -30,7 +31,7 @@ export function automaticValuationFundamentalsAreFresh(
   now: Date,
 ): boolean {
   if (!fundamentals) return false;
-  const updatedMs = Date.parse(fundamentals.updated_at);
+  const updatedMs = Date.parse(fundamentals.updated_at ?? "");
   const marketAsOfMs = Date.parse(fundamentals.market_checked_at ?? fundamentals.market_as_of ?? "");
   if (!Number.isFinite(updatedMs) || !Number.isFinite(marketAsOfMs)) return false;
   const oldestTimestamp = Math.min(marketAsOfMs, updatedMs);
