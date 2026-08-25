@@ -13,7 +13,8 @@ Alpha Vantage (TIME_SERIES_WEEKLY + SPLITS)
       ▼
 history_ingestor  ──►  D1 weekly_prices + technical_metrics
       │
-      └ (weekly maintenance: refresh / reconcile splits / recompute metrics)
+      ├ weekly maintenance: WEEKLY refresh + recompute metrics (priority)
+      └ separate reconcile-splits: low-frequency SPLITS discovery
 Cloudflare Worker /api/screener  =  technical_metrics basis + latest_quotes.price
 ```
 
@@ -50,9 +51,10 @@ Cloudflare Worker /api/screener  =  technical_metrics basis + latest_quotes.pric
 - **Rate behaviour (free tier): 25 requests/day per key.** Back-to-back calls
   return `{"Information": ...}` (soft pacing — the client paces ~13s per key
   and backs off); daily exhaustion returns `{"Note": ...}` (hard stop).
-  Two independently-obtained keys each carry their own 25/day entitlement.
-  The tool NEVER rotates keys to bypass a per-key quota — it simply stops
-  once every key is exhausted and resumes the next day from its checkpoint.
+  Two independently-obtained keys each carry their own 25/day entitlement,
+  giving a nominal aggregate of **50 requests/day total**. The tool NEVER
+  rotates keys to bypass a per-key quota — it simply stops once every key is
+  exhausted and resumes the next day from its checkpoint.
 
 ## Secrets
 
@@ -71,8 +73,7 @@ Run from the repo root (or `apps/history-ingestor`):
 
 ```bash
 # One-shot resumable bootstrap (SPLITS before WEEKLY per symbol; idempotent
-# UPSERTs; checkpoint after every symbol; stops when every key's 25/day is
-# exhausted and reports exactly what remains):
+# UPSERTs; exact provider HTTP cap; reports exactly what remains):
 python3 -m history_ingestor bootstrap
 
 # Partial run / specific symbols / request cap / planning-only:
@@ -83,7 +84,7 @@ python3 -m history_ingestor bootstrap --dry-run        # no provider calls, no D
 # never fetches SPLITS — decoupled):
 python3 -m history_ingestor maintenance
 
-# LOW-FREQUENCY provider SPLITS reconciliation (decoupled from weekly; weekly/monthly):
+# LOW-FREQUENCY provider SPLITS reconciliation (decoupled from weekly):
 python3 -m history_ingestor reconcile-splits
 
 # Daily zero-provider split application (apply due future-dated splits):
@@ -116,10 +117,17 @@ with the live quote:
 `calculated_at`, `status` (`ok` / `limited` 199.. / `not_enough_history` /
 `no_data`).
 
-The Worker logic: quote week == anchor week → `(closed_sma_200w * 200 - anchor_close + price)/200`
-(true 200-week basis — the naive `sum_199 - anchor_close + price` would only supply 198 prior
-closes + the quote = 199 observations, which is wrong); quote week == anchor+1 → `(sum_199 + price)/200`;
-anything else → honest `Unavailable`, never a fabricated SMA.
+The Worker logic is intentionally availability-first without sacrificing split
+safety:
+
+- quote week == anchor week → `(closed_sma_200w * 200 - anchor_close + price)/200`;
+- quote week == anchor+1 → `(sum_199 + price)/200`;
+- quote week > anchor+1 → if a previously-valid `closed_sma_200w` exists, serve
+  that **last-known-good** value and compute live distance from the current quote;
+- quote week < anchor → `Unavailable` (inconsistent data);
+- any confirmed quote/history split-scale mismatch → `Unavailable` before any
+  last-known-good fallback is considered;
+- insufficient completed history → `NotEnoughHistory` (`N/A`).
 
 The same-week (delta 0) form only applies when a genuine 200 completed-week basis exists
 (`closed_sma_200w` non-null). With exactly 199 completed weeks, there are not 199 closes strictly
@@ -133,8 +141,15 @@ before L, so it honestly reports `NotEnoughHistory`.
 - Checkpoint (`app_meta.historyBootstrapState` in D1, with a local-file
   mirror): per-key request counts for the current UTC day + per-symbol
   per-endpoint status (`splits` / `weekly` → pending | done | error).
-- Resume skips done symbols (no duplicate downloads); a new day resets per-key
-  counts while keeping completed symbols done — can spread across days.
+- The residual bootstrap has an independent **exact HTTP debit counter** for the
+  UTC day. `BootstrapBudgetLedger` increments/persists it at the provider ledger
+  boundary on every real request, including `Information`/`Note` and an
+  internal second-key retry. A service/process restart therefore cannot reset
+  or double-spend the configured bootstrap daily cap (default 6).
+- `--limit` is an additional per-invocation bound and can only reduce the
+  bootstrap daily cap; it cannot bypass it.
+- Resume skips done symbols (no duplicate downloads); a new UTC day resets
+  provider/day counters while keeping completed symbols done.
 - `Information` throttle → count the HTTP request, circuit-break that key for
   the rest of the run (no same-key retry storm), try other keys once. When
   every key is throttled the run stops with status `throttled`, saves the
@@ -171,8 +186,8 @@ valid SMA value — it is never nulled or flipped to `Unavailable` purely becaus
 the newest week is missing. The stale state remains observable internally via
 `historical_data_as_of` / `sma200wAsOf`, but the user simply sees the last
 available value. Only symbols that never accumulated a valid 200-week basis
-report `NotEnoughHistory` (`N/A`). See `reference` of the Worker maths in
-`apps/web/worker/sma/metrics.ts`.
+report `NotEnoughHistory` (`N/A`). A confirmed split-scale mismatch remains
+`Unavailable`; stale fallback never overrides split safety.
 
 ### systemd deployment (documented — install requires root)
 
@@ -181,21 +196,21 @@ SMA refresh is never starved):
 
 - **maintenance: `*-*-* 07:00 UTC`** daily, effectively weekly (PRIORITY over
   bootstrap). Monday refreshes the just-closed week; Tue–Sat are automatic
-  catch-up that no-ops (zero provider requests) once the cycle is complete.
+  catch-up that no-op (zero provider requests) once the cycle is complete.
 - **bootstrap: `*-*-* 08:00 UTC`** daily, residual, runs AFTER maintenance,
-  request-capped (default 6/day).
-- **reconcile-split: `Mon *-*-* 09:00 UTC`** weekly, decoupled provider SPLITS
-  check, runs AFTER maintenance/bootstrap (never preempts them). `Persistent=false`
-  so a missed run is never auto-caught-up at boot into the same window as
-  maintenance — the daily zero-provider apply-due-splits keeps stored rules
-  applied regardless.
+  exact HTTP request-capped (default 6/day).
+- **reconcile-split: `Tue *-*-* 09:00 UTC`** weekly, decoupled provider SPLITS
+  check, runs in a true residual day AFTER Tuesday maintenance/bootstrap.
+  `Persistent=false` so a missed run is never auto-caught-up at boot into the
+  same window as a due maintenance run.
 - **due-split: `Tue..Sat 13:10 UTC`** (zero-provider reconciliation).
 
-Rationale for weekly (not daily) maintenance: the 200W SMA basis only changes
-when a new week closes, so a single Monday refresh (~50 requests, one per
-symbol) fits the two-key 50/day budget, leaving the rest of the week free for
-the residual bootstrap and the weekly split check. MAINTENANCE RUNS BEFORE
-BOOTSTRAP so bootstrap can never consume quota ahead of the weekly refresh.
+Rationale: the 200W SMA basis only changes when a new week closes, and Monday
+maintenance can legitimately consume essentially the whole two-key free-tier
+budget (~50 requests for 50 symbols). SPLITS reconciliation therefore does NOT
+run Monday. Tuesday maintenance always gets first chance to finish any carryover;
+only then can the capped bootstrap and capped reconciliation consume residual
+quota.
 
 Provision the existing secret files first:
 
@@ -234,33 +249,35 @@ to `hermes` before loading the existing env files and running read-only
 `history_ingestor status`, then parses the JSON with isolated Python. Only when
 `bootstrap_done=50`, `bootstrap_pending=0`, and `universe_total=50` does root
 run the idempotent `systemctl disable --now history-ingestor-bootstrap.timer`.
-Maintenance and due-split are never touched by the completion gate.
+Maintenance, reconcile-split and due-split are never touched by the completion
+gate.
 
-Service ordering serializes bootstrap → maintenance → due-split when persistent
-timers catch up together after an outage. For production manual runs, prefer
-`systemctl start history-ingestor-<service>` rather than invoking the Python
-module directly so the same ordering rules apply.
+Service ordering is maintenance → bootstrap → reconcile-split on reconciliation
+days, with due-split later and zero-provider. Reconciliation is non-persistent,
+so outage catch-up cannot let it jump ahead of a due maintenance run. For
+production manual runs, prefer `systemctl start history-ingestor-<service>`
+rather than invoking the Python module directly so the same locking/environment
+rules apply.
 
 ## Tests
 
 ```bash
-cd apps/history-ingestor && python3 -m unittest discover -s tests -v    # 161 tests
-cd <repo root> && ruff check .                                            # lint
+cd apps/history-ingestor && python3 -m unittest discover -s tests -v
+cd <repo root> && ruff check .
 ```
 
 Covers: NY/ISO week helpers (holiday weeks, year boundaries, DST), strict
 WEEKLY/SPLITS parsing (garbage, throttle, quota, invalid-key, impossible OHLC,
-NaN), split-only adjustment (2:1, 3:1, 4:1, 10:1, fractional 3:2, reverse,
-sequential), technical-metrics windows (199/200 boundaries), D1 upsert
-idempotency/chunking/error handling, checkpoint resume + day rollover, the
-provider (pacing, quota exhaustion, invalid-key skip, round-robin, no
-tight-loop retries), bootstrap (splits-before-weekly, resume, quota stop,
-dry-run), maintenance (split reconciliation, coverage, anomalies) and
-secret-leak assertions.
+NaN), split-only adjustment, technical-metrics windows, D1 upsert
+idempotency/chunking/error handling, checkpoint resume + UTC-day rollover,
+provider pacing/quota/throttle behavior, exact bootstrap HTTP budgeting across
+internal key retries and process restarts, bootstrap resume, maintenance
+WEEKLY-first behavior, independent reconcile state, filtered reconcile safety,
+last-known-good SMA and secret-leak assertions.
 
 ## Rollback
 
 No destructive rollback: `weekly_prices` / `technical_metrics` are additive
-tables (migration `0015_weekly_history.sql`). If PR2 needs to be disabled the
-Worker/API simply stops exposing the new SMA fields; the tables can stay. The
+tables (migration `0015_weekly_history.sql`). If the SMA feature needs to be
+disabled the Worker/API can stop exposing the fields; the tables can stay. The
 `latest_quotes` / Finnhub WebSocket pipeline is untouched by this app.
