@@ -76,6 +76,8 @@ export const stockDetailApiResponseSchema = z.object({
   fundamentals: z.object({
     marketCap: z.string().trim().min(1).nullable(),
     peTtm: z.number().finite().nullable(),
+    /** Market cap / shareholders' equity. Used by bank P/B valuation. */
+    priceToBook: z.number().positive().finite().nullable().optional(),
     roicPct: z.number().finite().nullable(),
     fcfMarginPct: z.number().finite().nullable(),
     debtToEquity: z.number().finite().nullable(),
