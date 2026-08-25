@@ -125,7 +125,19 @@ def run(settings: Settings, dry_run: bool = False) -> dict[str, int]:
                 d1.upsert_market(symbol, market, updated_at)
                 counts["written"] += 1
             counts["processed"] += 1
-            logger.info("snapshot symbol=%s dry_run=%s", symbol, dry_run)
+            # Brief valuation-feature summary. Never logs the API key, raw
+            # JSON or the full provider payload.
+            logger.info(
+                "snapshot symbol=%s dry_run=%s growth_yoy=%s roe_pct=%s pe_samples=%s pe_median=%s pfcf_samples=%s pfcf_median=%s",
+                symbol,
+                dry_run,
+                market.revenue_growth_ttm_yoy_pct,
+                market.roe_ttm_pct,
+                market.pe_5y_samples,
+                market.pe_5y_median,
+                market.pfcf_5y_samples,
+                market.pfcf_5y_median,
+            )
         except Exception as exc:
             counts["failed"] += 1
             logger.error("snapshot failed symbol=%s reason=%s", symbol, type(exc).__name__)
