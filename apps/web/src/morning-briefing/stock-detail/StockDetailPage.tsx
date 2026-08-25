@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
+import { calculateAutomaticIntrinsicValue, type AutomaticIntrinsicValue } from "@stock-autotrader/contracts";
 import FinancialInfoHint from "../../financial-education/FinancialInfoHint";
 import type { FinancialGlossaryTerm } from "../../financial-education/financial-glossary";
 import { CompanyLogo } from "../EarningsLogo";
@@ -72,8 +73,28 @@ function ExplainableLabel({ label, term }: { label: string; term: FinancialGloss
   );
 }
 
+/**
+ * Automatic IV is calculated at presentation time from values already returned
+ * by the Stock Detail read model. Mock fixtures retain their supplied design
+ * values so visual tests remain deterministic.
+ */
+function automaticValuation(detail: StockDetail): AutomaticIntrinsicValue | null {
+  if (detail.source !== "api") return null;
+  return calculateAutomaticIntrinsicValue(detail.symbol, detail.sector, {
+    price: detail.quote.price,
+    peTtm: detail.metrics.peTtm,
+    priceToBook: detail.metrics.priceToBook ?? null,
+  });
+}
+
+function selectedIntrinsicValue(detail: StockDetail): number | null {
+  return automaticValuation(detail)?.base ?? detail.valuation.intrinsicValue;
+}
+
 function IntrinsicValueCard({ detail }: { detail: StockDetail }) {
-  const { intrinsicValue, upsidePct } = detail.valuation;
+  const automatic = automaticValuation(detail);
+  const intrinsicValue = automatic?.base ?? detail.valuation.intrinsicValue;
+  const upsidePct = automatic?.baseUpsidePct ?? detail.valuation.upsidePct;
   const upsideClass = upsidePct === null ? "stock-neutral" : upsidePct >= 0 ? "stock-positive" : "stock-negative";
 
   return (
@@ -85,41 +106,53 @@ function IntrinsicValueCard({ detail }: { detail: StockDetail }) {
         {upsidePct !== null && <span>{upsidePct >= 0 ? " Upside" : " Downside"}</span>}
       </div>
 
-      <div className="stock-scenario stock-scenario-single" aria-label="Intrinsic value range">
+      <div className={`stock-scenario ${automatic ? "" : "stock-scenario-single"}`} aria-label="Intrinsic value range">
         <div className="stock-scenario-track" aria-hidden="true">
           <span className="stock-scenario-bear-segment" />
           <span className="stock-scenario-base-segment" />
           <span className="stock-scenario-bull-segment" />
           {intrinsicValue !== null && <i className="stock-scenario-marker" />}
         </div>
-        <div className="stock-scenario-labels stock-scenario-labels-single">
-          <span><small>IV</small><b>{formatMoney(intrinsicValue)}</b></span>
-        </div>
+        {automatic ? (
+          <div className="stock-scenario-labels">
+            <span><small>Bear</small><b>{formatMoney(automatic.bear)}</b></span>
+            <span><small>Base</small><b>{formatMoney(automatic.base)}</b></span>
+            <span><small>Bull</small><b>{formatMoney(automatic.bull)}</b></span>
+          </div>
+        ) : (
+          <div className="stock-scenario-labels stock-scenario-labels-single">
+            <span><small>IV</small><b>{formatMoney(intrinsicValue)}</b></span>
+          </div>
+        )}
       </div>
     </section>
   );
 }
 
 function ValuationMethodsCard({ detail }: { detail: StockDetail }) {
-  const { methods } = detail.valuation;
-  const rows: ReadonlyArray<readonly [string, number | null, FinancialGlossaryTerm | null]> = [
-    ["DCF", methods.dcf, "dcf"],
-    ["Multiples", methods.multiples, "multiples"],
-    ["Manual", methods.manual, null],
-  ];
+  const automatic = automaticValuation(detail);
+  const manual = detail.valuation.methods.manual ?? detail.valuation.intrinsicValue;
+  const rows = [
+    ["Automatic Bear", automatic?.bear ?? null],
+    ["Automatic Base", automatic?.base ?? null],
+    ["Automatic Bull", automatic?.bull ?? null],
+    ["Manual", manual],
+  ] as const;
+
   return (
     <section className="stock-card" aria-labelledby="stock-methods-title">
       <h2 id="stock-methods-title"><ExplainableLabel label="Valuation Methods" term="valuationMethods" /></h2>
       <dl className="stock-data-list">
-        {rows.map(([label, value, term]) => (
-          <div key={label}>
-            <dt>{term ? <ExplainableLabel label={label} term={term} /> : label}</dt>
-            <dd>{formatMoney(value)}</dd>
-          </div>
+        {rows.map(([label, value]) => (
+          <div key={label}><dt>{label}</dt><dd>{formatMoney(value)}</dd></div>
         ))}
         <div className="stock-data-selected">
-          <dt>Selected{methods.selectedMethod ? ` (${methods.selectedMethod})` : ""}</dt>
-          <dd>{formatMoney(methods.selected)}</dd>
+          <dt>Automatic Method</dt>
+          <dd>
+            {automatic
+              ? `${automatic.method} · ${automatic.bearMultiple}x / ${automatic.baseMultiple}x / ${automatic.bullMultiple}x`
+              : "—"}
+          </dd>
         </div>
       </dl>
     </section>
@@ -173,6 +206,7 @@ function StockMetrics({ detail }: { detail: StockDetail }) {
 }
 
 function StockOverview({ detail }: { detail: StockDetail }) {
+  const intrinsicValue = selectedIntrinsicValue(detail);
   return (
     <div className="stock-overview">
       <div className="stock-overview-top">
@@ -187,7 +221,7 @@ function StockOverview({ detail }: { detail: StockDetail }) {
             symbol={detail.symbol}
             priceHistory={detail.chart.priceHistory}
             currentPrice={chartCurrentPrice(detail)}
-            intrinsicValue={detail.valuation.intrinsicValue}
+            intrinsicValue={intrinsicValue}
             intrinsicValueHistory={detail.chart.intrinsicValueHistory}
             sma200wHistory={detail.technical.sma200wHistory}
             supports={detail.technical.supports}
