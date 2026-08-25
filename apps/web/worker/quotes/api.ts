@@ -39,6 +39,7 @@ interface CompanyRow {
   industry: string | null;
   pe_ttm: number | null;
   eps_ttm: number | null;
+  fcf_per_share_ttm: number | null;
   market_cap: number | null;
   shareholders_equity: number | null;
   shares_outstanding: number | null;
@@ -57,7 +58,8 @@ async function readCoreCompanies(db: D1Database): Promise<CompanyRow[]> {
   try {
     const result = await db.prepare(
       `SELECT u.symbol, u.company, u.logo_url, u.industry,
-        f.pe_ttm, f.eps_ttm, f.market_cap, f.shareholders_equity, f.shares_outstanding,
+        f.pe_ttm, f.eps_ttm, f.fcf_per_share_ttm, f.market_cap,
+        f.shareholders_equity, f.shares_outstanding,
         f.market_as_of, f.market_checked_at, f.updated_at
        FROM earnings_universe AS u
        LEFT JOIN stock_fundamentals_snapshot AS f ON f.symbol = u.symbol
