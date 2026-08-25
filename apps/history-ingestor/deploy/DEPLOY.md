@@ -69,6 +69,26 @@ For a **fresh installation**, activate the desired timers explicitly after
 reviewing their schedules. Routine upgrades preserve the existing operational
 state.
 
+## Runtime cadence
+
+The recurring work is deliberately aligned with how a 200-week SMA changes:
+
+- `maintenance`: daily at 07:00 UTC, but provider work is effectively weekly.
+  Monday refreshes the just-closed weekly series; later runs are catch-up only
+  and make zero provider calls once the weekly cycle is complete.
+- `bootstrap`: daily at 08:00 UTC only while initial historical loading remains
+  incomplete. It is automatically disabled when all 50 Core Universe symbols
+  have terminal SPLITS + WEEKLY bootstrap results.
+- `reconcile-splits`: first and third Tuesday of each month at 09:00 UTC. It is
+  bounded to at most 50 provider HTTP requests and shares the normal daily
+  provider ledger, so maintenance always has priority.
+- `apply-due-splits`: Tue-Sat at 13:10 UTC and makes zero provider calls.
+
+The website reads the durable D1 basis. A valid 200W SMA therefore remains
+available even when the VPS is temporarily offline; a missed refresh does not
+blank an already-valid value. A confirmed split-scale mismatch remains a safety
+exception and is not hidden by last-known-good fallback.
+
 ## Bootstrap auto-disable
 
 The bootstrap service contains no privileged `ExecStartPost`. On a successful
@@ -85,11 +105,19 @@ The root helper then:
    `universe_total=50`, runs the idempotent
    `systemctl disable --now history-ingestor-bootstrap.timer`.
 
+`bootstrap_done=50` means both provider bootstrap endpoints (`SPLITS` and
+`TIME_SERIES_WEEKLY`) have completed for every Core Universe symbol. It does
+**not** mean every symbol has 200 weeks of history. A newly-listed company can
+correctly finish bootstrap with `technical_metrics.status=not_enough_history`
+and still count as bootstrap complete. Such symbols show `N/A`; they must not
+keep the one-shot bootstrap timer alive forever.
+
 This keeps provider/D1 secrets and repository-controlled Python out of the root
-execution boundary. The helper never touches maintenance or due-split and never
-makes Alpha Vantage provider calls.
+execution boundary. The helper never touches maintenance, split reconciliation,
+or due-split and never makes Alpha Vantage provider calls.
 
 ## Manual provider calls
 
 Do **not** run `python3 -m history_ingestor bootstrap` manually just to test —
-it consumes Alpha Vantage quota. Use `status` (read-only) and the daily timer.
+it consumes Alpha Vantage quota. Use `status` (read-only) and the timer while
+bootstrap is still legitimately incomplete.
