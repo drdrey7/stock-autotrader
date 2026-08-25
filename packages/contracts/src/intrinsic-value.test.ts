@@ -44,6 +44,19 @@ describe("automatic intrinsic value", () => {
     expect(second?.baseUpsidePct).not.toBe(first?.baseUpsidePct);
   });
 
+  it("keeps canonical IV available when the current quote is temporarily unavailable", () => {
+    const result = calculateAutomaticIntrinsicValue("MSFT", "Software", {
+      price: null,
+      peTtm: 30,
+      epsTtm: 10,
+    });
+
+    expect(result?.base).toBe(310);
+    expect(result?.bearUpsidePct).toBeNull();
+    expect(result?.baseUpsidePct).toBeNull();
+    expect(result?.bullUpsidePct).toBeNull();
+  });
+
   it("falls back to positive FCF/share when GAAP EPS is not usable", () => {
     const result = calculateAutomaticIntrinsicValue("COIN", "Financial Services", {
       price: 181.5,
@@ -116,7 +129,6 @@ describe("automatic intrinsic value", () => {
   });
 
   it("fails closed when neither earnings nor free cash flow provides a valid anchor", () => {
-    expect(calculateAutomaticIntrinsicValue("MSFT", "Software", { price: null, peTtm: 30, epsTtm: 10 })).toBeNull();
     expect(calculateAutomaticIntrinsicValue("COIN", "Financial Services", {
       price: 181.5,
       peTtm: null,
