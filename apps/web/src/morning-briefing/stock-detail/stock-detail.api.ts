@@ -1,6 +1,9 @@
 import {
+  calculateAutomaticIntrinsicValue,
   stockDetailApiResponseSchema,
   type StockDetailApiResponse,
+  type StockDetailAutomaticIntrinsicValue,
+  type StockDetailIntrinsicValue,
 } from "@stock-autotrader/contracts";
 import { requestJson } from "../api-client";
 import type { StockDetail, StockDetailDataSource } from "./stock-detail.types";
@@ -26,8 +29,55 @@ function canShowDailyChange(api: StockDetailApiResponse): boolean {
     && api.quote.provider === "finnhub-quote";
 }
 
+/**
+ * Rolling-deploy compatibility only. Once every production Worker serves the
+ * new `valuation.automatic` field, the browser consumes the Worker result and
+ * never owns valuation policy. This fallback keeps old-main previews usable
+ * while the PR is still unmerged.
+ */
+function compatibilityAutomaticValuation(api: StockDetailApiResponse): StockDetailAutomaticIntrinsicValue | null {
+  if (api.valuation.automatic !== undefined) return api.valuation.automatic;
+  const calculated = calculateAutomaticIntrinsicValue(api.symbol, api.company.sector, {
+    price: api.quote.price,
+    peTtm: api.fundamentals.peTtm,
+    priceToBook: api.fundamentals.priceToBook ?? null,
+  });
+  if (!calculated) return null;
+  return {
+    bear: calculated.bear,
+    base: calculated.base,
+    bull: calculated.bull,
+    method: calculated.method,
+    bearMultiple: calculated.bearMultiple,
+    baseMultiple: calculated.baseMultiple,
+    bullMultiple: calculated.bullMultiple,
+    bearUpsidePct: calculated.bearUpsidePct,
+    baseUpsidePct: calculated.baseUpsidePct,
+    bullUpsidePct: calculated.bullUpsidePct,
+  };
+}
+
+function compatibilitySelectedIntrinsicValue(
+  api: StockDetailApiResponse,
+  automatic: StockDetailAutomaticIntrinsicValue | null,
+): StockDetailIntrinsicValue | null {
+  if (api.valuation.selectedIntrinsicValue !== undefined) return api.valuation.selectedIntrinsicValue;
+  if (api.valuation.intrinsicValue) return api.valuation.intrinsicValue;
+  if (!automatic) return null;
+  return {
+    low: automatic.bear,
+    base: automatic.base,
+    high: automatic.bull,
+    method: `automatic-${automatic.method.toLowerCase().replaceAll("/", "-")}`,
+    asOf: api.generatedAt.slice(0, 10),
+    upsidePct: automatic.baseUpsidePct,
+  };
+}
+
 function toUiModel(api: StockDetailApiResponse): StockDetail {
-  const iv = api.valuation.intrinsicValue;
+  const manual = api.valuation.intrinsicValue;
+  const automatic = compatibilityAutomaticValuation(api);
+  const selected = compatibilitySelectedIntrinsicValue(api, automatic);
   const showDailyChange = canShowDailyChange(api);
   return {
     source: "api",
@@ -46,19 +96,30 @@ function toUiModel(api: StockDetailApiResponse): StockDetail {
       asOf: api.quote.asOf,
     },
     valuation: {
-      intrinsicValue: iv?.base ?? null,
-      upsidePct: iv?.upsidePct ?? null,
+      intrinsicValue: selected?.base ?? null,
+      upsidePct: selected?.upsidePct ?? null,
+      automatic: automatic
+        ? {
+            bear: automatic.bear,
+            base: automatic.base,
+            bull: automatic.bull,
+            method: automatic.method,
+            bearMultiple: automatic.bearMultiple,
+            baseMultiple: automatic.baseMultiple,
+            bullMultiple: automatic.bullMultiple,
+          }
+        : null,
       scenarios: {
-        bear: iv?.low ?? null,
-        base: iv?.base ?? null,
-        bull: iv?.high ?? null,
+        bear: automatic?.bear ?? null,
+        base: automatic?.base ?? null,
+        bull: automatic?.bull ?? null,
       },
       methods: {
         dcf: null,
         multiples: null,
-        manual: iv?.base ?? null,
-        selected: iv?.base ?? null,
-        selectedMethod: iv?.method ?? null,
+        manual: manual?.base ?? null,
+        selected: selected?.base ?? null,
+        selectedMethod: selected?.method ?? null,
       },
     },
     technical: {
