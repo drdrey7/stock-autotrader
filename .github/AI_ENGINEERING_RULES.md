@@ -2,18 +2,21 @@
 
 These rules are mandatory for AI-generated changes that affect persistent state, provider APIs, quotas, retries, timers, background jobs, authentication, deployment, or production infrastructure.
 
-## 1. Define invariants before implementation
+## 1. Define invariants and acceptance criteria before implementation
 
-Write down the real-world property, not only the local function behavior. Examples:
+Write down the real-world property, not only the local function behavior. Define the acceptance criteria that will prove the change complete before editing code. Examples:
 
 - A limit described as `per day` must survive process restarts and multiple invocations in the same UTC day.
 - Partial work must resume from the first unfinished item after restart.
 - A weekly reset must not erase unrelated workflow progress.
 - Re-running an idempotent task must not duplicate or corrupt D1 state.
 
+Implementation is not complete until the applicable invariants are covered by tests or another explicit validation method.
+
 ## 2. Quotas and provider calls
 
-- Check hard limits immediately before every provider call.
+- Atomically reserve budget immediately before every provider call whenever more than one process, timer, or workflow can share the quota. A separate non-atomic check is not sufficient for shared budgets.
+- Single-consumer limits must still be checked immediately before every provider call.
 - Limits must apply across the intended scope, including restarts and multiple processes.
 - Persist budget state when the requirement spans more than one process lifetime.
 - Provider-consuming scheduled jobs must have explicit budgets or a documented reserved-budget policy.
@@ -60,6 +63,7 @@ Add regression coverage for the relevant subset of:
 
 - run -> restart -> run again;
 - two runs in the same UTC day;
+- concurrent consumers of one shared quota;
 - day/week rollover;
 - partial -> resume;
 - provider throttle/error;
@@ -68,11 +72,22 @@ Add regression coverage for the relevant subset of:
 - stale last-known-good behavior;
 - idempotent retry.
 
-## 9. Final diff review
+## 9. Review convergence
+
+The goal is to find classes of defects before opening or updating the PR, not one finding per review cycle.
+
+- Before the first review, perform a self-review against the acceptance criteria, this file, the relevant architecture contracts, and the complete diff.
+- Fix related findings as one batch, including equivalent occurrences in adjacent code, tests, docs and configuration.
+- After a review finding, search for the same bug pattern across the touched subsystem instead of fixing only the reported line.
+- Run narrow validation while iterating, then one subsystem/full validation after the batch is complete.
+- Do not restart broad review loops after every small patch. Request one final broad review only after the known findings are fixed and validation is green.
+- A final broad review should inspect the whole diff for new regressions introduced by the fixes.
+
+## 10. Final diff review
 
 Before commit, explicitly review the final diff for:
 
-- quota accounting;
+- quota accounting and concurrency safety;
 - restart safety;
 - retry safety;
 - daily/weekly boundary behavior;
