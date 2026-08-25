@@ -52,7 +52,7 @@ const SPLIT_EVENTS_SQL = `SELECT effective_date, split_factor
   FROM split_events
   WHERE symbol = ?
   ORDER BY effective_date ASC`;
-const FUNDAMENTALS_SQL = `SELECT symbol, market_cap, pe_ttm, eps_ttm, shares_outstanding, revenue_ttm,
+const FUNDAMENTALS_SQL = `SELECT symbol, market_cap, pe_ttm, eps_ttm, shares_outstanding, fcf_per_share_ttm, revenue_ttm,
   operating_income_ttm, pretax_income_ttm, income_tax_ttm,
   operating_cash_flow_ttm, capex_ttm, free_cash_flow_ttm, cash,
   short_term_investments, total_debt, shareholders_equity, roic_pct,
@@ -93,10 +93,9 @@ export interface StockFundamentalsSnapshotRow {
   symbol: string;
   market_cap: number | null;
   pe_ttm: number | null;
-  /** Added in migration 0025; optional here for legacy/local fixture compatibility. */
   eps_ttm?: number | null;
-  /** Added in migration 0024; optional here for legacy/local fixture compatibility. */
   shares_outstanding?: number | null;
+  fcf_per_share_ttm?: number | null;
   revenue_ttm: number | null;
   operating_income_ttm: number | null;
   pretax_income_ttm: number | null;
@@ -133,6 +132,10 @@ export interface StockDetailStorageSnapshot {
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
+}
+
+function firstRow<T>(rows: readonly unknown[] | undefined): T | null {
+  return (rows?.[0] as T | undefined) ?? null;
 }
 
 function parseCompany(row: StockDetailCompanyRow | null): StockDetailCompanyRow | null {
@@ -179,54 +182,106 @@ function parseWeeklyRows(rows: readonly unknown[]): WeeklyPriceRow[] {
 }
 
 function parseSplitEvents(rows: readonly unknown[]): StockDetailSplitEventRow[] {
-  return rows
-    .filter((row): row is StockDetailSplitEventRow => (
-      typeof row === "object"
-      && row !== null
-      && "effective_date" in row
-      && typeof row.effective_date === "string"
-      && /^\d{4}-\d{2}-\d{2}$/.test(row.effective_date)
-      && "split_factor" in row
-      && isFiniteNumber(row.split_factor)
-      && row.split_factor > 0
-    ));
+  return rows.filter((row): row is StockDetailSplitEventRow => (
+    typeof row === "object"
+    && row !== null
+    && "effective_date" in row
+    && typeof row.effective_date === "string"
+    && /^\d{4}-\d{2}-\d{2}$/.test(row.effective_date)
+    && "split_factor" in row
+    && isFiniteNumber(row.split_factor)
+    && row.split_factor > 0
+  ));
 }
 
-async function getFirst<T>(db: D1Database, sql: string, ...args: unknown[]): Promise<T | null> {
-  return db.prepare(sql).bind(...args).first<T>();
+function parseFundamentals(row: unknown): StockFundamentalsSnapshotRow | null {
+  if (!row || typeof row !== "object") return null;
+  const value = row as Record<string, unknown>;
+  const numericFields = [
+    "market_cap", "pe_ttm", "eps_ttm", "shares_outstanding", "fcf_per_share_ttm", "revenue_ttm",
+    "operating_income_ttm", "pretax_income_ttm", "income_tax_ttm", "operating_cash_flow_ttm", "capex_ttm",
+    "free_cash_flow_ttm", "cash", "short_term_investments", "total_debt", "shareholders_equity", "roic_pct",
+    "fcf_margin_pct", "debt_to_equity", "accounting_periods_compatible",
+  ];
+  if (typeof value.symbol !== "string" || !numericFields.every((field) => value[field] === null || value[field] === undefined || isFiniteNumber(value[field]))) return null;
+  if (!["accounting_source", "market_source", "updated_at"].every((field) => typeof value[field] === "string" && value[field])) return null;
+  return value as unknown as StockFundamentalsSnapshotRow;
 }
 
-async function getAll<T>(db: D1Database, sql: string, ...args: unknown[]): Promise<T[]> {
-  const result = await db.prepare(sql).bind(...args).all<T>();
-  return result.results ?? [];
-}
-
+/**
+ * Canonical Stock Detail serving read. D1 documents at most six simultaneous
+ * connections per Worker invocation, while this read model needs eight data
+ * families. `batch()` keeps this one bounded, coherent D1 operation instead of
+ * opening eight concurrent reads. Any D1 failure propagates to the route.
+ */
 export async function readStockDetailStorageSnapshot(
   db: D1Database,
   symbol: string,
   historyLimit = STOCK_DETAIL_HISTORY_LIMIT,
-  companyMode: "runtime" | "preview" = "runtime",
+  environment = "production",
 ): Promise<StockDetailStorageSnapshot> {
-  const companySql = companyMode === "preview" ? PREVIEW_COMPANY_SQL : COMPANY_SQL;
-  const [companyRaw, quoteRaw, metricRaw, supportRows, intrinsicRaw, weeklyRowsRaw, splitRowsRaw, fundamentals] = await Promise.all([
-    getFirst<StockDetailCompanyRow>(db, companySql, symbol),
-    getFirst<LatestQuoteRow>(db, QUOTE_SQL, symbol),
-    getFirst<unknown>(db, TECHNICAL_SQL, symbol),
-    getAll<unknown>(db, SUPPORTS_SQL, symbol),
-    getFirst<unknown>(db, INTRINSIC_VALUE_SQL, symbol),
-    getAll<unknown>(db, WEEKLY_HISTORY_SQL, symbol, historyLimit),
-    getAll<unknown>(db, SPLIT_EVENTS_SQL, symbol),
-    getFirst<StockFundamentalsSnapshotRow>(db, FUNDAMENTALS_SQL, symbol),
+  const companySql = environment === "preview" ? PREVIEW_COMPANY_SQL : COMPANY_SQL;
+  const results = await db.batch([
+    db.prepare(companySql).bind(symbol),
+    db.prepare(QUOTE_SQL).bind(symbol),
+    db.prepare(TECHNICAL_SQL).bind(symbol),
+    db.prepare(SUPPORTS_SQL).bind(symbol),
+    db.prepare(INTRINSIC_VALUE_SQL).bind(symbol),
+    db.prepare(WEEKLY_HISTORY_SQL).bind(symbol, historyLimit),
+    db.prepare(SPLIT_EVENTS_SQL).bind(symbol),
+    db.prepare(FUNDAMENTALS_SQL).bind(symbol),
   ]);
 
+  const rows = results.map((result) => (result.results ?? []) as unknown[]);
+  const company = parseCompany(firstRow<StockDetailCompanyRow>(rows[0]));
+  if (!company) throw new Error("stock_not_found");
+
   return {
-    company: parseCompany(companyRaw),
-    quote: parseLatestQuote(quoteRaw),
-    metric: parseTechnicalMetric(metricRaw),
-    supports: parseSupports(symbol, supportRows),
-    intrinsicValue: parseIntrinsicValue(symbol, intrinsicRaw),
-    weeklyRows: parseWeeklyRows(weeklyRowsRaw),
-    splitEvents: parseSplitEvents(splitRowsRaw),
-    fundamentals,
+    company,
+    quote: parseLatestQuote(firstRow<LatestQuoteRow>(rows[1])),
+    metric: parseTechnicalMetric(firstRow(rows[2])),
+    supports: parseSupports(symbol, rows[3] ?? []),
+    intrinsicValue: parseIntrinsicValue(symbol, firstRow(rows[4])),
+    weeklyRows: parseWeeklyRows(rows[5] ?? []),
+    splitEvents: parseSplitEvents(rows[6] ?? []),
+    fundamentals: parseFundamentals(firstRow(rows[7])),
   };
+}
+
+/** Individual strict reads are retained for focused storage tests/reuse. */
+export async function readStockDetailCompany(db: D1Database, symbol: string, environment = "production"): Promise<StockDetailCompanyRow | null> {
+  const companySql = environment === "preview" ? PREVIEW_COMPANY_SQL : COMPANY_SQL;
+  return parseCompany(await db.prepare(companySql).bind(symbol).first<StockDetailCompanyRow>());
+}
+
+export async function readStockDetailQuote(db: D1Database, symbol: string): Promise<LatestQuoteRow | null> {
+  return parseLatestQuote(await db.prepare(QUOTE_SQL).bind(symbol).first<LatestQuoteRow>());
+}
+
+export async function readStockDetailTechnicalMetric(db: D1Database, symbol: string): Promise<TechnicalMetricsRow | null> {
+  return parseTechnicalMetric(await db.prepare(TECHNICAL_SQL).bind(symbol).first());
+}
+
+export async function readStockDetailSupports(db: D1Database, symbol: string): Promise<SupportLevelsForSymbol | undefined> {
+  const result = await db.prepare(SUPPORTS_SQL).bind(symbol).all();
+  return parseSupports(symbol, result.results ?? []);
+}
+
+export async function readStockDetailIntrinsicValue(db: D1Database, symbol: string): Promise<IntrinsicValuesForSymbol | undefined> {
+  const raw = await db.prepare(INTRINSIC_VALUE_SQL).bind(symbol).first();
+  return parseIntrinsicValue(symbol, raw);
+}
+
+export async function readStockDetailWeeklyHistory(
+  db: D1Database,
+  symbol: string,
+  limit = STOCK_DETAIL_HISTORY_LIMIT,
+): Promise<WeeklyPriceRow[]> {
+  const result = await db.prepare(WEEKLY_HISTORY_SQL).bind(symbol, limit).all<WeeklyPriceRow>();
+  return result.results ?? [];
+}
+
+export async function readStockDetailSplitEvents(db: D1Database, symbol: string): Promise<StockDetailSplitEventRow[]> {
+  const result = await db.prepare(SPLIT_EVENTS_SQL).bind(symbol).all<StockDetailSplitEventRow>();
+  return parseSplitEvents(result.results ?? []);
 }
