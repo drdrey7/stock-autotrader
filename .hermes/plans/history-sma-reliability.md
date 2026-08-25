@@ -13,8 +13,8 @@ requests.
 
 ## Existing pieces that already help
 
-- `apply-due-splits` = daily ZERO-provider split application (reading stored `split_events`).
-- `technical_metrics` keeps `closed_sma_200w`, `sum_199`, `anchor_close`, `status` per symbol; D1 is additive.
+- `apply-due-splits` = ZERO-provider split application (reading stored `split_events`).
+- `technical_metrics` keeps `closed_sma_200w`, `sum_199`, `anchor_close`, `status` per symbol; D1 is durable.
 - `provider.py` circuit breaker / pacing / shared per-key quota ledger.
 
 ## Changes
@@ -28,53 +28,61 @@ When `delta > 1` (anchor stale because weekly refresh lagged), if a previously-v
 - **Split-scale mismatch is checked BEFORE the delta>1 branch** and always stays `Unavailable`; last-known-good never overrides it.
 - `delta < 0` (quote older than basis) stays `Unavailable`.
 
-### B. Decouple SPLITS from maintenance — `maintenance.py` + `maintenance_state.py`
+The frontend therefore depends on durable D1 data, not VPS uptime. If the VPS is temporarily offline, the most recent valid SMA remains visible.
 
-- `maintenance.run()` drops the provider SPLITS phase entirely. It becomes **WEEKLY-priority**: fetch TIME_SERIES_WEEKLY -> adjust from stored `split_events` -> upsert changed rows -> recompute metrics.
+### B. Weekly-first maintenance
+
+- `maintenance.run()` does not fetch provider SPLITS. It is **WEEKLY-priority**: fetch `TIME_SERIES_WEEKLY` -> adjust from stored `split_events` -> upsert changed rows -> recompute metrics.
+- Monday normally performs one refresh per Core Universe symbol (~50 requests total).
+- The timer still runs Tue-Sat only as automatic catch-up. Once the weekly cycle is complete, subsequent runs perform ZERO provider calls.
 - `phase()` treats weekly `error` as unfinished weekly work, so it retries in the current cycle.
-- `apply_due_splits` remains the separate zero-provider daily split application.
-- Provider SPLITS discovery moves to dedicated `reconcile-splits` state/cadence.
+- `apply_due_splits` remains a separate zero-provider operation.
 
-### C. Bootstrap residual budget — exact HTTP accounting
+### C. Bootstrap — one-shot and self-disabling
 
-- Bootstrap keeps its honest incomplete checkpoint until all 50 symbols are complete.
-- `bootstrap_max_requests_per_day` defaults to 6 and is a HARD per-UTC-day cap.
-- The exact cap is enforced at the provider ledger boundary through `BootstrapBudgetLedger`, not after a logical `fetch_*` returns.
-- Every real provider HTTP debit is persisted immediately, including `Information` / `Note` attempts and multi-key retries inside one logical fetch.
-- A process/systemd restart on the same UTC day inherits the already-spent exact HTTP count.
-- `--limit` is an additional per-invocation cap and can only lower the daily cap.
-- The previous logical bootstrap counter remains only for backwards compatibility/reporting; it is not the safety boundary.
+- Bootstrap is initial historical loading only. It is not permanent maintenance.
+- `bootstrap_max_requests_per_day` defaults to 6 and is a hard per-UTC-day residual cap while bootstrap remains incomplete.
+- Exact HTTP debits are persisted at the provider ledger boundary, including `Information` / `Note` attempts and internal multi-key retries.
+- Restarting the process/systemd service cannot reset the same-day budget.
+- `--limit` can only lower the configured cap.
+- The auto-disable gate remains exact: `bootstrap_done=50`, `bootstrap_pending=0`, `universe_total=50`.
 
-Tests cover internal multi-key retry with cap=1 and same-day new-ledger/restart semantics.
+Important semantic: **50/50 means both bootstrap provider endpoints completed for all 50 symbols. It does NOT mean 50 symbols have a numeric 200W SMA.** A recently-listed company with fewer than 200 completed weeks can correctly finish bootstrap and have `technical_metrics.status=not_enough_history`. That symbol shows `N/A` and must not keep bootstrap alive forever.
 
-### D. Low-frequency SPLITS reconciliation — `reconcile-splits`
+Therefore, once production status is 50/50 terminal, the bootstrap timer should disable itself and stay disabled.
 
-- Fetches provider SPLITS per symbol, bounded and quota-aware.
-- `--dry-run` is provider-free.
-- Progress uses independent `historyReconcileSplitState`; maintenance weekly rollover cannot erase it.
-- Capped runs resume unfinished symbols.
-- A filtered manual run (`--symbols ...`) is only a processing filter: starting a new filtered pass resets those requested symbols without replacing/erasing persistent progress for unrelated universe members.
+### D. Low-frequency SPLITS reconciliation
+
+Splits are rare compared with weekly price updates, so daily provider polling is unnecessary.
+
+- Provider SPLITS discovery is decoupled from weekly SMA maintenance.
+- `reconcile-splits` runs on the **first and third Tuesday of each month at 09:00 UTC** (roughly fortnightly).
+- Each invocation is explicitly capped at 50 HTTP requests, one per Core Universe symbol in the normal case.
+- The shared provider ledger is still the true ceiling: if Tuesday maintenance or residual bootstrap used quota first, reconciliation consumes only what is left and saves its durable cursor.
+- `Persistent=false` prevents a missed scan from racing maintenance after downtime.
+- Progress uses independent `historyReconcileSplitState`; weekly rollover and filtered manual runs cannot erase unrelated progress.
+- `--dry-run` remains provider-free.
 - Changed splits rewrite only the affected symbol's stored history/metrics.
-- Default cadence: **Tue..Sat 09:00 UTC**, `Persistent=false`, 10 provider requests maximum per invocation.
-- Five durable residual slices of 10 cover the full 50-symbol universe once per normal week; a missed/capped slice resumes on the next scheduled residual day rather than restarting the pass.
 
-### E. systemd cadence and real quota
+Tuesday is deliberate: Monday may legitimately use the entire 50-request entitlement for the weekly history refresh. Tuesday maintenance gets first chance to finish any carryover before split discovery uses residual quota.
 
-Alpha Vantage entitlement used by this app is **25 requests/day per key**. With two configured keys the aggregate nominal budget is **50 requests/day total**, not 100.
+### E. systemd cadence and quota
 
-- **maintenance.timer**: `*-*-* 07:00 UTC` daily; Monday normally refreshes the 50 WEEKLY series and may consume essentially the entire 50-request day.
-- **bootstrap.timer**: `*-*-* 08:00 UTC` daily, residual, after maintenance, exact HTTP hard cap default 6/day.
-- **reconcile-split.timer**: `Tue..Sat *-*-* 09:00 UTC`, `Persistent=false`, explicit cap 10/run.
-- **due-split.timer**: `Tue..Sat 13:10 UTC`, zero-provider.
+Alpha Vantage entitlement used by this app is **25 requests/day per key**. With two configured keys the nominal aggregate is **50 requests/day total**.
 
-Why Tue..Sat for reconciliation: Monday is reserved for the primary 200W WEEKLY refresh. On every residual day maintenance still runs first, so any Monday carryover gets priority. Only afterwards can bootstrap and the 10-request reconciliation slice consume residual quota. Under normal conditions 10 requests × 5 days checks all 50 symbols once per week without competing with Monday's 50-request WEEKLY pass.
+- **maintenance.timer**: daily 07:00 UTC; real provider work is effectively weekly, with Tue-Sat catch-up only.
+- **bootstrap.timer**: daily 08:00 UTC only while bootstrap is incomplete; exact HTTP hard cap 6/day; auto-disables at terminal 50/50 endpoint completion.
+- **reconcile-split.timer**: first + third Tuesday 09:00 UTC; `Persistent=false`; explicit cap 50/run, still constrained by shared daily provider ledger.
+- **due-split.timer**: Tue-Sat 13:10 UTC; zero-provider.
 
-`Persistent=false` on reconciliation prevents a missed split scan from catch-up racing a due maintenance run after downtime; durable progress resumes on the next regular slice.
+Priority is always:
+
+`maintenance > temporary bootstrap > split reconciliation > zero-provider due-split`.
 
 ### F. Installer / fresh install
 
 - `install-history-ingestor-root.sh` includes reconcile-split service/timer transactionally.
-- Fresh install enables all four timers: maintenance, bootstrap, reconcile-split, due-split.
+- Fresh install enables the recurring timers that are required; bootstrap is only needed until initial historical loading reaches terminal 50/50 endpoint completion.
 
 ## Tests (mock provider, no real calls)
 
@@ -116,10 +124,10 @@ bash -n apps/history-ingestor/deploy/install-history-ingestor-root.sh
 cd apps/web && npx wrangler d1 execute stock-autotrader-db --remote --command="SELECT symbol, anchor_week, historical_data_as_of, closed_sma_200w, status FROM technical_metrics WHERE closed_sma_200w IS NOT NULL ORDER BY historical_data_as_of ASC LIMIT 20;"
 ```
 
-## Out of scope (explicit)
+## Out of scope
 
 - No manual production D1 edits.
 - No real provider calls during development/tests.
 - No quota/plan/key changes.
 - No frontend redesign beyond last-known-good / N/A behavior.
-- No weakening of exact 50/50 bootstrap completion semantics.
+- No weakening of terminal 50/50 bootstrap endpoint completion semantics.
