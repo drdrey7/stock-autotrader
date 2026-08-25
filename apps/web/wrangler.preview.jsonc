@@ -5,6 +5,7 @@
   "compatibility_flags": ["nodejs_compat"],
   "main": "preview-worker.ts",
   "workers_dev": true,
+  "preview_urls": true,
   "vars": {
     "ENVIRONMENT": "preview"
   },

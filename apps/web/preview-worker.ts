@@ -1,6 +1,4 @@
-import { isCoreUniverseSymbol } from "@stock-autotrader/contracts";
 import { proxyProductionApiRequest, type ProductionApiBinding } from "./preview-api-proxy";
-import { handleStockDetailApi } from "./worker/stock-detail/api";
 
 export interface PreviewEnv {
   ASSETS: Fetcher;
@@ -21,38 +19,6 @@ function jsonResponse(body: unknown, status = 200, method = "GET"): Response {
     status,
     headers: jsonHeaders,
   });
-}
-
-function methodNotAllowed(): Response {
-  return new Response(JSON.stringify({ error: "method_not_allowed" }), {
-    status: 405,
-    headers: { ...jsonHeaders, allow: "GET, HEAD" },
-  });
-}
-
-async function previewStockDetailResponse(
-  request: Request,
-  pathname: string,
-  env: PreviewEnv,
-): Promise<Response | null> {
-  const match = pathname.match(/^\/api\/stocks\/([^/]+)\/detail$/);
-  if (!match) return null;
-  if (request.method !== "GET" && request.method !== "HEAD") return methodNotAllowed();
-
-  let symbol: string;
-  try {
-    symbol = decodeURIComponent(match[1] ?? "").trim().toUpperCase();
-  } catch {
-    return jsonResponse({ error: "stock_not_found" }, 404, request.method);
-  }
-
-  if (!isCoreUniverseSymbol(symbol)) {
-    return jsonResponse({ error: "stock_not_found" }, 404, request.method);
-  }
-
-  const response = await handleStockDetailApi(symbol, env, new Date());
-  response.headers.set("x-stock-detail-preview-d1", "1");
-  return response;
 }
 
 async function responseObject(response: Response): Promise<JsonObject | null> {
@@ -108,9 +74,6 @@ export async function handlePreviewRequest(
   env: PreviewEnv,
 ): Promise<Response> {
   const { pathname } = new URL(request.url);
-
-  const stockDetailResponse = await previewStockDetailResponse(request, pathname, env);
-  if (stockDetailResponse) return stockDetailResponse;
 
   if (pathname === "/api" || pathname.startsWith("/api/")) {
     return proxyProductionApiRequest(request, env.PRODUCTION_API);
