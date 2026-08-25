@@ -16,6 +16,7 @@ export const AUTOMATIC_IV_MARKET_STALE_AFTER_SECONDS = 3 * 24 * 60 * 60;
 export interface AutomaticValuationFundamentals {
   pe_ttm: number | null;
   eps_ttm?: number | null;
+  fcf_per_share_ttm?: number | null;
   market_cap: number | null;
   shareholders_equity: number | null;
   shares_outstanding?: number | null;
@@ -68,9 +69,9 @@ export function bookValuePerShareFromPersistedFundamentals(
 }
 
 /**
- * Canonical serving adapter. Production never falls back to a price-derived EPS:
- * a fresh positive EPS TTM is required for every automatic valuation, and banks
- * additionally require Book Value Per Share. Current price only drives the
+ * Canonical serving adapter. Production uses only persisted, fresh per-share
+ * anchors. Banks require positive EPS + BVPS. Other stocks prefer positive EPS
+ * (P/E) and fall back to positive FCF/share (P/FCF). Current price only drives
  * displayed upside/distance, never the intrinsic-value equation itself.
  */
 export function calculateAutomaticIntrinsicValueFromPersistedFundamentals(
@@ -81,17 +82,23 @@ export function calculateAutomaticIntrinsicValueFromPersistedFundamentals(
   now: Date,
 ): AutomaticIntrinsicValue | null {
   if (!automaticValuationFundamentalsAreFresh(fundamentals, now)) return null;
-  const epsTtm = fundamentals?.eps_ttm;
-  if (!positiveFinite(epsTtm)) return null;
 
   const family = classifyValuationFamily(symbol, industry);
+  const epsTtm = fundamentals?.eps_ttm;
+  const fcfPerShareTtm = fundamentals?.fcf_per_share_ttm;
   const bookValuePerShare = bookValuePerShareFromPersistedFundamentals(fundamentals);
-  if (family === "bank" && bookValuePerShare === null) return null;
+
+  if (family === "bank") {
+    if (!positiveFinite(epsTtm) || bookValuePerShare === null) return null;
+  } else if (!positiveFinite(epsTtm) && !positiveFinite(fcfPerShareTtm)) {
+    return null;
+  }
 
   return calculateAutomaticIntrinsicValue(symbol, industry, {
     price: currentPrice,
     peTtm: fundamentals?.pe_ttm ?? null,
-    epsTtm,
+    epsTtm: positiveFinite(epsTtm) ? epsTtm : null,
+    fcfPerShareTtm: positiveFinite(fcfPerShareTtm) ? fcfPerShareTtm : null,
     priceToBook: priceToBookFromPersistedFundamentals(fundamentals),
     bookValuePerShare,
   });
