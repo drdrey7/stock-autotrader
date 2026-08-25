@@ -258,8 +258,16 @@ class ReconcileStore:
         return self._state
 
     def start_new_pass(self, symbols: list[str]) -> None:
-        """Begin a fresh reconciliation pass over the full universe."""
-        self._state.splits = {s: STATUS_PENDING for s in symbols}
+        """Reset the requested members without erasing unrelated progress.
+
+        A manual ``reconcile-splits --symbols ...`` invocation is a processing
+        filter, not a new definition of the persistent universe. Resetting a
+        subset therefore updates only those symbols; existing done/pending/error
+        state for every other symbol is preserved. A normal full-universe call
+        still resets the complete pass because it supplies every member.
+        """
+        for symbol in symbols:
+            self._state.splits[symbol] = STATUS_PENDING
         self._state.updated_at = _utc_now_iso()
 
     def save(self) -> bool:
