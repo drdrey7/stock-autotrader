@@ -1,17 +1,17 @@
-# LOW-FREQUENCY provider SPLITS reconciliation — recurring residual service.
+# LOW-FREQUENCY provider SPLITS reconciliation — bounded residual service.
 #
 # Decoupled from weekly maintenance so split discovery NEVER blocks or starves
 # the WEEKLY SMA refresh. Shares the same Alpha Vantage per-key ledger.
 #
 # QUOTA: provider entitlement is 25 requests/day per key; with two keys that is
-# 50/day total. Monday is reserved for the 50-symbol WEEKLY maintenance pass.
-# Tue..Sat this service runs after maintenance and bootstrap, processing at most
-# 10 SPLITS requests per invocation. Five durable slices cover the 50-symbol
-# universe once per week under normal conditions while leaving substantial
-# residual quota. If maintenance carries over, it still runs first and this job
-# simply gets less/no shared provider budget and resumes next residual day.
+# 50/day total. This service is scheduled only on the 1st and 15th of each month,
+# after maintenance and (while it still exists) bootstrap. It may use at most 50
+# provider HTTP requests in one invocation, but the shared provider ledger means
+# it can consume only the real residual budget left that day. If maintenance or
+# bootstrap already used quota, reconciliation stops safely and resumes from its
+# durable cursor on the next scheduled scan.
 [Unit]
-Description=Stock Autotrader SPLITS reconciliation (bounded residual provider check)
+Description=Stock Autotrader SPLITS reconciliation (twice-monthly bounded residual provider check)
 After=network-online.target history-ingestor-maintenance.service history-ingestor-bootstrap.service
 Wants=network-online.target
 
@@ -25,8 +25,9 @@ EnvironmentFile=/etc/stock-autotrader/alpha-vantage.env
 EnvironmentFile=/etc/stock-autotrader/cloudflare.env
 Environment=HISTORY_INGESTOR_STATE=/var/lib/history-ingestor/checkpoint.json
 Environment=HISTORY_INGESTOR_MAINTENANCE_STATE=/var/lib/history-ingestor/maintenance.json
-# Exactly one normal weekly pass: 10 requests/day * Tue..Sat = 50 symbols.
-Environment=RECONCILE_SPLITS_MAX_REQUESTS=10
+# One provider request per Core Universe symbol. The real ceiling is still the
+# shared per-key daily ledger (25/key); this explicit cap prevents unbounded work.
+Environment=RECONCILE_SPLITS_MAX_REQUESTS=50
 StateDirectory=history-ingestor
 ExecStart=/usr/bin/flock /var/lib/history-ingestor/run.lock /usr/bin/python3 -m history_ingestor reconcile-splits
 ProtectSystem=full
