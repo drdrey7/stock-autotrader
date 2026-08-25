@@ -9,6 +9,7 @@ import {
 
 const stockSymbolSchema = z.string().regex(/^[A-Z][A-Z0-9-]{0,11}$/);
 const nullablePositiveNumber = z.number().positive().finite().nullable();
+const MAX_PLAUSIBLE_PRICE_TO_BOOK = 10;
 
 export const stockDetailQuoteScaleStateValues = ["safe", "mismatch", "unknown"] as const;
 export type StockDetailQuoteScaleState = (typeof stockDetailQuoteScaleStateValues)[number];
@@ -43,6 +44,30 @@ export const stockDetailIntrinsicValueSchema = z.object({
 export type StockDetailIntrinsicValue = z.infer<typeof stockDetailIntrinsicValueSchema>;
 
 /**
+ * Stock Detail fundamentals exposed to the browser. `priceToBook` is an
+ * internal bank-valuation input, not a visible card. Omit missing or implausible
+ * values so stale/unit-mismatched accounting data can never reach the P/B model.
+ */
+export const stockDetailFundamentalsSchema = z.object({
+  marketCap: z.string().trim().min(1).nullable(),
+  peTtm: z.number().finite().nullable(),
+  /** Market cap / shareholders' equity. Used by bank P/B valuation. */
+  priceToBook: z.number().positive().finite().nullable().optional(),
+  roicPct: z.number().finite().nullable(),
+  fcfMarginPct: z.number().finite().nullable(),
+  debtToEquity: z.number().finite().nullable(),
+}).transform((fundamentals) => {
+  if (
+    fundamentals.priceToBook === null
+    || fundamentals.priceToBook === undefined
+    || fundamentals.priceToBook > MAX_PLAUSIBLE_PRICE_TO_BOOK
+  ) {
+    delete fundamentals.priceToBook;
+  }
+  return fundamentals;
+});
+
+/**
  * Public, provider-neutral Stock Detail read model.
  *
  * The page request is serving-only: data collection happens independently and
@@ -73,15 +98,7 @@ export const stockDetailApiResponseSchema = z.object({
   valuation: z.object({
     intrinsicValue: stockDetailIntrinsicValueSchema.nullable(),
   }),
-  fundamentals: z.object({
-    marketCap: z.string().trim().min(1).nullable(),
-    peTtm: z.number().finite().nullable(),
-    /** Market cap / shareholders' equity. Used by bank P/B valuation. */
-    priceToBook: z.number().positive().finite().nullable().optional(),
-    roicPct: z.number().finite().nullable(),
-    fcfMarginPct: z.number().finite().nullable(),
-    debtToEquity: z.number().finite().nullable(),
-  }),
+  fundamentals: stockDetailFundamentalsSchema,
   technical: z.object({
     sma200w: nullablePositiveNumber,
     distanceToSma200wPct: z.number().finite().nullable(),
