@@ -1,12 +1,18 @@
 import type { Env } from "../index";
 import type {
   ScreenerApiResponse,
+  ScreenerIntrinsicValue,
   ScreenerQuotesHealth,
   ScreenerRow,
   ScreenerMarketState,
   SourceState,
 } from "@stock-autotrader/contracts";
-import { CORE_UNIVERSE, CORE_UNIVERSE_VERSION } from "@stock-autotrader/contracts";
+import {
+  CORE_UNIVERSE,
+  CORE_UNIVERSE_VERSION,
+  calculateAutomaticIntrinsicValue,
+  intrinsicValueDistancePct,
+} from "@stock-autotrader/contracts";
 import {
   collectorStateFromRows,
   countQuoteStates,
@@ -32,18 +38,64 @@ interface CompanyRow {
   symbol: string;
   company: string;
   logo_url: string | null;
+  industry: string | null;
+  pe_ttm: number | null;
+  market_cap: number | null;
+  shareholders_equity: number | null;
 }
 
-/** Core Universe company names + logo are best-effort enrichment — never fatal. */
+/**
+ * Core Universe company + slow valuation inputs in one D1 query. The LEFT JOIN
+ * keeps fundamentals best-effort and avoids a second query/read loop for the
+ * Screener fallback IV.
+ */
 async function readCoreCompanies(db: D1Database): Promise<CompanyRow[]> {
   try {
     const result = await db.prepare(
-      "SELECT symbol, company, logo_url FROM earnings_universe WHERE source = 'core' AND active = 1",
+      `SELECT u.symbol, u.company, u.logo_url, u.industry,
+        f.pe_ttm, f.market_cap, f.shareholders_equity
+       FROM earnings_universe AS u
+       LEFT JOIN stock_fundamentals_snapshot AS f ON f.symbol = u.symbol
+       WHERE u.source = 'core' AND u.active = 1`,
     ).all<CompanyRow>();
     return result.results ?? [];
   } catch {
     return [];
   }
+}
+
+function priceToBook(company: CompanyRow | undefined): number | null {
+  const marketCap = company?.market_cap;
+  const equity = company?.shareholders_equity;
+  if (
+    typeof marketCap !== "number" || !Number.isFinite(marketCap) || marketCap <= 0
+    || typeof equity !== "number" || !Number.isFinite(equity) || equity <= 0
+  ) return null;
+  const value = marketCap / equity;
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function automaticScreenerIntrinsicValue(
+  symbol: string,
+  currentPrice: number | null,
+  company: CompanyRow | undefined,
+  asOf: string | undefined,
+): ScreenerIntrinsicValue | null {
+  if (!asOf) return null;
+  const automatic = calculateAutomaticIntrinsicValue(symbol, company?.industry ?? null, {
+    price: currentPrice,
+    peTtm: company?.pe_ttm ?? null,
+    priceToBook: priceToBook(company),
+  });
+  if (!automatic) return null;
+  return {
+    low: automatic.bear,
+    base: automatic.base,
+    high: automatic.bull,
+    method: `automatic-${automatic.method.toLowerCase().replaceAll("/", "-")}`,
+    asOf,
+    distancePct: intrinsicValueDistancePct(currentPrice, automatic.base),
+  };
 }
 
 /**
@@ -120,6 +172,15 @@ export async function readScreenerApi(env: Env, now = new Date()): Promise<Scree
       : null;
     const sma = computeLiveSma200w(quoteInput, metrics.get(symbol) ?? null, latestSplitEffectiveDates);
     const currentPrice = quote?.price ?? null;
+    const manualIntrinsicValue = buildIntrinsicValue(
+      currentPrice,
+      intrinsicValues.get(symbol),
+      splitEffectiveDatesAsOf.get(symbol),
+      currentMarketDate,
+    );
+    const intrinsicValue = manualIntrinsicValue
+      ?? automaticScreenerIntrinsicValue(symbol, currentPrice, company, currentMarketDate);
+
     return {
       symbol,
       company: company?.company ?? null,
@@ -140,7 +201,7 @@ export async function readScreenerApi(env: Env, now = new Date()): Promise<Scree
       sma200wHistoryWeeks: sma.sma200wHistoryWeeks,
       sma200wAsOf: sma.sma200wAsOf,
       supportLevels: buildSupportLevels(currentPrice, supportLevels.get(symbol), splitEffectiveDatesAsOf.get(symbol), currentMarketDate),
-      intrinsicValue: buildIntrinsicValue(currentPrice, intrinsicValues.get(symbol), splitEffectiveDatesAsOf.get(symbol), currentMarketDate),
+      intrinsicValue,
       logoUrl: company?.logo_url ?? null,
     };
   });
