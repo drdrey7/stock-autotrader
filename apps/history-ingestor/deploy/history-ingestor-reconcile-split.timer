@@ -1,29 +1,30 @@
-# LOW-FREQUENCY provider SPLITS reconciliation — TUE..SAT 09:00 UTC.
+# LOW-FREQUENCY provider SPLITS reconciliation — twice monthly at 09:00 UTC.
 #
 # This is the SEPARATE split-discovery responsibility, independent of the
-# weekly SMA refresh. The 50-symbol universe is processed in durable capped
-# slices across the five residual days: 10 SPLITS requests/day => one complete
-# reconciliation pass per week under normal conditions.
+# weekly SMA refresh. Splits are rare for the 50-symbol Core Universe, so a
+# full provider scan every day is unnecessary. The job runs on the 1st and
+# 15th of each month and resumes from its durable checkpoint if provider quota
+# is unavailable.
 #
 # ORDERING (MAINTENANCE HAS ABSOLUTE PRIORITY):
 #   maintenance  -- daily 07:00 UTC (weekly refresh on Monday; carryover first)
-#   bootstrap    -- daily 08:00 UTC (residual, exact HTTP-capped)
-#   reconcile    -- Tue..Sat 09:00 UTC (10-request durable slice)
+#   bootstrap    -- daily 08:00 UTC while bootstrap is incomplete only
+#   reconcile    -- 1st + 15th 09:00 UTC (bounded residual split scan)
 #   due-split    -- Tue..Sat 13:10 UTC (zero-provider)
 #
-# Monday is reserved entirely for the primary 200W WEEKLY refresh, which may
-# consume the full two-key free-tier budget (25/key, 50/day total). Tue..Sat,
-# maintenance still runs first and gets any quota it needs for carryover; only
-# afterwards can bootstrap/reconciliation use residual capacity.
+# A healthy Monday maintenance refreshes the 200W basis once per week. The
+# reconciliation job is intentionally infrequent because split discovery does
+# not need daily polling. It shares the provider ledger, so maintenance always
+# wins if both need quota.
 #
-# Persistent=false: a missed slice is NOT auto-caught-up at boot into a due
-# maintenance window. The durable reconcile cursor simply resumes on the next
-# scheduled residual day.
+# Persistent=false: a missed scan is NOT auto-caught-up at boot into a due
+# maintenance window. The durable reconcile cursor resumes on the next
+# scheduled scan.
 [Unit]
-Description=Stock Autotrader SPLITS reconciliation (Tue-Sat residual slices; non-persistent)
+Description=Stock Autotrader SPLITS reconciliation (twice-monthly bounded residual scan)
 
 [Timer]
-OnCalendar=Tue..Sat *-*-* 09:00:00 UTC
+OnCalendar=*-*-01,15 09:00:00 UTC
 RandomizedDelaySec=15m
 Persistent=false
 
