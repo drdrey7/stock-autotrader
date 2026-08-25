@@ -99,6 +99,23 @@ describe("EarningsDetail financial education", () => {
     expect(hint).toHaveTextContent("Reporting above consensus is generally positive");
   });
 
+  it("keeps Tab focus inside a portaled hint instead of escaping the earnings modal", () => {
+    const onClose = vi.fn();
+    render(<EarningsDetail item={earningsItem()} onClose={onClose} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Learn what EPS means" }));
+    const hint = screen.getByRole("dialog", { name: "EPS" });
+    const closeHint = screen.getByRole("button", { name: "Close EPS explanation" });
+
+    expect(hint).toHaveFocus();
+    fireEvent.keyDown(hint, { key: "Tab" });
+    expect(closeHint).toHaveFocus();
+
+    fireEvent.keyDown(closeHint, { key: "Tab" });
+    expect(closeHint).toHaveFocus();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it("closes an open hint with Escape before closing the earnings drawer", () => {
     const onClose = vi.fn();
     render(<EarningsDetail item={earningsItem()} onClose={onClose} />);
