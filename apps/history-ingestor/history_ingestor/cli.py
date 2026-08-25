@@ -1,10 +1,12 @@
 """CLI entry points for the history ingestor.
 
 Subcommands:
-  bootstrap   — one-shot resumable historical bootstrap (SPLITS+WEEKLY all symbols)
-  maintenance — weekly refresh + split reconciliation + metrics + coverage report
-  status      — checkpoint + D1 coverage summary
-  validate    — local data-quality validation for one symbol (D1 read-only)
+  bootstrap        — resumable historical bootstrap (SPLITS+WEEKLY)
+  maintenance      — priority WEEKLY refresh + metrics
+  reconcile-splits — bounded provider SPLITS discovery with durable progress
+  apply-due-splits — zero-provider application of stored due splits
+  status           — checkpoint + D1 coverage summary
+  validate         — local data-quality validation for one symbol (D1 read-only)
 
 All commands log JSON lines; secrets never appear (config/state keys are
 referenced by index only).
@@ -41,6 +43,7 @@ def _build(
     *,
     bootstrap: bool = False,
     bootstrap_run_limit: int | None = None,
+    provider_run_limit: int | None = None,
 ) -> tuple[D1Client, AlphaVantageClient, StateStore]:
     d1 = D1Client(
         settings.cloudflare_api_token,
@@ -59,7 +62,7 @@ def _build(
             run_limit=bootstrap_run_limit,
         )
     else:
-        ledger = KeyBudgetLedger(store)
+        ledger = KeyBudgetLedger(store, run_limit=provider_run_limit)
     provider = AlphaVantageClient(settings, ledger)
     return d1, provider, store
 
@@ -125,11 +128,27 @@ def cmd_apply_due_splits(settings: Settings, args: argparse.Namespace) -> int:
 
 
 def cmd_reconcile_splits(settings: Settings, args: argparse.Namespace) -> int:
-    d1, provider, store = _build(settings)
+    configured = settings.reconcile_splits_max_requests
+    if configured is not None and args.limit is not None:
+        effective_limit = min(configured, args.limit)
+    elif configured is not None:
+        effective_limit = configured
+    else:
+        effective_limit = args.limit
+
+    # Enforce the reconciliation cap twice by design:
+    # 1) provider ledger: hard boundary on every real HTTP debit, including
+    #    internal multi-key retries / Information responses;
+    # 2) runner: stops before starting another logical symbol fetch.
+    d1, provider, store = _build(settings, provider_run_limit=effective_limit)
     store.load()
     mstore = MaintenanceStore(settings, d1)
     runner = MaintenanceRunner(settings, d1, provider, mstore, key_store=store)
-    report = runner.reconcile_splits(symbols_filter=args.symbols, dry_run=args.dry_run, limit=args.limit)
+    report = runner.reconcile_splits(
+        symbols_filter=args.symbols,
+        dry_run=args.dry_run,
+        limit=effective_limit,
+    )
     _emit("reconcile_splits_report", **report)
     # Quota / throttle / partial are expected outcomes (free-tier) — exit 0, no
     # retry loop. Only genuine failures surface as non-zero from _settings().
@@ -230,13 +249,13 @@ def main(argv: list[str] | None = None) -> int:
     p_bootstrap.add_argument("--symbols", nargs="*", default=None, help="restrict to these symbols")
     p_bootstrap.set_defaults(handler=cmd_bootstrap)
 
-    p_maintenance = sub.add_parser("maintenance", help="weekly refresh + reconciliation")
+    p_maintenance = sub.add_parser("maintenance", help="priority WEEKLY refresh + metrics")
     p_maintenance.add_argument("--dry-run", action="store_true", help="plan only — no provider calls, no D1 writes")
     p_maintenance.add_argument("--limit", type=int, default=None, help="cap total provider requests")
     p_maintenance.add_argument("--symbols", nargs="*", default=None, help="restrict to these symbols")
     p_maintenance.set_defaults(handler=cmd_maintenance)
 
-    p_due = sub.add_parser("apply-due-splits", help="daily ZERO-PROVIDER split reconciliation (apply splits whose effective date is reached)")
+    p_due = sub.add_parser("apply-due-splits", help="daily ZERO-PROVIDER split application")
     p_due.add_argument("--symbols", nargs="*", default=None, help="restrict to these symbols")
     p_due.set_defaults(handler=cmd_apply_due_splits)
 
