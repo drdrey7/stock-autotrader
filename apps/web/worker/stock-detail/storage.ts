@@ -135,10 +135,6 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
-function firstRow<T>(rows: readonly unknown[] | undefined): T | null {
-  return (rows?.[0] as T | undefined) ?? null;
-}
-
 function parseCompany(row: StockDetailCompanyRow | null): StockDetailCompanyRow | null {
   if (!row || typeof row.company !== "string" || !row.company.trim()) return null;
   return row;
