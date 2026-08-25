@@ -22,8 +22,10 @@ interface CompanyRow {
   logo_url: string | null;
   industry: string | null;
   pe_ttm: number | null;
+  eps_ttm: number | null;
   market_cap: number | null;
   shareholders_equity: number | null;
+  shares_outstanding: number | null;
   market_as_of: string | null;
   market_checked_at: string | null;
   updated_at: string;
@@ -77,6 +79,7 @@ function createDb(
 
 const NOW = new Date("2026-08-13T14:00:00.000Z");
 const NOW_ISO = NOW.toISOString();
+const ADBE_EPS_TTM = 276.24 / 15.137946495292185;
 
 function adobeCompany(overrides: Partial<CompanyRow> = {}): CompanyRow {
   return {
@@ -85,8 +88,10 @@ function adobeCompany(overrides: Partial<CompanyRow> = {}): CompanyRow {
     logo_url: null,
     industry: "Technology",
     pe_ttm: 15.137946495292185,
+    eps_ttm: ADBE_EPS_TTM,
     market_cap: 119_000_000_000,
     shareholders_equity: 14_000_000_000,
+    shares_outstanding: 420_000_000,
     market_as_of: null,
     market_checked_at: NOW_ISO,
     updated_at: NOW_ISO,
@@ -94,10 +99,10 @@ function adobeCompany(overrides: Partial<CompanyRow> = {}): CompanyRow {
   };
 }
 
-function adobeQuote(): QuoteRow {
+function adobeQuote(price = 276.24): QuoteRow {
   return {
     symbol: "ADBE",
-    price: 276.24,
+    price,
     change_abs: 22.25,
     change_pct: 8.74,
     day_high: 280,
@@ -126,6 +131,17 @@ describe("Screener intrinsic value selection", () => {
     expect(adobe!.intrinsicValue!.distancePct).toBeCloseTo(-39.4489, 3);
   });
 
+  it("keeps automatic IV fixed when only the live quote changes", async () => {
+    const first = await readScreenerApi({ DB: createDb(adobeQuote(276.24), adobeCompany()) } as Env, NOW);
+    const second = await readScreenerApi({ DB: createDb(adobeQuote(270.52), adobeCompany()) } as Env, NOW);
+    const firstAdobe = first.rows.find((row) => row.symbol === "ADBE")!;
+    const secondAdobe = second.rows.find((row) => row.symbol === "ADBE")!;
+
+    expect(secondAdobe.intrinsicValue?.base).toBe(firstAdobe.intrinsicValue?.base);
+    expect(secondAdobe.intrinsicValue?.base).toBe(456.21);
+    expect(secondAdobe.intrinsicValue?.distancePct).not.toBe(firstAdobe.intrinsicValue?.distancePct);
+  });
+
   it("always keeps a valid Manual IV ahead of the automatic fallback", async () => {
     const manual: ManualIntrinsicValueRow = {
       symbol: "ADBE",
@@ -144,8 +160,8 @@ describe("Screener intrinsic value selection", () => {
     expect(adobe!.intrinsicValue!.method).toBe("manual");
   });
 
-  it("fails closed instead of calculating from stale persisted fundamentals", async () => {
-    const env = {
+  it("fails closed instead of calculating from stale or incomplete persisted fundamentals", async () => {
+    const stale = await readScreenerApi({
       DB: createDb(
         adobeQuote(),
         adobeCompany({
@@ -153,10 +169,12 @@ describe("Screener intrinsic value selection", () => {
           updated_at: "2026-08-01T14:00:00.000Z",
         }),
       ),
-    } as Env;
-    const response = await readScreenerApi(env, NOW);
-    const adobe = response.rows.find((row) => row.symbol === "ADBE");
+    } as Env, NOW);
+    const missingEps = await readScreenerApi({
+      DB: createDb(adobeQuote(), adobeCompany({ eps_ttm: null })),
+    } as Env, NOW);
 
-    expect(adobe!.intrinsicValue).toBeNull();
+    expect(stale.rows.find((row) => row.symbol === "ADBE")!.intrinsicValue).toBeNull();
+    expect(missingEps.rows.find((row) => row.symbol === "ADBE")!.intrinsicValue).toBeNull();
   });
 });
