@@ -24,7 +24,7 @@ from .d1 import D1Client
 from .maintenance import MaintenanceRunner
 from .maintenance_state import MaintenanceStore
 from .provider import AlphaVantageClient
-from .state import KeyBudgetLedger, StateStore
+from .state import BootstrapBudgetLedger, KeyBudgetLedger, StateStore
 from .universe import load_core_universe
 
 
@@ -36,7 +36,12 @@ def _settings() -> Settings:
         raise SystemExit(2)
 
 
-def _build(settings: Settings) -> tuple[D1Client, AlphaVantageClient, StateStore]:
+def _build(
+    settings: Settings,
+    *,
+    bootstrap: bool = False,
+    bootstrap_run_limit: int | None = None,
+) -> tuple[D1Client, AlphaVantageClient, StateStore]:
     d1 = D1Client(
         settings.cloudflare_api_token,
         settings.cloudflare_account_id,
@@ -47,7 +52,14 @@ def _build(settings: Settings) -> tuple[D1Client, AlphaVantageClient, StateStore
         batch_max_rows=settings.d1_batch_max_rows,
     )
     store = StateStore(settings, d1)
-    ledger = KeyBudgetLedger(store)
+    if bootstrap:
+        ledger = BootstrapBudgetLedger(
+            store,
+            daily_limit=settings.bootstrap_max_requests_per_day,
+            run_limit=bootstrap_run_limit,
+        )
+    else:
+        ledger = KeyBudgetLedger(store)
     provider = AlphaVantageClient(settings, ledger)
     return d1, provider, store
 
@@ -57,7 +69,14 @@ def _emit(event: str, **fields: Any) -> None:
 
 
 def cmd_bootstrap(settings: Settings, args: argparse.Namespace) -> int:
-    d1, provider, store = _build(settings)
+    # Bootstrap gets a dedicated ledger wrapper so BOTH the persisted UTC-day
+    # cap and a lower explicit --limit are enforced at the actual HTTP debit
+    # boundary. Internal multi-key retry can therefore never overshoot the cap.
+    d1, provider, store = _build(
+        settings,
+        bootstrap=True,
+        bootstrap_run_limit=args.limit,
+    )
     runner = BootstrapRunner(settings, d1, provider, store)
     report = runner.run(
         dry_run=args.dry_run,
