@@ -22,6 +22,18 @@
   min-width: 0;
 }
 
+/* Legacy .detail-metrics span rules style every descendant span, not just each
+   metric cell. Neutralize those inherited cell styles inside reusable help
+   labels so GAAP/overall-result hints stay compact and visually consistent. */
+.earnings-drawer .detail-metrics > span .financial-label,
+.earnings-drawer .detail-metrics > span .financial-label-text,
+.earnings-drawer .detail-metrics > span .financial-info-hint {
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font-size: inherit;
+}
+
 @media (max-width: 700px) {
   .earnings-drawer .report-grid .metric-row {
     gap: 12px;

@@ -186,7 +186,7 @@ export default function EarningsDetail({ item, onClose }: { item: EarningsCompan
 
         <section className="earnings-subsection" aria-label="Market earnings">
           <div className="subsection-head">
-            <h3>Market Earnings</h3>
+            <h3><ExplainableLabel label="Market Earnings" term="marketEarnings" /></h3>
             <small>Finnhub / Market consensus</small>
           </div>
 
@@ -199,16 +199,19 @@ export default function EarningsDetail({ item, onClose }: { item: EarningsCompan
               <MetricRow label="Result" value={displayMetricResult(market.epsResult)} tone={resultClass(market.epsResult)} term="beatMiss"/>
             </section>
             <section className="earnings-metric">
-              <span>Revenue</span>
-              <MetricRow label="Consensus Revenue" value={formatCompactMoney(market.revenueEstimate)}/>
-              <MetricRow label="Market Revenue Actual" value={formatCompactMoney(market.revenueActual)}/>
-              <MetricRow label="Surprise" value={formatPercent(market.revenueSurprisePct)} tone={surpriseTone(market.revenueSurprisePct)}/>
-              <MetricRow label="Result" value={displayMetricResult(market.revenueResult)} tone={resultClass(market.revenueResult)}/>
+              <span><ExplainableLabel label="Revenue" term="revenue" /></span>
+              <MetricRow label="Consensus Revenue" value={formatCompactMoney(market.revenueEstimate)} term="consensusRevenue"/>
+              <MetricRow label="Market Revenue Actual" value={formatCompactMoney(market.revenueActual)} term="marketRevenueActual"/>
+              <MetricRow label="Surprise" value={formatPercent(market.revenueSurprisePct)} tone={surpriseTone(market.revenueSurprisePct)} term="earningsSurprise"/>
+              <MetricRow label="Result" value={displayMetricResult(market.revenueResult)} tone={resultClass(market.revenueResult)} term="beatMiss"/>
             </section>
           </div>
 
           <div className="detail-metrics detail-metrics-single">
-            <span>Overall Market Result<strong className={resultClass(market.overallResult)}>{displayMetricResult(market.overallResult)}</strong></span>
+            <span>
+              <ExplainableLabel label="Overall Market Result" term="overallMarketResult" />
+              <strong className={resultClass(market.overallResult)}>{displayMetricResult(market.overallResult)}</strong>
+            </span>
           </div>
         </section>
 
@@ -221,7 +224,7 @@ export default function EarningsDetail({ item, onClose }: { item: EarningsCompan
           </div>
           <div className="detail-metrics official-metrics">
             <span><ExplainableLabel label="GAAP EPS" term="gaapEps" /><strong>{formatShareValue(official.epsGaap)}</strong></span>
-            <span>GAAP Revenue<strong>{formatCompactMoney(official.revenueGaap)}</strong></span>
+            <span><ExplainableLabel label="GAAP Revenue" term="gaapRevenue" /><strong>{formatCompactMoney(official.revenueGaap)}</strong></span>
             <span><ExplainableLabel label="SEC Form" term="secForm" /><strong>{official.secForm ?? "N/A"}</strong></span>
             <span>SEC Filed<strong>{formatFilingDate(official.secFiledAt) ?? "N/A"}</strong></span>
           </div>

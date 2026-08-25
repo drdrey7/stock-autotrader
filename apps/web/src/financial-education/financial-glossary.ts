@@ -18,13 +18,19 @@ export type FinancialGlossaryTerm =
   | "roic"
   | "fcfMargin"
   | "debtToEquity"
+  | "marketEarnings"
   | "eps"
   | "consensusEps"
   | "adjustedEps"
   | "marketEpsActual"
+  | "revenue"
+  | "consensusRevenue"
+  | "marketRevenueActual"
   | "earningsSurprise"
   | "beatMiss"
+  | "overallMarketResult"
   | "gaapEps"
+  | "gaapRevenue"
   | "secEdgar"
   | "secForm";
 
@@ -99,6 +105,13 @@ export const financialGlossary = Object.freeze({
     interpretation:
       "For positive ratios, lower is generally safer, but normal debt levels vary a lot by industry. A negative ratio usually means shareholders' equity is negative, so it needs a separate look — do not treat it as safer just because the number is lower.",
   },
+  marketEarnings: {
+    title: "Market Earnings",
+    shortDescription:
+      "The market-data view of an earnings release. It compares analyst expectations with the actual figures supplied by our market-data provider.",
+    interpretation:
+      "Use this section to understand beats, misses and market expectations. Use Official SEC Data when you need the company's filed GAAP numbers.",
+  },
   eps: {
     title: "EPS",
     shortDescription:
@@ -127,6 +140,27 @@ export const financialGlossary = Object.freeze({
     interpretation:
       "Above consensus is generally positive; below consensus is generally negative. Always check the accounting basis before comparing it with GAAP EPS.",
   },
+  revenue: {
+    title: "Revenue",
+    shortDescription:
+      "The money a company brings in from selling its products or services before costs and expenses are deducted. It is often called sales or the top line.",
+    interpretation:
+      "Higher and growing revenue is generally positive, but strong sales growth matters more when the company can also turn those sales into profit and cash flow.",
+  },
+  consensusRevenue: {
+    title: "Consensus Revenue",
+    shortDescription:
+      "The revenue analysts expect before the company reports. It is the market's shared sales estimate for the quarter, not a company promise.",
+    interpretation:
+      "Revenue above consensus is generally a beat. Revenue below consensus is generally a miss.",
+  },
+  marketRevenueActual: {
+    title: "Market Revenue Actual",
+    shortDescription:
+      "The reported revenue figure supplied by our market-data provider and used here to compare the result with analyst expectations.",
+    interpretation:
+      "Compare it with Consensus Revenue to understand the market surprise. For the official filed accounting number, check GAAP Revenue below.",
+  },
   earningsSurprise: {
     title: "Surprise",
     shortDescription:
@@ -141,12 +175,26 @@ export const financialGlossary = Object.freeze({
     interpretation:
       "A beat is generally better than a miss, although the stock can still move differently if guidance or other news matters more.",
   },
+  overallMarketResult: {
+    title: "Overall Market Result",
+    shortDescription:
+      "A compact summary of the EPS and revenue outcomes in this market-data view. It combines whether each line beat, missed or matched expectations.",
+    interpretation:
+      "Mixed means EPS and revenue did not tell the same story — for example, EPS beat while revenue missed. Read both cards before judging the quarter.",
+  },
   gaapEps: {
     title: "GAAP EPS",
     shortDescription:
       "The official earnings per share calculated using standard U.S. accounting rules. It can differ from Adjusted EPS because adjusted results may remove some items.",
     interpretation:
       "Higher and growing GAAP EPS is generally better, but compare it with previous GAAP results rather than mixing it with adjusted EPS.",
+  },
+  gaapRevenue: {
+    title: "GAAP Revenue",
+    shortDescription:
+      "The company's official revenue reported under standard U.S. accounting rules and taken from its SEC filing.",
+    interpretation:
+      "Use this as the filed accounting revenue. Compare it with previous GAAP revenue; do not assume a market-data actual will always be identical in timing or basis.",
   },
   secEdgar: {
     title: "SEC / EDGAR",

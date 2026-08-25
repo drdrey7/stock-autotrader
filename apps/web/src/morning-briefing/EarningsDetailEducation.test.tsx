@@ -30,17 +30,28 @@ function earningsItem(partial: Record<string, unknown> = {}): EarningsCompany {
 afterEach(() => cleanup());
 
 describe("EarningsDetail financial education", () => {
-  it("uses the shared contextual hints instead of a separate glossary block", () => {
+  it("covers the market and official earnings vocabulary consistently", () => {
     render(<EarningsDetail item={earningsItem()} onClose={vi.fn()} />);
+
+    expect(screen.getByRole("button", { name: "Learn what Market Earnings means" })).toBeInTheDocument();
 
     expect(screen.getByRole("button", { name: "Learn what EPS means" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Learn what Consensus EPS means" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Learn what Adjusted EPS means" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Learn what Surprise means" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Learn what Beat / Miss means" })).toBeInTheDocument();
+
+    expect(screen.getByRole("button", { name: "Learn what Revenue means" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Learn what Consensus Revenue means" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Learn what Market Revenue Actual means" })).toBeInTheDocument();
+
+    expect(screen.getAllByRole("button", { name: "Learn what Surprise means" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "Learn what Beat / Miss means" })).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "Learn what Overall Market Result means" })).toBeInTheDocument();
+
     expect(screen.getByRole("button", { name: "Learn what SEC / EDGAR means" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Learn what GAAP EPS means" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Learn what GAAP Revenue means" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Learn what SEC Form means" })).toBeInTheDocument();
+
     expect(screen.queryByText("How to read these numbers")).not.toBeInTheDocument();
   });
 
@@ -54,6 +65,27 @@ describe("EarningsDetail financial education", () => {
 
     expect(screen.getByRole("button", { name: "Learn what Market EPS Actual means" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Learn what Adjusted EPS means" })).not.toBeInTheDocument();
+  });
+
+  it("explains revenue in beginner language and keeps interpretation guidance", () => {
+    render(<EarningsDetail item={earningsItem()} onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Learn what Revenue means" }));
+
+    const hint = screen.getByRole("dialog", { name: "Revenue" });
+    expect(hint).toHaveTextContent("selling its products or services");
+    expect(hint).toHaveTextContent("Usually:");
+    expect(hint).toHaveTextContent("Higher and growing revenue is generally positive");
+  });
+
+  it("explains why an overall earnings result can be mixed", () => {
+    render(<EarningsDetail item={earningsItem({ overallResult: "Mixed" })} onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Learn what Overall Market Result means" }));
+
+    const hint = screen.getByRole("dialog", { name: "Overall Market Result" });
+    expect(hint).toHaveTextContent("EPS and revenue outcomes");
+    expect(hint).toHaveTextContent("Mixed means EPS and revenue did not tell the same story");
   });
 
   it("shows casual interpretation guidance inside an earnings hint", () => {
