@@ -8,7 +8,7 @@ export type ValuationFamily =
   | "bank"
   | "general";
 
-export type AutomaticValuationMethod = "P/E" | "P/B";
+export type AutomaticValuationMethod = "P/E" | "P/B" | "P/FCF";
 
 export interface AutomaticIntrinsicValueInput {
   /** Current quote. Used for upside/downside only when stable per-share inputs are supplied. */
@@ -17,6 +17,8 @@ export interface AutomaticIntrinsicValueInput {
   peTtm: number | null;
   /** Persisted trailing EPS. Canonical P/E valuation anchor in production. */
   epsTtm?: number | null;
+  /** Persisted trailing free cash flow per share. Canonical fallback when EPS is not usable. */
+  fcfPerShareTtm?: number | null;
   /** Persisted current P/B. Legacy/rolling-preview bank fallback only. */
   priceToBook?: number | null;
   /** Shareholders' equity / shares outstanding. Canonical P/B valuation anchor in production. */
@@ -54,6 +56,21 @@ export const PE_MULTIPLES: Readonly<Partial<Record<ValuationFamily, MultipleRang
   healthcare: { bear: 22, bull: 27 },
   "consumer-quality": { bear: 24, bull: 30 },
   general: { bear: 22, bull: 28 },
+});
+
+/**
+ * Conservative P/FCF fallback assumptions for businesses where GAAP EPS is
+ * non-positive or unusable but trailing free cash flow per share is positive.
+ * This is deliberately a fallback behind P/E, not a second value to average.
+ */
+export const PFCF_MULTIPLES: Readonly<Partial<Record<ValuationFamily, MultipleRange>>> = Object.freeze({
+  "mega-cap-quality": { bear: 24, bull: 32 },
+  semiconductors: { bear: 22, bull: 30 },
+  "software-growth": { bear: 24, bull: 34 },
+  "payments-quality": { bear: 24, bull: 32 },
+  healthcare: { bear: 18, bull: 24 },
+  "consumer-quality": { bear: 18, bull: 26 },
+  general: { bear: 18, bull: 26 },
 });
 
 const BANK_BALANCE_SHEET_SYMBOLS = new Set(["GS", "JPM", "SOFI"]);
@@ -168,16 +185,17 @@ function legacyBankMultiples(peTtm: number, priceToBook: number): MultipleRange 
 /**
  * Deterministic per-share automatic IV. No provider calls or persistence.
  *
- * Canonical production path:
- *   Non-financials: IV = EPS TTM × Target P/E.
- *   Banks:          IV = Book Value Per Share × justified Target P/B.
+ * Canonical production routing:
+ *   Banks:          Book Value Per Share × justified Target P/B.
+ *   Other stocks:   EPS TTM × Target P/E when EPS is positive.
+ *                   Otherwise FCF/Share TTM × Target P/FCF when FCF is positive.
  *
  * Current price is deliberately excluded from those valuation equations and is
- * used only for upside/downside. This prevents the estimated intrinsic value
- * from mechanically moving with an intraday quote.
+ * used only for upside/downside. Pre-profit companies with neither positive EPS
+ * nor positive FCF fail closed instead of receiving a fabricated valuation.
  *
- * The Price/P-E and Price/P-B paths below are compatibility fallbacks for old
- * preview responses only. Worker adapters require EPS (and BVPS for banks).
+ * Price/P-E and Price/P-B paths are compatibility fallbacks for old preview
+ * responses only. Worker adapters supply the persisted per-share inputs.
  */
 export function calculateAutomaticIntrinsicValue(
   symbol: string,
@@ -216,17 +234,30 @@ export function calculateAutomaticIntrinsicValue(
     );
   }
 
-  const multiples = PE_MULTIPLES[family];
-  if (!multiples) return null;
+  const peMultiples = PE_MULTIPLES[family];
+  if (!peMultiples) return null;
   if (positiveFinite(input.epsTtm)) {
     return buildResult(
       family,
       "P/E",
       input.price,
-      input.epsTtm * multiples.bear,
-      input.epsTtm * multiples.bull,
-      multiples.bear,
-      multiples.bull,
+      input.epsTtm * peMultiples.bear,
+      input.epsTtm * peMultiples.bull,
+      peMultiples.bear,
+      peMultiples.bull,
+    );
+  }
+
+  const pfcfMultiples = PFCF_MULTIPLES[family];
+  if (pfcfMultiples && positiveFinite(input.fcfPerShareTtm)) {
+    return buildResult(
+      family,
+      "P/FCF",
+      input.price,
+      input.fcfPerShareTtm * pfcfMultiples.bear,
+      input.fcfPerShareTtm * pfcfMultiples.bull,
+      pfcfMultiples.bear,
+      pfcfMultiples.bull,
     );
   }
 
@@ -236,10 +267,10 @@ export function calculateAutomaticIntrinsicValue(
     family,
     "P/E",
     input.price,
-    input.price * (multiples.bear / input.peTtm),
-    input.price * (multiples.bull / input.peTtm),
-    multiples.bear,
-    multiples.bull,
+    input.price * (peMultiples.bear / input.peTtm),
+    input.price * (peMultiples.bull / input.peTtm),
+    peMultiples.bear,
+    peMultiples.bull,
   );
 }
 
