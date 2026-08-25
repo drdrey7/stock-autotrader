@@ -27,15 +27,18 @@ export function FinancialInfoHint({ term, className = "" }: FinancialInfoHintPro
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
       setOpen(false);
       triggerRef.current?.focus();
     };
 
     document.addEventListener("pointerdown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
+    // Capture Escape before parent drawers/dialogs so the hint closes first.
+    document.addEventListener("keydown", onKeyDown, true);
     return () => {
       document.removeEventListener("pointerdown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("keydown", onKeyDown, true);
     };
   }, [open]);
 
@@ -87,6 +90,11 @@ export function FinancialInfoHint({ term, className = "" }: FinancialInfoHintPro
             </button>
           </span>
           <span className="financial-info-description">{entry.shortDescription}</span>
+          {entry.interpretation ? (
+            <span className="financial-info-interpretation">
+              <strong>Usually:</strong> {entry.interpretation}
+            </span>
+          ) : null}
         </span>
       )}
     </span>
