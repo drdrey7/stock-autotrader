@@ -77,7 +77,7 @@ Run from the repo root (or `apps/history-ingestor`):
 python3 -m history_ingestor bootstrap
 
 # Partial run / specific symbols / request cap / planning-only:
-python3 -m history_ingestor bootstrap --limit 20 --symbols NVDA AAPL MSFT
+python3 -m history_ingestor bootstrap --limit 4 --symbols NVDA AAPL MSFT
 python3 -m history_ingestor bootstrap --dry-run        # no provider calls, no D1 writes
 
 # Weekly maintenance: WEEKLY refresh + metrics (PRIORITY provider worker;
@@ -191,26 +191,27 @@ report `NotEnoughHistory` (`N/A`). A confirmed split-scale mismatch remains
 
 ### systemd deployment (documented — install requires root)
 
-Production uses four timers, all explicitly UTC, non-overlapping (so the weekly
-SMA refresh is never starved):
+Production uses four timers, all explicitly UTC. Provider work is ordered so
+the weekly SMA refresh always has first claim on quota:
 
 - **maintenance: `*-*-* 07:00 UTC`** daily, effectively weekly (PRIORITY over
   bootstrap). Monday refreshes the just-closed week; Tue–Sat are automatic
-  catch-up that no-op (zero provider requests) once the cycle is complete.
+  catch-up and no-op once the cycle is complete.
 - **bootstrap: `*-*-* 08:00 UTC`** daily, residual, runs AFTER maintenance,
   exact HTTP request-capped (default 6/day).
-- **reconcile-split: `Tue *-*-* 09:00 UTC`** weekly, decoupled provider SPLITS
-  check, runs in a true residual day AFTER Tuesday maintenance/bootstrap.
-  `Persistent=false` so a missed run is never auto-caught-up at boot into the
-  same window as a due maintenance run.
-- **due-split: `Tue..Sat 13:10 UTC`** (zero-provider reconciliation).
+- **reconcile-split: `Tue..Sat *-*-* 09:00 UTC`** provider SPLITS discovery in
+  five durable residual slices, maximum 10 requests per invocation. Ten calls
+  per day across five residual days cover the 50-symbol universe once per
+  normal week. The durable cursor resumes unfinished work rather than starting
+  over. `Persistent=false` prevents outage catch-up from racing maintenance.
+- **due-split: `Tue..Sat 13:10 UTC`** zero-provider application of stored rules.
 
 Rationale: the 200W SMA basis only changes when a new week closes, and Monday
 maintenance can legitimately consume essentially the whole two-key free-tier
 budget (~50 requests for 50 symbols). SPLITS reconciliation therefore does NOT
-run Monday. Tuesday maintenance always gets first chance to finish any carryover;
-only then can the capped bootstrap and capped reconciliation consume residual
-quota.
+run Monday. Tue–Sat maintenance still gets first chance to finish any carryover;
+only afterwards can the capped bootstrap and capped reconciliation slice consume
+residual quota.
 
 Provision the existing secret files first:
 
