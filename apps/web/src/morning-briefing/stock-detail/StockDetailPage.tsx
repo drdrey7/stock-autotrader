@@ -1,13 +1,12 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
-import { calculateAutomaticIntrinsicValue, type AutomaticIntrinsicValue } from "@stock-autotrader/contracts";
 import FinancialInfoHint from "../../financial-education/FinancialInfoHint";
 import type { FinancialGlossaryTerm } from "../../financial-education/financial-glossary";
 import { CompanyLogo } from "../EarningsLogo";
 import { screenerQueryFromNavigationState, type ScreenerQuery } from "../screener/screener-filter";
 import PriceAndKeyLevelsChart from "./PriceAndKeyLevelsChart";
 import { apiStockDetailDataSource } from "./stock-detail.api";
-import type { StockDetail, StockDetailDataSource } from "./stock-detail.types";
+import type { StockAutomaticValuation, StockDetail, StockDetailDataSource } from "./stock-detail.types";
 import "./stock-detail.css";
 import "./typography.css";
 
@@ -74,27 +73,21 @@ function ExplainableLabel({ label, term }: { label: string; term: FinancialGloss
 }
 
 /**
- * Automatic IV is calculated at presentation time from values already returned
- * by the Stock Detail read model. Mock fixtures retain their supplied design
- * values so visual tests remain deterministic.
+ * Valuation policy is owned by the serving Worker. React only renders the
+ * canonical automatic scenarios and selected IV returned by the API model.
  */
-function automaticValuation(detail: StockDetail): AutomaticIntrinsicValue | null {
-  if (detail.source !== "api") return null;
-  return calculateAutomaticIntrinsicValue(detail.symbol, detail.sector, {
-    price: detail.quote.price,
-    peTtm: detail.metrics.peTtm,
-    priceToBook: detail.metrics.priceToBook ?? null,
-  });
+function automaticValuation(detail: StockDetail): StockAutomaticValuation | null {
+  return detail.valuation.automatic ?? null;
 }
 
 function selectedIntrinsicValue(detail: StockDetail): number | null {
-  return automaticValuation(detail)?.base ?? detail.valuation.intrinsicValue;
+  return detail.valuation.intrinsicValue;
 }
 
 function IntrinsicValueCard({ detail }: { detail: StockDetail }) {
   const automatic = automaticValuation(detail);
-  const intrinsicValue = automatic?.base ?? detail.valuation.intrinsicValue;
-  const upsidePct = automatic?.baseUpsidePct ?? detail.valuation.upsidePct;
+  const intrinsicValue = detail.valuation.intrinsicValue;
+  const upsidePct = detail.valuation.upsidePct;
   const upsideClass = upsidePct === null ? "stock-neutral" : upsidePct >= 0 ? "stock-positive" : "stock-negative";
 
   return (
@@ -131,7 +124,7 @@ function IntrinsicValueCard({ detail }: { detail: StockDetail }) {
 
 function ValuationMethodsCard({ detail }: { detail: StockDetail }) {
   const automatic = automaticValuation(detail);
-  const manual = detail.valuation.methods.manual ?? detail.valuation.intrinsicValue;
+  const manual = detail.valuation.methods.manual;
   const rows = [
     ["Automatic Bear", automatic?.bear ?? null],
     ["Automatic Base", automatic?.base ?? null],
