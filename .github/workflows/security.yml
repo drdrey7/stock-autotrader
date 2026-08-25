@@ -26,11 +26,19 @@ jobs:
       - run: npm ci --ignore-scripts
       - name: Audit npm dependencies
         run: npm audit --audit-level=high
-      - name: Audit Python dependencies
+      - name: Audit all pinned Python dependency locks
         run: |
           python3 -m pip install --quiet "pip-audit==2.10.1"
-          python3 -m pip_audit -r bot/requirements-lock.txt
-          python3 -m pip_audit -r apps/ai-analysis-runner/requirements-lock.txt
+          mapfile -t locks < <(find . -type f -name 'requirements-lock.txt' -not -path './node_modules/*' -print | sort)
+          if (( ${#locks[@]} == 0 )); then
+            echo "No requirements-lock.txt files found" >&2
+            exit 1
+          fi
+          printf 'Auditing %d Python lockfile(s):\n' "${#locks[@]}"
+          printf ' - %s\n' "${locks[@]}"
+          for lock in "${locks[@]}"; do
+            python3 -m pip_audit -r "$lock"
+          done
 
   secrets:
     runs-on: ubuntu-latest

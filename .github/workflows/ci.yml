@@ -14,7 +14,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  frontend:
+  web:
+    name: web
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -52,28 +53,61 @@ jobs:
       - name: Validate Stock Detail against local D1
         working-directory: apps/web
         run: node scripts/verify-stock-detail-local.mjs
+
+  node-services:
+    name: node-services
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Test publisher client
+        run: npm run test -w @stock-autotrader/publisher
+
+  python-lint:
+    name: python-lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Lint Python (ruff)
         run: |
           pip install --quiet "ruff==0.16.0"
           ruff check .
-      - name: Test fundamentals ingestor (Python)
+
+  history-ingestor:
+    name: history-ingestor
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Test history ingestor without provider calls
+        working-directory: apps/history-ingestor
+        run: python3 -m unittest discover -s tests -v
+
+  python-services:
+    name: python-services
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Test fundamentals ingestor
         working-directory: apps/fundamentals-ingestor
         run: PYTHONPATH=. python3 -m unittest discover -s tests -v
-      - name: Test publisher client (Python)
-        run: npm run test -w @stock-autotrader/publisher
-      - name: Test VPS runtime (bot, PR #4)
+      - name: Test VPS runtime
         working-directory: bot
         run: |
           pip install --quiet -e .
           python3 -m unittest discover -s tests -v
-      - name: Test quote ingestor (Python)
+      - name: Test quote ingestor
         working-directory: apps/quote-ingestor
         run: |
           pip install --quiet "websocket-client>=1.6,<2"
           python3 -m unittest discover -s tests -v
-      - name: Test history ingestor (Python)
-        working-directory: apps/history-ingestor
-        run: python3 -m unittest discover -s tests -v
 
   ai-analysis-runner:
     name: ai-analysis-runner
