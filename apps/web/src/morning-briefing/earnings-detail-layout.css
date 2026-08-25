@@ -1,0 +1,29 @@
+/* Earnings detail layout normalization.
+   The legacy report-grid selectors make direct div children inline-flex, which
+   can pull metric rows up beside the EPS/Revenue headings. Keep each card title
+   on its own row and make every metric row use the intended label/value grid. */
+.earnings-drawer .earnings-metric > span {
+  display: flex;
+  align-items: center;
+  min-height: 24px;
+  margin: 0;
+}
+
+.earnings-drawer .report-grid .metric-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  margin: 8px 0 0;
+}
+
+.earnings-drawer .report-grid .metric-row small {
+  min-width: 0;
+}
+
+@media (max-width: 700px) {
+  .earnings-drawer .report-grid .metric-row {
+    gap: 12px;
+  }
+}
