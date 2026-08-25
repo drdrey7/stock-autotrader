@@ -31,7 +31,11 @@ class Checkpoint:
     day: str = ""  # UTC date the per-key usage refers to ("YYYY-MM-DD")
     keys: list[dict] = field(default_factory=list)  # [{"index": 0, "used": 12, "status": "ok"}]
     symbols: dict[str, dict[str, str]] = field(default_factory=dict)
-    bootstrap_daily_used: int = 0  # bootstrap-only provider requests used this UTC day (residual cap)
+    # Legacy logical-fetch counter kept for backwards compatibility/reporting.
+    bootstrap_daily_used: int = 0
+    # Exact bootstrap HTTP debits. Updated by BootstrapBudgetLedger on every
+    # provider request, including Information/Note attempts and multi-key retry.
+    bootstrap_http_used: int = 0
     started_at: str = ""
     updated_at: str = ""
 
@@ -42,6 +46,7 @@ class Checkpoint:
             "keys": self.keys,
             "symbols": self.symbols,
             "bootstrap_daily_used": self.bootstrap_daily_used,
+            "bootstrap_http_used": self.bootstrap_http_used,
             "started_at": self.started_at,
             "updated_at": self.updated_at,
         }
@@ -65,11 +70,21 @@ class Checkpoint:
             bootstrap_daily_used = int(payload.get("bootstrap_daily_used", 0))
         except (TypeError, ValueError):
             bootstrap_daily_used = 0
+        # On first deploy of exact HTTP accounting, seed from the previous
+        # logical counter rather than zero. This is conservative and prevents a
+        # same-day upgrade from accidentally granting a fresh bootstrap budget.
+        try:
+            bootstrap_http_used = int(
+                payload.get("bootstrap_http_used", payload.get("bootstrap_daily_used", 0))
+            )
+        except (TypeError, ValueError):
+            bootstrap_http_used = 0
         return cls(
             day=day,
             keys=keys,
             symbols=symbols,
             bootstrap_daily_used=max(0, bootstrap_daily_used),
+            bootstrap_http_used=max(0, bootstrap_http_used),
             started_at=str(payload.get("started_at", "")),
             updated_at=str(payload.get("updated_at", "")),
         )
@@ -92,7 +107,7 @@ def _iso_day_of(iso_timestamp: str) -> str:
 
 
 class KeyBudgetLedger:
-    """Adapts a StateStore to the provider's BudgetLedger protocol."""
+    """Adapts a StateStore to the provider's shared per-key budget protocol."""
 
     def __init__(self, store: StateStore) -> None:
         self._store = store
@@ -105,6 +120,54 @@ class KeyBudgetLedger:
 
     def mark_exhausted(self, index: int) -> None:
         self._store.mark_key_exhausted(index)
+
+
+class BootstrapBudgetLedger:
+    """Provider ledger that enforces bootstrap's real HTTP request budget.
+
+    Alpha Vantage may debit more than one HTTP request inside a single logical
+    ``fetch_*`` call (for example key 0 returns ``Information`` and key 1 is
+    tried next). Therefore the residual bootstrap cap must live at the provider
+    ledger boundary, where every real HTTP debit is observed, rather than after
+    a logical fetch returns.
+
+    ``daily_limit`` is persisted in ``StateStore.bootstrap_http_used`` and thus
+    survives process/systemd restarts. ``run_limit`` is an optional lower cap
+    for this invocation (``--limit``); both are enforced before the provider can
+    select another key.
+    """
+
+    def __init__(
+        self,
+        store: StateStore,
+        daily_limit: int,
+        run_limit: int | None = None,
+    ) -> None:
+        self._store = store
+        self._daily_limit = max(0, int(daily_limit))
+        requested = self._daily_limit if run_limit is None else max(0, int(run_limit))
+        self._run_limit = min(requested, self._daily_limit)
+        self._run_used = 0
+
+    def remaining(self, index: int) -> int:
+        daily_remaining = max(0, self._daily_limit - self._store.bootstrap_http_used())
+        run_remaining = max(0, self._run_limit - self._run_used)
+        return min(self._store.key_remaining(index), daily_remaining, run_remaining)
+
+    def mark_used(self, index: int, delta: int = 1) -> None:
+        debit = max(0, int(delta))
+        if debit == 0:
+            return
+        self._store.mark_key_used(index, debit)
+        self._store.mark_bootstrap_http_used(debit)
+        self._run_used += debit
+        # Persist immediately after EACH real HTTP debit. A crash/restart can
+        # never forget provider quota already spent by bootstrap.
+        self._store.save()
+
+    def mark_exhausted(self, index: int) -> None:
+        self._store.mark_key_exhausted(index)
+        self._store.save()
 
 
 class StateStore:
@@ -143,8 +206,9 @@ class StateStore:
                 {"index": index, "used": 0, "status": "ok"}
                 for index in range(self._settings.key_count)
             ]
-            # Bootstrap's residual daily budget also resets on UTC day change.
+            # Both bootstrap counters reset only on the UTC day boundary.
             self._state.bootstrap_daily_used = 0
+            self._state.bootstrap_http_used = 0
         # Ensure one entry per configured key (keys added/removed between runs).
         by_index = {int(k.get("index", -1)): k for k in self._state.keys}
         self._state.keys = [
@@ -195,16 +259,25 @@ class StateStore:
         ]
 
     def bootstrap_daily_used(self) -> int:
-        """Bootstrap-only provider requests consumed so far this UTC day."""
+        """Legacy logical bootstrap fetches consumed so far this UTC day."""
         return int(getattr(self._state, "bootstrap_daily_used", 0))
 
     def mark_bootstrap_daily_used(self, delta: int = 1) -> None:
-        """Persist bootstrap's residual daily request consumption."""
+        """Persist the legacy logical bootstrap fetch counter."""
         self._state.bootstrap_daily_used += delta
         self._state.updated_at = _utc_now_iso()
 
+    def bootstrap_http_used(self) -> int:
+        """Exact bootstrap provider HTTP debits consumed this UTC day."""
+        return int(getattr(self._state, "bootstrap_http_used", 0))
+
+    def mark_bootstrap_http_used(self, delta: int = 1) -> None:
+        """Record exact provider HTTP debits for the residual bootstrap cap."""
+        self._state.bootstrap_http_used += delta
+        self._state.updated_at = _utc_now_iso()
+
     def save_bootstrap_daily_used(self) -> None:
-        """Persist the bootstrap daily counter (best-effort, mirror+D1)."""
+        """Persist the bootstrap counters (best-effort, mirror+D1)."""
         self.save()
 
     def save(self) -> bool:
