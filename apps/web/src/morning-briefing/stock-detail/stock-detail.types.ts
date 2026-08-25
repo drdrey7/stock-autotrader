@@ -28,7 +28,7 @@ export interface StockAutomaticValuation {
   bear: number;
   base: number;
   bull: number;
-  method: "P/E" | "P/B";
+  method: "P/E" | "P/B" | "P/FCF";
   bearMultiple: number;
   baseMultiple: number;
   bullMultiple: number;
