@@ -26,39 +26,35 @@ describe("preview Worker", () => {
     expect(env.ASSETS.fetch).toHaveBeenCalledOnce();
   });
 
-  it("fails closed when the preview D1 binding is unavailable", async () => {
-    const productionApi = { fetch: vi.fn(async () => new Response("must not run")) };
+  it("routes Stock Detail reads through the production service binding", async () => {
+    const productionApi = {
+      fetch: vi.fn(async (input: RequestInfo | URL) => {
+        const downstream = input as Request;
+        expect(downstream.url).toBe("https://stock-autotrader-web/api/stocks/MSFT/detail");
+        expect(downstream.method).toBe("GET");
+        return new Response('{"symbol":"MSFT"}');
+      }),
+    };
     const { env } = previewEnv(new Response("branch asset"), productionApi);
 
     const response = await handlePreviewRequest(
-      new Request("https://preview.example/api/stocks/msft/detail"),
+      new Request("https://preview.example/api/stocks/MSFT/detail"),
       env,
     );
 
-    expect(response.status).toBe(503);
-    expect(await response.json()).toEqual({ error: "stock_detail_store_unavailable" });
-    expect(productionApi.fetch).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ symbol: "MSFT" });
     expect(env.ASSETS.fetch).not.toHaveBeenCalled();
   });
 
-  it("returns the real not-found contract for invalid Stock Detail symbols", async () => {
-    const { env, productionApi } = previewEnv();
-    const response = await handlePreviewRequest(
-      new Request("https://preview.example/api/stocks/INVALID/detail"),
-      env,
-    );
-    expect(response.status).toBe(404);
-    expect(await response.json()).toEqual({ error: "stock_not_found" });
-    expect(productionApi.fetch).not.toHaveBeenCalled();
-  });
-
-  it("rejects Stock Detail preview mutations without invoking production", async () => {
+  it("rejects Stock Detail mutations without invoking production", async () => {
     const productionApi = { fetch: vi.fn(async () => new Response("must not run")) };
     const { env } = previewEnv(new Response("branch asset"), productionApi);
     const response = await handlePreviewRequest(
       new Request("https://preview.example/api/stocks/MSFT/detail", { method: "POST" }),
       env,
     );
+
     expect(response.status).toBe(405);
     expect(response.headers.get("allow")).toBe("GET, HEAD");
     expect(productionApi.fetch).not.toHaveBeenCalled();

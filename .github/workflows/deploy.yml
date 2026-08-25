@@ -28,7 +28,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci --ignore-scripts
-      - name: Validate and build (PR validation only; no preview deployment)
+      - name: Validate and build
         run: npm run build
         env:
           VITE_DEMO_MODE: "false"
@@ -37,6 +37,15 @@ jobs:
           npm run lint
           npm run typecheck
           npm test
+      - name: Upload PR frontend artifact for trusted preview publisher
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: web-preview-pr-${{ github.event.pull_request.number }}
+          path: apps/web/dist
+          if-no-files-found: error
+          retention-days: 2
+          include-hidden-files: false
       - name: Apply remote D1 migrations (production only)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         working-directory: apps/web

@@ -1,0 +1,114 @@
+name: Publish PR Preview
+
+on:
+  workflow_run:
+    workflows: [Deploy]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+
+concurrency:
+  group: preview-${{ github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.id }}
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.pull_requests[0].number != null
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+      SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+      SOURCE_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      # workflow_run executes the workflow definition from the default branch.
+      # Never check out the PR here: this job receives Cloudflare credentials.
+      - name: Validate trusted event metadata
+        run: |
+          set -euo pipefail
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid PR number" >&2; exit 1; }
+          [[ "$SOURCE_RUN_ID" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid workflow run id" >&2; exit 1; }
+          [[ "$SOURCE_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "Invalid head SHA" >&2; exit 1; }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install trusted deployment dependencies
+        run: npm ci --ignore-scripts
+      - name: Download frontend artifact from validated PR run
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: web-preview-pr-${{ env.PR_NUMBER }}
+          path: ${{ runner.temp }}/preview-assets
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+      - name: Validate and stage untrusted static assets
+        run: |
+          set -euo pipefail
+          ASSET_DIR="$RUNNER_TEMP/preview-assets"
+          test -f "$ASSET_DIR/index.html" || { echo "Preview artifact has no index.html" >&2; exit 1; }
+          if find "$ASSET_DIR" -type l -print -quit | grep -q .; then
+            echo "Preview artifact must not contain symlinks" >&2
+            exit 1
+          fi
+          if find "$ASSET_DIR" ! -type f ! -type d -print -quit | grep -q .; then
+            echo "Preview artifact contains unsupported filesystem entries" >&2
+            exit 1
+          fi
+          rm -rf apps/web/dist
+          mkdir -p apps/web/dist
+          cp -R "$ASSET_DIR/." apps/web/dist/
+      - name: Publish isolated Cloudflare preview from trusted code
+        working-directory: apps/web
+        env:
+          # Prefer a dedicated preview-only token when configured. The existing
+          # production token is a compatibility fallback, but it is only exposed
+          # to this trusted default-branch workflow, never to PR-controlled code.
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PREVIEW_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PREVIEW_ALIAS: pr-${{ env.PR_NUMBER }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ] || [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
+            echo "::error::A Cloudflare API token and CLOUDFLARE_ACCOUNT_ID are required"
+            exit 1
+          fi
+          npx wrangler versions upload \
+            --config wrangler.preview.jsonc \
+            --preview-alias "$PREVIEW_ALIAS" \
+            --message "PR #${PR_NUMBER} ${SOURCE_HEAD_SHA}"
+      - name: Publish preview URL to PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIEW_URL: https://pr-${{ env.PR_NUMBER }}-stock-autotrader-preview.barroso-labs.workers.dev
+        run: |
+          set -euo pipefail
+          MARKER='<!-- cloudflare-pr-preview -->'
+          BODY=$(printf '%s\n\n%s\n\n%s' \
+            "$MARKER" \
+            "Cloudflare preview: ${PREVIEW_URL}" \
+            "Stock Detail test: ${PREVIEW_URL}/stocks/MSFT")
+          COMMENT_ID=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            --jq ".[] | select(.body | contains(\"${MARKER}\")) | .id" | head -n1)
+          if [ -n "$COMMENT_ID" ]; then
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}" -f body="$BODY" >/dev/null
+          else
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -f body="$BODY" >/dev/null
+          fi
+          echo "### Cloudflare Preview" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "$PREVIEW_URL" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Stock Detail test: $PREVIEW_URL/stocks/MSFT" >> "$GITHUB_STEP_SUMMARY"

@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
+import FinancialInfoHint from "../../financial-education/FinancialInfoHint";
+import type { FinancialGlossaryTerm } from "../../financial-education/financial-glossary";
 import { CompanyLogo } from "../EarningsLogo";
 import { screenerQueryFromNavigationState, type ScreenerQuery } from "../screener/screener-filter";
 import PriceAndKeyLevelsChart from "./PriceAndKeyLevelsChart";
@@ -61,13 +63,22 @@ function navigationLogoUrl(state: unknown): string | null {
   return typeof value === "string" && value.trim() ? value : null;
 }
 
+function ExplainableLabel({ label, term }: { label: string; term: FinancialGlossaryTerm }) {
+  return (
+    <span className="financial-label">
+      <span className="financial-label-text">{label}</span>
+      <FinancialInfoHint term={term} />
+    </span>
+  );
+}
+
 function IntrinsicValueCard({ detail }: { detail: StockDetail }) {
   const { intrinsicValue, upsidePct } = detail.valuation;
   const upsideClass = upsidePct === null ? "stock-neutral" : upsidePct >= 0 ? "stock-positive" : "stock-negative";
 
   return (
     <section className="stock-card stock-iv-card" aria-labelledby="stock-iv-title">
-      <h2 id="stock-iv-title">Our Intrinsic Value</h2>
+      <h2 id="stock-iv-title"><ExplainableLabel label="Our Intrinsic Value" term="intrinsicValue" /></h2>
       <div className="stock-iv-value">{intrinsicValue === null ? "×" : formatMoney(intrinsicValue)}</div>
       <div className={`stock-iv-upside ${upsideClass}`}>
         {upsidePct === null ? "—" : `${upsidePct > 0 ? "▲ " : upsidePct < 0 ? "▼ " : ""}${formatChange(upsidePct)}%`}
@@ -118,7 +129,7 @@ function KeyLevelsCard({ detail }: { detail: StockDetail }) {
       <h2 id="stock-levels-title">Key Levels</h2>
       <dl className="stock-data-list stock-levels-list">
         <div>
-          <dt>200W SMA</dt>
+          <dt><ExplainableLabel label="200W SMA" term="sma200w" /></dt>
           <dd>
             {formatMoney(detail.technical.sma200w)}
             {detail.technical.smaDistancePct !== null && (
@@ -139,17 +150,20 @@ function KeyLevelsCard({ detail }: { detail: StockDetail }) {
 }
 
 function StockMetrics({ detail }: { detail: StockDetail }) {
-  const metrics = [
-    ["Market Cap", detail.metrics.marketCap ?? "—"],
-    ["P/E (TTM)", formatNumber(detail.metrics.peTtm, "", 1)],
-    ["ROIC", formatNumber(detail.metrics.roicPct, "%", 1)],
-    ["FCF Margin", formatNumber(detail.metrics.fcfMarginPct, "%", 1)],
-    ["Debt / Equity", formatNumber(detail.metrics.debtToEquity, "", 2)],
+  const metrics: ReadonlyArray<readonly [string, string, FinancialGlossaryTerm | null]> = [
+    ["Market Cap", detail.metrics.marketCap ?? "—", "marketCap"],
+    ["P/E (TTM)", formatNumber(detail.metrics.peTtm, "", 1), null],
+    ["ROIC", formatNumber(detail.metrics.roicPct, "%", 1), null],
+    ["FCF Margin", formatNumber(detail.metrics.fcfMarginPct, "%", 1), null],
+    ["Debt / Equity", formatNumber(detail.metrics.debtToEquity, "", 2), null],
   ];
   return (
     <section className="stock-metrics" aria-label="Stock metrics">
-      {metrics.map(([label, value]) => (
-        <div className="stock-metric" key={label}><small>{label}</small><strong>{value}</strong></div>
+      {metrics.map(([label, value, term]) => (
+        <div className="stock-metric" key={label}>
+          <small>{term ? <ExplainableLabel label={label} term={term} /> : label}</small>
+          <strong>{value}</strong>
+        </div>
       ))}
     </section>
   );
