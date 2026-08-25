@@ -11,7 +11,7 @@ export type ValuationFamily =
 export type AutomaticValuationMethod = "P/E" | "P/B" | "P/FCF";
 
 export interface AutomaticIntrinsicValueInput {
-  /** Current quote. Used for upside/downside only when stable per-share inputs are supplied. */
+  /** Current quote. Used for upside/downside and legacy compatibility only. */
   price: number | null;
   /** Persisted trailing P/E. Kept only for rolling-preview compatibility and bank legacy fallback. */
   peTtm: number | null;
@@ -165,9 +165,6 @@ function buildResult(
  *
  * Production obtains ROE from stable per-share fundamentals:
  *   ROE ≈ EPS TTM / Book Value Per Share.
- *
- * A P/E + P/B reconstruction is retained only for rolling-preview compatibility
- * with old API responses that do not expose EPS/BVPS to the browser.
  */
 function bankMultiplesFromRoe(roe: number): MultipleRange | null {
   if (!Number.isFinite(roe) || roe <= 0 || roe > 0.5) return null;
@@ -190,19 +187,15 @@ function legacyBankMultiples(peTtm: number, priceToBook: number): MultipleRange 
  *   Other stocks:   EPS TTM × Target P/E when EPS is positive.
  *                   Otherwise FCF/Share TTM × Target P/FCF when FCF is positive.
  *
- * Current price is deliberately excluded from those valuation equations and is
- * used only for upside/downside. Pre-profit companies with neither positive EPS
- * nor positive FCF fail closed instead of receiving a fabricated valuation.
- *
- * Price/P-E and Price/P-B paths are compatibility fallbacks for old preview
- * responses only. Worker adapters supply the persisted per-share inputs.
+ * A current quote is deliberately optional for canonical valuation. When it is
+ * absent the IV remains available and only upside/downside is null. Pre-profit
+ * companies with neither positive EPS nor positive FCF fail closed.
  */
 export function calculateAutomaticIntrinsicValue(
   symbol: string,
   industry: string | null,
   input: AutomaticIntrinsicValueInput,
 ): AutomaticIntrinsicValue | null {
-  if (!positiveFinite(input.price)) return null;
   const family = classifyValuationFamily(symbol, industry);
 
   if (family === "bank") {
@@ -220,7 +213,7 @@ export function calculateAutomaticIntrinsicValue(
       );
     }
 
-    if (!positiveFinite(input.peTtm) || !positiveFinite(input.priceToBook)) return null;
+    if (!positiveFinite(input.price) || !positiveFinite(input.peTtm) || !positiveFinite(input.priceToBook)) return null;
     const multiples = legacyBankMultiples(input.peTtm, input.priceToBook);
     if (!multiples) return null;
     return buildResult(
@@ -262,7 +255,7 @@ export function calculateAutomaticIntrinsicValue(
   }
 
   // Rolling-preview compatibility for an older Stock Detail API contract.
-  if (!positiveFinite(input.peTtm) || input.peTtm < 3 || input.peTtm > 150) return null;
+  if (!positiveFinite(input.price) || !positiveFinite(input.peTtm) || input.peTtm < 3 || input.peTtm > 150) return null;
   return buildResult(
     family,
     "P/E",
