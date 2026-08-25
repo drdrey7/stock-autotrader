@@ -66,7 +66,7 @@ function navigationLogoUrl(state: unknown): string | null {
 function ExplainableLabel({ label, term }: { label: string; term: FinancialGlossaryTerm }) {
   return (
     <span className="financial-label">
-      <span>{label}</span>
+      <span className="financial-label-text">{label}</span>
       <FinancialInfoHint term={term} />
     </span>
   );
