@@ -23,8 +23,6 @@ function renderStock(symbol: string) {
 const expandedHintNames = [
   "Learn what Intrinsic Value means",
   "Learn what Valuation Methods means",
-  "Learn what DCF means",
-  "Learn what Multiples means",
   "Learn what Market Cap means",
   "Learn what P/E (TTM) means",
   "Learn what ROIC means",
