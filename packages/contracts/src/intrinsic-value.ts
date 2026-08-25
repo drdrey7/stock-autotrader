@@ -13,7 +13,7 @@ export type AutomaticValuationMethod = "P/E" | "P/B" | "P/FCF";
 export interface AutomaticIntrinsicValueInput {
   /** Current quote. Used for upside/downside and legacy compatibility only. */
   price: number | null;
-  /** Persisted trailing P/E. Kept only for rolling-preview compatibility and bank legacy fallback. */
+  /** Persisted trailing P/E. Used as a quality gate for canonical EPS valuation and for legacy fallbacks. */
   peTtm: number | null;
   /** Persisted trailing EPS. Canonical P/E valuation anchor in production. */
   epsTtm?: number | null;
@@ -60,8 +60,9 @@ export const PE_MULTIPLES: Readonly<Partial<Record<ValuationFamily, MultipleRang
 
 /**
  * Conservative P/FCF fallback assumptions for businesses where GAAP EPS is
- * non-positive or unusable but trailing free cash flow per share is positive.
- * This is deliberately a fallback behind P/E, not a second value to average.
+ * non-positive or economically unusable but trailing free cash flow per share
+ * is positive. This is deliberately a fallback behind a *plausible* P/E, not
+ * a second value to average.
  */
 export const PFCF_MULTIPLES: Readonly<Partial<Record<ValuationFamily, MultipleRange>>> = Object.freeze({
   "mega-cap-quality": { bear: 24, bull: 32 },
@@ -76,6 +77,9 @@ export const PFCF_MULTIPLES: Readonly<Partial<Record<ValuationFamily, MultipleRa
 const BANK_BALANCE_SHEET_SYMBOLS = new Set(["GS", "JPM", "SOFI"]);
 const MEGA_CAP_QUALITY_SYMBOLS = new Set(["AAPL", "GOOGL", "META", "MSFT"]);
 const PAYMENT_QUALITY_SYMBOLS = new Set(["MA", "V"]);
+
+const MIN_PLAUSIBLE_PE = 3;
+const MAX_PLAUSIBLE_PE = 150;
 
 const BANK_RE = /\bbanks?\b|banking|savings\s*&\s*loans|mortgage finance/i;
 const SEMICONDUCTOR_RE = /semiconductor|chip|electronic equipment|semiconductor equipment/i;
@@ -102,6 +106,10 @@ export function classifyValuationFamily(symbol: string, industry: string | null)
 
 function positiveFinite(value: number | null | undefined): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
+function plausiblePe(value: number | null | undefined): value is number {
+  return positiveFinite(value) && value >= MIN_PLAUSIBLE_PE && value <= MAX_PLAUSIBLE_PE;
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {
@@ -175,7 +183,7 @@ function bankMultiplesFromRoe(roe: number): MultipleRange | null {
 }
 
 function legacyBankMultiples(peTtm: number, priceToBook: number): MultipleRange | null {
-  if (peTtm <= 0 || peTtm > 60 || priceToBook <= 0 || priceToBook > 10) return null;
+  if (!plausiblePe(peTtm) || priceToBook <= 0 || priceToBook > 10) return null;
   return bankMultiplesFromRoe(priceToBook / peTtm);
 }
 
@@ -184,12 +192,13 @@ function legacyBankMultiples(peTtm: number, priceToBook: number): MultipleRange 
  *
  * Canonical production routing:
  *   Banks:          Book Value Per Share × justified Target P/B.
- *   Other stocks:   EPS TTM × Target P/E when EPS is positive.
+ *   Other stocks:   EPS TTM × Target P/E when EPS and the observed trailing P/E
+ *                   are both economically plausible.
  *                   Otherwise FCF/Share TTM × Target P/FCF when FCF is positive.
  *
  * A current quote is deliberately optional for canonical valuation. When it is
- * absent the IV remains available and only upside/downside is null. Pre-profit
- * companies with neither positive EPS nor positive FCF fail closed.
+ * absent the IV remains available and only upside/downside is null. Companies
+ * with neither a plausible earnings anchor nor positive FCF fail closed.
  */
 export function calculateAutomaticIntrinsicValue(
   symbol: string,
@@ -213,7 +222,7 @@ export function calculateAutomaticIntrinsicValue(
       );
     }
 
-    if (!positiveFinite(input.price) || !positiveFinite(input.peTtm) || !positiveFinite(input.priceToBook)) return null;
+    if (!positiveFinite(input.price) || !plausiblePe(input.peTtm) || !positiveFinite(input.priceToBook)) return null;
     const multiples = legacyBankMultiples(input.peTtm, input.priceToBook);
     if (!multiples) return null;
     return buildResult(
@@ -229,7 +238,7 @@ export function calculateAutomaticIntrinsicValue(
 
   const peMultiples = PE_MULTIPLES[family];
   if (!peMultiples) return null;
-  if (positiveFinite(input.epsTtm)) {
+  if (positiveFinite(input.epsTtm) && plausiblePe(input.peTtm)) {
     return buildResult(
       family,
       "P/E",
@@ -255,7 +264,7 @@ export function calculateAutomaticIntrinsicValue(
   }
 
   // Rolling-preview compatibility for an older Stock Detail API contract.
-  if (!positiveFinite(input.price) || !positiveFinite(input.peTtm) || input.peTtm < 3 || input.peTtm > 150) return null;
+  if (!positiveFinite(input.price) || !plausiblePe(input.peTtm)) return null;
   return buildResult(
     family,
     "P/E",
