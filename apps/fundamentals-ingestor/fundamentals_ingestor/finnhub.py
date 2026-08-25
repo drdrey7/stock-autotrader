@@ -109,6 +109,8 @@ def percentile(values: list[float], percentile_point: float) -> float:
     """
     if not values:
         raise ValueError("cannot compute percentile of an empty sequence")
+    if not 0.0 <= percentile_point <= 100.0:
+        raise ValueError("percentile_point must be between 0 and 100")
     ordered = sorted(values)
     rank = (len(ordered) - 1) * (percentile_point / 100.0)
     lower_index = int(math.floor(rank))

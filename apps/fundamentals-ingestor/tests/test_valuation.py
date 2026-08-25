@@ -63,6 +63,16 @@ class PercentileFunctionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             percentile([], 50)
 
+    def test_out_of_range_percentile_point_raises_value_error(self):
+        for point in (-1, 101):
+            with self.subTest(point=point):
+                with self.assertRaises(ValueError):
+                    percentile([1, 2, 3], point)
+
+    def test_boundary_percentile_points_are_accepted(self):
+        self.assertEqual(percentile([1, 2, 3], 0), 1)
+        self.assertEqual(percentile([1, 2, 3], 100), 3)
+
 
 class GrowthNormalizationTests(unittest.TestCase):
     def test_finnhub_growth_scalars_are_stored_directly_as_percentage_points(self):
