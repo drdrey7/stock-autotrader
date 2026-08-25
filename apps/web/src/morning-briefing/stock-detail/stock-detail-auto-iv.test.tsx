@@ -50,6 +50,35 @@ describe("Stock Detail automatic intrinsic value", () => {
     expect(screen.getByText("P/E · 28x / 31x / 34x")).toBeInTheDocument();
   });
 
+  it("regression: Adobe uses the midpoint Base everywhere, including the headline and scenario bar", async () => {
+    const mock = createMockStockDetail("ADBE")!;
+    const detail: StockDetail = {
+      ...mock,
+      source: "api",
+      sector: "Technology",
+      quote: { ...mock.quote, price: 276.24 },
+      metrics: { ...mock.metrics, peTtm: 15.137946495292185, priceToBook: null },
+      valuation: {
+        ...mock.valuation,
+        intrinsicValue: null,
+        upsidePct: null,
+        methods: { ...mock.valuation.methods, manual: null, selected: null },
+      },
+    };
+
+    renderDetail(detail);
+    await screen.findByRole("heading", { level: 1, name: "Adobe Inc." });
+
+    expect(screen.getAllByText("$401.46").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText("$456.21").length).toBeGreaterThanOrEqual(3);
+    expect(screen.getAllByText("$510.95").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText("+65.20%")).toBeInTheDocument();
+    expect(screen.getByText("P/E · 22x / 25x / 28x")).toBeInTheDocument();
+    expect(screen.getByText("Bear")).toBeInTheDocument();
+    expect(screen.getByText("Base")).toBeInTheDocument();
+    expect(screen.getByText("Bull")).toBeInTheDocument();
+  });
+
   it("uses P/B scenarios for a bank when P/B is available", async () => {
     const mock = createMockStockDetail("JPM")!;
     const detail: StockDetail = {
