@@ -58,7 +58,7 @@ export function FinancialInfoHint({ term, className = "" }: FinancialInfoHintPro
           setOpen((value) => !value);
         }}
       >
-        <Lightbulb size={17} strokeWidth={2} aria-hidden="true" />
+        <Lightbulb size={15} strokeWidth={2} aria-hidden="true" />
       </button>
 
       {open && (
@@ -83,7 +83,7 @@ export function FinancialInfoHint({ term, className = "" }: FinancialInfoHintPro
                 triggerRef.current?.focus();
               }}
             >
-              <X size={13} strokeWidth={2} aria-hidden="true" />
+              <X size={12} strokeWidth={2} aria-hidden="true" />
             </button>
           </span>
           <span className="financial-info-description">{entry.shortDescription}</span>
