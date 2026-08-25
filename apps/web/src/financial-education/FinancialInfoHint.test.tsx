@@ -15,9 +15,10 @@ describe("FinancialInfoHint", () => {
     fireEvent.click(trigger);
 
     expect(trigger).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByRole("dialog", { name: "Market Cap" })).toHaveTextContent(
-      "The total value of all the company's shares combined.",
-    );
+    const dialog = screen.getByRole("dialog", { name: "Market Cap" });
+    expect(dialog).toHaveTextContent("The total value of all the company's shares combined.");
+    expect(dialog).toHaveTextContent("Usually:");
+    expect(dialog).toHaveTextContent("There isn't a better or worse number here");
   });
 
   it("moves focus into the dialog when it opens", () => {
