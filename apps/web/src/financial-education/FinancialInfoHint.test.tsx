@@ -20,6 +20,14 @@ describe("FinancialInfoHint", () => {
     );
   });
 
+  it("moves focus into the dialog when it opens", () => {
+    render(<FinancialInfoHint term="marketCap" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Learn what Market Cap means" }));
+
+    expect(screen.getByRole("dialog", { name: "Market Cap" })).toHaveFocus();
+  });
+
   it("closes with Escape and restores focus to the trigger", () => {
     render(<FinancialInfoHint term="sma200w" />);
     const trigger = screen.getByRole("button", { name: "Learn what 200W SMA means" });
