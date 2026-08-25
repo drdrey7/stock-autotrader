@@ -55,7 +55,8 @@ Tests cover internal multi-key retry with cap=1 and same-day new-ledger/restart 
 - Capped runs resume unfinished symbols.
 - A filtered manual run (`--symbols ...`) is only a processing filter: starting a new filtered pass resets those requested symbols without replacing/erasing persistent progress for unrelated universe members.
 - Changed splits rewrite only the affected symbol's stored history/metrics.
-- Default cadence: weekly **Tuesday 09:00 UTC**, `Persistent=false`.
+- Default cadence: **Tue..Sat 09:00 UTC**, `Persistent=false`, 10 provider requests maximum per invocation.
+- Five durable residual slices of 10 cover the full 50-symbol universe once per normal week; a missed/capped slice resumes on the next scheduled residual day rather than restarting the pass.
 
 ### E. systemd cadence and real quota
 
@@ -63,12 +64,12 @@ Alpha Vantage entitlement used by this app is **25 requests/day per key**. With 
 
 - **maintenance.timer**: `*-*-* 07:00 UTC` daily; Monday normally refreshes the 50 WEEKLY series and may consume essentially the entire 50-request day.
 - **bootstrap.timer**: `*-*-* 08:00 UTC` daily, residual, after maintenance, exact HTTP hard cap default 6/day.
-- **reconcile-split.timer**: `Tue *-*-* 09:00 UTC`, `Persistent=false`, explicit cap 20/run.
+- **reconcile-split.timer**: `Tue..Sat *-*-* 09:00 UTC`, `Persistent=false`, explicit cap 10/run.
 - **due-split.timer**: `Tue..Sat 13:10 UTC`, zero-provider.
 
-Why Tuesday for reconciliation: Monday is reserved for the primary 200W WEEKLY refresh. On a healthy cycle Tuesday maintenance is a zero-provider noop; if Monday was incomplete, Tuesday maintenance still gets first priority before bootstrap/reconciliation can consume residual quota.
+Why Tue..Sat for reconciliation: Monday is reserved for the primary 200W WEEKLY refresh. On every residual day maintenance still runs first, so any Monday carryover gets priority. Only afterwards can bootstrap and the 10-request reconciliation slice consume residual quota. Under normal conditions 10 requests × 5 days checks all 50 symbols once per week without competing with Monday's 50-request WEEKLY pass.
 
-`Persistent=false` on reconciliation prevents a missed split scan from catch-up racing a due maintenance run after downtime.
+`Persistent=false` on reconciliation prevents a missed split scan from catch-up racing a due maintenance run after downtime; durable progress resumes on the next regular slice.
 
 ### F. Installer / fresh install
 
@@ -80,7 +81,7 @@ Why Tuesday for reconciliation: Monday is reserved for the primary 200W WEEKLY r
 Python (`apps/history-ingestor/tests`):
 
 - maintenance WEEKLY runs without provider SPLITS calls;
-- previously-valid SMA is preserved when a WEEKLY refresh fails;
+- previously-valid SMA is preserved when a WEEKLY fetch fails;
 - bootstrap cap is enforced on actual HTTP debits, including internal key retry;
 - exact bootstrap daily usage survives a new process/ledger on the same UTC day;
 - reconcile-splits dry-run is zero-provider;
