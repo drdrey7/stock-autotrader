@@ -102,17 +102,20 @@ function IntrinsicValueCard({ detail }: { detail: StockDetail }) {
 
 function ValuationMethodsCard({ detail }: { detail: StockDetail }) {
   const { methods } = detail.valuation;
-  const rows = [
-    ["DCF", methods.dcf],
-    ["Multiples", methods.multiples],
-    ["Manual", methods.manual],
-  ] as const;
+  const rows: ReadonlyArray<readonly [string, number | null, FinancialGlossaryTerm | null]> = [
+    ["DCF", methods.dcf, "dcf"],
+    ["Multiples", methods.multiples, "multiples"],
+    ["Manual", methods.manual, null],
+  ];
   return (
     <section className="stock-card" aria-labelledby="stock-methods-title">
-      <h2 id="stock-methods-title">Valuation Methods</h2>
+      <h2 id="stock-methods-title"><ExplainableLabel label="Valuation Methods" term="valuationMethods" /></h2>
       <dl className="stock-data-list">
-        {rows.map(([label, value]) => (
-          <div key={label}><dt>{label}</dt><dd>{formatMoney(value)}</dd></div>
+        {rows.map(([label, value, term]) => (
+          <div key={label}>
+            <dt>{term ? <ExplainableLabel label={label} term={term} /> : label}</dt>
+            <dd>{formatMoney(value)}</dd>
+          </div>
         ))}
         <div className="stock-data-selected">
           <dt>Selected{methods.selectedMethod ? ` (${methods.selectedMethod})` : ""}</dt>
@@ -150,18 +153,18 @@ function KeyLevelsCard({ detail }: { detail: StockDetail }) {
 }
 
 function StockMetrics({ detail }: { detail: StockDetail }) {
-  const metrics: ReadonlyArray<readonly [string, string, FinancialGlossaryTerm | null]> = [
+  const metrics: ReadonlyArray<readonly [string, string, FinancialGlossaryTerm]> = [
     ["Market Cap", detail.metrics.marketCap ?? "—", "marketCap"],
-    ["P/E (TTM)", formatNumber(detail.metrics.peTtm, "", 1), null],
-    ["ROIC", formatNumber(detail.metrics.roicPct, "%", 1), null],
-    ["FCF Margin", formatNumber(detail.metrics.fcfMarginPct, "%", 1), null],
-    ["Debt / Equity", formatNumber(detail.metrics.debtToEquity, "", 2), null],
+    ["P/E (TTM)", formatNumber(detail.metrics.peTtm, "", 1), "peTtm"],
+    ["ROIC", formatNumber(detail.metrics.roicPct, "%", 1), "roic"],
+    ["FCF Margin", formatNumber(detail.metrics.fcfMarginPct, "%", 1), "fcfMargin"],
+    ["Debt / Equity", formatNumber(detail.metrics.debtToEquity, "", 2), "debtToEquity"],
   ];
   return (
     <section className="stock-metrics" aria-label="Stock metrics">
       {metrics.map(([label, value, term]) => (
         <div className="stock-metric" key={label}>
-          <small>{term ? <ExplainableLabel label={label} term={term} /> : label}</small>
+          <small><ExplainableLabel label={label} term={term} /></small>
           <strong>{value}</strong>
         </div>
       ))}
