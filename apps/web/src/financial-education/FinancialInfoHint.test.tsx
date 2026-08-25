@@ -21,6 +21,17 @@ describe("FinancialInfoHint", () => {
     expect(dialog).toHaveTextContent("There isn't a better or worse number here");
   });
 
+  it("makes clear that negative Debt / Equity is not safer", () => {
+    render(<FinancialInfoHint term="debtToEquity" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Learn what Debt / Equity means" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Debt / Equity" });
+    expect(dialog).toHaveTextContent("For positive ratios, lower is generally safer");
+    expect(dialog).toHaveTextContent("shareholders' equity is negative");
+    expect(dialog).toHaveTextContent("do not treat it as safer");
+  });
+
   it("moves focus into the dialog when it opens", () => {
     render(<FinancialInfoHint term="marketCap" />);
 
