@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import StockDetailPage from "./StockDetailPage";
@@ -45,6 +45,18 @@ describe("Stock Detail financial info hints", () => {
       expect(screen.getByRole("button", { name })).toBeInTheDocument();
     }
     expect(screen.getByRole("button", { name: "Learn what 200W SMA means" })).toBeInTheDocument();
+  });
+
+  it("shows the shared casual interpretation guidance on Stock Detail", async () => {
+    renderStock("MSFT");
+    await screen.findByRole("heading", { level: 1, name: "Microsoft Corporation" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Learn what P/E (TTM) means" }));
+
+    const hint = screen.getByRole("dialog", { name: "P/E (TTM)" });
+    expect(hint).toHaveTextContent("Usually:");
+    expect(hint).toHaveTextContent("A lower P/E can mean a cheaper valuation");
+    expect(hint).toHaveTextContent("not automatically better");
   });
 
   it("does not duplicate the Intrinsic Value hint beside the IV range label", async () => {

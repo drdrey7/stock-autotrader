@@ -5,16 +5,18 @@
 .financial-info-trigger{width:24px;height:24px;margin:-3px -2px -3px 0;border-radius:999px;color:var(--brand-blue);background:color-mix(in srgb,var(--brand-blue) 5%,transparent)}
 .financial-info-trigger:hover,.financial-info-trigger[aria-expanded="true"]{background:color-mix(in srgb,var(--brand-blue) 13%,transparent);color:var(--brand-blue)}
 .financial-info-trigger:focus-visible,.financial-info-close:focus-visible,.financial-info-popover:focus-visible{outline:2px solid var(--brand-blue);outline-offset:2px}
-.financial-info-popover{position:absolute;z-index:100;top:calc(100% + 6px);left:0;display:flex;width:min(260px,calc(100vw - 24px));box-sizing:border-box;flex-direction:column;gap:7px;padding:10px 11px;border:1px solid var(--border);border-radius:9px;background:var(--surface);color:var(--text);box-shadow:0 8px 24px color-mix(in srgb,var(--text) 12%,transparent);text-align:left}
+.financial-info-popover{position:fixed;z-index:1000;display:flex;width:min(260px,calc(100vw - 24px));max-height:calc(100dvh - 24px);box-sizing:border-box;flex-direction:column;gap:7px;padding:10px 11px;overflow-y:auto;overscroll-behavior:contain;border:1px solid var(--border);border-radius:9px;background:var(--surface);color:var(--text);box-shadow:0 8px 24px color-mix(in srgb,var(--text) 12%,transparent);text-align:left}
 .financial-info-popover-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .financial-info-popover-head strong{font-size:11px;line-height:1.25;font-weight:800;letter-spacing:-.01em}
 .financial-info-close{width:24px;height:24px;margin:-5px -6px -5px 0;border-radius:7px;color:var(--muted)}
 .financial-info-close:hover{background:var(--surface-muted);color:var(--text)}
 .financial-info-description{color:var(--muted);font-size:10px;line-height:1.5;font-weight:550}
+.financial-info-interpretation{padding-top:7px;border-top:1px solid color-mix(in srgb,var(--border) 72%,transparent);color:var(--text);font-size:9.5px;line-height:1.5;font-weight:600}
+.financial-info-interpretation strong{color:var(--brand-blue);font-weight:800}
 
 @media (max-width:600px){
   .financial-info-trigger{width:24px;height:24px;margin:-3px -2px -3px 0}
-  .financial-info-popover{top:calc(100% + 6px);left:0;width:min(260px,calc(100vw - 24px));padding:10px 11px;border-radius:9px;box-shadow:0 8px 24px color-mix(in srgb,var(--text) 14%,transparent)}
+  .financial-info-popover{width:min(260px,calc(100vw - 24px));padding:10px 11px;border-radius:9px;box-shadow:0 8px 24px color-mix(in srgb,var(--text) 14%,transparent)}
 }
 
 @media (prefers-reduced-motion:reduce){

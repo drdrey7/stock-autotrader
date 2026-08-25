@@ -1,6 +1,8 @@
 import { useEffect, useRef } from "react";
-import { ArrowLeft, BookOpen, ExternalLink, X } from "lucide-react";
+import { ArrowLeft, ExternalLink, X } from "lucide-react";
 import { motion } from "motion/react";
+import FinancialInfoHint from "../financial-education/FinancialInfoHint";
+import type { FinancialGlossaryTerm } from "../financial-education/financial-glossary";
 import { CompanyLogo } from "./EarningsLogo";
 import {
   dataQualityLabel,
@@ -70,11 +72,30 @@ function useDialogA11y<T extends HTMLElement>(onClose: () => void) {
   return dialogRef;
 }
 
+function ExplainableLabel({ label, term }: { label: string; term: FinancialGlossaryTerm }) {
+  return (
+    <span className="financial-label">
+      <span className="financial-label-text">{label}</span>
+      <FinancialInfoHint term={term} />
+    </span>
+  );
+}
+
 /** One labelled value row; N/A renders in the same slot so missing data never shifts layout. */
-function MetricRow({ label, value, tone = "" }: { label: string; value: string; tone?: string }) {
+function MetricRow({
+  label,
+  value,
+  tone = "",
+  term,
+}: {
+  label: string;
+  value: string;
+  tone?: string;
+  term?: FinancialGlossaryTerm;
+}) {
   return (
     <div className="metric-row">
-      <small>{label}</small>
+      <small>{term ? <ExplainableLabel label={label} term={term} /> : label}</small>
       <strong className={tone}>{value}</strong>
     </div>
   );
@@ -89,34 +110,6 @@ function UrlLink({ label, url }: UrlLinkProps) {
     <a className="official-link" href={url} target="_blank" rel="noreferrer">
       {label} <ExternalLink/>
     </a>
-  );
-}
-
-const GLOSSARY: Array<{ term: string; meaning: string }> = [
-  { term: "EPS", meaning: "EPS is the company’s profit divided by the number of shares. It helps show how much profit belongs to each share." },
-  { term: "Consensus Estimate", meaning: "The average expectation from analysts before the company reports results." },
-  { term: "Adjusted EPS", meaning: "An EPS number that removes some unusual or one-off items. Investors often use it to compare results with Wall Street expectations." },
-  { term: "GAAP EPS", meaning: "The official EPS calculated under standard accounting rules. It can be different from Adjusted EPS." },
-  { term: "Beat / Miss", meaning: "Beat means the reported market result was above analysts’ expectations. Miss means it was below." },
-];
-
-function EarningsGlossary() {
-  return (
-    <details className="earnings-glossary">
-      <summary><BookOpen/> How to read these numbers</summary>
-      <dl>
-        {GLOSSARY.map(({ term, meaning }) => (
-          <div key={term}>
-            <dt>{term}</dt>
-            <dd>{meaning}</dd>
-          </div>
-        ))}
-      </dl>
-      <p className="glossary-note">
-        <strong>Important:</strong> Adjusted and GAAP EPS are different measures,
-        so they should not be compared directly.
-      </p>
-    </details>
   );
 }
 
@@ -142,6 +135,7 @@ export default function EarningsDetail({ item, onClose }: { item: EarningsCompan
   // adjusted value; a neutral "Market EPS Actual" when we fell back to the
   // legacy provider actual (no adjusted basis guaranteed).
   const epsActualLabel = item.epsActualAdjustedSource ? "Adjusted EPS Actual" : "Market EPS Actual";
+  const epsActualTerm: FinancialGlossaryTerm = item.epsActualAdjustedSource ? "adjustedEps" : "marketEpsActual";
   const surpriseTone = (pct: number | null): string => (pct === null ? "" : pct > 0 ? "positive" : pct < 0 ? "negative" : "");
 
   return (
@@ -192,29 +186,32 @@ export default function EarningsDetail({ item, onClose }: { item: EarningsCompan
 
         <section className="earnings-subsection" aria-label="Market earnings">
           <div className="subsection-head">
-            <h3>Market Earnings</h3>
+            <h3><ExplainableLabel label="Market Earnings" term="marketEarnings" /></h3>
             <small>Finnhub / Market consensus</small>
           </div>
 
           <div className="report-grid">
             <section className="earnings-metric">
-              <span>EPS</span>
-              <MetricRow label="Consensus EPS" value={formatShareValue(market.epsEstimate)}/>
-              <MetricRow label={epsActualLabel} value={formatShareValue(market.epsActual)}/>
-              <MetricRow label="Surprise" value={formatPercent(market.epsSurprisePct)} tone={surpriseTone(market.epsSurprisePct)}/>
-              <MetricRow label="Result" value={displayMetricResult(market.epsResult)} tone={resultClass(market.epsResult)}/>
+              <span><ExplainableLabel label="EPS" term="eps" /></span>
+              <MetricRow label="Consensus EPS" value={formatShareValue(market.epsEstimate)} term="consensusEps"/>
+              <MetricRow label={epsActualLabel} value={formatShareValue(market.epsActual)} term={epsActualTerm}/>
+              <MetricRow label="Surprise" value={formatPercent(market.epsSurprisePct)} tone={surpriseTone(market.epsSurprisePct)} term="earningsSurprise"/>
+              <MetricRow label="Result" value={displayMetricResult(market.epsResult)} tone={resultClass(market.epsResult)} term="beatMiss"/>
             </section>
             <section className="earnings-metric">
-              <span>Revenue</span>
-              <MetricRow label="Consensus Revenue" value={formatCompactMoney(market.revenueEstimate)}/>
-              <MetricRow label="Market Revenue Actual" value={formatCompactMoney(market.revenueActual)}/>
-              <MetricRow label="Surprise" value={formatPercent(market.revenueSurprisePct)} tone={surpriseTone(market.revenueSurprisePct)}/>
-              <MetricRow label="Result" value={displayMetricResult(market.revenueResult)} tone={resultClass(market.revenueResult)}/>
+              <span><ExplainableLabel label="Revenue" term="revenue" /></span>
+              <MetricRow label="Consensus Revenue" value={formatCompactMoney(market.revenueEstimate)} term="consensusRevenue"/>
+              <MetricRow label="Market Revenue Actual" value={formatCompactMoney(market.revenueActual)} term="marketRevenueActual"/>
+              <MetricRow label="Surprise" value={formatPercent(market.revenueSurprisePct)} tone={surpriseTone(market.revenueSurprisePct)} term="earningsSurprise"/>
+              <MetricRow label="Result" value={displayMetricResult(market.revenueResult)} tone={resultClass(market.revenueResult)} term="beatMiss"/>
             </section>
           </div>
 
           <div className="detail-metrics detail-metrics-single">
-            <span>Overall Market Result<strong className={resultClass(market.overallResult)}>{displayMetricResult(market.overallResult)}</strong></span>
+            <span>
+              <ExplainableLabel label="Overall Market Result" term="overallMarketResult" />
+              <strong className={resultClass(market.overallResult)}>{displayMetricResult(market.overallResult)}</strong>
+            </span>
           </div>
         </section>
 
@@ -222,13 +219,13 @@ export default function EarningsDetail({ item, onClose }: { item: EarningsCompan
 
         <section className="earnings-subsection official-section" aria-label="Official SEC data">
           <div className="subsection-head">
-            <h3>Official SEC Data</h3>
+            <h3><ExplainableLabel label="Official SEC Data" term="secEdgar" /></h3>
             <small>SEC / EDGAR</small>
           </div>
           <div className="detail-metrics official-metrics">
-            <span>GAAP EPS<strong>{formatShareValue(official.epsGaap)}</strong></span>
-            <span>GAAP Revenue<strong>{formatCompactMoney(official.revenueGaap)}</strong></span>
-            <span>SEC Form<strong>{official.secForm ?? "N/A"}</strong></span>
+            <span><ExplainableLabel label="GAAP EPS" term="gaapEps" /><strong>{formatShareValue(official.epsGaap)}</strong></span>
+            <span><ExplainableLabel label="GAAP Revenue" term="gaapRevenue" /><strong>{formatCompactMoney(official.revenueGaap)}</strong></span>
+            <span><ExplainableLabel label="SEC Form" term="secForm" /><strong>{official.secForm ?? "N/A"}</strong></span>
             <span>SEC Filed<strong>{formatFilingDate(official.secFiledAt) ?? "N/A"}</strong></span>
           </div>
           {official.secFilingUrl ? (
@@ -240,8 +237,6 @@ export default function EarningsDetail({ item, onClose }: { item: EarningsCompan
           <UrlLink label="Official Earnings Report" url={item.officialReportUrl}/>
           <UrlLink label="Investor Relations" url={item.investorRelationsUrl}/>
         </div>
-
-        <EarningsGlossary/>
       </motion.aside>
     </motion.div>
   );

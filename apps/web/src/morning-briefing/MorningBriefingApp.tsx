@@ -11,6 +11,7 @@ import {
 } from "./screener/screener-filter";
 import { LazyPageErrorBoundary, PageLoadingFallback, spring } from "./shared";
 import "./morning-briefing.css";
+import "./earnings-detail-layout.css";
 import "./typography.css";
 
 const HeatmapPage = lazy(() => import("./HeatmapPage"));

@@ -2,7 +2,24 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import FinancialInfoHint from "./FinancialInfoHint";
 
-afterEach(() => cleanup());
+function rect(left: number, top: number, width: number, height: number): DOMRect {
+  return {
+    x: left,
+    y: top,
+    left,
+    top,
+    right: left + width,
+    bottom: top + height,
+    width,
+    height,
+    toJSON: () => ({}),
+  } as DOMRect;
+}
+
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 describe("FinancialInfoHint", () => {
   it("is closed by default and opens with the matching glossary content", () => {
@@ -15,9 +32,21 @@ describe("FinancialInfoHint", () => {
     fireEvent.click(trigger);
 
     expect(trigger).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByRole("dialog", { name: "Market Cap" })).toHaveTextContent(
-      "The total value of all the company's shares combined.",
-    );
+    const dialog = screen.getByRole("dialog", { name: "Market Cap" });
+    expect(dialog).toHaveTextContent("The total value of all the company's shares combined.");
+    expect(dialog).toHaveTextContent("Usually:");
+    expect(dialog).toHaveTextContent("There isn't a better or worse number here");
+  });
+
+  it("makes clear that negative Debt / Equity is not safer", () => {
+    render(<FinancialInfoHint term="debtToEquity" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Learn what Debt / Equity means" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Debt / Equity" });
+    expect(dialog).toHaveTextContent("For positive ratios, lower is generally safer");
+    expect(dialog).toHaveTextContent("shareholders' equity is negative");
+    expect(dialog).toHaveTextContent("do not treat it as safer");
   });
 
   it("moves focus into the dialog when it opens", () => {
@@ -26,6 +55,47 @@ describe("FinancialInfoHint", () => {
     fireEvent.click(screen.getByRole("button", { name: "Learn what Market Cap means" }));
 
     expect(screen.getByRole("dialog", { name: "Market Cap" })).toHaveFocus();
+  });
+
+  it("keeps keyboard focus inside the portaled dialog until it closes", () => {
+    render(
+      <div>
+        <FinancialInfoHint term="marketCap" />
+        <button type="button">Outside</button>
+      </div>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Learn what Market Cap means" }));
+    const dialog = screen.getByRole("dialog", { name: "Market Cap" });
+    const close = screen.getByRole("button", { name: "Close Market Cap explanation" });
+
+    expect(dialog).toHaveFocus();
+    fireEvent.keyDown(dialog, { key: "Tab" });
+    expect(close).toHaveFocus();
+
+    fireEvent.keyDown(close, { key: "Tab" });
+    expect(close).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Outside" })).not.toHaveFocus();
+  });
+
+  it("keeps the popover inside the viewport and flips above when needed", () => {
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this.classList.contains("financial-info-trigger")) return rect(900, 700, 24, 24);
+      if (this.classList.contains("financial-info-popover")) return rect(0, 0, 260, 180);
+      return rect(0, 0, 0, 0);
+    });
+
+    render(<FinancialInfoHint term="adjustedEps" />);
+    fireEvent.click(screen.getByRole("button", { name: "Learn what Adjusted EPS means" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Adjusted EPS" });
+    const left = Number.parseFloat(dialog.style.left);
+    const top = Number.parseFloat(dialog.style.top);
+
+    expect(dialog.parentElement).toBe(document.body);
+    expect(left).toBeLessThanOrEqual(window.innerWidth - 12 - 260);
+    expect(left).toBeGreaterThanOrEqual(12);
+    expect(top).toBeLessThan(700);
   });
 
   it("closes with Escape and restores focus to the trigger", () => {
