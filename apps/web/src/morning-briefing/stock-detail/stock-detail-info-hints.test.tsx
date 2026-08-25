@@ -20,26 +20,48 @@ function renderStock(symbol: string) {
   );
 }
 
+const expandedHintNames = [
+  "Learn what Intrinsic Value means",
+  "Learn what Valuation Methods means",
+  "Learn what DCF means",
+  "Learn what Multiples means",
+  "Learn what Market Cap means",
+  "Learn what P/E (TTM) means",
+  "Learn what ROIC means",
+  "Learn what FCF Margin means",
+  "Learn what Debt / Equity means",
+] as const;
+
 describe("Stock Detail financial info hints", () => {
   beforeEach(() => {
     vi.stubGlobal("scrollTo", vi.fn());
   });
 
-  it("renders the three beginner-friendly hints on Microsoft", async () => {
+  it("renders the requested beginner-friendly hints on Microsoft", async () => {
     renderStock("MSFT");
     await screen.findByRole("heading", { level: 1, name: "Microsoft Corporation" });
 
-    expect(screen.getByRole("button", { name: "Learn what Market Cap means" })).toBeInTheDocument();
+    for (const name of expandedHintNames) {
+      expect(screen.getByRole("button", { name })).toBeInTheDocument();
+    }
     expect(screen.getByRole("button", { name: "Learn what 200W SMA means" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Learn what Intrinsic Value means" })).toBeInTheDocument();
+  });
+
+  it("does not duplicate the Intrinsic Value hint beside the IV range label", async () => {
+    renderStock("MSFT");
+    await screen.findByRole("heading", { level: 1, name: "Microsoft Corporation" });
+
+    expect(screen.getAllByRole("button", { name: "Learn what Intrinsic Value means" })).toHaveLength(1);
+    expect(screen.getByText("IV")).toBeInTheDocument();
   });
 
   it("uses the same hints for another stock without symbol-specific logic", async () => {
     renderStock("AAPL");
     await screen.findByRole("heading", { level: 1, name: "Apple Inc." });
 
-    expect(screen.getByRole("button", { name: "Learn what Market Cap means" })).toBeInTheDocument();
+    for (const name of expandedHintNames) {
+      expect(screen.getByRole("button", { name })).toBeInTheDocument();
+    }
     expect(screen.getByRole("button", { name: "Learn what 200W SMA means" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Learn what Intrinsic Value means" })).toBeInTheDocument();
   });
 });
