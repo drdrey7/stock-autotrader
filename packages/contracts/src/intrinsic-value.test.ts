@@ -6,7 +6,7 @@ import {
 } from "./intrinsic-value";
 
 describe("automatic intrinsic value", () => {
-  it("defines Base as the exact midpoint and anchors P/E valuation to EPS TTM", () => {
+  it("defines Base as the cent-rounded midpoint and anchors P/E valuation to EPS TTM", () => {
     const result = calculateAutomaticIntrinsicValue("MSFT", "Software", {
       price: 481.2,
       peTtm: 32.1,
@@ -27,7 +27,7 @@ describe("automatic intrinsic value", () => {
       baseUpsidePct: -3.4,
       bullUpsidePct: 5.9,
     });
-    expect(result!.base).toBe((result!.bear + result!.bull) / 2);
+    expect(result!.base).toBeCloseTo((result!.bear + result!.bull) / 2, 2);
   });
 
   it("does not let an intraday price move change EPS-anchored intrinsic value", () => {
@@ -80,7 +80,19 @@ describe("automatic intrinsic value", () => {
     });
   });
 
-  it("prefers positive EPS/P-E over P/FCF when both anchors are usable", () => {
+  it("prefers P/FCF when EPS is positive but the observed P/E is implausible", () => {
+    const result = calculateAutomaticIntrinsicValue("COIN", "Financial Services", {
+      price: 181.5,
+      peTtm: 500,
+      epsTtm: 0.05,
+      fcfPerShareTtm: 6.5,
+    });
+
+    expect(result?.method).toBe("P/FCF");
+    expect(result?.base).toBe(143);
+  });
+
+  it("prefers positive EPS/P-E over P/FCF when both anchors are usable and P/E is plausible", () => {
     const result = calculateAutomaticIntrinsicValue("COIN", "Financial Services", {
       price: 181.5,
       peTtm: 30,
