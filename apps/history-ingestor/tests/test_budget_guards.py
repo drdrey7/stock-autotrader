@@ -10,7 +10,7 @@ from history_ingestor.maintenance_state import (
     ReconcileStore,
 )
 from history_ingestor.provider import AlphaVantageClient, ThrottleExhaustedError
-from history_ingestor.state import BootstrapBudgetLedger, Checkpoint
+from history_ingestor.state import BootstrapBudgetLedger, Checkpoint, KeyBudgetLedger
 
 
 class _FakeBootstrapStore:
@@ -65,15 +65,25 @@ class _FakeD1:
 
 
 class BudgetGuardTests(unittest.TestCase):
-    def test_bootstrap_cap_stops_internal_multi_key_retry_at_real_http_boundary(self) -> None:
-        store = _FakeBootstrapStore()
-        ledger = BootstrapBudgetLedger(store, daily_limit=1, run_limit=1)
+    @staticmethod
+    def _provider(ledger, urlopen) -> AlphaVantageClient:
         settings = SimpleNamespace(
             alpha_vantage_keys=("key-0", "key-1"),
             av_min_interval_seconds=0.0,
             av_base_url="https://example.invalid/query",
             av_timeout_seconds=1.0,
         )
+        return AlphaVantageClient(
+            settings,
+            ledger,
+            now_fn=lambda: 0.0,
+            sleep_fn=lambda _seconds: None,
+            urlopen=urlopen,
+        )
+
+    def test_bootstrap_cap_stops_internal_multi_key_retry_at_real_http_boundary(self) -> None:
+        store = _FakeBootstrapStore()
+        ledger = BootstrapBudgetLedger(store, daily_limit=1, run_limit=1)
         calls = 0
 
         def urlopen(_request, _timeout):
@@ -81,13 +91,7 @@ class BudgetGuardTests(unittest.TestCase):
             calls += 1
             return _InformationResponse()
 
-        provider = AlphaVantageClient(
-            settings,
-            ledger,
-            now_fn=lambda: 0.0,
-            sleep_fn=lambda _seconds: None,
-            urlopen=urlopen,
-        )
+        provider = self._provider(ledger, urlopen)
 
         with self.assertRaises(ThrottleExhaustedError):
             provider.fetch_splits("AAPL")
@@ -97,6 +101,27 @@ class BudgetGuardTests(unittest.TestCase):
         self.assertEqual(store.http_used, 1)
         self.assertEqual(ledger.remaining(1), 0)
         self.assertGreaterEqual(store.save_calls, 1)
+
+    def test_reconcile_run_cap_stops_internal_multi_key_retry(self) -> None:
+        store = _FakeBootstrapStore()
+        ledger = KeyBudgetLedger(store, run_limit=1)
+        calls = 0
+
+        def urlopen(_request, _timeout):
+            nonlocal calls
+            calls += 1
+            return _InformationResponse()
+
+        provider = self._provider(ledger, urlopen)
+
+        with self.assertRaises(ThrottleExhaustedError):
+            provider.fetch_splits("AAPL")
+
+        # The cap is an actual HTTP-request boundary, not a logical-symbol cap.
+        self.assertEqual(calls, 1)
+        self.assertEqual(provider.requests_this_run, 1)
+        self.assertEqual(sum(store.key_used), 1)
+        self.assertEqual(ledger.remaining(1), 0)
 
     def test_bootstrap_daily_http_counter_survives_new_ledger_instance(self) -> None:
         store = _FakeBootstrapStore()
