@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type SyntheticEvent } from "react";
-import { Info, X } from "lucide-react";
+import { Lightbulb, X } from "lucide-react";
 import { financialGlossary, type FinancialGlossaryTerm } from "./financial-glossary";
 import "./financial-info-hint.css";
 
@@ -55,7 +55,7 @@ export function FinancialInfoHint({ term, className = "" }: FinancialInfoHintPro
           setOpen((value) => !value);
         }}
       >
-        <Info size={12} strokeWidth={2} aria-hidden="true" />
+        <Lightbulb size={16} strokeWidth={2} aria-hidden="true" />
       </button>
 
       {open && (
