@@ -73,7 +73,10 @@ function toUiModel(api: StockDetailApiResponse): StockDetail {
         triggered: support.triggered,
       })),
     },
-    metrics: api.fundamentals,
+    metrics: {
+      ...api.fundamentals,
+      priceToBook: api.fundamentals.priceToBook ?? null,
+    },
     chart: {
       priceHistory: api.chart.priceHistory,
       intrinsicValueHistory: api.chart.intrinsicValueHistory,
