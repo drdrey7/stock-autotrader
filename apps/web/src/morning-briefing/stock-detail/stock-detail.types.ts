@@ -67,7 +67,8 @@ export interface StockDetail {
   metrics: {
     marketCap: string | null;
     peTtm: number | null;
-    priceToBook: number | null;
+    /** Present for API data; optional only for legacy/mock fixtures. */
+    priceToBook?: number | null;
     roicPct: number | null;
     fcfMarginPct: number | null;
     debtToEquity: number | null;
