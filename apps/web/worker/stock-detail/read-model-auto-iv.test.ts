@@ -18,8 +18,9 @@ import { readStockDetailApi } from "./read-model";
 const NOW = new Date("2026-08-13T14:00:00.000Z");
 const NOW_ISO = NOW.toISOString();
 const env = { DB: {} as D1Database } as Env;
+const ADBE_EPS_TTM = 276.24 / 15.137946495292185;
 
-function snapshot(manualBase: number | null): StockDetailStorageSnapshot {
+function snapshot(manualBase: number | null, price = 276.24): StockDetailStorageSnapshot {
   return {
     company: {
       symbol: "ADBE",
@@ -30,7 +31,7 @@ function snapshot(manualBase: number | null): StockDetailStorageSnapshot {
     },
     quote: {
       symbol: "ADBE",
-      price: 276.24,
+      price,
       change_abs: 22.25,
       change_pct: 8.74,
       day_high: 280,
@@ -60,6 +61,8 @@ function snapshot(manualBase: number | null): StockDetailStorageSnapshot {
       symbol: "ADBE",
       market_cap: 119_000_000_000,
       pe_ttm: 15.137946495292185,
+      eps_ttm: ADBE_EPS_TTM,
+      shares_outstanding: 420_000_000,
       revenue_ttm: null,
       operating_income_ttm: null,
       pretax_income_ttm: null,
@@ -112,6 +115,17 @@ describe("Stock Detail canonical intrinsic-value selection", () => {
       method: "automatic-p-e",
       asOf: "2026-08-13",
     });
+  });
+
+  it("keeps automatic IV stable when only the live Adobe quote moves", async () => {
+    storageMock.readStockDetailStorageSnapshot.mockResolvedValueOnce(snapshot(null, 276.24));
+    const first = await readStockDetailApi(env, "ADBE", NOW);
+    storageMock.readStockDetailStorageSnapshot.mockResolvedValueOnce(snapshot(null, 270.52));
+    const second = await readStockDetailApi(env, "ADBE", NOW);
+
+    expect(second.valuation.automatic?.base).toBe(first.valuation.automatic?.base);
+    expect(second.valuation.automatic?.base).toBe(456.21);
+    expect(second.valuation.automatic?.baseUpsidePct).not.toBe(first.valuation.automatic?.baseUpsidePct);
   });
 
   it("keeps Manual selected while still exposing Automatic scenarios", async () => {
