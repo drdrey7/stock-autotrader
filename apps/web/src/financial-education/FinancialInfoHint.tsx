@@ -55,7 +55,7 @@ export function FinancialInfoHint({ term, className = "" }: FinancialInfoHintPro
           setOpen((value) => !value);
         }}
       >
-        <Lightbulb size={16} strokeWidth={2} aria-hidden="true" />
+        <Lightbulb size={17} strokeWidth={2} aria-hidden="true" />
       </button>
 
       {open && (
