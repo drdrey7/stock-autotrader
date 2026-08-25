@@ -130,10 +130,15 @@ def _five_years_earlier(value: date) -> date:
 def _series_percentiles_5y(payload: dict[str, Any], field: str) -> dict[str, Any] | None:
     """Trailing 5-year P25/median/P75 for a quarterly ratio/multiple series.
 
-    Only points with a parseable period and a finite, positive value are kept.
-    The 5-year window is anchored at the most recent valid point of the series
-    itself (no extra provider request, no annual fallback, no caps or outlier
-    removal). Returns ``None`` when no valid point falls in the window.
+    The 5-year window is anchored at the most recent reported period of the
+    series itself, regardless of whether that period's value is usable. Only
+    after the window is fixed are points with a non-valid or non-positive
+    value discarded. ``as_of`` therefore reflects the freshness of the series
+    (latest reported period), not the last positive multiple.
+
+    No extra provider request, no annual fallback, no caps or outlier removal.
+    Returns ``None`` (``as_of`` NULL, ``samples`` 0) only when the series has
+    no parseable period at all.
     """
     series = payload.get("series")
     if not isinstance(series, dict):
@@ -145,12 +150,9 @@ def _series_percentiles_5y(payload: dict[str, Any], field: str) -> dict[str, Any
     if not isinstance(rows, list):
         return None
 
-    points: list[tuple[str, date, float]] = []
+    dated: list[tuple[str, date, Any]] = []
     for row in rows:
         if not isinstance(row, dict):
-            continue
-        value = _finite_number(row.get("v", row.get("value")))
-        if value is None or value <= 0:
             continue
         period = row.get("period")
         if not isinstance(period, str) or not period.strip():
@@ -159,23 +161,38 @@ def _series_percentiles_5y(payload: dict[str, Any], field: str) -> dict[str, Any
             parsed = date.fromisoformat(period.strip())
         except ValueError:
             continue
-        points.append((period.strip(), parsed, value))
-    if not points:
+        dated.append((period.strip(), parsed, row.get("v", row.get("value"))))
+    if not dated:
         return None
 
-    anchor_date = max(point[1] for point in points)
-    anchor_period = next(point[0] for point in points if point[1] == anchor_date)
+    anchor_date = max(point[1] for point in dated)
+    anchor_period = next(point[0] for point in dated if point[1] == anchor_date)
     cutoff = _five_years_earlier(anchor_date)
-    window = [value for _, parsed, value in points if parsed >= cutoff]
-    if not window:
-        return None
+
+    # Fix the window first (date-based), then keep only finite, positive values.
+    window_values: list[float] = []
+    for _, parsed, value in dated:
+        if parsed < cutoff:
+            continue
+        number = _finite_number(value)
+        if number is None or number <= 0:
+            continue
+        window_values.append(number)
+    if not window_values:
+        return {
+            "as_of": anchor_period,
+            "samples": 0,
+            "p25": None,
+            "median": None,
+            "p75": None,
+        }
 
     return {
         "as_of": anchor_period,
-        "samples": len(window),
-        "p25": percentile(window, 25),
-        "median": percentile(window, 50),
-        "p75": percentile(window, 75),
+        "samples": len(window_values),
+        "p25": percentile(window_values, 25),
+        "median": percentile(window_values, 50),
+        "p75": percentile(window_values, 75),
     }
 
 

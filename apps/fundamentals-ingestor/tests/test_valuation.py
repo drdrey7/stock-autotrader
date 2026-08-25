@@ -174,18 +174,80 @@ class PeHistoryTests(unittest.TestCase):
         self.assertEqual(value.pe_5y_samples, 1)
         self.assertAlmostEqual(value.pe_5y_median, 12.5)
 
-    def test_no_valid_points_gives_zero_samples_and_null_percentiles(self):
+    def test_no_valid_values_gives_zero_samples_and_null_percentiles_but_keeps_as_of(self):
         rows = [{"period": "2026-06-30", "v": None}, {"period": "2026-03-31", "v": float("nan")}]
         value = normalize_metric(self._payload(values=rows))
         self.assertEqual(value.pe_5y_samples, 0)
         self.assertIsNone(value.pe_5y_median)
         self.assertIsNone(value.pe_5y_p25)
         self.assertIsNone(value.pe_5y_p75)
-        self.assertIsNone(value.pe_5y_as_of)
+        # as_of reflects the latest reported period even when no value is usable.
+        self.assertEqual(value.pe_5y_as_of, "2026-06-30")
+
+    def test_anchor_uses_latest_reported_period_not_latest_positive(self):
+        # 2026 and 2025 are non-positive; the only positive (2020) is outside
+        # the 5-year window anchored at 2026-06-30, so it must be excluded.
+        rows = [
+            {"period": "2020-06-30", "v": 30.0},
+            {"period": "2025-06-30", "v": -1.0},
+            {"period": "2026-06-30", "v": -5.0},
+        ]
+        value = normalize_metric(self._payload(values=rows))
+        self.assertEqual(value.pe_5y_as_of, "2026-06-30")
+        self.assertEqual(value.pe_5y_samples, 0)
+        self.assertIsNone(value.pe_5y_median)
+        self.assertIsNone(value.pe_5y_p25)
+        self.assertIsNone(value.pe_5y_p75)
+
+    def test_anchor_fixes_window_before_filtering_positive_values(self):
+        # Latest reported period negative (2026) which must still anchor; the
+        # window 2021-06 -> 2026-06 keeps only the 2022/2023/2024 positives.
+        rows = [
+            {"period": "2022-06-30", "v": 30.0},
+            {"period": "2023-06-30", "v": 10.0},
+            {"period": "2024-06-30", "v": 20.0},
+            {"period": "2025-06-30", "v": -1.0},
+            {"period": "2026-06-30", "v": -5.0},
+        ]
+        value = normalize_metric(self._payload(values=rows))
+        self.assertEqual(value.pe_5y_as_of, "2026-06-30")
+        self.assertEqual(value.pe_5y_samples, 3)
+        self.assertAlmostEqual(value.pe_5y_median, 20.0)
+
+    def test_anchor_is_most_recent_parseable_period_when_unordered(self):
+        rows = [
+            {"period": "2023-06-30", "v": 5.0},
+            {"period": "2026-06-30", "v": 25.0},
+            {"period": "2024-12-31", "v": 15.0},
+            {"period": "2025-12-31", "v": 20.0},
+        ]
+        value = normalize_metric(self._payload(values=rows))
+        self.assertEqual(value.pe_5y_as_of, "2026-06-30")
+        self.assertEqual(value.pe_5y_samples, 4)
+
+    def test_null_value_row_still_anchors_the_window(self):
+        rows = [
+            {"period": "2026-06-30", "v": None},
+            {"period": "2024-06-30", "v": 12.0},
+            {"period": "2024-12-31", "v": 8.0},
+        ]
+        value = normalize_metric(self._payload(values=rows))
+        self.assertEqual(value.pe_5y_as_of, "2026-06-30")
+        self.assertEqual(value.pe_5y_samples, 2)
 
     def test_missing_series_gives_zero_samples(self):
         value = normalize_metric(_market_cap_metric())  # no series
         self.assertEqual(value.pe_5y_samples, 0)
+
+    def test_no_parseable_period_gives_null_as_of(self):
+        rows = [
+            {"v": 10.0},
+            {"period": "not-a-date", "v": 20.0},
+        ]
+        value = normalize_metric(self._payload(values=rows))
+        self.assertEqual(value.pe_5y_samples, 0)
+        self.assertIsNone(value.pe_5y_as_of)
+        self.assertIsNone(value.pe_5y_median)
 
 
 class PfcfHistoryTests(unittest.TestCase):
@@ -209,6 +271,30 @@ class PfcfHistoryTests(unittest.TestCase):
         value = normalize_metric(self._payload(values=[{"period": "2026-06-30", "v": -1.0}]))
         self.assertEqual(value.pfcf_5y_samples, 0)
         self.assertIsNone(value.pfcf_5y_median)
+
+    def test_pfcf_anchor_uses_latest_reported_period_not_latest_positive(self):
+        rows = [
+            {"period": "2020-06-30", "v": 40.0},
+            {"period": "2025-06-30", "v": -1.0},
+            {"period": "2026-06-30", "v": -5.0},
+        ]
+        value = normalize_metric(self._payload(values=rows))
+        self.assertEqual(value.pfcf_5y_as_of, "2026-06-30")
+        self.assertEqual(value.pfcf_5y_samples, 0)
+        self.assertIsNone(value.pfcf_5y_median)
+
+    def test_pfcf_anchor_fixes_window_before_filtering_positive_values(self):
+        rows = [
+            {"period": "2022-06-30", "v": 30.0},
+            {"period": "2023-06-30", "v": 10.0},
+            {"period": "2024-06-30", "v": 20.0},
+            {"period": "2025-06-30", "v": -1.0},
+            {"period": "2026-06-30", "v": -5.0},
+        ]
+        value = normalize_metric(self._payload(values=rows))
+        self.assertEqual(value.pfcf_5y_as_of, "2026-06-30")
+        self.assertEqual(value.pfcf_5y_samples, 3)
+        self.assertAlmostEqual(value.pfcf_5y_median, 20.0)
 
 
 class SanityCheckFixtures(unittest.TestCase):
