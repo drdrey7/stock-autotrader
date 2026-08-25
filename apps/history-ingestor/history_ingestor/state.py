@@ -107,16 +107,31 @@ def _iso_day_of(iso_timestamp: str) -> str:
 
 
 class KeyBudgetLedger:
-    """Adapts a StateStore to the provider's shared per-key budget protocol."""
+    """Shared per-key budget ledger with an optional hard per-run HTTP cap.
 
-    def __init__(self, store: StateStore) -> None:
+    The optional cap is enforced at the same provider boundary where every real
+    HTTP debit is observed. It is used by bounded provider jobs such as
+    ``reconcile-splits`` so an internal multi-key retry cannot overshoot the
+    advertised service cap. Maintenance leaves ``run_limit`` unset.
+    """
+
+    def __init__(self, store: StateStore, run_limit: int | None = None) -> None:
         self._store = store
+        self._run_limit = None if run_limit is None else max(0, int(run_limit))
+        self._run_used = 0
 
     def remaining(self, index: int) -> int:
-        return self._store.key_remaining(index)
+        shared_remaining = self._store.key_remaining(index)
+        if self._run_limit is None:
+            return shared_remaining
+        return min(shared_remaining, max(0, self._run_limit - self._run_used))
 
     def mark_used(self, index: int, delta: int = 1) -> None:
-        self._store.mark_key_used(index, delta)
+        debit = max(0, int(delta))
+        if debit == 0:
+            return
+        self._store.mark_key_used(index, debit)
+        self._run_used += debit
 
     def mark_exhausted(self, index: int) -> None:
         self._store.mark_key_exhausted(index)
