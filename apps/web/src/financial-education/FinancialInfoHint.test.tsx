@@ -1,6 +1,8 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import FinancialInfoHint from "./FinancialInfoHint";
+
+afterEach(() => cleanup());
 
 describe("FinancialInfoHint", () => {
   it("is closed by default and opens with the matching glossary content", () => {

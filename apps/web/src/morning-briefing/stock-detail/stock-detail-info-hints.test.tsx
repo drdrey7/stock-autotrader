@@ -1,12 +1,14 @@
-import { render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import StockDetailPage from "./StockDetailPage";
 import { mockStockDetailDataSource } from "./stock-detail.mock";
 
 vi.mock("./PriceAndKeyLevelsChart", () => ({
   default: () => <div data-testid="stock-chart" />,
 }));
+
+afterEach(() => cleanup());
 
 function renderStock(symbol: string) {
   return render(
