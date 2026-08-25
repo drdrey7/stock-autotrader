@@ -11,6 +11,8 @@
 .financial-info-close{width:24px;height:24px;margin:-5px -6px -5px 0;border-radius:7px;color:var(--muted)}
 .financial-info-close:hover{background:var(--surface-muted);color:var(--text)}
 .financial-info-description{color:var(--muted);font-size:10px;line-height:1.5;font-weight:550}
+.financial-info-interpretation{padding-top:7px;border-top:1px solid color-mix(in srgb,var(--border) 72%,transparent);color:var(--text);font-size:9.5px;line-height:1.5;font-weight:600}
+.financial-info-interpretation strong{color:var(--brand-blue);font-weight:800}
 
 @media (max-width:600px){
   .financial-info-trigger{width:24px;height:24px;margin:-3px -2px -3px 0}
