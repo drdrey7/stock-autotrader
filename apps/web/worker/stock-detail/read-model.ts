@@ -287,7 +287,7 @@ export function servedSplitScaleState(
   const splitMs = Date.parse(`${latestEffectiveSplit.effective_date}T00:00:00.000Z`);
   if (!Number.isFinite(splitMs)) return "unknown";
   if (weeklyRows.length === 0) return quoteSplitState(quote, splitMs);
-  const historyState = servedHistorySplitState(weeklyRows, effectiveSplits);
+  const historyState = servedHistoryScaleState(weeklyRows, effectiveSplits);
   if (historyState !== "safe") return historyState;
   const quoteStateValue = quoteSplitState(quote, splitMs);
   if (quoteStateValue !== "safe" || metricCalculatedAt === null) return quoteStateValue;
