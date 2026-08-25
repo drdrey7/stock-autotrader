@@ -13,11 +13,14 @@ export function FinancialInfoHint({ term, className = "" }: FinancialInfoHintPro
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLSpanElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLSpanElement>(null);
   const popoverId = useId();
   const titleId = `${popoverId}-title`;
 
   useEffect(() => {
     if (!open) return;
+
+    popoverRef.current?.focus();
 
     const onPointerDown = (event: PointerEvent) => {
       if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
@@ -60,10 +63,12 @@ export function FinancialInfoHint({ term, className = "" }: FinancialInfoHintPro
 
       {open && (
         <span
+          ref={popoverRef}
           id={popoverId}
           className="financial-info-popover"
           role="dialog"
           aria-labelledby={titleId}
+          tabIndex={-1}
           onClick={stopParentAction}
         >
           <span className="financial-info-popover-head">
