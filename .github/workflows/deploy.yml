@@ -37,30 +37,15 @@ jobs:
           npm run lint
           npm run typecheck
           npm test
-      - name: Upload isolated Cloudflare PR preview
+      - name: Upload PR frontend artifact for trusted preview publisher
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-        working-directory: apps/web
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          PREVIEW_ALIAS: pr-${{ github.event.pull_request.number }}
-        run: |
-          set -euo pipefail
-          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ] || [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
-            echo "::error::Cloudflare credentials are required for same-repository PR previews"
-            exit 1
-          fi
-          npx wrangler versions upload \
-            --config wrangler.preview.jsonc \
-            --preview-alias "$PREVIEW_ALIAS" \
-            --message "PR #${{ github.event.pull_request.number }} ${GITHUB_SHA}"
-          PREVIEW_URL="https://${PREVIEW_ALIAS}-stock-autotrader-preview.barroso-labs.workers.dev"
-          echo "### Cloudflare Preview" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "${PREVIEW_URL}" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Stock Detail test: ${PREVIEW_URL}/stocks/MSFT" >> "$GITHUB_STEP_SUMMARY"
-          echo "::notice title=Cloudflare Preview::${PREVIEW_URL}"
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: web-preview-pr-${{ github.event.pull_request.number }}
+          path: apps/web/dist
+          if-no-files-found: error
+          retention-days: 2
+          include-hidden-files: false
       - name: Apply remote D1 migrations (production only)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         working-directory: apps/web
