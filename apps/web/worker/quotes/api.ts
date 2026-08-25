@@ -189,7 +189,7 @@ export async function readScreenerApi(env: Env, now = new Date()): Promise<Scree
   const quotesHealth: ScreenerQuotesHealth = {
     state: collectorState,
     provider: wsHealth ? "finnhub-websocket" : (restHealth?.provider ?? "unavailable"),
-    lastSuccessAt: wsHealth ? wsHealth.lastSuccessfulFlushAt : (restHealth?.lastAttemptAt ?? null),
+    lastSuccessAt: wsHealth ? wsHealth.lastSuccessfulFlushAt : (restHealth?.lastSuccessAt ?? null),
     lastAttemptAt: wsHealth ? wsHealth.lastFlushAt : (restHealth?.lastAttemptAt ?? null),
     error: wsHealth ? wsHealth.lastError : (restHealth?.lastError ?? null),
     counts,
