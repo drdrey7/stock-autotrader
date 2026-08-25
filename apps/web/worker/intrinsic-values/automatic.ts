@@ -1,5 +1,6 @@
 import {
   calculateAutomaticIntrinsicValue,
+  classifyValuationFamily,
   intrinsicValueDistancePct,
   type AutomaticIntrinsicValue,
   type ScreenerIntrinsicValue,
@@ -8,14 +9,16 @@ import {
 export const AUTOMATIC_IV_MARKET_STALE_AFTER_SECONDS = 3 * 24 * 60 * 60;
 
 /**
- * Minimal persisted market inputs required by the automatic valuation model.
+ * Minimal persisted inputs required by the automatic valuation model.
  * Both Screener and Stock Detail adapt their D1 rows to this shape so freshness,
- * P/B derivation and valuation eligibility cannot drift between read models.
+ * per-share anchors and valuation eligibility cannot drift between read models.
  */
 export interface AutomaticValuationFundamentals {
   pe_ttm: number | null;
+  eps_ttm?: number | null;
   market_cap: number | null;
   shareholders_equity: number | null;
+  shares_outstanding?: number | null;
   market_as_of?: string | null;
   market_checked_at: string | null;
   /** Nullable because Screener obtains these columns through a LEFT JOIN. */
@@ -24,6 +27,10 @@ export interface AutomaticValuationFundamentals {
 
 function finite(value: number | null | undefined): value is number {
   return typeof value === "number" && Number.isFinite(value);
+}
+
+function positiveFinite(value: number | null | undefined): value is number {
+  return finite(value) && value > 0;
 }
 
 export function automaticValuationFundamentalsAreFresh(
@@ -39,16 +46,33 @@ export function automaticValuationFundamentalsAreFresh(
   return ageSeconds >= 0 && ageSeconds <= AUTOMATIC_IV_MARKET_STALE_AFTER_SECONDS;
 }
 
+/** Current P/B is still useful for the public metric/read model, not as the canonical IV anchor. */
 export function priceToBookFromPersistedFundamentals(
   fundamentals: AutomaticValuationFundamentals | null | undefined,
 ): number | null {
   const marketCap = fundamentals?.market_cap;
   const equity = fundamentals?.shareholders_equity;
-  if (!finite(marketCap) || marketCap <= 0 || !finite(equity) || equity <= 0) return null;
+  if (!positiveFinite(marketCap) || !positiveFinite(equity)) return null;
   const value = marketCap / equity;
   return Number.isFinite(value) && value > 0 ? value : null;
 }
 
+export function bookValuePerShareFromPersistedFundamentals(
+  fundamentals: AutomaticValuationFundamentals | null | undefined,
+): number | null {
+  const equity = fundamentals?.shareholders_equity;
+  const shares = fundamentals?.shares_outstanding;
+  if (!positiveFinite(equity) || !positiveFinite(shares)) return null;
+  const value = equity / shares;
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+/**
+ * Canonical serving adapter. Production never falls back to a price-derived EPS:
+ * a fresh positive EPS TTM is required for every automatic valuation, and banks
+ * additionally require Book Value Per Share. Current price only drives the
+ * displayed upside/distance, never the intrinsic-value equation itself.
+ */
 export function calculateAutomaticIntrinsicValueFromPersistedFundamentals(
   symbol: string,
   industry: string | null,
@@ -57,10 +81,19 @@ export function calculateAutomaticIntrinsicValueFromPersistedFundamentals(
   now: Date,
 ): AutomaticIntrinsicValue | null {
   if (!automaticValuationFundamentalsAreFresh(fundamentals, now)) return null;
+  const epsTtm = fundamentals?.eps_ttm;
+  if (!positiveFinite(epsTtm)) return null;
+
+  const family = classifyValuationFamily(symbol, industry);
+  const bookValuePerShare = bookValuePerShareFromPersistedFundamentals(fundamentals);
+  if (family === "bank" && bookValuePerShare === null) return null;
+
   return calculateAutomaticIntrinsicValue(symbol, industry, {
     price: currentPrice,
     peTtm: fundamentals?.pe_ttm ?? null,
+    epsTtm,
     priceToBook: priceToBookFromPersistedFundamentals(fundamentals),
+    bookValuePerShare,
   });
 }
 
