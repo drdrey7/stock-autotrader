@@ -44,6 +44,41 @@ describe("automatic intrinsic value", () => {
     expect(second?.baseUpsidePct).not.toBe(first?.baseUpsidePct);
   });
 
+  it("falls back to positive FCF/share when GAAP EPS is not usable", () => {
+    const result = calculateAutomaticIntrinsicValue("COIN", "Financial Services", {
+      price: 181.5,
+      peTtm: null,
+      epsTtm: -3.78,
+      fcfPerShareTtm: 6.5,
+    });
+
+    expect(result).toEqual({
+      family: "general",
+      method: "P/FCF",
+      bear: 117,
+      base: 143,
+      bull: 169,
+      bearMultiple: 18,
+      baseMultiple: 22,
+      bullMultiple: 26,
+      bearUpsidePct: -35.5,
+      baseUpsidePct: -21.2,
+      bullUpsidePct: -6.9,
+    });
+  });
+
+  it("prefers positive EPS/P-E over P/FCF when both anchors are usable", () => {
+    const result = calculateAutomaticIntrinsicValue("COIN", "Financial Services", {
+      price: 181.5,
+      peTtm: 30,
+      epsTtm: 6,
+      fcfPerShareTtm: 6.5,
+    });
+
+    expect(result?.method).toBe("P/E");
+    expect(result?.base).toBe(150);
+  });
+
   it("uses book value per share and EPS-derived ROE for balance-sheet financials", () => {
     expect(classifyValuationFamily("JPM", "Banks - Diversified")).toBe("bank");
     const result = calculateAutomaticIntrinsicValue("JPM", "Banks - Diversified", {
@@ -80,8 +115,14 @@ describe("automatic intrinsic value", () => {
     expect(bankFallback?.base).toBe(159.48);
   });
 
-  it("fails closed on missing or distorted inputs", () => {
+  it("fails closed when neither earnings nor free cash flow provides a valid anchor", () => {
     expect(calculateAutomaticIntrinsicValue("MSFT", "Software", { price: null, peTtm: 30, epsTtm: 10 })).toBeNull();
+    expect(calculateAutomaticIntrinsicValue("COIN", "Financial Services", {
+      price: 181.5,
+      peTtm: null,
+      epsTtm: -3,
+      fcfPerShareTtm: -1,
+    })).toBeNull();
     expect(calculateAutomaticIntrinsicValue("MSFT", "Software", { price: 400, peTtm: -5 })).toBeNull();
     expect(calculateAutomaticIntrinsicValue("MSFT", "Software", { price: 400, peTtm: 151 })).toBeNull();
     expect(calculateAutomaticIntrinsicValue("JPM", "Banks", { price: 200, peTtm: 14, priceToBook: null })).toBeNull();
