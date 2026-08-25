@@ -1,18 +1,12 @@
 import type { Env } from "../index";
 import type {
   ScreenerApiResponse,
-  ScreenerIntrinsicValue,
   ScreenerQuotesHealth,
   ScreenerRow,
   ScreenerMarketState,
   SourceState,
 } from "@stock-autotrader/contracts";
-import {
-  CORE_UNIVERSE,
-  CORE_UNIVERSE_VERSION,
-  calculateAutomaticIntrinsicValue,
-  intrinsicValueDistancePct,
-} from "@stock-autotrader/contracts";
+import { CORE_UNIVERSE, CORE_UNIVERSE_VERSION } from "@stock-autotrader/contracts";
 import {
   collectorStateFromRows,
   countQuoteStates,
@@ -31,6 +25,10 @@ import { computeLiveSma200w, type QuoteInput } from "../sma/metrics";
 import { readTechnicalMetrics, readLatestSplitEffectiveDate, readLatestSplitEffectiveDateAsOf } from "../sma/storage";
 import { readManualSupportLevels } from "../supports/storage";
 import { readManualIntrinsicValues } from "../intrinsic-values/storage";
+import {
+  automaticIntrinsicValueForScreener,
+  calculateAutomaticIntrinsicValueFromPersistedFundamentals,
+} from "../intrinsic-values/automatic";
 import { buildIntrinsicValue, buildSupportLevels } from "../stocks/derived";
 import { nyDateKeyOf } from "./freshness";
 
@@ -42,18 +40,23 @@ interface CompanyRow {
   pe_ttm: number | null;
   market_cap: number | null;
   shareholders_equity: number | null;
+  market_as_of: string | null;
+  market_checked_at: string | null;
+  updated_at: string;
 }
 
 /**
  * Core Universe company + slow valuation inputs in one D1 query. The LEFT JOIN
  * keeps fundamentals best-effort and avoids a second query/read loop for the
- * Screener fallback IV.
+ * Screener fallback IV. Freshness is evaluated by the same canonical helper
+ * used by Stock Detail before any automatic value can be served.
  */
 async function readCoreCompanies(db: D1Database): Promise<CompanyRow[]> {
   try {
     const result = await db.prepare(
       `SELECT u.symbol, u.company, u.logo_url, u.industry,
-        f.pe_ttm, f.market_cap, f.shareholders_equity
+        f.pe_ttm, f.market_cap, f.shareholders_equity,
+        f.market_as_of, f.market_checked_at, f.updated_at
        FROM earnings_universe AS u
        LEFT JOIN stock_fundamentals_snapshot AS f ON f.symbol = u.symbol
        WHERE u.source = 'core' AND u.active = 1`,
@@ -62,40 +65,6 @@ async function readCoreCompanies(db: D1Database): Promise<CompanyRow[]> {
   } catch {
     return [];
   }
-}
-
-function priceToBook(company: CompanyRow | undefined): number | null {
-  const marketCap = company?.market_cap;
-  const equity = company?.shareholders_equity;
-  if (
-    typeof marketCap !== "number" || !Number.isFinite(marketCap) || marketCap <= 0
-    || typeof equity !== "number" || !Number.isFinite(equity) || equity <= 0
-  ) return null;
-  const value = marketCap / equity;
-  return Number.isFinite(value) && value > 0 ? value : null;
-}
-
-function automaticScreenerIntrinsicValue(
-  symbol: string,
-  currentPrice: number | null,
-  company: CompanyRow | undefined,
-  asOf: string | undefined,
-): ScreenerIntrinsicValue | null {
-  if (!asOf) return null;
-  const automatic = calculateAutomaticIntrinsicValue(symbol, company?.industry ?? null, {
-    price: currentPrice,
-    peTtm: company?.pe_ttm ?? null,
-    priceToBook: priceToBook(company),
-  });
-  if (!automatic) return null;
-  return {
-    low: automatic.bear,
-    base: automatic.base,
-    high: automatic.bull,
-    method: `automatic-${automatic.method.toLowerCase().replaceAll("/", "-")}`,
-    asOf,
-    distancePct: intrinsicValueDistancePct(currentPrice, automatic.base),
-  };
 }
 
 /**
@@ -143,6 +112,11 @@ function safeguardWsCollectorState(
  * Screener read model: canonical Core Universe (50) combined with the latest
  * quote state. Pure D1 reads — opening /screener never touches Finnhub; the
  * collector is fully independent of frontend traffic.
+ *
+ * IV selection is deliberately centralized and deterministic:
+ *   1. split-safe Manual IV from D1;
+ *   2. otherwise Automatic Base from fresh persisted fundamentals;
+ *   3. otherwise unavailable.
  */
 export async function readScreenerApi(env: Env, now = new Date()): Promise<ScreenerApiResponse> {
   const currentMarketDate = nyDateKeyOf(now) ?? undefined;
@@ -178,8 +152,15 @@ export async function readScreenerApi(env: Env, now = new Date()): Promise<Scree
       splitEffectiveDatesAsOf.get(symbol),
       currentMarketDate,
     );
+    const automaticIntrinsicValue = calculateAutomaticIntrinsicValueFromPersistedFundamentals(
+      symbol,
+      company?.industry ?? null,
+      currentPrice,
+      company,
+      now,
+    );
     const intrinsicValue = manualIntrinsicValue
-      ?? automaticScreenerIntrinsicValue(symbol, currentPrice, company, currentMarketDate);
+      ?? automaticIntrinsicValueForScreener(automaticIntrinsicValue, currentPrice, currentMarketDate);
 
     return {
       symbol,
