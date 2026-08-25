@@ -42,6 +42,7 @@ function responseBody(): StockDetailApiResponse {
     fundamentals: {
       marketCap: null,
       peTtm: null,
+      priceToBook: null,
       roicPct: null,
       fcfMarginPct: null,
       debtToEquity: null,
@@ -85,7 +86,16 @@ describe("ApiStockDetailDataSource", () => {
     expect(detail?.valuation.methods.manual).toBe(600);
     expect(detail?.valuation.methods.dcf).toBeNull();
     expect(detail?.metrics.marketCap).toBeNull();
+    expect(detail?.metrics.priceToBook).toBeNull();
     expect(detail?.technical.supports).toHaveLength(1);
+  });
+
+  it("maps price-to-book when the API provides it", async () => {
+    const body = responseBody();
+    body.fundamentals.priceToBook = 2.1;
+    apiClientMock.requestJson.mockResolvedValue({ ok: true, status: 200, body });
+    const detail = await new ApiStockDetailDataSource().getStockDetail("MSFT");
+    expect(detail?.metrics.priceToBook).toBe(2.1);
   });
 
   it("keeps the last known price but suppresses 1D change while the market is closed", async () => {
