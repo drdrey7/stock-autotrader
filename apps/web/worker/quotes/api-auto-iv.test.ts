@@ -23,6 +23,7 @@ interface CompanyRow {
   industry: string | null;
   pe_ttm: number | null;
   eps_ttm: number | null;
+  fcf_per_share_ttm: number | null;
   market_cap: number | null;
   shareholders_equity: number | null;
   shares_outstanding: number | null;
@@ -89,6 +90,7 @@ function adobeCompany(overrides: Partial<CompanyRow> = {}): CompanyRow {
     industry: "Technology",
     pe_ttm: 15.137946495292185,
     eps_ttm: ADBE_EPS_TTM,
+    fcf_per_share_ttm: 20,
     market_cap: 119_000_000_000,
     shareholders_equity: 14_000_000_000,
     shares_outstanding: 420_000_000,
@@ -115,6 +117,41 @@ function adobeQuote(price = 276.24): QuoteRow {
   };
 }
 
+function coinCompany(): CompanyRow {
+  return {
+    symbol: "COIN",
+    company: "Coinbase Global, Inc.",
+    logo_url: null,
+    industry: "Financial Services",
+    pe_ttm: null,
+    eps_ttm: -3.78,
+    fcf_per_share_ttm: 6.5,
+    market_cap: 50_000_000_000,
+    shareholders_equity: 12_000_000_000,
+    shares_outstanding: 275_000_000,
+    market_as_of: null,
+    market_checked_at: NOW_ISO,
+    updated_at: NOW_ISO,
+  };
+}
+
+function coinQuote(): QuoteRow {
+  return {
+    symbol: "COIN",
+    price: 181.5,
+    change_abs: 34.2,
+    change_pct: 20.56,
+    day_high: 185,
+    day_low: 150,
+    day_open: 155,
+    previousClose: undefined,
+    previous_close: 150.54,
+    provider: "finnhub-quote",
+    provider_timestamp: NOW_ISO,
+    updated_at: NOW_ISO,
+  } as QuoteRow;
+}
+
 describe("Screener intrinsic value selection", () => {
   it("regression: Adobe without manual IV receives the same midpoint Base used by Stock Detail", async () => {
     const env = { DB: createDb(adobeQuote(), adobeCompany()) } as Env;
@@ -129,6 +166,20 @@ describe("Screener intrinsic value selection", () => {
     expect(adobe!.intrinsicValue!.method).toBe("automatic-p-e");
     expect(adobe!.intrinsicValue!.asOf).toBe("2026-08-13");
     expect(adobe!.intrinsicValue!.distancePct).toBeCloseTo(-39.4489, 3);
+  });
+
+  it("uses P/FCF for a COIN-like stock with negative EPS but positive FCF/share", async () => {
+    const response = await readScreenerApi({ DB: createDb(coinQuote(), coinCompany()) } as Env, NOW);
+    const coin = response.rows.find((row) => row.symbol === "COIN");
+
+    expect(coin?.intrinsicValue).toMatchObject({
+      low: 117,
+      base: 143,
+      high: 169,
+      method: "automatic-p-fcf",
+      asOf: "2026-08-13",
+    });
+    expect(coin?.intrinsicValue?.distancePct).toBeCloseTo(26.923, 3);
   });
 
   it("keeps automatic IV fixed when only the live quote changes", async () => {
@@ -170,11 +221,11 @@ describe("Screener intrinsic value selection", () => {
         }),
       ),
     } as Env, NOW);
-    const missingEps = await readScreenerApi({
-      DB: createDb(adobeQuote(), adobeCompany({ eps_ttm: null })),
+    const missingAnchors = await readScreenerApi({
+      DB: createDb(adobeQuote(), adobeCompany({ eps_ttm: null, fcf_per_share_ttm: null })),
     } as Env, NOW);
 
     expect(stale.rows.find((row) => row.symbol === "ADBE")!.intrinsicValue).toBeNull();
-    expect(missingEps.rows.find((row) => row.symbol === "ADBE")!.intrinsicValue).toBeNull();
+    expect(missingAnchors.rows.find((row) => row.symbol === "ADBE")!.intrinsicValue).toBeNull();
   });
 });
