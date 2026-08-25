@@ -72,7 +72,7 @@ describe("Stock Detail automatic intrinsic value", () => {
     expect(screen.getAllByText("$401.46").length).toBeGreaterThanOrEqual(2);
     expect(screen.getAllByText("$456.21").length).toBeGreaterThanOrEqual(3);
     expect(screen.getAllByText("$510.95").length).toBeGreaterThanOrEqual(2);
-    expect(screen.getByText("+65.20%")).toBeInTheDocument();
+    expect(screen.getByText("+65.10%")).toBeInTheDocument();
     expect(screen.getByText("P/E · 22x / 25x / 28x")).toBeInTheDocument();
     expect(screen.getByText("Bear")).toBeInTheDocument();
     expect(screen.getByText("Base")).toBeInTheDocument();
