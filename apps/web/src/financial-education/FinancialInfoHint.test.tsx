@@ -57,6 +57,27 @@ describe("FinancialInfoHint", () => {
     expect(screen.getByRole("dialog", { name: "Market Cap" })).toHaveFocus();
   });
 
+  it("keeps keyboard focus inside the portaled dialog until it closes", () => {
+    render(
+      <div>
+        <FinancialInfoHint term="marketCap" />
+        <button type="button">Outside</button>
+      </div>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Learn what Market Cap means" }));
+    const dialog = screen.getByRole("dialog", { name: "Market Cap" });
+    const close = screen.getByRole("button", { name: "Close Market Cap explanation" });
+
+    expect(dialog).toHaveFocus();
+    fireEvent.keyDown(dialog, { key: "Tab" });
+    expect(close).toHaveFocus();
+
+    fireEvent.keyDown(close, { key: "Tab" });
+    expect(close).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Outside" })).not.toHaveFocus();
+  });
+
   it("keeps the popover inside the viewport and flips above when needed", () => {
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
       if (this.classList.contains("financial-info-trigger")) return rect(900, 700, 24, 24);
