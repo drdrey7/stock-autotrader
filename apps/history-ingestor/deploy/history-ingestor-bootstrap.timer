@@ -1,13 +1,21 @@
-# Daily bootstrap resume cadence (06:00 UTC).
-# Runs before permanent maintenance at 07:00 UTC. Persistent=true catches up
-# after an outage; service ordering prevents overlap with maintenance/due-split.
-# Disable once bootstrap coverage is complete.
-
+# Residual bootstrap cadence — DAILY 08:00 UTC, strictly AFTER maintenance.
+#
+# Bootstrap is the RESIDUAL worker: it only finishes symbols the bootstrap
+# never completed. It runs AFTER maintenance (07:00 UTC) so it can never
+# consume the day's Alpha Vantage quota ahead of the WEEKLY SMA refresh.
+#
+# A hard daily request cap is applied by the bootstrap CLI itself
+# (BOOTSTRAP_MAX_REQUESTS_PER_DAY, default 6) so a single problem symbol
+# (e.g. a symbol the provider keeps failing on) can never exhaust the whole
+# day's quota or starve maintenance. Honest checkpoint state (47/50) is
+# preserved until the remaining symbols resolve.
+#
+# Disable once bootstrap coverage is complete (auto-disable fires at 50/50).
 [Unit]
-Description=Stock Autotrader history bootstrap (daily; temporary until complete)
+Description=Stock Autotrader history bootstrap (daily residual resume; after maintenance; capped)
 
 [Timer]
-OnCalendar=*-*-* 06:00:00 UTC
+OnCalendar=*-*-* 08:00:00 UTC
 RandomizedDelaySec=15m
 Persistent=true
 

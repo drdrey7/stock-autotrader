@@ -1,0 +1,32 @@
+# LOW-FREQUENCY provider SPLITS reconciliation — roughly fortnightly Tuesdays.
+#
+# This is the SEPARATE split-discovery responsibility, independent of the
+# weekly SMA refresh. Splits are rare for the 50-symbol Core Universe, so a
+# provider scan every day is unnecessary. The job runs on the first and third
+# Tuesday of each month (roughly every two weeks) and resumes from its durable
+# checkpoint if provider quota is unavailable.
+#
+# ORDERING (MAINTENANCE HAS ABSOLUTE PRIORITY):
+#   maintenance  -- daily 07:00 UTC (weekly refresh on Monday; carryover first)
+#   bootstrap    -- daily 08:00 UTC while bootstrap is incomplete only
+#   reconcile    -- first + third Tuesday 09:00 UTC (bounded residual scan)
+#   due-split    -- Tue..Sat 13:10 UTC (zero-provider)
+#
+# Tuesday is deliberate: a healthy Monday can use the full daily entitlement
+# refreshing the 50 WEEKLY series. Tuesday maintenance gets first chance to
+# finish any carryover; only then may reconciliation consume residual quota.
+#
+# Persistent=false: a missed scan is NOT auto-caught-up at boot into a due
+# maintenance window. The durable reconcile cursor resumes on the next
+# scheduled scan.
+[Unit]
+Description=Stock Autotrader SPLITS reconciliation (fortnightly bounded residual scan)
+
+[Timer]
+OnCalendar=Tue *-*-01..07 09:00:00 UTC
+OnCalendar=Tue *-*-15..21 09:00:00 UTC
+RandomizedDelaySec=15m
+Persistent=false
+
+[Install]
+WantedBy=timers.target

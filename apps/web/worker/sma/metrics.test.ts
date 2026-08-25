@@ -263,9 +263,47 @@ describe("computeLiveSma200w — honest null handling", () => {
     expect(result.sma200wState).toBe("Unavailable");
   });
 
-  it("Unavailable on a maintenance data gap (quote more than one week past anchor)", () => {
-    // Quote in 2026-W35, anchor 2026-W33 -> delta 2 (missing week 34 basis).
+  it("LAST-KNOWN-GOOD: quote more than one week past anchor but a valid closed SMA exists", () => {
+    // Quote in 2026-W35, anchor 2026-W33 -> delta 2 (weekly refresh lagged one
+    // week but a previously-valid basis exists). The stored closed SMA (100) is
+    // the last known good value and MUST keep being served — never nulled.
     const result = computeLiveSma200w(quote(110, "2026-08-28T15:00:00.000Z"), metrics());
+    expect(result.sma200w).toBeCloseTo(100, 10);
+    expect(result.distanceToSma200wPct).toBeCloseTo((110 / 100 - 1) * 100, 10);
+    expect(result.distanceToSma200wPct).toBeCloseTo(10, 10);
+    expect(result.sma200wState).toBe("Above");
+    expect(result.sma200wHistoryWeeks).toBe(1200);
+    expect(result.sma200wAsOf).toBe("2026-08-19T06:00:00.000Z");
+  });
+
+  it("LAST-KNOWN-GOOD: delta>1 with no valid closed SMA -> honest NotEnoughHistory", () => {
+    // A symbol that never accumulated a valid 200-week basis has no closed SMA
+    // to fall back to; it is NotEnoughHistory, not a fabricated value.
+    const stunted = metrics({
+      completed_weeks_available: 250,
+      sum_199: 19900,
+      anchor_close: 100,
+      closed_sma_200w: null,
+      status: "ok",
+    });
+    const result = computeLiveSma200w(quote(110, "2026-08-28T15:00:00.000Z"), stunted);
+    expect(result.sma200w).toBeNull();
+    expect(result.sma200wState).toBe("NotEnoughHistory");
+    expect(result.sma200wHistoryWeeks).toBe(250);
+  });
+
+  it("LAST-KNOWN-GOOD does NOT apply on a split-scale mismatch (regression)", () => {
+    // The stale-SMA fallback must NEVER serve the previously-valid value when
+    // the current state is Unavailable due to a split-scale mismatch. The
+    // mismatch guard runs before the delta>1 branch, so even a stored closed
+    // SMA with delta>1 must read Unavailable — not the value from a different
+    // split scale.
+    const splitMap = new Map([["NVDA", "2026-08-20"]]);
+    const result = computeLiveSma200w(
+      quote(110, "2026-08-28T15:00:00.000Z"),                                        // W35, post-split
+      metrics({ anchor_week: "2026-08-14", closed_sma_200w: 100, calculated_at: "2026-08-19T06:00:00.000Z" }), // pre-split metrics, W33 anchor
+      splitMap,
+    );
     expect(result.sma200w).toBeNull();
     expect(result.sma200wState).toBe("Unavailable");
   });
