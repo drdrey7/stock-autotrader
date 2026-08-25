@@ -80,7 +80,10 @@ def cmd_bootstrap(settings: Settings, args: argparse.Namespace) -> int:
     runner = BootstrapRunner(settings, d1, provider, store)
     report = runner.run(
         dry_run=args.dry_run,
-        limit=args.limit,
+        # The provider ledger owns --limit exactly. Passing it again to the
+        # legacy runner-level logical-fetch counter would incorrectly compare a
+        # per-invocation limit against prior same-day logical usage.
+        limit=None,
         symbols_filter=args.symbols,
     )
     _emit("bootstrap_report", **report)
