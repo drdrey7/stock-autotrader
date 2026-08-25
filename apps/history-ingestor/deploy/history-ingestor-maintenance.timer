@@ -1,18 +1,31 @@
-# Daily maintenance cadence (07:00 UTC, before NY market open).
+# Weekly maintenance cadence — DAILY 07:00 UTC, effectively weekly (MAINTENANCE
+# HAS STRICT PRIORITY over bootstrap).
 #
-# SUNDAY 07:00 UTC -> SPLITS reconciliation pass.
-# MONDAY 07:00 UTC -> WEEKLY refresh pass for the just-closed week.
-# TUE-SAT 07:00 UTC -> catch-up if the weekly phase remains incomplete.
-# Completed/idempotent work performs ZERO provider calls.
+# The maintenance cycle is the WEEKLY-PRIORITY provider worker: it fetches
+# TIME_SERIES_WEEKLY for a newly-closed week and rolls each symbol's
+# technical_metrics anchor forward. It NEVER depends on split reconciliation
+# (separate low-frequency SPLITS responsibility) and never blocks on it.
 #
-# The bootstrap timer runs earlier at 06:00 UTC while initial coverage is
-# incomplete. Service ordering prevents overlap during persistent catch-up.
+#   MONDAY 07:00 UTC -> WEEKLY refresh for the just-closed (Friday) week.
+#   TUE-SAT 07:00 UTC -> automatic catch-up ONLY if Monday's pass was missed
+#                       (is_weekly_phase_ready is Mon-Sat); when the cycle is
+#                       complete the run performs ZERO provider calls (noop).
+#
+# Rationale for a DAILY timer with weekly-effective work (vs a single Monday
+# trigger): the 200W SMA basis only changes when a new week closes, so the
+# provider requests are inherently weekly — a single Monday pass fetches ~50
+# requests (one per symbol) within the two-key 50/day budget. But a daily timer
+# that no-ops when complete gives AUTOMATIC CATCH-UP: if Monday's pass fails
+# (outage, quota), Tuesday simply resumes it instead of leaving the anchor stuck
+# for a second week. This is strictly more robust and costs ZERO extra provider
+# requests (idempotent completed cycles make no calls — see tests). Bootstrap,
+# which runs AFTER this (08:00 UTC), can therefore never starve it.
 [Unit]
-Description=Stock Autotrader history maintenance (daily; Sun SPLITS / Mon-Sat WEEKLY catch-up)
+Description=Stock Autotrader history maintenance (daily, effectively weekly WEEKLY refresh; priority over bootstrap)
 
 [Timer]
 OnCalendar=*-*-* 07:00:00 UTC
-RandomizedDelaySec=30m
+RandomizedDelaySec=15m
 Persistent=true
 
 [Install]

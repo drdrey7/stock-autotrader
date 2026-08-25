@@ -1,229 +1,252 @@
 # History Ingestor — Alpha Vantage weekly history + split-only adjustment
 
-Screener PR2: the **historical layer** behind the live 200-week SMA. It
-bootstraps and maintains `weekly_prices` + `technical_metrics` in the shared
-D1 database (`stock-autotrader-db`) from **Alpha Vantage**, split-adjusted
-only (never dividend-adjusted). Live/current prices remain exclusively the
-Finnhub WebSocket pipeline from PR #65 (`apps/quote-ingestor`) — this app
-never provides current quotes.
+Historical layer behind the live 200-week SMA. It stores split-adjusted weekly
+history and precomputed SMA basis data in the shared Cloudflare D1 database.
+Current/live prices still come from the Finnhub quote pipeline; this app never
+provides current quotes.
 
-```
-Alpha Vantage (TIME_SERIES_WEEKLY + SPLITS)
-      │  paced, per-key budgeted, resumable
-      ▼
-history_ingestor  ──►  D1 weekly_prices + technical_metrics
-      │
-      └ (weekly maintenance: refresh / reconcile splits / recompute metrics)
-Cloudflare Worker /api/screener  =  technical_metrics basis + latest_quotes.price
+```text
+Alpha Vantage TIME_SERIES_WEEKLY ──► weekly_prices ──► technical_metrics
+Alpha Vantage SPLITS             ──► split_events
+                                             │
+Finnhub latest quote + D1 SMA basis ─────────┴──► Worker/API/UI
 ```
 
-## Why this layering
+## Design goals
 
-- **Weekly history changes once a week**, not every tick. The Worker therefore
-  reads the precomputed 199-week basis (`technical_metrics`, 50 rows) instead
-  of ~1000×50 `weekly_prices` rows per Screener request.
-- **Split-only adjustment** matches a normal stock price chart (splits only,
-  no dividends) — the canonical SMA semantic the Screener wants.
-- **The live formula** (PR2 §7) is:
+- The 200W SMA basis changes only when a trading week closes.
+- A valid SMA remains visible even if the VPS or provider is temporarily down.
+- Provider quota is spent on WEEKLY history before any secondary work.
+- Split discovery is independent from weekly maintenance.
+- Bootstrap is one-shot and disables itself when initial loading is complete.
+- D1 is the durable serving source; the frontend does not depend on VPS uptime.
 
-  ```
-  SMA200W live = (sum of the 199 completed split-adjusted weekly closes
-                  immediately preceding the quote's trading week
-                  + current Finnhub WebSocket price) / 200
-  ```
+## Provider contract
 
-  The 199-week basis is anchored to the quote's OWN trading week (from
-  `latest_quotes.provider_timestamp`, America/New_York ISO week), so the
-  current week is never double-counted and the result is correct during
-  market hours, post-close, weekends, Monday pre-open, holidays and
-  early-close days.
+Alpha Vantage free-tier accounting used by this app is 25 requests/day per key.
+With two configured keys the nominal aggregate is 50 requests/day total. The
+client tracks each key independently and does not rotate keys to bypass a
+per-key quota.
 
-## Provider contract (verified live 2026-08-19)
+`TIME_SERIES_WEEKLY?symbol=X&outputsize=full` returns weekly OHLCV history. The
+newest in-progress week is excluded before persistence.
 
-- `TIME_SERIES_WEEKLY?symbol=X&outputsize=full` → `Meta Data` +
-  `Weekly Time Series`, ~20y of weekly buckets keyed by the week's **last
-  trading day** (a Thursday when Friday is a holiday). OHLC/volume are
-  strings; the newest bucket is the **in-progress** week and is dropped.
-- `SPLITS?symbol=X` → `{"symbol", "data": [{effective_date, split_factor}]}`
-  newest-first; `split_factor` is a decimal string (`"10.0000"`, `"1.5000"`,
-  `"0.5000"` for a 1:2 reverse split).
-- **Rate behaviour (free tier): 25 requests/day per key.** Back-to-back calls
-  return `{"Information": ...}` (soft pacing — the client paces ~13s per key
-  and backs off); daily exhaustion returns `{"Note": ...}` (hard stop).
-  Two independently-obtained keys each carry their own 25/day entitlement.
-  The tool NEVER rotates keys to bypass a per-key quota — it simply stops
-  once every key is exhausted and resumes the next day from its checkpoint.
+`SPLITS?symbol=X` returns split events. Weekly history is split-adjusted only;
+dividends are never applied.
 
-## Secrets
+## Stored data
 
-- Keys come from the runtime environment: `ALPHA_VANTAGE_API_KEYS`
-  (comma-separated), `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`,
-  `CLOUDFLARE_D1_DATABASE_ID` — via a systemd `EnvironmentFile` on the VPS
-  (0600, owner hermes), exactly like `apps/quote-ingestor`.
-- Keys are referenced **only by index**; values never appear in logs, errors,
-  checkpoints, stdout or git (covered by `tests/test_secrets.py`).
-- Set `HISTORY_INGESTOR_UNIVERSE` to `packages/contracts/src/core-universe.v1.json`
-  (the default resolves to that path automatically).
+### `weekly_prices`
 
-## Commands
+One row per `(symbol, week_end_date)` containing raw weekly OHLCV, split factor,
+split-adjusted close, source and fetch timestamp. Writes are idempotent UPSERTs.
 
-Run from the repo root (or `apps/history-ingestor`):
+### `technical_metrics`
+
+One row per symbol containing:
+
+- `anchor_week`;
+- `completed_weeks_available`;
+- `sum_199`;
+- `anchor_close`;
+- `closed_sma_200w`;
+- `historical_data_as_of`;
+- `calculated_at`;
+- `status`.
+
+### `split_events`
+
+Durable split history used to keep stored weekly prices on the correct current
+share-price scale.
+
+## Live 200W SMA semantics
+
+For a valid 200-week basis, the Worker combines the stored weekly basis with the
+latest quote. The exact live formula depends on the quote week relative to the
+stored anchor.
+
+Availability policy:
+
+- same/current adjacent week with a valid basis → compute live 200W SMA;
+- stored anchor more than one week behind → serve the last-known-good
+  `closed_sma_200w` and compute distance using the current quote;
+- quote older than the stored basis → `Unavailable`;
+- confirmed quote/history split-scale mismatch → `Unavailable`;
+- fewer than 200 completed weeks → `NotEnoughHistory` (`N/A`).
+
+A delayed maintenance job must therefore never blank an already-valid SMA. A
+confirmed split-scale mismatch is the deliberate fail-closed exception.
+
+## Bootstrap
+
+Bootstrap is initial historical loading only. It fetches SPLITS then WEEKLY for
+unfinished symbols and persists progress in `app_meta.historyBootstrapState`.
 
 ```bash
-# One-shot resumable bootstrap (SPLITS before WEEKLY per symbol; idempotent
-# UPSERTs; checkpoint after every symbol; stops when every key's 25/day is
-# exhausted and reports exactly what remains):
 python3 -m history_ingestor bootstrap
-
-# Partial run / specific symbols / request cap / planning-only:
-python3 -m history_ingestor bootstrap --limit 20 --symbols NVDA AAPL MSFT
-python3 -m history_ingestor bootstrap --dry-run        # no provider calls, no D1 writes
-
-# Weekly maintenance: refresh + split reconciliation + metrics + coverage:
-python3 -m history_ingestor maintenance
-
-# Checkpoint + D1 coverage summary:
+python3 -m history_ingestor bootstrap --dry-run
+python3 -m history_ingestor bootstrap --limit 4 --symbols NVDA AAPL MSFT
 python3 -m history_ingestor status
-
-# Local data-quality validation of one symbol's D1 rows:
-python3 -m history_ingestor validate --symbol NVDA
 ```
 
-Note: a `bootstrap` subcommand runs with `PYTHONPATH=.` (the package dir) or
-`python3 -m history_ingestor` from `apps/history-ingestor/`.
+Safety properties:
 
-## What gets stored
+- default residual cap: 6 real provider HTTP requests per UTC day;
+- cap is enforced at the provider ledger boundary, including `Information`,
+  `Note` and internal multi-key attempts;
+- same-day process/systemd restart does not reset the bootstrap budget;
+- `--limit` can only lower the configured cap;
+- completed symbols are not downloaded again.
 
-`weekly_prices` — one row per `(symbol, week_end_date)`:
-raw OHLCV as-traded, `split_adjustment_factor` (the cumulative divisor F(t) =
-product of all split ratios effective strictly after that week's end),
-`split_adjusted_close = raw_close / F(t)` (e.g. 400 → 4:1 → 100), `source`,
-`source_fetched_at`. UPSERT-by-PK is idempotent; re-running never duplicates.
+### Bootstrap completion means endpoint completion
 
-`technical_metrics` — one row per symbol with the basis the Worker combines
-with the live quote:
-`anchor_week` (the latest completed stored week L, `YYYY-MM-DD`),
-`completed_weeks_available`, `sum_199` (199 closes ending at L),
-`anchor_close` (L's close — the one-row correction term),
-`closed_sma_200w` (informational chart-style SMA), `historical_data_as_of`,
-`calculated_at`, `status` (`ok` / `limited` 199.. / `not_enough_history` /
-`no_data`).
+The completion gate is intentionally:
 
-The Worker logic: quote week == anchor week → `(closed_sma_200w * 200 - anchor_close + price)/200`
-(true 200-week basis — the naive `sum_199 - anchor_close + price` would only supply 198 prior
-closes + the quote = 199 observations, which is wrong); quote week == anchor+1 → `(sum_199 + price)/200`;
-anything else → honest `Unavailable`, never a fabricated SMA.
+```text
+bootstrap_done = 50
+bootstrap_pending = 0
+universe_total = 50
+```
 
-The same-week (delta 0) form only applies when a genuine 200 completed-week basis exists
-(`closed_sma_200w` non-null). With exactly 199 completed weeks, there are not 199 closes strictly
-before L, so it honestly reports `NotEnoughHistory`.
+`bootstrap_done=50` means the required bootstrap provider work completed for all
+50 Core Universe symbols. It does **not** mean all 50 have 200 weeks of market
+history.
 
-## Bootstrap / resume design
+A newly listed company can correctly have:
 
-- Loads the canonical Core Universe **exclusively** from
-  `packages/contracts/src/core-universe.v1.json` (validated: exactly 50,
-  unique, sorted) — no second permanent symbol list anywhere.
-- Checkpoint (`app_meta.historyBootstrapState` in D1, with a local-file
-  mirror): per-key request counts for the current UTC day + per-symbol
-  per-endpoint status (`splits` / `weekly` → pending | done | error).
-- Resume skips done symbols (no duplicate downloads); a new day resets per-key
-  counts while keeping completed symbols done — can spread across days.
-- `Information` throttle → count the HTTP request, circuit-break that key for
-  the rest of the run (no same-key retry storm), try other keys once. When
-  every key is throttled the run stops with status `throttled`, saves the
-  checkpoint, and does NOT mark the current symbol as a permanent error.
-  Fairness queue prefers never-tried/pending symbols over sticky transient
-  errors so head-of-line blocking cannot starve the rest of the universe.
-  `Note` quota → the key is marked exhausted; when all keys are exhausted the
-  run stops cleanly, saves the checkpoint and reports the remaining symbols.
-- Transient network/server errors retry across keys with a small bound;
-  invalid keys and unknown symbols are non-retryable. Provider messages are
-  NEVER persisted as market data (strict parser). Structured attempt logs
-  record `symbol/endpoint/key_index/attempt/result` without secrets.
+```text
+bootstrap: done
+technical_metrics.status: not_enough_history
+UI: N/A
+```
+
+That is terminal bootstrap success, not unfinished work. Such stocks must not
+keep bootstrap running forever. When the exact 50/50 endpoint gate is reached,
+`history-ingestor-bootstrap-maybe-disable.service` disables and stops
+`history-ingestor-bootstrap.timer` automatically.
 
 ## Weekly maintenance
 
-`maintenance` refetches the full series per symbol (one request each at this
-scale), reconciles split history by recomputing factors from the FRESH split
-list and rewriting every row whose factor/adjusted close changed (a new or
-changed split rewrites the whole affected history — no mixed adjustment
-regimes), recomputes `technical_metrics`, verifies coverage (row counts,
-week-sequence gaps via ISO-week Mondays, `<199` weeks) and writes a report to
-`app_meta.historyMaintenanceReport`. It respects the same per-key quota
-policies, so a full pass can spread across days under free-tier limits.
-
-### systemd deployment (documented — install requires root)
-
-Production uses three timers, all explicitly UTC:
-
-- bootstrap: `06:00 UTC` daily, temporary until initial coverage completes;
-- maintenance: `07:00 UTC` daily, permanent long-term path;
-- due-split: `13:10 UTC` Tue-Sat, zero-provider reconciliation.
-
-Provision the existing secret files first:
-
-- `/etc/stock-autotrader/alpha-vantage.env`
-- `/etc/stock-autotrader/cloudflare.env`
-
-They remain outside Git and are never modified by the installer. Production
-code lives under `/opt/stock-autotrader`; development checkouts under
-`/home/hermes/projects/...` must not be used as systemd `WorkingDirectory`.
-
-For routine production updates, use the deterministic procedure in
-`deploy/DEPLOY.md`. The privileged installer is launched from a sanitized
-environment and installs the root-owned auto-disable helper plus **seven** unit
-files. It validates staged units first, snapshots timer and destination state,
-quiesces active timers, installs, runs `daemon-reload`, then restores each
-timer's exact prior enablement/activity state.
-
-The installer is transactional: if a failure occurs after quiescing, it
-restores the previous helper/unit files and best-effort restores timer state.
-An active timer that cannot be stopped causes an immediate abort. Masked or
-unsupported timer states also fail closed.
-
-On a **fresh installation**, explicitly enable/start the timers you want only
-after reviewing the schedules:
+Maintenance is the primary recurring provider workload:
 
 ```bash
-sudo systemctl enable history-ingestor-bootstrap.timer history-ingestor-maintenance.timer history-ingestor-due-split.timer
-sudo systemctl start history-ingestor-bootstrap.timer history-ingestor-maintenance.timer history-ingestor-due-split.timer
-sudo systemctl list-timers --all | grep history-ingestor
+python3 -m history_ingestor maintenance
 ```
 
-Bootstrap is resumable. A successful bootstrap triggers the separate
-`history-ingestor-bootstrap-maybe-disable.service` through systemd `OnSuccess=`.
-That root-only completion gate has no provider/D1 `EnvironmentFile`; it drops
-to `hermes` before loading the existing env files and running read-only
-`history_ingestor status`, then parses the JSON with isolated Python. Only when
-`bootstrap_done=50`, `bootstrap_pending=0`, and `universe_total=50` does root
-run the idempotent `systemctl disable --now history-ingestor-bootstrap.timer`.
-Maintenance and due-split are never touched by the completion gate.
+It fetches only `TIME_SERIES_WEEKLY`, reads durable split events from D1,
+upserts changed/new weekly rows and recomputes `technical_metrics`. It never
+fetches SPLITS.
 
-Service ordering serializes bootstrap → maintenance → due-split when persistent
-timers catch up together after an outage. For production manual runs, prefer
-`systemctl start history-ingestor-<service>` rather than invoking the Python
-module directly so the same ordering rules apply.
+The timer runs daily at 07:00 UTC for resilience, but provider work is
+effectively weekly:
+
+- Monday: normally refresh the just-closed week for the 50-symbol universe;
+- Tue-Sat: catch-up only if the weekly cycle is incomplete;
+- completed cycle: zero provider requests.
+
+This gives automatic recovery after a Monday outage without spending provider
+quota every day.
+
+## Split discovery
+
+Provider split discovery is deliberately low-frequency because splits are rare
+for a 50-stock universe.
+
+```bash
+python3 -m history_ingestor reconcile-splits
+python3 -m history_ingestor reconcile-splits --dry-run
+```
+
+Production schedule:
+
+- first Tuesday of each month, 09:00 UTC;
+- third Tuesday of each month, 09:00 UTC;
+- `Persistent=false`;
+- explicit maximum 50 provider HTTP requests per invocation;
+- still constrained by the shared 25/key daily ledger.
+
+Tuesday is intentional. Monday can legitimately consume essentially all 50
+requests refreshing WEEKLY history. Tuesday maintenance runs first and gets any
+carry-over quota it needs; split reconciliation receives only the residual
+budget. Its independent durable checkpoint resumes unfinished work at the next
+scan rather than restarting from the beginning.
+
+Filtered manual `--symbols` runs restrict processing only; they do not erase
+unrelated reconciliation progress.
+
+## Due split application
+
+```bash
+python3 -m history_ingestor apply-due-splits
+```
+
+This reads already-known future-dated split events from D1 and applies them when
+they become effective. It makes zero provider calls and is safe to run Tue-Sat.
+
+## Production systemd cadence
+
+All times UTC:
+
+| Priority | Timer | Cadence | Provider work |
+|---|---|---|---|
+| 1 | `history-ingestor-maintenance.timer` | daily 07:00 | effectively weekly; catch-up only after Monday |
+| 2 | `history-ingestor-bootstrap.timer` | daily 08:00 while incomplete | max 6 HTTP/day; auto-disables at terminal 50/50 |
+| 3 | `history-ingestor-reconcile-split.timer` | first + third Tuesday 09:00 | max 50/run, residual shared quota only |
+| 4 | `history-ingestor-due-split.timer` | Tue-Sat 13:10 | zero-provider |
+
+Operational priority is therefore:
+
+```text
+maintenance > temporary bootstrap > split reconciliation > due-split
+```
+
+All provider-consuming paths share the same per-key daily ledger and the same
+process lock. Reconciliation is non-persistent so a missed scan cannot catch up
+at boot ahead of a due maintenance run.
+
+## Secrets and production paths
+
+Required environment variables are supplied through systemd `EnvironmentFile`
+files and are never logged:
+
+- `ALPHA_VANTAGE_API_KEYS`;
+- `CLOUDFLARE_API_TOKEN`;
+- `CLOUDFLARE_ACCOUNT_ID`;
+- `CLOUDFLARE_D1_DATABASE_ID`.
+
+Production paths:
+
+- code: `/opt/stock-autotrader/apps/history-ingestor`;
+- durable state: `/var/lib/history-ingestor`;
+- env files: `/etc/stock-autotrader/alpha-vantage.env` and
+  `/etc/stock-autotrader/cloudflare.env`.
+
+Development checkouts under `/home/hermes/projects/...` must never be used as a
+production systemd `WorkingDirectory`.
+
+The root installer is transactional and preserves the previous enablement and
+activity state of installed timers. See `deploy/DEPLOY.md` for the production
+procedure.
 
 ## Tests
 
+No test makes real Alpha Vantage requests.
+
 ```bash
-cd apps/history-ingestor && python3 -m unittest discover -s tests -v    # 161 tests
-cd <repo root> && ruff check .                                            # lint
+cd apps/history-ingestor
+python3 -m unittest discover -s tests -v
+cd ../..
+ruff check apps/history-ingestor
 ```
 
-Covers: NY/ISO week helpers (holiday weeks, year boundaries, DST), strict
-WEEKLY/SPLITS parsing (garbage, throttle, quota, invalid-key, impossible OHLC,
-NaN), split-only adjustment (2:1, 3:1, 4:1, 10:1, fractional 3:2, reverse,
-sequential), technical-metrics windows (199/200 boundaries), D1 upsert
-idempotency/chunking/error handling, checkpoint resume + day rollover, the
-provider (pacing, quota exhaustion, invalid-key skip, round-robin, no
-tight-loop retries), bootstrap (splits-before-weekly, resume, quota stop,
-dry-run), maintenance (split reconciliation, coverage, anomalies) and
-secret-leak assertions.
+Coverage includes provider throttle/quota handling, exact bootstrap HTTP
+accounting across restart, weekly maintenance resume, independent reconciliation
+state, filtered reconciliation safety, split adjustment, D1 idempotency,
+last-known-good behavior and split-scale mismatch fail-closed behavior.
 
 ## Rollback
 
-No destructive rollback: `weekly_prices` / `technical_metrics` are additive
-tables (migration `0015_weekly_history.sql`). If PR2 needs to be disabled the
-Worker/API simply stops exposing the new SMA fields; the tables can stay. The
-`latest_quotes` / Finnhub WebSocket pipeline is untouched by this app.
+`weekly_prices` and `technical_metrics` are additive durable data. If the SMA
+feature ever needs to be disabled, the Worker/API can stop exposing it without
+destructively dropping the historical tables. The live quote pipeline is
+independent from this app.

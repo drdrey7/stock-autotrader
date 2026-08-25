@@ -784,5 +784,192 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual(report["remaining_symbols"], [])
 
 
+class BootstrapResidualBudgetTests(unittest.TestCase):
+    """Once residual, bootstrap is hard request-capped so one problem symbol
+    can never exhaust the day's Alpha Vantage quota ahead of maintenance."""
+
+    def test_bootstrap_max_requests_per_day_1_allows_exactly_one_request(self):
+        # HARD CAP: with bootstrap_max_requests_per_day=1 and an explicit
+        # --limit=50, the run must make AT MOST one provider request. Otherwise
+        # a single symbol's SPLITS+WEEKLY would exceed the cap mid-iteration.
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            settings = Settings(
+                alpha_vantage_keys=["K1", "K2"],
+                cloudflare_api_token="t", cloudflare_account_id="a", cloudflare_d1_database_id="d",
+                av_min_interval_seconds=0.0, av_max_retries=1, av_retry_base_seconds=0.0,
+                bootstrap_max_requests_per_day=1,
+            )
+            store = StateStore(settings, d1, state_path=Path(tmp) / "checkpoint.json")
+            provider = FakeProvider(
+                weekly_payloads={"A": weekly_payload("A"), "B": weekly_payload("B")},
+                splits_payloads={"A": splits_payload("A"), "B": splits_payload("B")},
+            )
+            # --limit 50 must be CLAMPED to the configured cap (1).
+            report = BootstrapRunner(settings, d1, provider, store, now_fn=lambda: NOW).run(
+                universe=["A", "B"], limit=50
+            )
+            self.assertEqual(provider.requests_this_run, 1)
+            self.assertEqual(report["requests_used_total"], 1)
+            # No symbol is fully done (SPLITS consumed the single request).
+            self.assertEqual(report["symbols_done"], 0)
+            self.assertEqual(report["remaining_symbols"], ["A", "B"])
+            # A is not marked weekly done — the cap protected the quota.
+            self.assertEqual(store.symbol_status("A", "weekly"), "pending")
+
+    def test_limit_below_cap_is_respected(self):
+        # An explicit --limit BELOW the configured cap limits the run to that
+        # lower number (the cap is an upper bound, not a floor).
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            settings = Settings(
+                alpha_vantage_keys=["K1", "K2"],
+                cloudflare_api_token="t", cloudflare_account_id="a", cloudflare_d1_database_id="d",
+                av_min_interval_seconds=0.0, av_max_retries=1, av_retry_base_seconds=0.0,
+                bootstrap_max_requests_per_day=6,
+            )
+            store = StateStore(settings, d1, state_path=Path(tmp) / "checkpoint.json")
+            provider = FakeProvider(
+                weekly_payloads={"A": weekly_payload("A"), "B": weekly_payload("B")},
+                splits_payloads={"A": splits_payload("A"), "B": splits_payload("B")},
+            )
+            report = BootstrapRunner(settings, d1, provider, store, now_fn=lambda: NOW).run(
+                universe=["A", "B"], limit=1
+            )
+            self.assertEqual(provider.requests_this_run, 1)
+            self.assertEqual(report["status"], "partial")
+
+    def test_no_explicit_limit_applies_default_residual_cap(self):
+        # Two symbols need 2 requests each (SPLITS+WEEKLY). Default cap 2 leaves
+        # B pending (one problem symbol cannot exhaust the whole day's quota).
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            settings = Settings(
+                alpha_vantage_keys=["K1", "K2"],
+                cloudflare_api_token="t", cloudflare_account_id="a", cloudflare_d1_database_id="d",
+                av_min_interval_seconds=0.0, av_max_retries=1, av_retry_base_seconds=0.0,
+                bootstrap_max_requests_per_day=2,
+            )
+            store = StateStore(settings, d1, state_path=Path(tmp) / "checkpoint.json")
+            provider = FakeProvider(
+                weekly_payloads={"A": weekly_payload("A"), "B": weekly_payload("B")},
+                splits_payloads={"A": splits_payload("A"), "B": splits_payload("B")},
+            )
+            # No --limit passed: the residual default caps the run at 2 requests.
+            report = BootstrapRunner(settings, d1, provider, store, now_fn=lambda: NOW).run(
+                universe=["A", "B"]
+            )
+            self.assertEqual(report["status"], "partial")
+            self.assertEqual(provider.requests_this_run, 2)
+            self.assertEqual(report["requests_used_total"], 2)
+            # A done; B pending (not exhausted by a runaway problem symbol).
+            self.assertEqual(report["symbols_done"], 1)
+            self.assertEqual(report["remaining_symbols"], ["B"])
+            # B still honest pending — next day resumes it.
+            self.assertEqual(store.symbol_status("B", "weekly"), "pending")
+
+    def test_limit_above_cap_never_exceeds_cap(self):
+        # Cap 2; the run makes exactly 2 request (one symbol, SPLITS only) even
+        # though --limit 100 is passed — the cap is absolute, never bypassed.
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            settings = Settings(
+                alpha_vantage_keys=["K1", "K2"],
+                cloudflare_api_token="t", cloudflare_account_id="a", cloudflare_d1_database_id="d",
+                av_min_interval_seconds=0.0, av_max_retries=1, av_retry_base_seconds=0.0,
+                bootstrap_max_requests_per_day=2,
+            )
+            store = StateStore(settings, d1, state_path=Path(tmp) / "checkpoint.json")
+            provider = FakeProvider(
+                weekly_payloads={"A": weekly_payload("A"), "B": weekly_payload("B")},
+                splits_payloads={"A": splits_payload("A"), "B": splits_payload("B")},
+            )
+            report = BootstrapRunner(settings, d1, provider, store, now_fn=lambda: NOW).run(
+                universe=["A", "B"], limit=100
+            )
+            self.assertEqual(provider.requests_this_run, 2)
+            self.assertEqual(report["status"], "partial")
+            self.assertEqual(report["remaining_symbols"], ["B"])
+
+    def test_daily_budget_shared_across_processes_same_utc_day(self):
+        # Two separate runner/process invocations within the same UTC day must
+        # SHARE the same residual budget. A fresh StateStore (new process) in the
+        # same day re-reads the persisted bootstrap_daily_used counter and must
+        # not spend beyond the cap.
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            settings = Settings(
+                alpha_vantage_keys=["K1", "K2"],
+                cloudflare_api_token="t", cloudflare_account_id="a", cloudflare_d1_database_id="d",
+                av_min_interval_seconds=0.0, av_max_retries=1, av_retry_base_seconds=0.0,
+                bootstrap_max_requests_per_day=3,
+            )
+            # Process/run 1: consumes 2 requests (SPLITS+WEEKLY for A) on this day.
+            store1 = StateStore(settings, d1, state_path=Path(tmp) / "checkpoint.json")
+            provider1 = FakeProvider(
+                weekly_payloads={"A": weekly_payload("A"), "B": weekly_payload("B")},
+                splits_payloads={"A": splits_payload("A"), "B": splits_payload("B")},
+            )
+            BootstrapRunner(settings, d1, provider1, store1, now_fn=lambda: NOW).run(universe=["A"], limit=100)
+            self.assertEqual(provider1.requests_this_run, 2)
+            self.assertEqual(store1.bootstrap_daily_used(), 2)
+
+            # Process/run 2: NEW StateStore (simulating a separate process on the
+            # same UTC day) read the persisted counter. Only 1 further request is
+            # allowed (total 3), then the cap stops it.
+            store2 = StateStore(settings, d1, state_path=Path(tmp) / "checkpoint.json")
+            provider2 = FakeProvider(
+                weekly_payloads={"B": weekly_payload("B"), "C": weekly_payload("C")},
+                splits_payloads={"B": splits_payload("B"), "C": splits_payload("C")},
+            )
+            report2 = BootstrapRunner(settings, d1, provider2, store2, now_fn=lambda: NOW).run(
+                universe=["B", "C"], limit=100
+            )
+            self.assertEqual(report2["requests_used_total"], 1)  # only 1 of 3 left
+            self.assertEqual(store2.bootstrap_daily_used(), 3)  # persisted total
+            # B partially processed (SPLITS only), C untouched.
+            self.assertEqual(store2.symbol_status("B", "weekly"), "pending")
+            self.assertEqual(store2.symbol_status("C", "splits"), "pending")
+
+    def test_daily_budget_resets_on_utc_day_change(self):
+        # A new UTC day resets bootstrap's residual budget even though the same
+        # D1/StateStore persists across days.
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            settings = Settings(
+                alpha_vantage_keys=["K1", "K2"],
+                cloudflare_api_token="t", cloudflare_account_id="a", cloudflare_d1_database_id="d",
+                av_min_interval_seconds=0.0, av_max_retries=1, av_retry_base_seconds=0.0,
+                bootstrap_max_requests_per_day=2,
+            )
+            store1 = StateStore(settings, d1, state_path=Path(tmp) / "checkpoint.json")
+            provider1 = FakeProvider(
+                weekly_payloads={"A": weekly_payload("A")},
+                splits_payloads={"A": splits_payload("A")},
+            )
+            BootstrapRunner(settings, d1, provider1, store1, now_fn=lambda: NOW).run(universe=["A"], limit=100)
+            self.assertEqual(store1.bootstrap_daily_used(), 2)
+
+            # Simulate a new UTC day by rewinding the checkpoint's day marker.
+            from history_ingestor.state import D1_META_KEY
+            payload = store1.state.to_dict()
+            payload["day"] = "2026-08-18"  # yesterday (same process / persisted state)
+            d1.write_app_meta(D1_META_KEY, payload)
+
+            # New process reads the day marker, sees it changed, resets budget.
+            store2 = StateStore(settings, d1, state_path=Path(tmp) / "checkpoint.json")
+            self.assertEqual(store2.bootstrap_daily_used(), 0)  # reset for the new day
+            provider2 = FakeProvider(
+                weekly_payloads={"B": weekly_payload("B")},
+                splits_payloads={"B": splits_payload("B")},
+            )
+            report2 = BootstrapRunner(settings, d1, provider2, store2, now_fn=lambda: NOW).run(
+                universe=["B"], limit=100
+            )
+            self.assertEqual(provider2.requests_this_run, 2)  # fresh day, full budget
+            self.assertEqual(store2.bootstrap_daily_used(), 2)
+            self.assertEqual(report2["symbols_done"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -48,6 +48,20 @@ def _float_env(name: str, default: float, minimum: float = 0.0) -> float:
     return value
 
 
+def _optional_positive_int(name: str) -> int | None:
+    """Parse a positive-int env var that may be unset (None when absent)."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ConfigError(f"{name} must be an integer, got {raw!r}") from exc
+    if value <= 0:
+        raise ConfigError(f"{name} must be positive, got {value}")
+    return value
+
+
 def _required(name: str) -> str:
     value = os.environ.get(name, "").strip()
     if not value:
@@ -126,6 +140,16 @@ class Settings:
             str(Path.home() / ".local" / "state" / "history-ingestor" / "maintenance.json"),
         )
     ))
+    # Hard daily cap on bootstrap's provider requests once it is the residual
+    # worker. One problem symbol (quota/throttle survivor) must never be able
+    # to exhaust the whole day's Alpha Vantage quota ahead of maintenance. Low
+    # but enough to make slow, honest progress on the remaining symbols.
+    bootstrap_max_requests_per_day: int = 6
+    # Hard per-invocation cap on SPLITS reconciliation provider requests. The
+    # job draws from the shared per-key daily ledger but must never overrun the
+    # whole day ahead of the priority weekly maintenance. None = unbounded
+    # (default); the service/timer should pass an explicit cap.
+    reconcile_splits_max_requests: int | None = None
     log_flush_summaries: bool = True
 
     @property
@@ -149,6 +173,8 @@ def from_env(environ: os._Environ | dict[str, str] | None = None) -> Settings:
             av_max_retries=_positive_int("AV_MAX_RETRIES", 3),
             av_retry_base_seconds=_float_env("AV_RETRY_BASE_SECONDS", 10.0),
             av_budget_per_key_per_day=_positive_int("AV_BUDGET_PER_KEY_PER_DAY", 25),
+            bootstrap_max_requests_per_day=_positive_int("BOOTSTRAP_MAX_REQUESTS_PER_DAY", 6),
+            reconcile_splits_max_requests=_optional_positive_int("RECONCILE_SPLITS_MAX_REQUESTS"),
             d1_max_retries=_positive_int("D1_MAX_RETRIES", 3),
             d1_batch_max_rows=_positive_int("D1_BATCH_MAX_ROWS", 10),
             universe_path=Path(os.environ.get(
