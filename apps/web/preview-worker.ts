@@ -14,6 +14,17 @@ const jsonHeaders = {
   "content-type": "application/json; charset=utf-8",
 };
 
+const PREVIEW_IV_SYMBOL = "COIN";
+const PREVIEW_IV_AS_OF = "2026-08-26";
+const PREVIEW_IV = {
+  bear: 150,
+  base: 190,
+  bull: 230,
+  method: "Automatic IV V2 · preview fixture",
+  methods: ["P/E", "P/FCF"] as const,
+  confidence: "Medium" as const,
+};
+
 function jsonResponse(body: unknown, status = 200, method = "GET"): Response {
   return new Response(method === "HEAD" ? null : JSON.stringify(body), {
     status,
@@ -28,6 +39,102 @@ async function responseObject(response: Response): Promise<JsonObject | null> {
   } catch {
     return null;
   }
+}
+
+function finitePositive(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function upsidePct(value: number, price: unknown): number | null {
+  const usablePrice = finitePositive(price);
+  return usablePrice === null ? null : ((value / usablePrice) - 1) * 100;
+}
+
+function withCoinDetailPreviewIv(body: JsonObject): JsonObject {
+  if (body.symbol !== PREVIEW_IV_SYMBOL) return body;
+  const valuation = body.valuation;
+  if (typeof valuation !== "object" || valuation === null || Array.isArray(valuation)) return body;
+
+  const valuationObject = valuation as JsonObject;
+  // Once the production Worker serves Automatic IV V2, never replace real data.
+  if (valuationObject.automatic !== null && valuationObject.automatic !== undefined) return body;
+
+  const quote = typeof body.quote === "object" && body.quote !== null && !Array.isArray(body.quote)
+    ? body.quote as JsonObject
+    : {};
+  const price = quote.price;
+  const automatic = {
+    ...PREVIEW_IV,
+    methods: [...PREVIEW_IV.methods],
+    asOf: PREVIEW_IV_AS_OF,
+    bearUpsidePct: upsidePct(PREVIEW_IV.bear, price),
+    baseUpsidePct: upsidePct(PREVIEW_IV.base, price),
+    bullUpsidePct: upsidePct(PREVIEW_IV.bull, price),
+  };
+  const selectedIntrinsicValue = {
+    low: PREVIEW_IV.bear,
+    base: PREVIEW_IV.base,
+    high: PREVIEW_IV.bull,
+    method: PREVIEW_IV.method,
+    asOf: PREVIEW_IV_AS_OF,
+    upsidePct: upsidePct(PREVIEW_IV.base, price),
+  };
+  const freshness = typeof body.freshness === "object" && body.freshness !== null && !Array.isArray(body.freshness)
+    ? { ...(body.freshness as JsonObject), valuationAsOf: PREVIEW_IV_AS_OF }
+    : body.freshness;
+
+  return {
+    ...body,
+    valuation: {
+      ...valuationObject,
+      automatic,
+      selectedIntrinsicValue,
+    },
+    freshness,
+  };
+}
+
+function withCoinScreenerPreviewIv(body: JsonObject): JsonObject {
+  if (!Array.isArray(body.rows)) return body;
+  let changed = false;
+  const rows = body.rows.map((row) => {
+    if (typeof row !== "object" || row === null || Array.isArray(row)) return row;
+    const rowObject = row as JsonObject;
+    if (rowObject.symbol !== PREVIEW_IV_SYMBOL || rowObject.intrinsicValue !== null) return row;
+    changed = true;
+    return {
+      ...rowObject,
+      intrinsicValue: {
+        low: PREVIEW_IV.bear,
+        base: PREVIEW_IV.base,
+        high: PREVIEW_IV.bull,
+        method: PREVIEW_IV.method,
+        asOf: PREVIEW_IV_AS_OF,
+        distancePct: upsidePct(PREVIEW_IV.base, rowObject.price),
+      },
+    };
+  });
+  return changed ? { ...body, rows } : body;
+}
+
+async function proxyWithPreviewIv(
+  request: Request,
+  productionApi: ProductionApiBinding,
+): Promise<Response> {
+  const upstream = await proxyProductionApiRequest(request, productionApi);
+  if (request.method.toUpperCase() === "HEAD" || !upstream.ok) return upstream;
+
+  const pathname = new URL(request.url).pathname;
+  const supportsFixture = pathname === "/api/screener"
+    || pathname === `/api/stocks/${PREVIEW_IV_SYMBOL}/detail`;
+  if (!supportsFixture) return upstream;
+
+  const body = await responseObject(upstream);
+  if (body === null) return upstream;
+  const decorated = pathname === "/api/screener"
+    ? withCoinScreenerPreviewIv(body)
+    : withCoinDetailPreviewIv(body);
+  return jsonResponse(decorated, upstream.status, request.method);
 }
 
 async function diagnostics(productionApi: ProductionApiBinding): Promise<JsonObject> {
@@ -76,7 +183,7 @@ export async function handlePreviewRequest(
   const { pathname } = new URL(request.url);
 
   if (pathname === "/api" || pathname.startsWith("/api/")) {
-    return proxyProductionApiRequest(request, env.PRODUCTION_API);
+    return proxyWithPreviewIv(request, env.PRODUCTION_API);
   }
   if (pathname === "/__preview/diagnostics") {
     if (request.method !== "GET" && request.method !== "HEAD") {
