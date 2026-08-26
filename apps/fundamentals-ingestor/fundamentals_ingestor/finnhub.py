@@ -267,15 +267,21 @@ def normalize_metric(payload: Any, checked_at: str | None = None) -> MarketData:
     # revenue_per_share_ttm: finite metric value, else NULL.
     revenue_per_share_ttm = _finite_number(metric.get("revenuePerShareTTM"))
 
-    # book_value_per_share: prefer bookValuePerShareQuarterly; fall back to
-    # bookValuePerShareAnnual only when the quarterly point is absent or
-    # non-positive. Accept a finite, positive value only. Never derived from a
-    # current price, market cap, or the P/B multiple.
+    # book_value_per_share: prefer bookValuePerShareQuarterly. A present and
+    # finite quarterly value is economic information (a negative or zero book
+    # value is real, not missing data), so a zero/negative quarterly must NOT
+    # be replaced by an older positive annual figure that would mislead a
+    # future P/B-based IV. Fall back to bookValuePerShareAnnual only when the
+    # quarterly point is actually missing or non-finite. In all cases the
+    # selected value must be finite and positive, else NULL. Never derived from
+    # a current price, market cap, or the P/B multiple.
     bvps_quarterly = _finite_number(metric.get("bookValuePerShareQuarterly"))
     bvps_annual = _finite_number(metric.get("bookValuePerShareAnnual"))
     book_value_per_share = None
-    if bvps_quarterly is not None and bvps_quarterly > 0:
-        book_value_per_share = bvps_quarterly
+    if bvps_quarterly is not None:
+        if bvps_quarterly > 0:
+            book_value_per_share = bvps_quarterly
+        # quarterly <= 0 -> economic signal, keep NULL (no annual fallback).
     elif bvps_annual is not None and bvps_annual > 0:
         book_value_per_share = bvps_annual
 

@@ -79,14 +79,26 @@ class BookValuePerShareTests(unittest.TestCase):
         value = normalize_metric(payload)
         self.assertAlmostEqual(value.book_value_per_share, 6.6434)
 
-    def test_quarterly_zero_falls_back_to_annual(self):
-        # quarterly present but non-positive -> invalid -> use annual.
+    def test_quarterly_zero_with_annual_positive_is_null(self):
+        # A zero/negative quarterly book value is real economic information, not
+        # missing data: it must NOT be replaced by an older positive annual figure.
         payload = _metric_payload({"bookValuePerShareQuarterly": 0.0, "bookValuePerShareAnnual": 6.6434})
+        value = normalize_metric(payload)
+        self.assertIsNone(value.book_value_per_share)
+
+    def test_quarterly_negative_with_annual_positive_is_null(self):
+        payload = _metric_payload({"bookValuePerShareQuarterly": -2.0, "bookValuePerShareAnnual": 6.6434})
+        value = normalize_metric(payload)
+        self.assertIsNone(value.book_value_per_share)
+
+    def test_quarterly_nan_falls_back_to_annual(self):
+        # NaN is a non-finite quarterly -> treated as missing -> annual fallback applies.
+        payload = _metric_payload({"bookValuePerShareQuarterly": float("nan"), "bookValuePerShareAnnual": 6.6434})
         value = normalize_metric(payload)
         self.assertAlmostEqual(value.book_value_per_share, 6.6434)
 
-    def test_quarterly_negative_falls_back_to_annual(self):
-        payload = _metric_payload({"bookValuePerShareQuarterly": -2.0, "bookValuePerShareAnnual": 6.6434})
+    def test_quarterly_invalid_string_falls_back_to_annual(self):
+        payload = _metric_payload({"bookValuePerShareQuarterly": "n/a", "bookValuePerShareAnnual": 6.6434})
         value = normalize_metric(payload)
         self.assertAlmostEqual(value.book_value_per_share, 6.6434)
 
