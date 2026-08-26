@@ -164,6 +164,19 @@ describe("Automatic IV V2", () => {
     expectArithmeticMidpoint(blended!);
   });
 
+  it("does not award High confidence for an immaterial sparse second method", () => {
+    const result = calculateAutomaticIntrinsicValue("AAPL", "Consumer Electronics", {
+      price: null,
+      epsTtm: 10,
+      revenuePerShareTtm: 100,
+      peHistory: dense(20, 25, 30, 20),
+      psHistory: dense(1, 2, 3, 1),
+    });
+    expect(result).not.toBeNull();
+    expect(result!.methods).toEqual(["P/E", "P/S"]);
+    expect(result!.confidence).toBe("Medium");
+  });
+
   it("uses P/B as the primary bank anchor with P/E as a cross-check", () => {
     const result = calculateAutomaticIntrinsicValue("JPM", "Banks - Diversified", {
       price: 300,
