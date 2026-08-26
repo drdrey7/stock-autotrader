@@ -93,7 +93,6 @@ function IntrinsicValueCard({ detail }: { detail: StockDetail }) {
   const intrinsicValue = detail.valuation.intrinsicValue;
   const upsidePct = detail.valuation.upsidePct;
   const upsideClass = upsidePct === null ? "stock-neutral" : upsidePct >= 0 ? "stock-positive" : "stock-negative";
-  const hasValuation = automatic !== null || intrinsicValue !== null;
 
   return (
     <section className="stock-card stock-iv-card" aria-labelledby="stock-iv-title">
@@ -104,27 +103,19 @@ function IntrinsicValueCard({ detail }: { detail: StockDetail }) {
         {upsidePct !== null && <span>{upsidePct >= 0 ? " Upside" : " Downside"}</span>}
       </div>
 
-      {hasValuation && (
-        <div className={`stock-scenario ${automatic ? "" : "stock-scenario-single"}`} aria-label="Intrinsic value range">
-          <div className="stock-scenario-track" aria-hidden="true">
-            <span className="stock-scenario-bear-segment" />
-            <span className="stock-scenario-base-segment" />
-            <span className="stock-scenario-bull-segment" />
-            {intrinsicValue !== null && <i className="stock-scenario-marker" />}
-          </div>
-          {automatic ? (
-            <div className="stock-scenario-labels">
-              <span><small>Bear</small><b>{formatMoney(automatic.bear)}</b></span>
-              <span><small>Base</small><b>{formatMoney(automatic.base)}</b></span>
-              <span><small>Bull</small><b>{formatMoney(automatic.bull)}</b></span>
-            </div>
-          ) : (
-            <div className="stock-scenario-labels stock-scenario-labels-single">
-              <span><small>IV</small><b>{formatMoney(intrinsicValue)}</b></span>
-            </div>
-          )}
+      <div className="stock-scenario" aria-label="Intrinsic value range">
+        <div className="stock-scenario-track" aria-hidden="true">
+          <span className="stock-scenario-bear-segment" />
+          <span className="stock-scenario-base-segment" />
+          <span className="stock-scenario-bull-segment" />
+          {intrinsicValue !== null && <i className="stock-scenario-marker" />}
         </div>
-      )}
+        <div className="stock-scenario-labels">
+          <span><small>Bear</small><b>{formatMoney(automatic?.bear ?? null)}</b></span>
+          <span><small>Base</small><b>{formatMoney(automatic?.base ?? null)}</b></span>
+          <span><small>Bull</small><b>{formatMoney(automatic?.bull ?? null)}</b></span>
+        </div>
+      </div>
     </section>
   );
 }
