@@ -119,7 +119,7 @@ export async function readScreenerApi(env: Env, now = new Date()): Promise<Scree
     readTechnicalMetrics(env.DB),
     readLatestSplitEffectiveDate(env.DB),
     currentMarketDate ? readLatestSplitEffectiveDateAsOf(env.DB, currentMarketDate) : Promise.resolve(new Map()),
-    currentMarketDate ? readEffectiveSplitEventsAsOf(env.DB, currentMarketDate) : Promise.resolve(new Map()),
+    currentMarketDate ? readEffectiveSplitEventsAsOf(env.DB, currentMarketDate) : Promise.resolve(null),
     readManualSupportLevels(env.DB),
     readManualIntrinsicValues(env.DB),
   ]);
@@ -143,7 +143,7 @@ export async function readScreenerApi(env: Env, now = new Date()): Promise<Scree
       splitEffectiveDatesAsOf.get(symbol),
       currentMarketDate ?? undefined,
     );
-    const automaticIntrinsicValue = currentMarketDate
+    const automaticIntrinsicValue = currentMarketDate && effectiveSplitEvents !== null
       ? calculateAutomaticIntrinsicValueFromPersistedFundamentals(
           symbol,
           company?.industry ?? null,
