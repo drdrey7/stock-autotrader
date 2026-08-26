@@ -128,7 +128,7 @@ def run(settings: Settings, dry_run: bool = False) -> dict[str, int]:
             # Brief valuation-feature summary. Never logs the API key, raw
             # JSON or the full provider payload.
             logger.info(
-                "snapshot symbol=%s dry_run=%s growth_yoy=%s roe_pct=%s pe_samples=%s pe_median=%s pfcf_samples=%s pfcf_median=%s",
+                "snapshot symbol=%s dry_run=%s growth_yoy=%s roe_pct=%s pe_samples=%s pe_median=%s pfcf_samples=%s pfcf_median=%s ps_samples=%s ps_median=%s pb_samples=%s pb_median=%s",
                 symbol,
                 dry_run,
                 market.revenue_growth_ttm_yoy_pct,
@@ -137,6 +137,10 @@ def run(settings: Settings, dry_run: bool = False) -> dict[str, int]:
                 market.pe_5y_median,
                 market.pfcf_5y_samples,
                 market.pfcf_5y_median,
+                market.ps_5y_samples,
+                market.ps_5y_median,
+                market.pb_5y_samples,
+                market.pb_5y_median,
             )
         except Exception as exc:
             counts["failed"] += 1
