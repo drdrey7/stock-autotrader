@@ -43,6 +43,7 @@ class Settings:
     universe_path: Path = field(default_factory=lambda: Path(__file__).resolve().parents[3] / "packages/contracts/src/core-universe.v1.json")
     request_timeout_seconds: float = 30.0
     finnhub_min_interval_seconds: float = 1.05
+    fx_url: str = "https://open.er-api.com/v6/latest/USD"
 
     def __repr__(self) -> str:
         return (
@@ -67,4 +68,5 @@ def from_env(environ: dict[str, str] | None = None) -> Settings:
         )),
         request_timeout_seconds=_positive_float("FUNDAMENTALS_REQUEST_TIMEOUT", 30.0, values),
         finnhub_min_interval_seconds=_positive_float("FINNHUB_MIN_INTERVAL_SECONDS", 1.05, values),
+        fx_url=(values.get("FUNDAMENTALS_FX_URL") or "https://open.er-api.com/v6/latest/USD").strip(),
     )

@@ -1,12 +1,19 @@
 export type ValuationFamily =
   | "mega-cap-quality"
+  | "semiconductor-design"
+  | "semiconductor-manufacturing"
   | "semiconductors"
+  | "quality-software"
+  | "growth-software"
+  | "hypergrowth-revenue"
   | "software-growth"
   | "payments-quality"
   | "healthcare"
   | "consumer-quality"
   | "bank"
+  | "capital-markets"
   | "growth-financial"
+  | "financial-platform"
   | "general";
 
 export const automaticValuationMethods = ["P/E", "P/FCF", "P/S", "P/B"] as const;
@@ -88,12 +95,99 @@ const METHOD_WEIGHTS: Readonly<Record<ValuationFamily, Readonly<Partial<Record<A
   "growth-financial": { "P/B": 0.55, "P/E": 0.30, "P/S": 0.15 },
   "mega-cap-quality": { "P/E": 0.45, "P/FCF": 0.45, "P/S": 0.10 },
   semiconductors: { "P/E": 0.45, "P/FCF": 0.40, "P/S": 0.15 },
+  "semiconductor-design": { "P/E": 0.45, "P/FCF": 0.40, "P/S": 0.15 },
+  "semiconductor-manufacturing": { "P/E": 0.45, "P/FCF": 0.40, "P/S": 0.15 },
   "software-growth": { "P/FCF": 0.45, "P/S": 0.35, "P/E": 0.20 },
+  "quality-software": { "P/FCF": 0.45, "P/S": 0.35, "P/E": 0.20 },
+  "growth-software": { "P/FCF": 0.40, "P/S": 0.40, "P/E": 0.20 },
+  "hypergrowth-revenue": { "P/S": 0.60, "P/FCF": 0.25, "P/E": 0.15 },
   "payments-quality": { "P/E": 0.50, "P/FCF": 0.35, "P/S": 0.15 },
+  "capital-markets": { "P/E": 0.55, "P/B": 0.25, "P/S": 0.20 },
+  "financial-platform": { "P/E": 0.45, "P/FCF": 0.35, "P/S": 0.20 },
   healthcare: { "P/E": 0.50, "P/FCF": 0.35, "P/S": 0.15 },
   "consumer-quality": { "P/E": 0.45, "P/FCF": 0.35, "P/S": 0.20 },
   general: { "P/E": 0.40, "P/FCF": 0.35, "P/S": 0.25 },
 });
+
+/**
+ * Explicit valuation profile for every Core Universe symbol (deterministic and
+ * auditable, no scattered per-symbol branching). A symbol missing from this
+ * registry falls back to industry-based classification for non-Core tickers
+ * only; every Core symbol must be present here (enforced by a unit test).
+ *
+ * The taxonomy splits semiconductors into design vs manufacturing, software into
+ * quality/growth/hypergrowth, and finance into bank / capital-markets /
+ * growth-financial / financial-platform so economically distinct businesses are
+ * not lumped into a generic profile (e.g. HOOD and COIN no longer fall into
+ * `general`). Method weights remain profile-driven and are NOT recalibrated to
+ * match any external benchmark.
+ */
+export const CORE_VALUATION_PROFILES: Readonly<Record<string, ValuationFamily>> = Object.freeze({
+  // mega-cap platform quality (steady, dominant)
+  AAPL: "mega-cap-quality",
+  AMZN: "mega-cap-quality",
+  GOOGL: "mega-cap-quality",
+  META: "mega-cap-quality",
+  MSFT: "mega-cap-quality",
+  NFLX: "mega-cap-quality",
+  // semiconductor design / fabless IP
+  AMD: "semiconductor-design",
+  ARM: "semiconductor-design",
+  AVGO: "semiconductor-design",
+  INTC: "semiconductor-design",
+  MU: "semiconductor-design",
+  NVDA: "semiconductor-design",
+  QCOM: "semiconductor-design",
+  SNDK: "semiconductor-design",
+  // semiconductor manufacturing / heavy capex equipment
+  AMAT: "semiconductor-manufacturing",
+  ASML: "semiconductor-manufacturing",
+  DELL: "semiconductor-manufacturing",
+  KLAC: "semiconductor-manufacturing",
+  LRCX: "semiconductor-manufacturing",
+  TSM: "semiconductor-manufacturing",
+  // durable / profitable software
+  ADBE: "quality-software",
+  CRM: "quality-software",
+  CRWD: "quality-software",
+  NOW: "quality-software",
+  ORCL: "quality-software",
+  PANW: "quality-software",
+  SHOP: "quality-software",
+  // higher-growth software
+  DDOG: "growth-software",
+  NET: "growth-software",
+  PLTR: "growth-software",
+  SNOW: "growth-software",
+  // revenue-anchored hypergrowth (often loss-making)
+  CRWV: "hypergrowth-revenue",
+  NBIS: "hypergrowth-revenue",
+  // payments / transaction processing
+  MA: "payments-quality",
+  V: "payments-quality",
+  // banks vs capital markets (economically distinct)
+  JPM: "bank",
+  GS: "capital-markets",
+  // balance-sheet consumer finance
+  SOFI: "growth-financial",
+  // technology-driven financial platforms
+  AFRM: "financial-platform",
+  COIN: "financial-platform",
+  HOOD: "financial-platform",
+  // healthcare
+  LLY: "healthcare",
+  NVO: "healthcare",
+  UNH: "healthcare",
+  // consumer / retail / discretionary
+  COST: "consumer-quality",
+  CRCL: "consumer-quality",
+  RDDT: "consumer-quality",
+  TSLA: "consumer-quality",
+  UBER: "consumer-quality",
+  WMT: "consumer-quality",
+});
+
+const IS_SEMICONDUCTOR_FAMILY = new Set<ValuationFamily>(["semiconductors", "semiconductor-design", "semiconductor-manufacturing"]);
 
 export function classifyValuationFamily(symbol: string, industry: string | null): ValuationFamily {
   const normalizedSymbol = symbol.trim().toUpperCase();
@@ -110,6 +204,19 @@ export function classifyValuationFamily(symbol: string, industry: string | null)
   if (HEALTHCARE_RE.test(value)) return "healthcare";
   if (CONSUMER_RE.test(value)) return "consumer-quality";
   return "general";
+}
+
+/**
+ * Canonical profile resolution for Automatic IV. Explicit Core Universe mapping
+ * always wins; anything not in the 50 uses industry/legacy classification.
+ * Every Core symbol is present in CORE_VALUATION_PROFILES (enforced by a test),
+ * so no Core symbol can ever drift into `general` or the regex fallback.
+ */
+export function resolveValuationProfile(symbol: string, industry: string | null): ValuationFamily {
+  const normalizedSymbol = symbol.trim().toUpperCase();
+  const explicit = CORE_VALUATION_PROFILES[normalizedSymbol];
+  if (explicit) return explicit;
+  return classifyValuationFamily(symbol, industry);
 }
 
 function finite(value: number | null | undefined): value is number {
@@ -245,7 +352,7 @@ function targetPosition(
     return clamp(0.5 + 0.08 * growth + 0.10 * roe, 0.25, 0.75);
   }
   const position = 0.5 + 0.12 * growth + 0.08 * quality - 0.06 * leverage;
-  return clamp(position, 0.22, family === "semiconductors" ? 0.68 : 0.78);
+  return clamp(position, 0.22, IS_SEMICONDUCTOR_FAMILY.has(family) ? 0.68 : 0.78);
 }
 
 function scenarioMultiples(
@@ -355,7 +462,7 @@ export function calculateAutomaticIntrinsicValue(
   industry: string | null,
   input: AutomaticIntrinsicValueInput,
 ): AutomaticIntrinsicValue | null {
-  const family = classifyValuationFamily(symbol, industry);
+  const family = resolveValuationProfile(symbol, industry);
   const growth = growthSignal(input, family);
   const quality = qualitySignal(input);
   const leverage = leverageSignal(input);

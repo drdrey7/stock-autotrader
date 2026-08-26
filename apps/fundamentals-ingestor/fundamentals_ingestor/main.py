@@ -10,6 +10,8 @@ from pathlib import Path
 
 from .config import Settings, from_env
 from .finnhub import FinnhubClient
+from .fx import FxClient, FxError
+from .instruments import get_instrument, needs_conversion, normalize_to_quote_currency
 from .market_d1 import MarketD1Client
 
 logger = logging.getLogger("fundamentals_ingestor")
@@ -95,6 +97,26 @@ def _annual_window_is_safe(
     )
 
 
+def _load_fx(fx: FxClient, d1, updated_at: str, dry_run: bool) -> tuple[dict[tuple[str, str], float], str]:
+    """Fetch daily rates, persist them on a fresh read, else fall back to
+    last-known-good stored in D1. Returns ``(rates, source)`` where source is
+    ``fresh``, ``lkg`` or ``missing``."""
+    try:
+        rates, as_of = fx.fetch_rates()
+    except FxError as exc:
+        lkg = d1.get_fx_rates()
+        logger.warning("fx fetch failed reason=%s using_lkg=%s", type(exc).__name__, bool(lkg))
+        return lkg, ("lkg" if lkg else "missing")
+    if not dry_run:
+        try:
+            d1.upsert_fx_rates(rates, as_of, updated_at)
+        except RuntimeError:
+            # FX persistence failure must not abort the whole fundamentals run;
+            # the freshly fetched rates are still used in-memory for this run.
+            logger.error("fx persist failed using_fetched=true")
+    return rates, "fresh"
+
+
 def run(settings: Settings, dry_run: bool = False) -> dict[str, int]:
     """Refresh direct Finnhub fundamentals for the Core Universe.
 
@@ -102,6 +124,13 @@ def run(settings: Settings, dry_run: bool = False) -> dict[str, int]:
     last-known-good snapshot. Missing individual metrics inside an otherwise
     valid Finnhub response are legitimate NULLs and therefore become dashes in
     Stock Detail on the next successful snapshot.
+
+    Instrument/currency normalization is applied here, before the canonical
+    facts reach D1: per-share and market-cap values are converted to the
+    quoted security and quote currency (see ``instruments``). When a listing
+    needs FX and no rate is available (no fresh fetch, no last-known-good),
+    the unit-dependent facts fail closed to NULL so Automatic IV never runs
+    on wrong-unit inputs.
     """
     symbols = load_universe(settings.universe_path)
     finnhub = FinnhubClient(
@@ -116,11 +145,18 @@ def run(settings: Settings, dry_run: bool = False) -> dict[str, int]:
         settings.request_timeout_seconds,
     )
     updated_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    fx = FxClient(settings.request_timeout_seconds, settings.fx_url)
+    fx_rates, fx_source = _load_fx(fx, d1, updated_at, dry_run)
+    logger.info("fx source=%s pairs=%d updated_at=%s", fx_source, len(fx_rates), updated_at)
     counts = {"processed": 0, "failed": 0, "written": 0}
 
     for symbol in symbols:
         try:
             market = finnhub.fetch(symbol)
+            meta = get_instrument(symbol)
+            market = normalize_to_quote_currency(market, meta, fx_rates)
+            if needs_conversion(meta) and (meta.quote_currency, meta.fundamentals_currency) not in fx_rates:
+                logger.warning("instrument fail-closed symbol=%s currency=%s quote_currency=%s missing_fx=true", symbol, meta.fundamentals_currency, meta.quote_currency)
             if not dry_run:
                 d1.upsert_market(symbol, market, updated_at)
                 counts["written"] += 1

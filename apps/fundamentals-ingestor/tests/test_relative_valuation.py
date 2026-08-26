@@ -423,9 +423,23 @@ class RefreshFlowTests(unittest.TestCase):
     class FakeD1:
         def __init__(self, *args, **kwargs):
             self.writes = []
+            self.fx_rates = {}
 
         def upsert_market(self, symbol, market, updated_at):
             self.writes.append((symbol, market, updated_at))
+
+        def upsert_fx_rates(self, rates, rates_as_of, updated_at):
+            self.fx_rates.update(rates)
+
+        def get_fx_rates(self):
+            return dict(self.fx_rates)
+
+    class FakeFx:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def fetch_rates(self):
+            return {("USD", "TWD"): 31.85, ("USD", "DKK"): 6.41, ("USD", "EUR"): 0.857}, "2026-08-26"
 
     class FakeFinnhub:
         def __init__(self, *args, **kwargs):
@@ -456,6 +470,7 @@ class RefreshFlowTests(unittest.TestCase):
             patch("fundamentals_ingestor.main.load_universe", return_value=["CRWV"]),
             patch("fundamentals_ingestor.main.FinnhubClient", self.FakeFinnhub),
             patch("fundamentals_ingestor.main.MarketD1Client", return_value=d1),
+            patch("fundamentals_ingestor.main.FxClient", self.FakeFx),
         ):
             result = run(self.settings())
         self.assertEqual(result, {"processed": 1, "failed": 0, "written": 1})
@@ -478,6 +493,7 @@ class RefreshFlowTests(unittest.TestCase):
             patch("fundamentals_ingestor.main.load_universe", return_value=["CRWV"]),
             patch("fundamentals_ingestor.main.FinnhubClient", FailingFinnhub),
             patch("fundamentals_ingestor.main.MarketD1Client", return_value=d1),
+            patch("fundamentals_ingestor.main.FxClient", self.FakeFx),
         ):
             result = run(self.settings())
         self.assertEqual(result, {"processed": 0, "failed": 1, "written": 0})
@@ -489,6 +505,7 @@ class RefreshFlowTests(unittest.TestCase):
             patch("fundamentals_ingestor.main.load_universe", return_value=["CRWV"]),
             patch("fundamentals_ingestor.main.FinnhubClient", self.FakeFinnhub),
             patch("fundamentals_ingestor.main.MarketD1Client", return_value=d1),
+            patch("fundamentals_ingestor.main.FxClient", self.FakeFx),
         ):
             result = run(self.settings(), dry_run=True)
         self.assertEqual(result, {"processed": 1, "failed": 0, "written": 0})

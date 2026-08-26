@@ -128,6 +128,42 @@ describe("Automatic IV persisted-fundamentals adapter", () => {
     ])).toBe(4);
   });
 
+  it("applies a post-snapshot split to canonical foreign per-share facts (no FX/ADR interference)", () => {
+    // D1 holds CANONICAL per-ADR USD facts (already normalized at ingest),
+    // e.g. TSM eps_ttm 13.72 = 87.38 TWD/ord * 5 / 31.85. A later split must
+    // divide the canonical value only — currency/ADR normalization is already
+    // baked in and must not be applied twice.
+    const canonical = fundamentals({
+      market_checked_at: "2026-08-01T10:00:00Z",
+      updated_at: "2026-08-01T10:00:01Z",
+      eps_ttm: 13.72,
+      fcf_per_share_ttm: 6.89,
+      revenue_per_share_ttm: 27.06,
+      book_value_per_share: 38.94,
+    });
+    const noSplit = calculateAutomaticIntrinsicValueFromPersistedFundamentals(
+      "TSM",
+      "Semiconductors",
+      null,
+      canonical,
+      [],
+      "2026-08-26",
+    );
+    const twoForOne = calculateAutomaticIntrinsicValueFromPersistedFundamentals(
+      "TSM",
+      "Semiconductors",
+      null,
+      canonical,
+      [{ effective_date: "2026-08-20", split_factor: 2 }],
+      "2026-08-26",
+    );
+    expect(noSplit).not.toBeNull();
+    expect(twoForOne).not.toBeNull();
+    expect(twoForOne!.base).toBeCloseTo(noSplit!.base / 2, 2);
+    expect(twoForOne!.bear).toBeCloseTo(noSplit!.bear / 2, 2);
+    expect(twoForOne!.bull).toBeCloseTo(noSplit!.bull / 2, 2);
+  });
+
   it("converts automatic output to the existing Screener IV contract", () => {
     const result = calculateAutomaticIntrinsicValueFromPersistedFundamentals(
       "AMD",
