@@ -25,7 +25,12 @@ interface ManualRow {
   as_of_date: string;
 }
 
-function createDb(company: Record<string, unknown>, quote: QuoteRow, manual: ManualRow | null = null): D1Database {
+function createDb(
+  company: Record<string, unknown>,
+  quote: QuoteRow,
+  manual: ManualRow | null = null,
+  failAutomaticSplitRead = false,
+): D1Database {
   return {
     prepare(sql: string) {
       const statement = {
@@ -37,6 +42,9 @@ function createDb(company: Record<string, unknown>, quote: QuoteRow, manual: Man
           return null;
         },
         async all<T>(): Promise<{ results: T[] }> {
+          if (failAutomaticSplitRead && sql.includes("SELECT symbol, effective_date, split_factor FROM split_events")) {
+            throw new Error("split_events unavailable");
+          }
           if (sql.includes("FROM latest_quotes")) return { results: [quote] as T[] };
           if (sql.includes("FROM earnings_universe")) return { results: [company] as T[] };
           if (sql.includes("FROM stock_intrinsic_values")) return { results: (manual ? [manual] : []) as T[] };
@@ -152,6 +160,31 @@ describe("Screener Automatic IV V2 selection", () => {
     const amd = response.rows.find((row) => row.symbol === "AMD")!;
     expect(amd.intrinsicValue?.base).toBe(333.33);
     expect(amd.intrinsicValue?.method).toBe("manual");
+  });
+
+  it("keeps Manual IV but suppresses Automatic IV when split state is unreadable", async () => {
+    const manual: ManualRow = {
+      symbol: "AMD",
+      method: "manual",
+      low_value: null,
+      base_value: 333.33,
+      high_value: null,
+      as_of_date: "2026-08-26",
+    };
+    const response = await readScreenerApi({
+      DB: createDb(amdCompany(), quote("AMD", 480), manual, true),
+    } as Env, NOW);
+    const amd = response.rows.find((row) => row.symbol === "AMD")!;
+    expect(amd.intrinsicValue?.method).toBe("manual");
+    expect(amd.intrinsicValue?.base).toBe(333.33);
+  });
+
+  it("fails Automatic IV closed when split state is unreadable", async () => {
+    const response = await readScreenerApi({
+      DB: createDb(amdCompany(), quote("AMD", 480), null, true),
+    } as Env, NOW);
+    const amd = response.rows.find((row) => row.symbol === "AMD")!;
+    expect(amd.intrinsicValue).toBeNull();
   });
 
   it("keeps Automatic Base fixed when only the quote changes", async () => {
