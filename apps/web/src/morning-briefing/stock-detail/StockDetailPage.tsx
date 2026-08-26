@@ -97,7 +97,7 @@ function IntrinsicValueCard({ detail }: { detail: StockDetail }) {
   return (
     <section className="stock-card stock-iv-card" aria-labelledby="stock-iv-title">
       <h2 id="stock-iv-title"><ExplainableLabel label="Our Intrinsic Value" term="intrinsicValue" /></h2>
-      <div className="stock-iv-value">{intrinsicValue === null ? "×" : formatMoney(intrinsicValue)}</div>
+      <div className="stock-iv-value">{formatMoney(intrinsicValue)}</div>
       <div className={`stock-iv-upside ${upsideClass}`}>
         {upsidePct === null ? "—" : `${upsidePct > 0 ? "▲ " : upsidePct < 0 ? "▼ " : ""}${formatChange(upsidePct)}%`}
         {upsidePct !== null && <span>{upsidePct >= 0 ? " Upside" : " Downside"}</span>}
@@ -129,28 +129,27 @@ function IntrinsicValueCard({ detail }: { detail: StockDetail }) {
 function ValuationMethodsCard({ detail }: { detail: StockDetail }) {
   const automatic = automaticValuation(detail);
   const manual = detail.valuation.methods.manual;
-  const selected = detail.valuation.methods.selected;
-  const rows = [
-    ["Automatic Bear", automatic?.bear ?? null],
-    ["Automatic Base", automatic?.base ?? null],
-    ["Automatic Bull", automatic?.bull ?? null],
-    ["Manual", manual],
-  ] as const;
 
   return (
     <section className="stock-card" aria-labelledby="stock-methods-title">
       <h2 id="stock-methods-title"><ExplainableLabel label="Valuation Methods" term="valuationMethods" /></h2>
       <dl className="stock-data-list">
-        {rows.map(([label, value]) => (
-          <div key={label}><dt>{label}</dt><dd>{formatMoney(value)}</dd></div>
-        ))}
-        <div className="stock-data-selected">
-          <dt>Selected{detail.valuation.methods.selectedMethod ? ` (${detail.valuation.methods.selectedMethod})` : ""}</dt>
-          <dd>{formatMoney(selected)}</dd>
-        </div>
-        <div><dt>Automatic Model</dt><dd>{automatic?.method ?? "—"}</dd></div>
-        <div><dt>Confidence</dt><dd>{automatic?.confidence ?? "—"}</dd></div>
-        <div><dt>Inputs as of</dt><dd>{formatMarketDate(automatic?.asOf ?? null)}</dd></div>
+        {automatic ? (
+          <>
+            <div>
+              <dt>Automatic Base · {automatic.confidence}</dt>
+              <dd>{formatMoney(automatic.base)}</dd>
+            </div>
+            {manual !== null && <div><dt>Manual</dt><dd>{formatMoney(manual)}</dd></div>}
+            <div><dt>Model</dt><dd>{automatic.method}</dd></div>
+            <div><dt>Inputs as of</dt><dd>{formatMarketDate(automatic.asOf)}</dd></div>
+          </>
+        ) : (
+          <>
+            {manual !== null && <div><dt>Manual</dt><dd>{formatMoney(manual)}</dd></div>}
+            <div><dt>Automatic IV</dt><dd>—</dd></div>
+          </>
+        )}
       </dl>
     </section>
   );
