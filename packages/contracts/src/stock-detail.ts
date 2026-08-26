@@ -54,7 +54,11 @@ export const stockDetailAutomaticIntrinsicValueSchema = z.object({
   baseUpsidePct: z.number().finite().nullable(),
   bullUpsidePct: z.number().finite().nullable(),
 })
-  .refine((value) => value.bear <= value.base && value.base <= value.bull, "automatic IV scenarios must be ordered");
+  .refine((value) => value.bear <= value.base && value.base <= value.bull, "automatic IV scenarios must be ordered")
+  .refine(
+    (value) => value.base === Math.round(((value.bear + value.bull) / 2) * 100) / 100,
+    "automatic IV base must be the arithmetic midpoint of bear and bull",
+  );
 export type StockDetailAutomaticIntrinsicValue = z.infer<typeof stockDetailAutomaticIntrinsicValueSchema>;
 
 /**
