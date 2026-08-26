@@ -23,8 +23,6 @@ function renderStock(symbol: string) {
 const expandedHintNames = [
   "Learn what Intrinsic Value means",
   "Learn what Valuation Methods means",
-  "Learn what DCF means",
-  "Learn what Multiples means",
   "Learn what Market Cap means",
   "Learn what P/E (TTM) means",
   "Learn what ROIC means",
@@ -45,6 +43,8 @@ describe("Stock Detail financial info hints", () => {
       expect(screen.getByRole("button", { name })).toBeInTheDocument();
     }
     expect(screen.getByRole("button", { name: "Learn what 200W SMA means" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Learn what DCF means" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Learn what Multiples means" })).not.toBeInTheDocument();
   });
 
   it("shows the shared casual interpretation guidance on Stock Detail", async () => {
@@ -75,5 +75,7 @@ describe("Stock Detail financial info hints", () => {
       expect(screen.getByRole("button", { name })).toBeInTheDocument();
     }
     expect(screen.getByRole("button", { name: "Learn what 200W SMA means" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Learn what DCF means" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Learn what Multiples means" })).not.toBeInTheDocument();
   });
 });
