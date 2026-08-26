@@ -80,29 +80,39 @@ export interface EffectiveSplitEventRow {
   split_factor: number;
 }
 
+function isStrictMarketDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = Date.parse(`${value}T00:00:00.000Z`);
+  return Number.isFinite(parsed) && new Date(parsed).toISOString().slice(0, 10) === value;
+}
+
 /**
  * All already-effective split events, grouped by symbol. Automatic IV uses the
  * factors to re-scale stale per-share fundamentals if a split happened while
- * the fundamentals VPS was offline. One tiny query; no weekly-price reads.
+ * the fundamentals VPS was offline.
+ *
+ * Unlike the older SMA/manual split helpers, this read is part of Automatic
+ * IV's scale-safety boundary: `null` means split state could not be trusted and
+ * callers must suppress Automatic IV rather than silently assume no split.
  */
 export async function readEffectiveSplitEventsAsOf(
   db: D1Database,
   asOfDate: string,
-): Promise<Map<string, EffectiveSplitEventRow[]>> {
+): Promise<Map<string, EffectiveSplitEventRow[]> | null> {
   const grouped = new Map<string, EffectiveSplitEventRow[]>();
   try {
     const query = await db.prepare(
       "SELECT symbol, effective_date, split_factor FROM split_events WHERE effective_date <= ? ORDER BY symbol, effective_date ASC",
     ).bind(asOfDate).all<EffectiveSplitEventRow>();
     for (const row of query.results ?? []) {
-      if (!row.symbol || !/^\d{4}-\d{2}-\d{2}$/.test(row.effective_date)) continue;
-      if (!Number.isFinite(row.split_factor) || row.split_factor <= 0) continue;
+      if (!row.symbol || !isStrictMarketDate(row.effective_date)) return null;
+      if (!Number.isFinite(row.split_factor) || row.split_factor <= 0) return null;
       const rows = grouped.get(row.symbol) ?? [];
       rows.push(row);
       grouped.set(row.symbol, rows);
     }
+    return grouped;
   } catch {
-    // Best-effort. Missing split data means no automatic split adjustment.
+    return null;
   }
-  return grouped;
 }
