@@ -50,6 +50,19 @@ class MarketData:
     pfcf_5y_p75: float | None = None
     pfcf_5y_samples: int | None = None
     pfcf_5y_as_of: str | None = None
+    # Relative valuation facts (P/S and P/B; data layer only).
+    revenue_per_share_ttm: float | None = None
+    book_value_per_share: float | None = None
+    ps_5y_p25: float | None = None
+    ps_5y_median: float | None = None
+    ps_5y_p75: float | None = None
+    ps_5y_samples: int | None = None
+    ps_5y_as_of: str | None = None
+    pb_5y_p25: float | None = None
+    pb_5y_median: float | None = None
+    pb_5y_p75: float | None = None
+    pb_5y_samples: int | None = None
+    pb_5y_as_of: str | None = None
 
 
 def _finite_number(value: Any) -> float | None:
@@ -249,6 +262,30 @@ def normalize_metric(payload: Any, checked_at: str | None = None) -> MarketData:
     pe_p25, pe_median, pe_p75, pe_samples, pe_as_of = _percentile_fields(pe_result)
     pfcf_p25, pfcf_median, pfcf_p75, pfcf_samples, pfcf_as_of = _percentile_fields(pfcf_result)
 
+    # Relative valuation facts (PR2 input layer: data normalization only).
+    #
+    # revenue_per_share_ttm: finite metric value, else NULL.
+    revenue_per_share_ttm = _finite_number(metric.get("revenuePerShareTTM"))
+
+    # book_value_per_share: prefer bookValuePerShareQuarterly; fall back to
+    # bookValuePerShareAnnual only when the quarterly point is absent or
+    # non-positive. Accept a finite, positive value only. Never derived from a
+    # current price, market cap, or the P/B multiple.
+    bvps_quarterly = _finite_number(metric.get("bookValuePerShareQuarterly"))
+    bvps_annual = _finite_number(metric.get("bookValuePerShareAnnual"))
+    book_value_per_share = None
+    if bvps_quarterly is not None and bvps_quarterly > 0:
+        book_value_per_share = bvps_quarterly
+    elif bvps_annual is not None and bvps_annual > 0:
+        book_value_per_share = bvps_annual
+
+    # P/S and P/B trailing 5-year windows, reusing the exact PR #118 semantics
+    # (window anchored at the latest reported period, positive finite values only).
+    ps_result = _series_percentiles_5y(payload, "psTTM")
+    pb_result = _series_percentiles_5y(payload, "pb")
+    ps_p25, ps_median, ps_p75, ps_samples, ps_as_of = _percentile_fields(ps_result)
+    pb_p25, pb_median, pb_p75, pb_samples, pb_as_of = _percentile_fields(pb_result)
+
     # Finnhub reports marketCapitalization in millions. This is only provider
     # unit normalization; no quote-based valuation is performed here.
     market_cap = market_cap_millions * 1_000_000 if market_cap_millions is not None else None
@@ -277,6 +314,18 @@ def normalize_metric(payload: Any, checked_at: str | None = None) -> MarketData:
         pfcf_5y_p75=pfcf_p75,
         pfcf_5y_samples=pfcf_samples,
         pfcf_5y_as_of=pfcf_as_of,
+        revenue_per_share_ttm=revenue_per_share_ttm,
+        book_value_per_share=book_value_per_share,
+        ps_5y_p25=ps_p25,
+        ps_5y_median=ps_median,
+        ps_5y_p75=ps_p75,
+        ps_5y_samples=ps_samples,
+        ps_5y_as_of=ps_as_of,
+        pb_5y_p25=pb_p25,
+        pb_5y_median=pb_median,
+        pb_5y_p75=pb_p75,
+        pb_5y_samples=pb_samples,
+        pb_5y_as_of=pb_as_of,
     )
 
 
