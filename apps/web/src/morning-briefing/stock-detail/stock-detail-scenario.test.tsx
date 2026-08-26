@@ -81,7 +81,7 @@ describe("Intrinsic Value scenario range", () => {
 
     await screen.findByRole("heading", { level: 1, name: "Microsoft Corporation" });
     expect(screen.getByText("$400.00")).toBeInTheDocument();
-    expect(screen.getByText("$500.00")).toBeInTheDocument();
+    expect(screen.getAllByText("$500.00").length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText("$600.00")).toBeInTheDocument();
     expect(document.querySelector(".stock-scenario-marker")).toBeNull();
   });
