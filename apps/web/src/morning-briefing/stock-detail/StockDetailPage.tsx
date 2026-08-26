@@ -103,7 +103,7 @@ function IntrinsicValueCard({ detail }: { detail: StockDetail }) {
         {upsidePct !== null && <span>{upsidePct >= 0 ? " Upside" : " Downside"}</span>}
       </div>
 
-      <div className="stock-scenario" aria-label="Intrinsic value range">
+      <div className="stock-scenario" aria-label={automatic ? "Intrinsic value range" : undefined}>
         <div className="stock-scenario-track" aria-hidden="true">
           <span className="stock-scenario-bear-segment" />
           <span className="stock-scenario-base-segment" />
