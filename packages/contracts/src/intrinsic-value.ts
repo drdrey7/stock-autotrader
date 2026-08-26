@@ -335,7 +335,7 @@ function confidenceOf(candidates: readonly Candidate[]): AutomaticValuationConfi
     0,
   ) / totalWeight;
   const meaningful = candidates.filter((candidate) => candidate.weight / totalWeight >= 0.15);
-  if (candidates.length >= 2 && effectiveSamples >= 10 && meaningful.every((candidate) => candidate.samples >= 6)) {
+  if (meaningful.length >= 2 && effectiveSamples >= 10 && meaningful.every((candidate) => candidate.samples >= 6)) {
     return "High";
   }
   if (effectiveSamples >= 6) return "Medium";
