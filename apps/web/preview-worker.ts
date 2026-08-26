@@ -100,7 +100,8 @@ function withCoinScreenerPreviewIv(body: JsonObject): JsonObject {
   const rows = body.rows.map((row) => {
     if (typeof row !== "object" || row === null || Array.isArray(row)) return row;
     const rowObject = row as JsonObject;
-    if (rowObject.symbol !== PREVIEW_IV_SYMBOL || rowObject.intrinsicValue !== null) return row;
+    const hasIntrinsicValue = rowObject.intrinsicValue !== null && rowObject.intrinsicValue !== undefined;
+    if (rowObject.symbol !== PREVIEW_IV_SYMBOL || hasIntrinsicValue) return row;
     changed = true;
     return {
       ...rowObject,
@@ -129,7 +130,7 @@ async function proxyWithPreviewIv(
     || pathname === `/api/stocks/${PREVIEW_IV_SYMBOL}/detail`;
   if (!supportsFixture) return upstream;
 
-  const body = await responseObject(upstream);
+  const body = await responseObject(upstream.clone());
   if (body === null) return upstream;
   const decorated = pathname === "/api/screener"
     ? withCoinScreenerPreviewIv(body)
