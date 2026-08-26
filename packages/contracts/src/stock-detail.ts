@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { automaticValuationMethods } from "./intrinsic-value";
 import { isoTimestampSchema, marketDateSchema } from "./primitives";
 import { sourceStateValues } from "./source-health";
 import {
@@ -47,7 +48,7 @@ export const stockDetailAutomaticIntrinsicValueSchema = z.object({
   base: z.number().positive().finite(),
   bull: z.number().positive().finite(),
   method: z.string().trim().min(1).max(128),
-  methods: z.array(z.enum(["P/E", "P/FCF", "P/S", "P/B"])).min(1).max(4),
+  methods: z.array(z.enum(automaticValuationMethods)).min(1).max(automaticValuationMethods.length),
   confidence: z.enum(["High", "Medium", "Low"]),
   asOf: marketDateSchema,
   bearUpsidePct: z.number().finite().nullable(),
