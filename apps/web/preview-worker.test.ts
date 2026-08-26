@@ -47,6 +47,143 @@ describe("preview Worker", () => {
     expect(env.ASSETS.fetch).not.toHaveBeenCalled();
   });
 
+  it("adds a COIN Automatic IV fixture only when production has no automatic valuation yet", async () => {
+    const productionApi = {
+      fetch: vi.fn(async () => new Response(JSON.stringify({
+        symbol: "COIN",
+        quote: { price: 187.2 },
+        valuation: { intrinsicValue: null },
+        freshness: { valuationAsOf: null },
+      }))),
+    };
+    const { env } = previewEnv(new Response("branch asset"), productionApi);
+
+    const response = await handlePreviewRequest(
+      new Request("https://preview.example/api/stocks/COIN/detail"),
+      env,
+    );
+    const body = await response.json() as {
+      valuation: {
+        automatic: { bear: number; base: number; bull: number; method: string };
+        selectedIntrinsicValue: { low: number; base: number; high: number; upsidePct: number };
+      };
+      freshness: { valuationAsOf: string };
+    };
+
+    expect(body.valuation.automatic).toMatchObject({
+      bear: 150,
+      base: 190,
+      bull: 230,
+      method: "Automatic IV V2 · preview fixture",
+    });
+    expect(body.valuation.selectedIntrinsicValue).toMatchObject({ low: 150, base: 190, high: 230 });
+    expect(body.valuation.selectedIntrinsicValue.upsidePct).toBeCloseTo(1.4957, 3);
+    expect(body.freshness.valuationAsOf).toBe("2026-08-26");
+  });
+
+  it("preserves a production Manual selection while adding the COIN Automatic comparison", async () => {
+    const manual = {
+      low: null,
+      base: 175,
+      high: null,
+      method: "manual",
+      asOf: "2026-08-01",
+      upsidePct: -6.5,
+    };
+    const productionApi = {
+      fetch: vi.fn(async () => new Response(JSON.stringify({
+        symbol: "COIN",
+        quote: { price: 187.2 },
+        valuation: {
+          intrinsicValue: manual,
+          selectedIntrinsicValue: manual,
+          automatic: null,
+        },
+        freshness: { valuationAsOf: "2026-08-01" },
+      }))),
+    };
+    const { env } = previewEnv(new Response("branch asset"), productionApi);
+
+    const response = await handlePreviewRequest(
+      new Request("https://preview.example/api/stocks/COIN/detail"),
+      env,
+    );
+    const body = await response.json() as {
+      valuation: {
+        intrinsicValue: typeof manual;
+        selectedIntrinsicValue: typeof manual;
+        automatic: { base: number; method: string };
+      };
+      freshness: { valuationAsOf: string };
+    };
+
+    expect(body.valuation.intrinsicValue).toEqual(manual);
+    expect(body.valuation.selectedIntrinsicValue).toEqual(manual);
+    expect(body.valuation.automatic).toMatchObject({
+      base: 190,
+      method: "Automatic IV V2 · preview fixture",
+    });
+    expect(body.freshness.valuationAsOf).toBe("2026-08-01");
+  });
+
+  it("does not replace a real production Automatic IV for COIN", async () => {
+    const productionAutomatic = {
+      bear: 160,
+      base: 200,
+      bull: 240,
+      method: "real-model",
+    };
+    const productionApi = {
+      fetch: vi.fn(async () => new Response(JSON.stringify({
+        symbol: "COIN",
+        quote: { price: 187.2 },
+        valuation: { intrinsicValue: null, automatic: productionAutomatic },
+      }))),
+    };
+    const { env } = previewEnv(new Response("branch asset"), productionApi);
+
+    const response = await handlePreviewRequest(
+      new Request("https://preview.example/api/stocks/COIN/detail"),
+      env,
+    );
+    const body = await response.json() as { valuation: { automatic: typeof productionAutomatic } };
+    expect(body.valuation.automatic).toEqual(productionAutomatic);
+  });
+
+  it("adds the same COIN Base IV to the preview Screener with canonical distance semantics", async () => {
+    const productionApi = {
+      fetch: vi.fn(async () => new Response(JSON.stringify({
+        rows: [
+          { symbol: "COIN", price: 187.2, intrinsicValue: null },
+          { symbol: "NVO", price: 48.65, intrinsicValue: { base: 72.96 } },
+        ],
+      }))),
+    };
+    const { env } = previewEnv(new Response("branch asset"), productionApi);
+
+    const response = await handlePreviewRequest(
+      new Request("https://preview.example/api/screener"),
+      env,
+    );
+    const body = await response.json() as {
+      rows: Array<{
+        symbol: string;
+        intrinsicValue: null | { low: number; base: number; high: number; method: string; distancePct?: number | null };
+      }>;
+    };
+    const coin = body.rows.find((row) => row.symbol === "COIN");
+    const nvo = body.rows.find((row) => row.symbol === "NVO");
+
+    expect(coin?.intrinsicValue).toMatchObject({
+      low: 150,
+      base: 190,
+      high: 230,
+      method: "Automatic IV V2 · preview fixture",
+    });
+    expect(coin?.intrinsicValue?.distancePct).toBeCloseTo(-1.4737, 3);
+    expect(nvo?.intrinsicValue).toEqual({ base: 72.96 });
+  });
+
   it("rejects Stock Detail mutations without invoking production", async () => {
     const productionApi = { fetch: vi.fn(async () => new Response("must not run")) };
     const { env } = previewEnv(new Response("branch asset"), productionApi);

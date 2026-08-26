@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { automaticValuationMethods } from "./intrinsic-value";
 import { isoTimestampSchema, marketDateSchema } from "./primitives";
 import { sourceStateValues } from "./source-health";
 import {
@@ -42,6 +43,25 @@ export const stockDetailIntrinsicValueSchema = z.object({
   .refine((value) => value.high === null || value.base <= value.high, "base must be <= high");
 export type StockDetailIntrinsicValue = z.infer<typeof stockDetailIntrinsicValueSchema>;
 
+export const stockDetailAutomaticIntrinsicValueSchema = z.object({
+  bear: z.number().positive().finite(),
+  base: z.number().positive().finite(),
+  bull: z.number().positive().finite(),
+  method: z.string().trim().min(1).max(128),
+  methods: z.array(z.enum(automaticValuationMethods)).min(1).max(automaticValuationMethods.length),
+  confidence: z.enum(["High", "Medium", "Low"]),
+  asOf: marketDateSchema,
+  bearUpsidePct: z.number().finite().nullable(),
+  baseUpsidePct: z.number().finite().nullable(),
+  bullUpsidePct: z.number().finite().nullable(),
+})
+  .refine((value) => value.bear <= value.base && value.base <= value.bull, "automatic IV scenarios must be ordered")
+  .refine(
+    (value) => value.base === Math.round(((value.bear + value.bull) / 2) * 100) / 100,
+    "automatic IV base must be the arithmetic midpoint of bear and bull",
+  );
+export type StockDetailAutomaticIntrinsicValue = z.infer<typeof stockDetailAutomaticIntrinsicValueSchema>;
+
 /**
  * Public, provider-neutral Stock Detail read model.
  *
@@ -71,7 +91,12 @@ export const stockDetailApiResponseSchema = z.object({
     scaleState: z.enum(stockDetailQuoteScaleStateValues),
   }),
   valuation: z.object({
+    /** Manual D1 IV, kept separate so priority is explicit and auditable. */
     intrinsicValue: stockDetailIntrinsicValueSchema.nullable(),
+    /** Optional for rolling-deploy/preview compatibility with an older Worker. */
+    automatic: stockDetailAutomaticIntrinsicValueSchema.nullable().optional(),
+    /** Manual first, otherwise Automatic Base. Optional only during rolling deploy. */
+    selectedIntrinsicValue: stockDetailIntrinsicValueSchema.nullable().optional(),
   }),
   fundamentals: z.object({
     marketCap: z.string().trim().min(1).nullable(),

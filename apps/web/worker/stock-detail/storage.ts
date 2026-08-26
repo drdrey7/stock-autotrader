@@ -17,9 +17,6 @@ const COMPANY_SQL = `SELECT u.symbol, u.company, u.logo_url, u.exchange, u.indus
   FROM earnings_universe AS u
   WHERE u.symbol = ? AND ${ACTIVE_UNIVERSE_PREDICATE}
   LIMIT 1`;
-// Branch Preview is intentionally seeded only with fundamentals rows. This
-// path is never selected by production, which keeps the runtime membership
-// gate above authoritative for real serving traffic.
 const PREVIEW_COMPANY_SQL = `SELECT symbol, symbol AS company, NULL AS logo_url, NULL AS exchange, NULL AS industry
   FROM stock_fundamentals_snapshot
   WHERE symbol = ?
@@ -52,12 +49,18 @@ const SPLIT_EVENTS_SQL = `SELECT effective_date, split_factor
   FROM split_events
   WHERE symbol = ?
   ORDER BY effective_date ASC`;
-const FUNDAMENTALS_SQL = `SELECT symbol, market_cap, pe_ttm, revenue_ttm,
-  operating_income_ttm, pretax_income_ttm, income_tax_ttm,
+const FUNDAMENTALS_SQL = `SELECT symbol, market_cap, pe_ttm, eps_ttm, fcf_per_share_ttm,
+  revenue_per_share_ttm, book_value_per_share,
+  revenue_growth_ttm_yoy_pct, revenue_growth_3y_pct, revenue_growth_5y_pct, roe_ttm_pct,
+  pe_5y_p25, pe_5y_median, pe_5y_p75, pe_5y_samples, pe_5y_as_of,
+  pfcf_5y_p25, pfcf_5y_median, pfcf_5y_p75, pfcf_5y_samples, pfcf_5y_as_of,
+  ps_5y_p25, ps_5y_median, ps_5y_p75, ps_5y_samples, ps_5y_as_of,
+  pb_5y_p25, pb_5y_median, pb_5y_p75, pb_5y_samples, pb_5y_as_of,
+  revenue_ttm, operating_income_ttm, pretax_income_ttm, income_tax_ttm,
   operating_cash_flow_ttm, capex_ttm, free_cash_flow_ttm, cash,
   short_term_investments, total_debt, shareholders_equity, roic_pct,
-  fcf_margin_pct, debt_to_equity, accounting_periods_compatible, accounting_as_of, market_as_of, market_checked_at,
-  accounting_source, market_source, updated_at
+  fcf_margin_pct, debt_to_equity, accounting_periods_compatible, accounting_as_of,
+  market_as_of, market_checked_at, accounting_source, market_source, updated_at
   FROM stock_fundamentals_snapshot
   WHERE symbol = ?
   LIMIT 1`;
@@ -93,6 +96,34 @@ export interface StockFundamentalsSnapshotRow {
   symbol: string;
   market_cap: number | null;
   pe_ttm: number | null;
+  eps_ttm?: number | null;
+  fcf_per_share_ttm?: number | null;
+  revenue_per_share_ttm?: number | null;
+  book_value_per_share?: number | null;
+  revenue_growth_ttm_yoy_pct?: number | null;
+  revenue_growth_3y_pct?: number | null;
+  revenue_growth_5y_pct?: number | null;
+  roe_ttm_pct?: number | null;
+  pe_5y_p25?: number | null;
+  pe_5y_median?: number | null;
+  pe_5y_p75?: number | null;
+  pe_5y_samples?: number | null;
+  pe_5y_as_of?: string | null;
+  pfcf_5y_p25?: number | null;
+  pfcf_5y_median?: number | null;
+  pfcf_5y_p75?: number | null;
+  pfcf_5y_samples?: number | null;
+  pfcf_5y_as_of?: string | null;
+  ps_5y_p25?: number | null;
+  ps_5y_median?: number | null;
+  ps_5y_p75?: number | null;
+  ps_5y_samples?: number | null;
+  ps_5y_as_of?: string | null;
+  pb_5y_p25?: number | null;
+  pb_5y_median?: number | null;
+  pb_5y_p75?: number | null;
+  pb_5y_samples?: number | null;
+  pb_5y_as_of?: string | null;
   revenue_ttm: number | null;
   operating_income_ttm: number | null;
   pretax_income_ttm: number | null;
@@ -179,43 +210,42 @@ function parseWeeklyRows(rows: readonly unknown[]): WeeklyPriceRow[] {
 }
 
 function parseSplitEvents(rows: readonly unknown[]): StockDetailSplitEventRow[] {
-  return rows
-    .filter((row): row is StockDetailSplitEventRow => (
-      typeof row === "object"
-      && row !== null
-      && "effective_date" in row
-      && typeof row.effective_date === "string"
-      && /^\d{4}-\d{2}-\d{2}$/.test(row.effective_date)
-      && "split_factor" in row
-      && isFiniteNumber(row.split_factor)
-      && row.split_factor > 0
-    ));
+  return rows.filter((row): row is StockDetailSplitEventRow => (
+    typeof row === "object"
+    && row !== null
+    && "effective_date" in row
+    && typeof row.effective_date === "string"
+    && /^\d{4}-\d{2}-\d{2}$/.test(row.effective_date)
+    && "split_factor" in row
+    && isFiniteNumber(row.split_factor)
+    && row.split_factor > 0
+  ));
 }
 
 function parseFundamentals(row: unknown): StockFundamentalsSnapshotRow | null {
   if (!row || typeof row !== "object") return null;
   const value = row as Record<string, unknown>;
   const numericFields = [
-    "market_cap", "pe_ttm", "revenue_ttm", "operating_income_ttm", "pretax_income_ttm",
-    "income_tax_ttm", "operating_cash_flow_ttm", "capex_ttm", "free_cash_flow_ttm", "cash",
+    "market_cap", "pe_ttm", "eps_ttm", "fcf_per_share_ttm", "revenue_per_share_ttm", "book_value_per_share",
+    "revenue_growth_ttm_yoy_pct", "revenue_growth_3y_pct", "revenue_growth_5y_pct", "roe_ttm_pct",
+    "pe_5y_p25", "pe_5y_median", "pe_5y_p75", "pe_5y_samples",
+    "pfcf_5y_p25", "pfcf_5y_median", "pfcf_5y_p75", "pfcf_5y_samples",
+    "ps_5y_p25", "ps_5y_median", "ps_5y_p75", "ps_5y_samples",
+    "pb_5y_p25", "pb_5y_median", "pb_5y_p75", "pb_5y_samples",
+    "revenue_ttm", "operating_income_ttm", "pretax_income_ttm", "income_tax_ttm",
+    "operating_cash_flow_ttm", "capex_ttm", "free_cash_flow_ttm", "cash",
     "short_term_investments", "total_debt", "shareholders_equity", "roic_pct", "fcf_margin_pct",
     "debt_to_equity", "accounting_periods_compatible",
   ];
-  if (typeof value.symbol !== "string" || !numericFields.every((field) => value[field] === null || isFiniteNumber(value[field]))) return null;
+  if (typeof value.symbol !== "string" || !numericFields.every((field) => value[field] === null || value[field] === undefined || isFiniteNumber(value[field]))) return null;
   if (!["accounting_source", "market_source", "updated_at"].every((field) => typeof value[field] === "string" && value[field])) return null;
   return value as unknown as StockFundamentalsSnapshotRow;
 }
 
 /**
- * Canonical Stock Detail serving read. D1 documents at most six simultaneous
- * connections per Worker invocation, while this read model needs seven
- * independent data families. `batch()` is therefore the production path: one
- * bound, symbol-scoped database call, seven sequential SELECT statements and
- * one coherent snapshot. Any D1 failure propagates and becomes a sanitized 503.
- *
- * The first statement is also the runtime membership gate. A symbol that is
- * configured statically but is not currently active in the Core universe must
- * never expose stale symbol-only quote/history/valuation rows.
+ * Canonical Stock Detail serving read. `batch()` keeps the eight independent
+ * data families in one bounded, coherent D1 operation. Providers never run in
+ * this request path.
  */
 export async function readStockDetailStorageSnapshot(
   db: D1Database,

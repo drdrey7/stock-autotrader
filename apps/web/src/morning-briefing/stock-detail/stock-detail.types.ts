@@ -24,6 +24,16 @@ export interface StockSupportLevel {
   triggered?: boolean | null;
 }
 
+export interface StockAutomaticValuation {
+  bear: number;
+  base: number;
+  bull: number;
+  method: string;
+  methods: Array<"P/E" | "P/FCF" | "P/S" | "P/B">;
+  confidence: "High" | "Medium" | "Low";
+  asOf: string;
+}
+
 export interface StockDetail {
   /** Data provenance; visual components never branch on this field. */
   source: "mock" | "api";
@@ -43,8 +53,10 @@ export interface StockDetail {
     asOf: string | null;
   };
   valuation: {
+    /** Canonical selected IV: Manual first, otherwise Automatic Base. */
     intrinsicValue: number | null;
     upsidePct: number | null;
+    automatic?: StockAutomaticValuation | null;
     scenarios: {
       bear: number | null;
       base: number | null;

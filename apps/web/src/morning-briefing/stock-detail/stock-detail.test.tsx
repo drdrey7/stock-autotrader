@@ -192,7 +192,7 @@ describe("StockDetailPage", () => {
     expect(screen.getByRole("link", { name: "Back to Screener" })).toHaveAttribute("href", "/screener");
   });
 
-  it("supports missing values, uses × for missing IV and hides unplotted legend entries", async () => {
+  it("supports missing values with a neutral IV state and hides unplotted legend entries", async () => {
     const base = createMockStockDetail("MSFT")!;
     const incomplete: StockDetail = {
       ...base,
@@ -200,6 +200,7 @@ describe("StockDetailPage", () => {
         ...base.valuation,
         intrinsicValue: null,
         upsidePct: null,
+        automatic: null,
         scenarios: { bear: null, base: null, bull: null },
         methods: { dcf: null, multiples: null, manual: null, selected: null, selectedMethod: null },
       },
@@ -226,8 +227,9 @@ describe("StockDetailPage", () => {
     renderStockRoute("/stocks/MSFT", dataSource);
 
     await screen.findByRole("heading", { level: 1, name: "Microsoft Corporation" });
-    expect(screen.getByText("×")).toBeInTheDocument();
-    expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(12);
+    expect(document.querySelector(".stock-iv-value")).toHaveTextContent("—");
+    expect(screen.queryByText("×")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Intrinsic value range")).not.toBeInTheDocument();
     expect(document.body).not.toHaveTextContent(/NaN|undefined/);
     const legend = screen.getByLabelText("Chart legend");
     expect(within(legend).getByText("Price")).toBeInTheDocument();

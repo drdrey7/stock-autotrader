@@ -5,20 +5,6 @@ import {
 import { requestJson } from "../api-client";
 import type { StockDetail, StockDetailDataSource } from "./stock-detail.types";
 
-/**
- * Daily change is only presentation-safe when the regular session is active
- * and the quote source owns a trustworthy prior-close baseline.
- *
- * The production WebSocket collector currently preserves `previous_close`
- * across sessions, so its persisted change fields can become stale from the
- * second trading day onward. Issue #83 owns that collector/session rollover.
- * Until then Stock Detail fails closed (`—`) for WebSocket daily change while
- * preserving the latest usable price.
- *
- * `finnhub-quote` is the existing REST quote adapter: its c/d/dp/pc values are
- * returned together by one provider response, so a Live regular-session row
- * from that source can safely expose the daily move.
- */
 function canShowDailyChange(api: StockDetailApiResponse): boolean {
   return api.quote.marketState === "regular"
     && api.quote.state === "Live"
@@ -27,8 +13,13 @@ function canShowDailyChange(api: StockDetailApiResponse): boolean {
 }
 
 function toUiModel(api: StockDetailApiResponse): StockDetail {
-  const iv = api.valuation.intrinsicValue;
+  const manual = api.valuation.intrinsicValue;
+  const automatic = api.valuation.automatic ?? null;
+  // Rolling-deploy compatibility: an older production Worker only exposes the
+  // manual `intrinsicValue` field. The browser never calculates valuation.
+  const selected = api.valuation.selectedIntrinsicValue ?? manual;
   const showDailyChange = canShowDailyChange(api);
+
   return {
     source: "api",
     symbol: api.symbol,
@@ -46,19 +37,30 @@ function toUiModel(api: StockDetailApiResponse): StockDetail {
       asOf: api.quote.asOf,
     },
     valuation: {
-      intrinsicValue: iv?.base ?? null,
-      upsidePct: iv?.upsidePct ?? null,
+      intrinsicValue: selected?.base ?? null,
+      upsidePct: selected?.upsidePct ?? null,
+      automatic: automatic
+        ? {
+            bear: automatic.bear,
+            base: automatic.base,
+            bull: automatic.bull,
+            method: automatic.method,
+            methods: automatic.methods,
+            confidence: automatic.confidence,
+            asOf: automatic.asOf,
+          }
+        : null,
       scenarios: {
-        bear: iv?.low ?? null,
-        base: iv?.base ?? null,
-        bull: iv?.high ?? null,
+        bear: automatic?.bear ?? null,
+        base: automatic?.base ?? null,
+        bull: automatic?.bull ?? null,
       },
       methods: {
         dcf: null,
-        multiples: null,
-        manual: iv?.base ?? null,
-        selected: iv?.base ?? null,
-        selectedMethod: iv?.method ?? null,
+        multiples: automatic?.base ?? null,
+        manual: manual?.base ?? null,
+        selected: selected?.base ?? null,
+        selectedMethod: selected?.method ?? null,
       },
     },
     technical: {

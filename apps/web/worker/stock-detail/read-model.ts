@@ -10,6 +10,10 @@ import {
   type QuoteInput,
 } from "../sma/metrics";
 import { isoWeekOfDateKey, weekDiffDays } from "../sma/weeks";
+import {
+  automaticIntrinsicValueForScreener,
+  calculateAutomaticIntrinsicValueFromPersistedFundamentals,
+} from "../intrinsic-values/automatic";
 import { buildIntrinsicValue, buildSupportLevels } from "../stocks/derived";
 import { nyDateKeyOf, quoteState, quotesMarketState } from "../quotes/freshness";
 import type { Env } from "../index";
@@ -183,8 +187,7 @@ function directFinnhubCardMetrics(
 
 /**
  * Read the three slow-moving cards. New snapshots use Finnhub's direct ratios.
- * The old accounting derivation remains only as a rollout compatibility path
- * for rows not yet refreshed by the new daily job.
+ * The old accounting derivation remains only as a rollout compatibility path.
  */
 export function calculateAccountingCardMetrics(
   fundamentals: StockDetailStorageSnapshot["fundamentals"],
@@ -325,6 +328,8 @@ export async function readStockDetailApi(
     ? await readStockDetailStorageSnapshot(env.DB, symbol, STOCK_DETAIL_HISTORY_LIMIT, "preview")
     : await readStockDetailStorageSnapshot(env.DB, symbol);
 
+  // The existing metric cards may still fail closed after three days. Automatic
+  // IV intentionally does not use this TTL; it consumes last-known-good facts.
   const marketFundamentalsFresh = marketFundamentalsAreFresh(fundamentals, now);
   const cardMetrics = calculateAccountingCardMetrics(fundamentals);
   const marketCap = marketFundamentalsFresh ? fundamentals?.market_cap ?? null : null;
@@ -368,24 +373,59 @@ export async function readStockDetailApi(
     effectiveSplitAsOf ?? undefined,
     currentMarketDate,
   );
-  const screenerIntrinsicValue = buildIntrinsicValue(
+  const screenerManualIntrinsicValue = buildIntrinsicValue(
     currentPrice,
     intrinsicRaw,
     effectiveSplitAsOf ?? undefined,
     currentMarketDate,
   );
-  const intrinsicValue = screenerIntrinsicValue
+  const manualIntrinsicValue = screenerManualIntrinsicValue
     ? {
-        low: screenerIntrinsicValue.low,
-        base: screenerIntrinsicValue.base,
-        high: screenerIntrinsicValue.high,
-        method: screenerIntrinsicValue.method,
-        asOf: screenerIntrinsicValue.asOf,
+        low: screenerManualIntrinsicValue.low,
+        base: screenerManualIntrinsicValue.base,
+        high: screenerManualIntrinsicValue.high,
+        method: screenerManualIntrinsicValue.method,
+        asOf: screenerManualIntrinsicValue.asOf,
         upsidePct: currentPrice !== null && currentPrice > 0
-          ? (screenerIntrinsicValue.base / currentPrice - 1) * 100
+          ? (screenerManualIntrinsicValue.base / currentPrice - 1) * 100
           : null,
       }
     : null;
+
+  const automaticModel = calculateAutomaticIntrinsicValueFromPersistedFundamentals(
+    symbol,
+    company?.industry?.trim() || null,
+    currentPrice,
+    fundamentals,
+    effectiveSplitEvents,
+    currentMarketDate,
+  );
+  const automatic = automaticModel
+    ? {
+        bear: automaticModel.bear,
+        base: automaticModel.base,
+        bull: automaticModel.bull,
+        method: automaticModel.method,
+        methods: automaticModel.methods,
+        confidence: automaticModel.confidence,
+        asOf: automaticModel.asOf,
+        bearUpsidePct: automaticModel.bearUpsidePct,
+        baseUpsidePct: automaticModel.baseUpsidePct,
+        bullUpsidePct: automaticModel.bullUpsidePct,
+      }
+    : null;
+  const automaticForSelection = automaticIntrinsicValueForScreener(automaticModel, currentPrice);
+  const automaticSelectedIntrinsicValue = automaticForSelection
+    ? {
+        low: automaticForSelection.low,
+        base: automaticForSelection.base,
+        high: automaticForSelection.high,
+        method: automaticForSelection.method,
+        asOf: automaticForSelection.asOf,
+        upsidePct: automaticModel?.baseUpsidePct ?? null,
+      }
+    : null;
+  const selectedIntrinsicValue = manualIntrinsicValue ?? automaticSelectedIntrinsicValue;
 
   const allCloseHistory = historyScaleSafe ? toValidChronologicalCloseHistory(weeklyRows) : [];
   const visibleStartIndex = Math.max(0, allCloseHistory.length - STOCK_DETAIL_VISIBLE_WEEKS);
@@ -421,7 +461,11 @@ export async function readStockDetailApi(
       marketState: quotesMarketState(now),
       scaleState,
     },
-    valuation: { intrinsicValue },
+    valuation: {
+      intrinsicValue: manualIntrinsicValue,
+      automatic,
+      selectedIntrinsicValue,
+    },
     fundamentals: {
       marketCap: formattedMarketCap,
       peTtm: marketFundamentalsFresh ? fundamentals?.pe_ttm ?? null : null,
@@ -446,7 +490,7 @@ export async function readStockDetailApi(
     freshness: {
       quoteAsOf: quote?.provider_timestamp ?? null,
       historyAsOf,
-      valuationAsOf: intrinsicValue?.asOf ?? null,
+      valuationAsOf: selectedIntrinsicValue?.asOf ?? null,
       technicalAsOf: metric?.calculated_at ?? null,
     },
   });

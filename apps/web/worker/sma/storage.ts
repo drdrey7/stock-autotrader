@@ -47,27 +47,17 @@ export async function readLatestSplitEffectiveDate(db: D1Database): Promise<Map<
       "SELECT symbol, MAX(effective_date) AS latest FROM split_events GROUP BY symbol",
     ).all<{ symbol: string; latest: string }>();
     for (const row of (query.results ?? [])) {
-      if (row.symbol && row.latest) {
-        result.set(row.symbol, row.latest);
-      }
+      if (row.symbol && row.latest) result.set(row.symbol, row.latest);
     }
   } catch {
-    // Best-effort: a missing/failing split_events table disables the guard
-    // (the historical basis is then assumed current). Never fatal.
+    // Best-effort: a missing/failing split_events table disables the guard.
   }
   return result;
 }
 
 /**
  * Read the latest SPLIT EFFECTIVE AS OF a given date per symbol.
- *
- * Unlike `readLatestSplitEffectiveDate()` (which returns MAX(effective_date)
- * across all time, including future announced splits), this caps the result
- * at `asOfDate` — only splits already effective by that date are considered.
- *
- * Needed for support-level split-safety: a future announced split does NOT
- * invalidate manual supports (quote and supports are still on the same scale).
- * Only splits that are already effective (effectiveDate <= asOfDate) matter.
+ * Future announced splits do not invalidate today's manual values.
  */
 export async function readLatestSplitEffectiveDateAsOf(db: D1Database, asOfDate: string): Promise<Map<string, string>> {
   const result = new Map<string, string>();
@@ -76,12 +66,53 @@ export async function readLatestSplitEffectiveDateAsOf(db: D1Database, asOfDate:
       "SELECT symbol, MAX(effective_date) AS latest FROM split_events WHERE effective_date <= ? GROUP BY symbol",
     ).bind(asOfDate).all<{ symbol: string; latest: string }>();
     for (const row of (query.results ?? [])) {
-      if (row.symbol && row.latest) {
-        result.set(row.symbol, row.latest);
-      }
+      if (row.symbol && row.latest) result.set(row.symbol, row.latest);
     }
   } catch {
     // Best-effort: same contract as readLatestSplitEffectiveDate.
   }
   return result;
+}
+
+export interface EffectiveSplitEventRow {
+  symbol: string;
+  effective_date: string;
+  split_factor: number;
+}
+
+function isStrictMarketDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = Date.parse(`${value}T00:00:00.000Z`);
+  return Number.isFinite(parsed) && new Date(parsed).toISOString().slice(0, 10) === value;
+}
+
+/**
+ * All already-effective split events, grouped by symbol. Automatic IV uses the
+ * factors to re-scale stale per-share fundamentals if a split happened while
+ * the fundamentals VPS was offline.
+ *
+ * Unlike the older SMA/manual split helpers, this read is part of Automatic
+ * IV's scale-safety boundary: `null` means split state could not be trusted and
+ * callers must suppress Automatic IV rather than silently assume no split.
+ */
+export async function readEffectiveSplitEventsAsOf(
+  db: D1Database,
+  asOfDate: string,
+): Promise<Map<string, EffectiveSplitEventRow[]> | null> {
+  const grouped = new Map<string, EffectiveSplitEventRow[]>();
+  try {
+    const query = await db.prepare(
+      "SELECT symbol, effective_date, split_factor FROM split_events WHERE effective_date <= ? ORDER BY symbol, effective_date ASC",
+    ).bind(asOfDate).all<EffectiveSplitEventRow>();
+    for (const row of query.results ?? []) {
+      if (!row.symbol || !isStrictMarketDate(row.effective_date)) return null;
+      if (!Number.isFinite(row.split_factor) || row.split_factor <= 0) return null;
+      const rows = grouped.get(row.symbol) ?? [];
+      rows.push(row);
+      grouped.set(row.symbol, rows);
+    }
+    return grouped;
+  } catch {
+    return null;
+  }
 }
