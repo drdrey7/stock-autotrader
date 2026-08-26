@@ -50,6 +50,11 @@ function upsidePct(value: number, price: unknown): number | null {
   return usablePrice === null ? null : ((value / usablePrice) - 1) * 100;
 }
 
+function distancePct(value: number, price: unknown): number | null {
+  const usablePrice = finitePositive(price);
+  return usablePrice === null ? null : ((usablePrice / value) - 1) * 100;
+}
+
 function withCoinDetailPreviewIv(body: JsonObject): JsonObject {
   if (body.symbol !== PREVIEW_IV_SYMBOL) return body;
   const valuation = body.valuation;
@@ -79,7 +84,14 @@ function withCoinDetailPreviewIv(body: JsonObject): JsonObject {
     asOf: PREVIEW_IV_AS_OF,
     upsidePct: upsidePct(PREVIEW_IV.base, price),
   };
-  const freshness = typeof body.freshness === "object" && body.freshness !== null && !Array.isArray(body.freshness)
+  const hasExistingSelection = valuationObject.intrinsicValue !== null
+    && valuationObject.intrinsicValue !== undefined
+    || valuationObject.selectedIntrinsicValue !== null
+      && valuationObject.selectedIntrinsicValue !== undefined;
+  const freshness = !hasExistingSelection
+    && typeof body.freshness === "object"
+    && body.freshness !== null
+    && !Array.isArray(body.freshness)
     ? { ...(body.freshness as JsonObject), valuationAsOf: PREVIEW_IV_AS_OF }
     : body.freshness;
 
@@ -88,7 +100,7 @@ function withCoinDetailPreviewIv(body: JsonObject): JsonObject {
     valuation: {
       ...valuationObject,
       automatic,
-      selectedIntrinsicValue,
+      ...(!hasExistingSelection ? { selectedIntrinsicValue } : {}),
     },
     freshness,
   };
@@ -111,7 +123,7 @@ function withCoinScreenerPreviewIv(body: JsonObject): JsonObject {
         high: PREVIEW_IV.bull,
         method: PREVIEW_IV.method,
         asOf: PREVIEW_IV_AS_OF,
-        distancePct: upsidePct(PREVIEW_IV.base, rowObject.price),
+        distancePct: distancePct(PREVIEW_IV.base, rowObject.price),
       },
     };
   });
