@@ -273,6 +273,7 @@ export * from "./core-universe";
 export * from "./source-health";
 export * from "./quotes";
 export * from "./stock-detail";
+export * from "./intrinsic-value";
 export * from "./dashboard";
 export * from "./ai-analysis";
 

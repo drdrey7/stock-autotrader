@@ -22,23 +22,49 @@ import {
 } from "./health";
 import { readLatestQuotes } from "./storage";
 import { computeLiveSma200w, type QuoteInput } from "../sma/metrics";
-import { readTechnicalMetrics, readLatestSplitEffectiveDate, readLatestSplitEffectiveDateAsOf } from "../sma/storage";
+import {
+  readEffectiveSplitEventsAsOf,
+  readLatestSplitEffectiveDate,
+  readLatestSplitEffectiveDateAsOf,
+  readTechnicalMetrics,
+} from "../sma/storage";
 import { readManualSupportLevels } from "../supports/storage";
 import { readManualIntrinsicValues } from "../intrinsic-values/storage";
+import {
+  automaticIntrinsicValueForScreener,
+  calculateAutomaticIntrinsicValueFromPersistedFundamentals,
+  type AutomaticValuationFundamentals,
+} from "../intrinsic-values/automatic";
 import { buildIntrinsicValue, buildSupportLevels } from "../stocks/derived";
 import { nyDateKeyOf } from "./freshness";
 
-interface CompanyRow {
+interface CompanyRow extends AutomaticValuationFundamentals {
   symbol: string;
   company: string;
   logo_url: string | null;
+  industry: string | null;
 }
 
-/** Core Universe company names + logo are best-effort enrichment — never fatal. */
+/**
+ * Core Universe company + last-known-good valuation facts in one D1 query.
+ * The LEFT JOIN keeps fundamentals best-effort and avoids any provider request
+ * in the Screener path.
+ */
 async function readCoreCompanies(db: D1Database): Promise<CompanyRow[]> {
   try {
     const result = await db.prepare(
-      "SELECT symbol, company, logo_url FROM earnings_universe WHERE source = 'core' AND active = 1",
+      `SELECT u.symbol, u.company, u.logo_url, u.industry,
+        f.eps_ttm, f.fcf_per_share_ttm, f.revenue_per_share_ttm, f.book_value_per_share,
+        f.revenue_growth_ttm_yoy_pct, f.revenue_growth_3y_pct, f.revenue_growth_5y_pct,
+        f.roe_ttm_pct, f.roic_pct, f.fcf_margin_pct, f.debt_to_equity,
+        f.pe_5y_p25, f.pe_5y_median, f.pe_5y_p75, f.pe_5y_samples, f.pe_5y_as_of,
+        f.pfcf_5y_p25, f.pfcf_5y_median, f.pfcf_5y_p75, f.pfcf_5y_samples, f.pfcf_5y_as_of,
+        f.ps_5y_p25, f.ps_5y_median, f.ps_5y_p75, f.ps_5y_samples, f.ps_5y_as_of,
+        f.pb_5y_p25, f.pb_5y_median, f.pb_5y_p75, f.pb_5y_samples, f.pb_5y_as_of,
+        f.market_as_of, f.market_checked_at, f.updated_at
+       FROM earnings_universe AS u
+       LEFT JOIN stock_fundamentals_snapshot AS f ON f.symbol = u.symbol
+       WHERE u.source = 'core' AND u.active = 1`,
     ).all<CompanyRow>();
     return result.results ?? [];
   } catch {
@@ -46,19 +72,9 @@ async function readCoreCompanies(db: D1Database): Promise<CompanyRow[]> {
   }
 }
 
-/**
- * Map the WebSocket collector state onto today's Screener badge labels
- * (P2 #2B — a future /status PR will surface Healthy/Degraded/Disconnected
- * natively). The worker badge stays semantics-compatible:
- *  - Healthy   -> Live (open session) / Cached (closed)
- *  - Degraded  -> Cached (usable, but not streaming live data)
- *  - Disconnected -> Stale (assuming a dead collector never recovers)
- */
 function wsCollectorStateToSourceState(state: WSCollectorState, marketState: ScreenerMarketState): SourceState {
   switch (state) {
     case "Healthy":
-      // Only DURING the regular session is the collector "Live"; after it
-      // (post_close / closed) the prices are the final session snapshot.
       return marketState === "regular" ? "Live" : "Cached";
     case "Degraded":
       return "Cached";
@@ -69,14 +85,6 @@ function wsCollectorStateToSourceState(state: WSCollectorState, marketState: Scr
   }
 }
 
-/**
- * P2 #2 conservative cross-check: Finnhub has no per-symbol subscription ack,
- * so a Healthy WS with ZERO live rows during the regular session means the
- * subscriptions may have silently failed (heartbeat fresh, socket connected,
- * no data arriving). In that pathological case we refuse to claim global
- * "Live" and degrade to Cached. Deliberately NOT triggered by one quiet
- * symbol, no recent NET/SNOW trade, or 49/50 live — only live === 0.
- */
 function safeguardWsCollectorState(
   base: SourceState,
   wsState: WSCollectorState,
@@ -88,24 +96,33 @@ function safeguardWsCollectorState(
 }
 
 /**
- * Screener read model: canonical Core Universe (50) combined with the latest
- * quote state. Pure D1 reads — opening /screener never touches Finnhub; the
- * collector is fully independent of frontend traffic.
+ * Screener read model: pure D1 serving. IV selection is deterministic:
+ * split-safe Manual first, otherwise Automatic V2 Base from the persisted
+ * last-known-good fundamentals snapshot. There is no fundamentals age TTL.
  */
 export async function readScreenerApi(env: Env, now = new Date()): Promise<ScreenerApiResponse> {
-  const currentMarketDate = nyDateKeyOf(now) ?? undefined;
-  const [quotes, companies, wsHealth, metrics, latestSplitEffectiveDates, splitEffectiveDatesAsOf, supportLevels, intrinsicValues] = await Promise.all([
+  const currentMarketDate = nyDateKeyOf(now);
+  const [
+    quotes,
+    companies,
+    wsHealth,
+    metrics,
+    latestSplitEffectiveDates,
+    splitEffectiveDatesAsOf,
+    effectiveSplitEvents,
+    supportLevels,
+    intrinsicValues,
+  ] = await Promise.all([
     readLatestQuotes(env.DB),
     readCoreCompanies(env.DB),
     readWsIngestorHealth(env.DB),
     readTechnicalMetrics(env.DB),
     readLatestSplitEffectiveDate(env.DB),
     currentMarketDate ? readLatestSplitEffectiveDateAsOf(env.DB, currentMarketDate) : Promise.resolve(new Map()),
+    currentMarketDate ? readEffectiveSplitEventsAsOf(env.DB, currentMarketDate) : Promise.resolve(new Map()),
     readManualSupportLevels(env.DB),
     readManualIntrinsicValues(env.DB),
   ]);
-  // REST shard health is only used as a fallback (manual/diagnostic runs)
-  // when the WebSocket collector has never written a record.
   const restHealth = wsHealth ? null : await readQuotesHealth(env.DB);
   const quoteBySymbol = new Map(quotes.map((quote) => [quote.symbol, quote]));
   const companyBySymbol = new Map(companies.map((company) => [company.symbol, company]));
@@ -120,6 +137,25 @@ export async function readScreenerApi(env: Env, now = new Date()): Promise<Scree
       : null;
     const sma = computeLiveSma200w(quoteInput, metrics.get(symbol) ?? null, latestSplitEffectiveDates);
     const currentPrice = quote?.price ?? null;
+    const manualIntrinsicValue = buildIntrinsicValue(
+      currentPrice,
+      intrinsicValues.get(symbol),
+      splitEffectiveDatesAsOf.get(symbol),
+      currentMarketDate ?? undefined,
+    );
+    const automaticIntrinsicValue = currentMarketDate
+      ? calculateAutomaticIntrinsicValueFromPersistedFundamentals(
+          symbol,
+          company?.industry ?? null,
+          currentPrice,
+          company,
+          effectiveSplitEvents.get(symbol) ?? [],
+          currentMarketDate,
+        )
+      : null;
+    const intrinsicValue = manualIntrinsicValue
+      ?? automaticIntrinsicValueForScreener(automaticIntrinsicValue, currentPrice);
+
     return {
       symbol,
       company: company?.company ?? null,
@@ -139,18 +175,18 @@ export async function readScreenerApi(env: Env, now = new Date()): Promise<Scree
       sma200wState: sma.sma200wState,
       sma200wHistoryWeeks: sma.sma200wHistoryWeeks,
       sma200wAsOf: sma.sma200wAsOf,
-      supportLevels: buildSupportLevels(currentPrice, supportLevels.get(symbol), splitEffectiveDatesAsOf.get(symbol), currentMarketDate),
-      intrinsicValue: buildIntrinsicValue(currentPrice, intrinsicValues.get(symbol), splitEffectiveDatesAsOf.get(symbol), currentMarketDate),
+      supportLevels: buildSupportLevels(
+        currentPrice,
+        supportLevels.get(symbol),
+        splitEffectiveDatesAsOf.get(symbol),
+        currentMarketDate ?? undefined,
+      ),
+      intrinsicValue,
       logoUrl: company?.logo_url ?? null,
     };
   });
 
   const counts = countQuoteStates(rows);
-  // Global collector freshness comes from the WebSocket ingestor's D1
-  // heartbeat + TTL (P2 #1/#2B) — NOT from per-symbol row age, so a quiet
-  // symbol (zero trades for 15+ min) can never demote the whole collector.
-  // Without a WS record (never installed / REST rollback) we fall back to the
-  // legacy row-derived collector state.
   const wsCollector = wsHealth ? collectorStateFromWsHealth(wsHealth, now) : "Unavailable";
   const collectorState = wsHealth
     ? safeguardWsCollectorState(

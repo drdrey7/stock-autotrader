@@ -6,7 +6,7 @@ import { CompanyLogo } from "../EarningsLogo";
 import { screenerQueryFromNavigationState, type ScreenerQuery } from "../screener/screener-filter";
 import PriceAndKeyLevelsChart from "./PriceAndKeyLevelsChart";
 import { apiStockDetailDataSource } from "./stock-detail.api";
-import type { StockDetail, StockDetailDataSource } from "./stock-detail.types";
+import type { StockAutomaticValuation, StockDetail, StockDetailDataSource } from "./stock-detail.types";
 import "./stock-detail.css";
 import "./typography.css";
 
@@ -34,6 +34,18 @@ function formatChange(value: number | null): string {
 function formatDate(iso: string | null): string {
   if (iso === null) return "—";
   const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "—";
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "America/New_York",
+  }).format(date);
+}
+
+function formatMarketDate(dateKey: string | null): string {
+  if (!dateKey) return "—";
+  const date = new Date(`${dateKey}T12:00:00.000Z`);
   if (Number.isNaN(date.getTime())) return "—";
   return new Intl.DateTimeFormat("en-US", {
     month: "short",
@@ -72,8 +84,14 @@ function ExplainableLabel({ label, term }: { label: string; term: FinancialGloss
   );
 }
 
+function automaticValuation(detail: StockDetail): StockAutomaticValuation | null {
+  return detail.valuation.automatic ?? null;
+}
+
 function IntrinsicValueCard({ detail }: { detail: StockDetail }) {
-  const { intrinsicValue, upsidePct } = detail.valuation;
+  const automatic = automaticValuation(detail);
+  const intrinsicValue = detail.valuation.intrinsicValue;
+  const upsidePct = detail.valuation.upsidePct;
   const upsideClass = upsidePct === null ? "stock-neutral" : upsidePct >= 0 ? "stock-positive" : "stock-negative";
 
   return (
@@ -85,42 +103,54 @@ function IntrinsicValueCard({ detail }: { detail: StockDetail }) {
         {upsidePct !== null && <span>{upsidePct >= 0 ? " Upside" : " Downside"}</span>}
       </div>
 
-      <div className="stock-scenario stock-scenario-single" aria-label="Intrinsic value range">
+      <div className={`stock-scenario ${automatic ? "" : "stock-scenario-single"}`} aria-label="Intrinsic value range">
         <div className="stock-scenario-track" aria-hidden="true">
           <span className="stock-scenario-bear-segment" />
           <span className="stock-scenario-base-segment" />
           <span className="stock-scenario-bull-segment" />
           {intrinsicValue !== null && <i className="stock-scenario-marker" />}
         </div>
-        <div className="stock-scenario-labels stock-scenario-labels-single">
-          <span><small>IV</small><b>{formatMoney(intrinsicValue)}</b></span>
-        </div>
+        {automatic ? (
+          <div className="stock-scenario-labels">
+            <span><small>Bear</small><b>{formatMoney(automatic.bear)}</b></span>
+            <span><small>Base</small><b>{formatMoney(automatic.base)}</b></span>
+            <span><small>Bull</small><b>{formatMoney(automatic.bull)}</b></span>
+          </div>
+        ) : (
+          <div className="stock-scenario-labels stock-scenario-labels-single">
+            <span><small>IV</small><b>{formatMoney(intrinsicValue)}</b></span>
+          </div>
+        )}
       </div>
     </section>
   );
 }
 
 function ValuationMethodsCard({ detail }: { detail: StockDetail }) {
-  const { methods } = detail.valuation;
-  const rows: ReadonlyArray<readonly [string, number | null, FinancialGlossaryTerm | null]> = [
-    ["DCF", methods.dcf, "dcf"],
-    ["Multiples", methods.multiples, "multiples"],
-    ["Manual", methods.manual, null],
-  ];
+  const automatic = automaticValuation(detail);
+  const manual = detail.valuation.methods.manual;
+  const selected = detail.valuation.methods.selected;
+  const rows = [
+    ["Automatic Bear", automatic?.bear ?? null],
+    ["Automatic Base", automatic?.base ?? null],
+    ["Automatic Bull", automatic?.bull ?? null],
+    ["Manual", manual],
+  ] as const;
+
   return (
     <section className="stock-card" aria-labelledby="stock-methods-title">
       <h2 id="stock-methods-title"><ExplainableLabel label="Valuation Methods" term="valuationMethods" /></h2>
       <dl className="stock-data-list">
-        {rows.map(([label, value, term]) => (
-          <div key={label}>
-            <dt>{term ? <ExplainableLabel label={label} term={term} /> : label}</dt>
-            <dd>{formatMoney(value)}</dd>
-          </div>
+        {rows.map(([label, value]) => (
+          <div key={label}><dt>{label}</dt><dd>{formatMoney(value)}</dd></div>
         ))}
         <div className="stock-data-selected">
-          <dt>Selected{methods.selectedMethod ? ` (${methods.selectedMethod})` : ""}</dt>
-          <dd>{formatMoney(methods.selected)}</dd>
+          <dt>Selected{detail.valuation.methods.selectedMethod ? ` (${detail.valuation.methods.selectedMethod})` : ""}</dt>
+          <dd>{formatMoney(selected)}</dd>
         </div>
+        <div><dt>Automatic Model</dt><dd>{automatic?.method ?? "—"}</dd></div>
+        <div><dt>Confidence</dt><dd>{automatic?.confidence ?? "—"}</dd></div>
+        <div><dt>Inputs as of</dt><dd>{formatMarketDate(automatic?.asOf ?? null)}</dd></div>
       </dl>
     </section>
   );
