@@ -9,7 +9,8 @@ export type ValuationFamily =
   | "growth-financial"
   | "general";
 
-export type AutomaticValuationMethod = "P/E" | "P/FCF" | "P/S" | "P/B";
+export const automaticValuationMethods = ["P/E", "P/FCF", "P/S", "P/B"] as const;
+export type AutomaticValuationMethod = (typeof automaticValuationMethods)[number];
 export type AutomaticValuationConfidence = "High" | "Medium" | "Low";
 
 export interface MultipleHistoryInput {
