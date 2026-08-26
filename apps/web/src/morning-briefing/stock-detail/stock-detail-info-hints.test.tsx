@@ -59,12 +59,14 @@ describe("Stock Detail financial info hints", () => {
     expect(hint).toHaveTextContent("not automatically better");
   });
 
-  it("does not duplicate the Intrinsic Value hint beside the IV range label", async () => {
+  it("does not duplicate the Intrinsic Value hint beside the Bear Base Bull range", async () => {
     renderStock("MSFT");
     await screen.findByRole("heading", { level: 1, name: "Microsoft Corporation" });
 
     expect(screen.getAllByRole("button", { name: "Learn what Intrinsic Value means" })).toHaveLength(1);
-    expect(screen.getByText("IV")).toBeInTheDocument();
+    expect(screen.getByText("Bear")).toBeInTheDocument();
+    expect(screen.getByText("Base")).toBeInTheDocument();
+    expect(screen.getByText("Bull")).toBeInTheDocument();
   });
 
   it("uses the same hints for another stock without symbol-specific logic", async () => {
