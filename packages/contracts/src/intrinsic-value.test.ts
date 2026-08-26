@@ -3,10 +3,15 @@ import {
   calculateAutomaticIntrinsicValue,
   classifyValuationFamily,
   intrinsicValueDistancePct,
+  type AutomaticIntrinsicValue,
   type AutomaticIntrinsicValueInput,
 } from "./intrinsic-value";
 
 const dense = (p25: number, median: number, p75: number, samples = 20) => ({ p25, median, p75, samples });
+
+function expectArithmeticMidpoint(result: AutomaticIntrinsicValue): void {
+  expect(result.base).toBe(Math.round(((result.bear + result.bull) / 2) * 100) / 100);
+}
 
 function amdInput(price: number | null): AutomaticIntrinsicValueInput {
   return {
@@ -43,7 +48,7 @@ describe("Automatic IV V2", () => {
     expect(result!.confidence).toBe("High");
     expect(result!.bear).toBeLessThanOrEqual(result!.base);
     expect(result!.base).toBeLessThanOrEqual(result!.bull);
-    expect(result!.base).not.toBeCloseTo((result!.bear + result!.bull) / 2, 2);
+    expectArithmeticMidpoint(result!);
   });
 
   it("does not let current price change intrinsic value", () => {
@@ -82,6 +87,7 @@ describe("Automatic IV V2", () => {
     expect(result!.confidence).toBe("Low");
     expect(result!.bear).toBeLessThan(result!.base);
     expect(result!.bull).toBeGreaterThan(result!.base);
+    expectArithmeticMidpoint(result!);
   });
 
   it("ignores an absurd percentage quality input instead of letting it dominate NBIS", () => {
@@ -115,6 +121,49 @@ describe("Automatic IV V2", () => {
     expect(distorted?.base).toBe(normal?.base);
   });
 
+  it("does not reward negative Debt/Equity as safer leverage", () => {
+    const baseInput: AutomaticIntrinsicValueInput = {
+      price: 100,
+      revenuePerShareTtm: 10,
+      revenueGrowth3yPct: 20,
+      psHistory: dense(5, 7, 10, 20),
+    };
+    const unavailable = calculateAutomaticIntrinsicValue("TEST", "General", {
+      ...baseInput,
+      debtToEquity: null,
+    });
+    const negativeEquity = calculateAutomaticIntrinsicValue("TEST", "General", {
+      ...baseInput,
+      debtToEquity: -3,
+    });
+    expect(unavailable).not.toBeNull();
+    expect(negativeEquity).not.toBeNull();
+    expect(negativeEquity!.bear).toBe(unavailable!.bear);
+    expect(negativeEquity!.base).toBe(unavailable!.base);
+    expect(negativeEquity!.bull).toBe(unavailable!.bull);
+  });
+
+  it("down-weights a one-sample extreme method against a dense cross-check", () => {
+    const denseOnly = calculateAutomaticIntrinsicValue("TEST", "General", {
+      price: null,
+      fcfPerShareTtm: 10,
+      pfcfHistory: dense(10, 12, 14, 20),
+    });
+    const blended = calculateAutomaticIntrinsicValue("TEST", "General", {
+      price: null,
+      epsTtm: 10,
+      fcfPerShareTtm: 10,
+      peHistory: dense(100, 120, 150, 1),
+      pfcfHistory: dense(10, 12, 14, 20),
+    });
+    expect(denseOnly).not.toBeNull();
+    expect(blended).not.toBeNull();
+    expect(blended!.methods).toEqual(["P/FCF", "P/E"]);
+    expect(blended!.confidence).toBe("Medium");
+    expect(blended!.base).toBeLessThan(denseOnly!.base * 2);
+    expectArithmeticMidpoint(blended!);
+  });
+
   it("uses P/B as the primary bank anchor with P/E as a cross-check", () => {
     const result = calculateAutomaticIntrinsicValue("JPM", "Banks - Diversified", {
       price: 300,
@@ -130,6 +179,7 @@ describe("Automatic IV V2", () => {
     expect(result!.family).toBe("bank");
     expect(result!.methods).toEqual(["P/B", "P/E"]);
     expect(result!.confidence).toBe("High");
+    expectArithmeticMidpoint(result!);
   });
 
   it("routes SOFI through growth-financial P/B plus P/E, without requiring P/S history", () => {
@@ -146,6 +196,7 @@ describe("Automatic IV V2", () => {
     expect(result).not.toBeNull();
     expect(result!.family).toBe("growth-financial");
     expect(result!.methods).toEqual(["P/B", "P/E"]);
+    expectArithmeticMidpoint(result!);
   });
 
   it("returns null only when no positive per-share anchor has usable own history", () => {
