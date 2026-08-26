@@ -25,11 +25,27 @@ interface ManualRow {
   as_of_date: string;
 }
 
+interface SplitRow {
+  symbol: string;
+  effective_date: string;
+  split_factor: number;
+}
+
+function latestSplitRows(splitRows: readonly SplitRow[]): Array<{ symbol: string; latest: string }> {
+  const latest = new Map<string, string>();
+  for (const row of splitRows) {
+    const previous = latest.get(row.symbol);
+    if (!previous || row.effective_date > previous) latest.set(row.symbol, row.effective_date);
+  }
+  return [...latest].map(([symbol, date]) => ({ symbol, latest: date }));
+}
+
 function createDb(
   company: Record<string, unknown>,
   quote: QuoteRow,
   manual: ManualRow | null = null,
   failAutomaticSplitRead = false,
+  splitRows: SplitRow[] = [],
 ): D1Database {
   return {
     prepare(sql: string) {
@@ -48,6 +64,12 @@ function createDb(
           if (sql.includes("FROM latest_quotes")) return { results: [quote] as T[] };
           if (sql.includes("FROM earnings_universe")) return { results: [company] as T[] };
           if (sql.includes("FROM stock_intrinsic_values")) return { results: (manual ? [manual] : []) as T[] };
+          if (sql.includes("SELECT symbol, effective_date, split_factor FROM split_events")) {
+            return { results: splitRows as T[] };
+          }
+          if (sql.includes("MAX(effective_date) AS latest FROM split_events")) {
+            return { results: latestSplitRows(splitRows) as T[] };
+          }
           return { results: [] as T[] };
         },
         async run(): Promise<{ meta: { changes: number } }> {
@@ -62,7 +84,7 @@ function createDb(
 const NOW = new Date("2026-08-26T14:00:00.000Z");
 const NOW_ISO = NOW.toISOString();
 
-function quote(symbol: string, price: number): QuoteRow {
+function quote(symbol: string, price: number, providerTimestamp = NOW_ISO): QuoteRow {
   return {
     symbol,
     price,
@@ -73,7 +95,7 @@ function quote(symbol: string, price: number): QuoteRow {
     day_open: price,
     previous_close: price - 1,
     provider: "finnhub-quote",
-    provider_timestamp: NOW_ISO,
+    provider_timestamp: providerTimestamp,
     updated_at: NOW_ISO,
   };
 }
@@ -185,6 +207,39 @@ describe("Screener Automatic IV V2 selection", () => {
     } as Env, NOW);
     const amd = response.rows.find((row) => row.symbol === "AMD")!;
     expect(amd.intrinsicValue).toBeNull();
+  });
+
+  it("keeps the IV value but suppresses distance for a pre-split quote", async () => {
+    const splitRows: SplitRow[] = [
+      { symbol: "AMD", effective_date: "2026-08-26", split_factor: 2 },
+    ];
+    const response = await readScreenerApi({
+      DB: createDb(
+        amdCompany(),
+        quote("AMD", 480, "2026-08-25T20:00:00.000Z"),
+        null,
+        false,
+        splitRows,
+      ),
+    } as Env, NOW);
+    const amd = response.rows.find((row) => row.symbol === "AMD")!;
+
+    expect(amd.price).toBe(480);
+    expect(amd.intrinsicValue?.base).toBeGreaterThan(0);
+    expect(amd.intrinsicValue?.distancePct).toBeNull();
+  });
+
+  it("restores distance after the quote proves it is on the post-split scale", async () => {
+    const splitRows: SplitRow[] = [
+      { symbol: "AMD", effective_date: "2026-08-26", split_factor: 2 },
+    ];
+    const response = await readScreenerApi({
+      DB: createDb(amdCompany(), quote("AMD", 240), null, false, splitRows),
+    } as Env, NOW);
+    const amd = response.rows.find((row) => row.symbol === "AMD")!;
+
+    expect(amd.intrinsicValue?.base).toBeGreaterThan(0);
+    expect(amd.intrinsicValue?.distancePct).not.toBeNull();
   });
 
   it("keeps Automatic Base fixed when only the quote changes", async () => {
