@@ -9,10 +9,13 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 FINNHUB_BASE_URL = "https://finnhub.io/api/v1"
+
+# Number of years used to select the trailing P/E and P/FCF history window.
+VALUATION_HISTORY_YEARS = 5
 
 
 class FinnhubError(RuntimeError):
@@ -32,6 +35,21 @@ class MarketData:
     fcf_margin_pct: float | None = None
     debt_to_equity: float | None = None
     fcf_per_share_ttm: float | None = None
+    # Valuation feature layer (PR1: data normalization only).
+    revenue_growth_ttm_yoy_pct: float | None = None
+    revenue_growth_3y_pct: float | None = None
+    revenue_growth_5y_pct: float | None = None
+    roe_ttm_pct: float | None = None
+    pe_5y_p25: float | None = None
+    pe_5y_median: float | None = None
+    pe_5y_p75: float | None = None
+    pe_5y_samples: int | None = None
+    pe_5y_as_of: str | None = None
+    pfcf_5y_p25: float | None = None
+    pfcf_5y_median: float | None = None
+    pfcf_5y_p75: float | None = None
+    pfcf_5y_samples: int | None = None
+    pfcf_5y_as_of: str | None = None
 
 
 def _finite_number(value: Any) -> float | None:
@@ -77,6 +95,116 @@ def _first_not_none(*values: float | None) -> float | None:
     return next((value for value in values if value is not None), None)
 
 
+def percentile(values: list[float], percentile_point: float) -> float:
+    """Deterministic quantile with numpy-style linear interpolation.
+
+    Uses the standard R-7 / Hyndman-Fan Type 7 method, which matches NumPy's
+    default ``method='linear'``. For ``q = percentile_point / 100`` and ``N``
+    values the rank is ``x = (N - 1) * q``; the result interpolates between the
+    two nearest sorted values. Well defined for ``N = 1`` (returns the single
+    value) and even/odd ``N`` (median falls on the middle element for odd ``N``
+    and averages the two middle elements for even ``N``).
+
+    Implemented in pure Python so percentiles do not require numpy/pandas.
+    """
+    if not values:
+        raise ValueError("cannot compute percentile of an empty sequence")
+    if not 0.0 <= percentile_point <= 100.0:
+        raise ValueError("percentile_point must be between 0 and 100")
+    ordered = sorted(values)
+    rank = (len(ordered) - 1) * (percentile_point / 100.0)
+    lower_index = int(math.floor(rank))
+    upper_index = int(math.ceil(rank))
+    if lower_index == upper_index:
+        return ordered[lower_index]
+    fraction = rank - lower_index
+    return ordered[lower_index] * (1.0 - fraction) + ordered[upper_index] * fraction
+
+
+def _five_years_earlier(value: date) -> date:
+    try:
+        return value.replace(year=value.year - VALUATION_HISTORY_YEARS)
+    except ValueError:
+        # Leap day (Feb 29) has no day-29 counterpart five years earlier.
+        return value.replace(year=value.year - VALUATION_HISTORY_YEARS, day=28)
+
+
+def _series_percentiles_5y(payload: dict[str, Any], field: str) -> dict[str, Any] | None:
+    """Trailing 5-year P25/median/P75 for a quarterly ratio/multiple series.
+
+    The 5-year window is anchored at the most recent reported period of the
+    series itself, regardless of whether that period's value is usable. Only
+    after the window is fixed are points with a non-valid or non-positive
+    value discarded. ``as_of`` therefore reflects the freshness of the series
+    (latest reported period), not the last positive multiple.
+
+    No extra provider request, no annual fallback, no caps or outlier removal.
+    Returns ``None`` (``as_of`` NULL, ``samples`` 0) only when the series has
+    no parseable period at all.
+    """
+    series = payload.get("series")
+    if not isinstance(series, dict):
+        return None
+    bucket = series.get("quarterly")
+    if not isinstance(bucket, dict):
+        return None
+    rows = bucket.get(field)
+    if not isinstance(rows, list):
+        return None
+
+    dated: list[tuple[str, date, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        period = row.get("period")
+        if not isinstance(period, str) or not period.strip():
+            continue
+        try:
+            parsed = date.fromisoformat(period.strip())
+        except ValueError:
+            continue
+        dated.append((period.strip(), parsed, row.get("v", row.get("value"))))
+    if not dated:
+        return None
+
+    anchor_date = max(point[1] for point in dated)
+    anchor_period = next(point[0] for point in dated if point[1] == anchor_date)
+    cutoff = _five_years_earlier(anchor_date)
+
+    # Fix the window first (date-based), then keep only finite, positive values.
+    window_values: list[float] = []
+    for _, parsed, value in dated:
+        if parsed < cutoff:
+            continue
+        number = _finite_number(value)
+        if number is None or number <= 0:
+            continue
+        window_values.append(number)
+    if not window_values:
+        return {
+            "as_of": anchor_period,
+            "samples": 0,
+            "p25": None,
+            "median": None,
+            "p75": None,
+        }
+
+    return {
+        "as_of": anchor_period,
+        "samples": len(window_values),
+        "p25": percentile(window_values, 25),
+        "median": percentile(window_values, 50),
+        "p75": percentile(window_values, 75),
+    }
+
+
+def _percentile_fields(result: dict[str, Any] | None) -> tuple[float | None, float | None, float | None, int | None, str | None]:
+    """Flatten a *_series_percentiles_5y result into (p25, median, p75, samples, as_of)."""
+    if result is None:
+        return (None, None, None, 0, None)
+    return (result["p25"], result["median"], result["p75"], result["samples"], result["as_of"])
+
+
 def normalize_metric(payload: Any, checked_at: str | None = None) -> MarketData:
     if not isinstance(payload, dict):
         return MarketData(None, None, None, None, None, checked_at)
@@ -93,7 +221,7 @@ def normalize_metric(payload: Any, checked_at: str | None = None) -> MarketData:
     )
 
     # Finnhub series ratios are decimal ratios (e.g. 0.25 = 25%). Store the
-    # two percentage-labelled D1 fields in percentage points for the UI.
+    # percentage-labelled D1 fields in percentage points for the UI.
     roic_ratio = _first_not_none(
         _latest_series_value(payload, "quarterly", "roicTTM"),
         _latest_series_value(payload, "annual", "roic"),
@@ -107,6 +235,19 @@ def normalize_metric(payload: Any, checked_at: str | None = None) -> MarketData:
     # observed Core Universe coverage.
     debt_to_equity = _latest_series_value(payload, "quarterly", "totalDebtToEquity")
     fcf_per_share_ttm = _latest_series_value(payload, "quarterly", "fcfPerShareTTM")
+
+    # Valuation feature layer (PR1). Growth fields are already expressed by the
+    # provider in percentage points, so they are stored directly. ROE comes
+    # from the quarterly series as a decimal ratio and is converted to points.
+    revenue_growth_ttm_yoy_pct = _finite_number(metric.get("revenueGrowthTTMYoy"))
+    revenue_growth_3y_pct = _finite_number(metric.get("revenueGrowth3Y"))
+    revenue_growth_5y_pct = _finite_number(metric.get("revenueGrowth5Y"))
+    roe_ratio = _latest_series_value(payload, "quarterly", "roeTTM")
+
+    pe_result = _series_percentiles_5y(payload, "peTTM")
+    pfcf_result = _series_percentiles_5y(payload, "pfcfTTM")
+    pe_p25, pe_median, pe_p75, pe_samples, pe_as_of = _percentile_fields(pe_result)
+    pfcf_p25, pfcf_median, pfcf_p75, pfcf_samples, pfcf_as_of = _percentile_fields(pfcf_result)
 
     # Finnhub reports marketCapitalization in millions. This is only provider
     # unit normalization; no quote-based valuation is performed here.
@@ -122,6 +263,20 @@ def normalize_metric(payload: Any, checked_at: str | None = None) -> MarketData:
         fcf_margin_pct=fcf_margin_ratio * 100 if fcf_margin_ratio is not None else None,
         debt_to_equity=debt_to_equity,
         fcf_per_share_ttm=fcf_per_share_ttm,
+        revenue_growth_ttm_yoy_pct=revenue_growth_ttm_yoy_pct,
+        revenue_growth_3y_pct=revenue_growth_3y_pct,
+        revenue_growth_5y_pct=revenue_growth_5y_pct,
+        roe_ttm_pct=roe_ratio * 100 if roe_ratio is not None else None,
+        pe_5y_p25=pe_p25,
+        pe_5y_median=pe_median,
+        pe_5y_p75=pe_p75,
+        pe_5y_samples=pe_samples,
+        pe_5y_as_of=pe_as_of,
+        pfcf_5y_p25=pfcf_p25,
+        pfcf_5y_median=pfcf_median,
+        pfcf_5y_p75=pfcf_p75,
+        pfcf_5y_samples=pfcf_samples,
+        pfcf_5y_as_of=pfcf_as_of,
     )
 
 

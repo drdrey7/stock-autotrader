@@ -31,7 +31,7 @@ class MarketD1Tests(unittest.TestCase):
         self.assertNotIn("accounting_source=excluded", sql)
         self.assertEqual(values[0], "MSFT")
         self.assertEqual(values[6:10], [27.5, 36.0, 0.2, 14.25])
-        self.assertEqual(values[11], "finnhub-basic-financials")
+        self.assertEqual(values[25], "finnhub-basic-financials")
 
     def test_null_metric_is_written_as_null_on_successful_snapshot(self):
         client = MarketD1Client("token", "account", "database")
