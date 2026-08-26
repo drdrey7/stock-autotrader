@@ -94,6 +94,9 @@ function IntrinsicValueCard({ detail }: { detail: StockDetail }) {
   const upsidePct = detail.valuation.upsidePct;
   const upsideClass = upsidePct === null ? "stock-neutral" : upsidePct >= 0 ? "stock-positive" : "stock-negative";
   const hasScenarioValue = automatic !== null || intrinsicValue !== null;
+  const showSelectedMarker = automatic !== null
+    && intrinsicValue !== null
+    && detail.valuation.methods.manual === null;
 
   return (
     <section className="stock-card stock-iv-card" aria-labelledby="stock-iv-title">
@@ -109,7 +112,7 @@ function IntrinsicValueCard({ detail }: { detail: StockDetail }) {
           <span className="stock-scenario-bear-segment" />
           <span className="stock-scenario-base-segment" />
           <span className="stock-scenario-bull-segment" />
-          {intrinsicValue !== null && <i className="stock-scenario-marker" />}
+          {showSelectedMarker && <i className="stock-scenario-marker" />}
         </div>
         <div className="stock-scenario-labels">
           <span><small>Bear</small><b>{formatMoney(automatic?.bear ?? null)}</b></span>
