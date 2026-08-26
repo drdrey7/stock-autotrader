@@ -29,7 +29,8 @@ function createDb(company: Record<string, unknown>, quote: QuoteRow, manual: Man
   return {
     prepare(sql: string) {
       const statement = {
-        bind(..._values: unknown[]) {
+        bind(...values: unknown[]) {
+          void values;
           return statement;
         },
         async first<T>(): Promise<T | null> {
