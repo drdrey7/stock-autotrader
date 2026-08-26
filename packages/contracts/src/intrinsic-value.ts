@@ -41,11 +41,12 @@ export interface AutomaticIntrinsicValueInput {
 
 export interface AutomaticIntrinsicValue {
   family: ValuationFamily;
-  /** Human-readable method composition, ordered by model weight. */
+  /** Human-readable method composition, ordered by effective model weight. */
   method: string;
   methods: AutomaticValuationMethod[];
   confidence: AutomaticValuationConfidence;
   bear: number;
+  /** Product contract: arithmetic midpoint of the displayed Bear/Bull scenarios. */
   base: number;
   bull: number;
   bearUpsidePct: number | null;
@@ -178,6 +179,9 @@ function qualitySignal(input: AutomaticIntrinsicValueInput): number {
 }
 
 function leverageSignal(input: AutomaticIntrinsicValueInput): number {
+  // Negative D/E normally means negative equity. It is not evidence of safer
+  // leverage, so treat it as unavailable rather than rewarding the multiple.
+  if (!finite(input.debtToEquity) || input.debtToEquity < 0) return 0;
   return normalizedSignal(input.debtToEquity, 1, 2);
 }
 
@@ -192,6 +196,27 @@ function normalizeHistory(input: MultipleHistoryInput | null | undefined): Norma
   if (typeof input.samples !== "number" || !Number.isFinite(input.samples) || !Number.isInteger(input.samples) || input.samples <= 0) return null;
   if (input.p25 > input.median || input.median > input.p75) return null;
   return { p25: input.p25, median: input.median, p75: input.p75, samples: input.samples };
+}
+
+function sampleReliability(samples: number): number {
+  if (samples >= 12) return 1;
+  if (samples >= 8) return 0.90;
+  if (samples >= 4) return 0.70;
+  if (samples >= 2) return 0.45;
+  return 0.25;
+}
+
+function dispersionReliability(history: NormalizedHistory): number {
+  const spread = history.p75 / history.p25;
+  if (spread <= 2) return 1;
+  if (spread <= 4) return 0.90;
+  if (spread <= 8) return 0.75;
+  return 0.60;
+}
+
+/** Sparse or extremely dispersed histories remain usable, but cannot dominate a dense anchor. */
+function historyReliability(history: NormalizedHistory): number {
+  return sampleReliability(history.samples) * dispersionReliability(history);
 }
 
 function logInterpolate(left: number, right: number, fraction: number): number {
@@ -238,26 +263,35 @@ function scenarioMultiples(
       ? 1.7 + 0.3 * positiveRoe
       : 1.8 + 0.4 * positiveGrowth;
 
-  let bear = Math.max(history.p25, history.median / lowerDivisor);
-  let bull = Math.min(history.p75, history.median * upperMultiplier);
-  if (bear > history.median) bear = history.median;
-  if (bull < history.median) bull = history.median;
+  let rawBear = Math.max(history.p25, history.median / lowerDivisor);
+  let rawBull = Math.min(history.p75, history.median * upperMultiplier);
+  if (rawBear > history.median) rawBear = history.median;
+  if (rawBull < history.median) rawBull = history.median;
 
-  const base = position <= 0.5
-    ? logInterpolate(bear, history.median, position / 0.5)
-    : logInterpolate(history.median, bull, (position - 0.5) / 0.5);
+  // Growth/quality/leverage pick a bounded central target inside the historical
+  // distribution. Move the entire historical scenario band around that target
+  // so the product-level Base contract can remain the arithmetic midpoint.
+  const target = position <= 0.5
+    ? logInterpolate(rawBear, history.median, position / 0.5)
+    : logInterpolate(history.median, rawBull, (position - 0.5) / 0.5);
+  const rawMidpoint = (rawBear + rawBull) / 2;
+  const bandScale = target / rawMidpoint;
+  let bear = rawBear * bandScale;
+  let bull = rawBull * bandScale;
 
-  // Sparse histories should not masquerade as precise ranges. Keep the central
-  // estimate, but widen Bear/Bull around it until more observations accumulate.
-  if (history.samples < 4) {
-    bear = Math.min(bear, base * 0.75);
-    bull = Math.max(bull, base * 1.35);
-  } else if (history.samples < 8) {
-    bear = Math.min(bear, base * 0.82);
-    bull = Math.max(bull, base * 1.25);
-  }
+  // Sparse histories should not masquerade as precise. Widen symmetrically
+  // around the target so sparse observations increase uncertainty, not bias.
+  const minimumHalfWidth = history.samples < 4
+    ? target * 0.30
+    : history.samples < 8
+      ? target * 0.20
+      : 0;
+  const currentHalfWidth = (bull - bear) / 2;
+  const halfWidth = Math.min(Math.max(currentHalfWidth, minimumHalfWidth), target * 0.75);
+  bear = target - halfWidth;
+  bull = target + halfWidth;
 
-  return { bear, base, bull };
+  return { bear, base: target, bull };
 }
 
 function buildCandidate(
@@ -270,9 +304,12 @@ function buildCandidate(
   leverage: number,
   roe: number,
 ): Candidate | null {
-  const weight = METHOD_WEIGHTS[family][method] ?? 0;
+  const baseWeight = METHOD_WEIGHTS[family][method] ?? 0;
   const history = normalizeHistory(historyInput);
-  if (weight <= 0 || !positiveFinite(perShare) || !history) return null;
+  if (baseWeight <= 0 || !positiveFinite(perShare) || !history) return null;
+  const reliability = historyReliability(history);
+  const weight = baseWeight * reliability;
+  if (weight <= 0) return null;
   const position = targetPosition(family, method, growth, quality, leverage, roe);
   const multiples = scenarioMultiples(history, method, position, growth, roe);
   const bear = perShare * multiples.bear;
@@ -282,7 +319,7 @@ function buildCandidate(
   return { method, weight, samples: history.samples, bear, base, bull };
 }
 
-function weightedGeometricMean(candidates: readonly Candidate[], field: "bear" | "base" | "bull"): number {
+function weightedGeometricMean(candidates: readonly Candidate[], field: "bear" | "bull"): number {
   const totalWeight = candidates.reduce((sum, candidate) => sum + candidate.weight, 0);
   const weightedLog = candidates.reduce(
     (sum, candidate) => sum + candidate.weight * Math.log(candidate[field]),
@@ -308,8 +345,9 @@ function confidenceOf(candidates: readonly Candidate[]): AutomaticValuationConfi
 /**
  * Automatic IV V2: deterministic relative valuation from last-known-good D1
  * fundamentals. The company's own trailing 5-year multiple distribution is the
- * anchor; current growth/quality/leverage can only move the Base within bounded
- * historical bands. Current market price never enters the fair-value equation.
+ * anchor; current growth/quality/leverage shifts a bounded scenario band while
+ * history quality determines each method's effective blend weight. Current
+ * market price never enters the fair-value equation.
  */
 export function calculateAutomaticIntrinsicValue(
   symbol: string,
@@ -332,8 +370,8 @@ export function calculateAutomaticIntrinsicValue(
   if (candidates.length === 0) return null;
   const ordered = [...candidates].sort((left, right) => right.weight - left.weight);
   const bear = roundMoney(weightedGeometricMean(ordered, "bear"));
-  const base = roundMoney(weightedGeometricMean(ordered, "base"));
   const bull = roundMoney(weightedGeometricMean(ordered, "bull"));
+  const base = roundMoney((bear + bull) / 2);
   if (bear <= 0 || base < bear || bull < base) return null;
 
   return {
