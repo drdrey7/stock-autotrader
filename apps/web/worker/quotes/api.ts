@@ -96,6 +96,25 @@ function safeguardWsCollectorState(
 }
 
 /**
+ * Price comparisons are only safe when the quote is provably on the current
+ * post-split scale. The quote itself may still be displayed while stale; only
+ * derived comparisons such as IV distance/support triggering are suppressed.
+ */
+function splitSafeComparisonPrice(
+  currentPrice: number | null,
+  providerTimestamp: string | null | undefined,
+  latestEffectiveSplitDate: string | undefined,
+): number | null {
+  if (currentPrice === null || !Number.isFinite(currentPrice) || currentPrice <= 0) return null;
+  if (!latestEffectiveSplitDate) return currentPrice;
+
+  const splitMs = Date.parse(`${latestEffectiveSplitDate}T00:00:00.000Z`);
+  const quoteMs = providerTimestamp ? Date.parse(providerTimestamp) : Number.NaN;
+  if (!Number.isFinite(splitMs) || !Number.isFinite(quoteMs) || quoteMs < splitMs) return null;
+  return currentPrice;
+}
+
+/**
  * Screener read model: pure D1 serving. IV selection is deterministic:
  * split-safe Manual first, otherwise Automatic V2 Base from the persisted
  * last-known-good fundamentals snapshot. There is no fundamentals age TTL.
@@ -137,8 +156,13 @@ export async function readScreenerApi(env: Env, now = new Date()): Promise<Scree
       : null;
     const sma = computeLiveSma200w(quoteInput, metrics.get(symbol) ?? null, latestSplitEffectiveDates);
     const currentPrice = quote?.price ?? null;
-    const manualIntrinsicValue = buildIntrinsicValue(
+    const comparisonPrice = splitSafeComparisonPrice(
       currentPrice,
+      quote?.provider_timestamp,
+      splitEffectiveDatesAsOf.get(symbol),
+    );
+    const manualIntrinsicValue = buildIntrinsicValue(
+      comparisonPrice,
       intrinsicValues.get(symbol),
       splitEffectiveDatesAsOf.get(symbol),
       currentMarketDate ?? undefined,
@@ -147,14 +171,14 @@ export async function readScreenerApi(env: Env, now = new Date()): Promise<Scree
       ? calculateAutomaticIntrinsicValueFromPersistedFundamentals(
           symbol,
           company?.industry ?? null,
-          currentPrice,
+          comparisonPrice,
           company,
           effectiveSplitEvents.get(symbol) ?? [],
           currentMarketDate,
         )
       : null;
     const intrinsicValue = manualIntrinsicValue
-      ?? automaticIntrinsicValueForScreener(automaticIntrinsicValue, currentPrice);
+      ?? automaticIntrinsicValueForScreener(automaticIntrinsicValue, comparisonPrice);
 
     return {
       symbol,
@@ -176,7 +200,7 @@ export async function readScreenerApi(env: Env, now = new Date()): Promise<Scree
       sma200wHistoryWeeks: sma.sma200wHistoryWeeks,
       sma200wAsOf: sma.sma200wAsOf,
       supportLevels: buildSupportLevels(
-        currentPrice,
+        comparisonPrice,
         supportLevels.get(symbol),
         splitEffectiveDatesAsOf.get(symbol),
         currentMarketDate ?? undefined,
