@@ -14,7 +14,7 @@ describe("Intrinsic Value scenario range", () => {
     vi.stubGlobal("scrollTo", vi.fn());
   });
 
-  it("keeps the range and a single IV marker when scenario values are incomplete", async () => {
+  it("keeps the Bear Base Bull range and a single selected-IV marker when automatic scenarios are unavailable", async () => {
     const base = createMockStockDetail("MSFT")!;
     const incomplete: StockDetail = {
       ...base,
@@ -39,8 +39,10 @@ describe("Intrinsic Value scenario range", () => {
     expect(screen.getByLabelText("Intrinsic value range")).toBeInTheDocument();
     expect(document.querySelector(".stock-scenario-track")).not.toBeNull();
     expect(document.querySelector(".stock-scenario-marker")).not.toBeNull();
-    expect(screen.getByText("IV")).toBeInTheDocument();
-    expect(screen.getAllByText("$529.20").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText("Bear")).toBeInTheDocument();
+    expect(screen.getByText("Base")).toBeInTheDocument();
+    expect(screen.getByText("Bull")).toBeInTheDocument();
+    expect(screen.getAllByText("$529.20")).toHaveLength(1);
     expect(screen.queryByText("Scenario range unavailable")).not.toBeInTheDocument();
   });
 });
