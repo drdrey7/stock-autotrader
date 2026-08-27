@@ -48,6 +48,7 @@ export interface Env {
   FINNHUB_API_KEY?: string;
   SEC_USER_AGENT?: string;
   BETTER_AUTH_SECRET?: string;
+  BETTER_AUTH_API_KEY?: string;
   BETTER_AUTH_URL?: string;
 }
 

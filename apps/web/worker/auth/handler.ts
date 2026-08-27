@@ -51,6 +51,11 @@ export async function handleAuth(request: Request, env: Env): Promise<Response> 
   const configError = validateAuthConfig(env);
   if (configError) return configError;
 
-  const auth = createAuth(env.DB, env.BETTER_AUTH_URL, env.BETTER_AUTH_SECRET);
+  const auth = createAuth(
+    env.DB,
+    env.BETTER_AUTH_URL,
+    env.BETTER_AUTH_SECRET,
+    env.BETTER_AUTH_API_KEY,
+  );
   return auth.handler(request);
 }

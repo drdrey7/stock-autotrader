@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@stock-autotrader/contracts": "*",
+    "@better-auth/infra": "^0.4.3",
     "better-auth": "^1.7.1",
     "lightweight-charts": "5.2.0",
     "lucide-react": "^0.468.0",

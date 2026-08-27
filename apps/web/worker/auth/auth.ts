@@ -1,4 +1,5 @@
 import { betterAuth } from "better-auth";
+import { dash } from "@better-auth/infra";
 import type { D1Database } from "@cloudflare/workers-types";
 
 function shouldUseSecureCookies(baseURL?: string): boolean {
@@ -24,7 +25,12 @@ function shouldUseSecureCookies(baseURL?: string): boolean {
  *
  * @see https://better-auth.com/blog/1-5#cloudflare-d1-support
  */
-export function createAuth(d1: D1Database, baseURL?: string, secret?: string) {
+export function createAuth(
+  d1: D1Database,
+  baseURL?: string,
+  secret?: string,
+  apiKey?: string,
+) {
   return betterAuth({
     database: d1,
     baseURL,
@@ -33,6 +39,9 @@ export function createAuth(d1: D1Database, baseURL?: string, secret?: string) {
     emailAndPassword: {
       enabled: true,
     },
+    plugins: [
+      dash({ apiKey }),
+    ],
     advanced: {
       // Production stays fail-secure. Only loopback HTTP is allowed to drop
       // the Secure cookie attribute so local `wrangler dev` can exercise auth.

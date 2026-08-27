@@ -70,14 +70,20 @@ jobs:
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
           BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET }}
+          BETTER_AUTH_API_KEY: ${{ secrets.BETTER_AUTH_API_KEY }}
         run: |
           if [ -z "$BETTER_AUTH_SECRET" ]; then
             echo "::error::BETTER_AUTH_SECRET repository secret is required for production deploys"
             exit 1
           fi
+          if [ -z "$BETTER_AUTH_API_KEY" ]; then
+            echo "::error::BETTER_AUTH_API_KEY repository secret is required for production deploys"
+            exit 1
+          fi
           npx --yes wrangler@4.123.0 deploy
           printf '%s' "$INGEST_SECRET" | npx --yes wrangler@4.123.0 secret put INGEST_SECRET
           printf '%s' "$BETTER_AUTH_SECRET" | npx --yes wrangler@4.123.0 secret put BETTER_AUTH_SECRET
+          printf '%s' "$BETTER_AUTH_API_KEY" | npx --yes wrangler@4.123.0 secret put BETTER_AUTH_API_KEY
           if [ -n "$FINNHUB_API_KEY" ]; then
             printf '%s' "$FINNHUB_API_KEY" | npx --yes wrangler@4.123.0 secret put FINNHUB_API_KEY
           fi
