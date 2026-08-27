@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { CORE_UNIVERSE } from "./core-universe";
 import {
   calculateAutomaticIntrinsicValue,
   classifyValuationFamily,
+  CORE_VALUATION_PROFILES,
   intrinsicValueDistancePct,
+  resolveValuationProfile,
   type AutomaticIntrinsicValue,
   type AutomaticIntrinsicValueInput,
 } from "./intrinsic-value";
@@ -32,12 +35,38 @@ function amdInput(price: number | null): AutomaticIntrinsicValueInput {
 }
 
 describe("Automatic IV V2", () => {
-  it("uses explicit financial families without treating SOFI like JPM", () => {
-    expect(classifyValuationFamily("JPM", "Banks - Diversified")).toBe("bank");
-    expect(classifyValuationFamily("GS", "Capital Markets")).toBe("bank");
-    expect(classifyValuationFamily("SOFI", "Credit Services")).toBe("growth-financial");
+  it("resolves explicit financial profiles without lumping HOOD/COIN into general", () => {
+    expect(resolveValuationProfile("JPM", "Banks - Diversified")).toBe("bank");
+    expect(resolveValuationProfile("GS", "Capital Markets")).toBe("capital-markets");
+    expect(resolveValuationProfile("SOFI", "Credit Services")).toBe("growth-financial");
+    expect(resolveValuationProfile("HOOD", "Capital Markets")).toBe("financial-platform");
+    expect(resolveValuationProfile("COIN", "Financial Services")).toBe("financial-platform");
+    expect(resolveValuationProfile("CRCL", "Capital Markets")).toBe("financial-platform");
+    // DELL is hardware/infrastructure, NOT a semiconductor.
+    expect(resolveValuationProfile("DELL", "Computer Hardware")).toBe("mega-cap-quality");
+  });
+
+  it("maps every semiconductor to the single semiconductors profile", () => {
+    for (const symbol of ["AMD", "ARM", "AVGO", "INTC", "MU", "NVDA", "QCOM", "SNDK", "TSM", "ASML", "AMAT", "LRCX", "KLAC"]) {
+      expect(resolveValuationProfile(symbol, "Semiconductors")).toBe("semiconductors");
+    }
+  });
+
+  it("assigns every Core Universe symbol an explicit profile (zero generic fallback)", () => {
+    expect(Object.keys(CORE_VALUATION_PROFILES).length).toBe(50);
+    for (const symbol of CORE_UNIVERSE) {
+      const explicit = CORE_VALUATION_PROFILES[symbol];
+      expect(explicit, `${symbol} must have an explicit profile`).toBeTruthy();
+      // No Core symbol may ever resolve to the generic fallback.
+      const resolved = resolveValuationProfile(symbol, "Completely Unknown Industry");
+      expect(resolved, `${symbol} must not fall back to general`).not.toBe("general");
+      expect(resolved, `${symbol} resolved profile equals registry`).toBe(explicit);
+    }
+  });
+
+  it("keeps industry-based classification available for non-Core symbols", () => {
     expect(classifyValuationFamily("HOOD", "Capital Markets")).toBe("general");
-    expect(classifyValuationFamily("COIN", "Financial Services")).toBe("general");
+    expect(classifyValuationFamily("BOGUS", "Semiconductors")).toBe("semiconductors");
   });
 
   it("anchors a semiconductor to its own P/E, P/FCF and P/S history", () => {

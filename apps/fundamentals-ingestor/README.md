@@ -35,9 +35,20 @@ Legacy Edgar adapter code/data may remain in the repository for historical
 compatibility, but the daily fundamentals runtime does not call EdgarTools and
 does not require `EDGAR_IDENTITY`.
 
-Required EnvironmentFile values are `FINNHUB_API_KEY` and the existing
-`CLOUDFLARE_*` D1 credentials. Secret values must not be committed or logged.
-Use `--dry-run` for provider validation; it performs no D1 write.
+Required EnvironmentFile values are `FINNHUB_API_KEY`, `EXCHANGE_RATE_API_KEY`
+(ExchangeRate-API Free plan key for the keyed FX endpoint, see `fundamentals_ingestor/fx.py`)
+and the existing `CLOUDFLARE_*` D1 credentials. Secret values must not be
+committed or logged. Use `--dry-run` for provider validation; it performs no D1
+write.
+
+FX normalization (Automatic IV V2.1): three Core symbols (TSM TWD, NVO DKK,
+ASML EUR) are reported by Finnhub on a local-currency ordinary-share basis and
+are converted to the USD quoted security before the D1 write. Rates come from
+the official ExchangeRate-API **Free** plan (keyed, no public attribution),
+one daily request, and are persisted to `fx_rates` so a failed fetch continues
+on last-known-good. If a foreign symbol has no fresh rate and no valid
+last-known-good rate its refresh is skipped and the previous canonical snapshot
+is preserved; domestic USD symbols are unaffected.
 
 Production code is read from `/opt/stock-autotrader`. The timer remains a daily
 23:30 UTC oneshot with a small randomized delay. The installer deliberately

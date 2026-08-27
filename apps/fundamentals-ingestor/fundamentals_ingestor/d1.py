@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import urllib.error
 import urllib.request
 from typing import Any
@@ -201,3 +202,64 @@ class D1Client:
             for row in rows
             if isinstance(row, dict) and isinstance(row.get("fiscal_year"), (int, float))
         }
+
+    def upsert_fx_rates(
+        self,
+        rates: dict[tuple[str, str], float],
+        rates_as_of: str | None,
+        updated_at: str,
+    ) -> None:
+        """Idempotently persist base->counter FX rates for the Core Universe pairs.
+
+        Rates are keyed by (base_currency, counter_currency). ``rate`` is the
+        number of ``counter_currency`` units per ``base_currency`` unit (e.g.
+        base=USD, counter=TWD, rate=31.85 means 31.85 TWD per 1 USD directly).
+        A failed provider fetch must NOT clear stored rates, so this is only
+        called with a freshly fetched set.
+        """
+        for (base, counter), rate in rates.items():
+            if not isinstance(rate, (int, float)) or rate <= 0:
+                continue
+            self._query(
+                """
+                INSERT INTO fx_rates (base_currency, counter_currency, rate, as_of, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(base_currency, counter_currency) DO UPDATE SET
+                  rate=excluded.rate, as_of=COALESCE(excluded.as_of, fx_rates.as_of),
+                  updated_at=excluded.updated_at
+                """,
+                [base, counter, rate, rates_as_of, updated_at],
+            )
+
+    def get_fx_rates(self) -> dict[tuple[str, str], float]:
+        """Read last-known-good rates. Empty dict when none have ever been stored.
+
+        Rejects booleans, zero/negative, NaN and infinities so a malformed or
+        corrupt stored row can never be accepted as a usable rate.
+        """
+        rows = self._query("SELECT base_currency, counter_currency, rate FROM fx_rates")
+        rates: dict[tuple[str, str], float] = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            base = row.get("base_currency")
+            counter = row.get("counter_currency")
+            rate = row.get("rate")
+            if (
+                isinstance(base, str)
+                and isinstance(counter, str)
+                and isinstance(rate, (int, float))
+                and not isinstance(rate, bool)
+                and math.isfinite(rate)
+                and rate > 0
+            ):
+                rates[(base, counter)] = float(rate)
+        return rates
+
+    def get_fx_last_as_of(self) -> str | None:
+        """Most recently persisted ``as_of`` source date, for LKG freshness logging."""
+        rows = self._query("SELECT as_of FROM fx_rates ORDER BY updated_at DESC LIMIT 1")
+        for row in rows:
+            if isinstance(row, dict) and isinstance(row.get("as_of"), str) and row["as_of"]:
+                return row["as_of"]
+        return None

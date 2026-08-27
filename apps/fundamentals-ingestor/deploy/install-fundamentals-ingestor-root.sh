@@ -17,6 +17,7 @@ command -v pip3 >/dev/null
 [ -r "$CONF_DIR/finnhub.env" ] || { echo "ERROR: missing $CONF_DIR/finnhub.env" >&2; exit 1; }
 [ -r "$CONF_DIR/cloudflare.env" ] || { echo "ERROR: missing $CONF_DIR/cloudflare.env" >&2; exit 1; }
 grep -Eq '^FINNHUB_API_KEY=[^[:space:]].*' "$CONF_DIR/finnhub.env" || { echo "ERROR: FINNHUB_API_KEY is missing" >&2; exit 1; }
+grep -Eq '^EXCHANGE_RATE_API_KEY=[^[:space:]].*' "$CONF_DIR/finnhub.env" || { echo "ERROR: EXCHANGE_RATE_API_KEY is missing (required for the keyed ExchangeRate-API Free FX endpoint)" >&2; exit 1; }
 for key in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_D1_DATABASE_ID; do
   grep -Eq "^${key}=[^[:space:]].*" "$CONF_DIR/cloudflare.env" || { echo "ERROR: $key is missing" >&2; exit 1; }
 done
