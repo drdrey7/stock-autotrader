@@ -13,7 +13,8 @@ single source covering all three required pairs.
 The request happens server-side in the VPS fundamentals-ingestor (never in the
 Worker); rates are persisted to D1 so a failed fetch continues on
 last-known-good. The API key is injected into the URL by the config layer and
-must never be logged or committed.
+must never be logged or committed. The keyed Free endpoint returns rates under
+``conversion_rates`` (the legacy keyless shape used ``rates``).
 
 Rates are expressed as ``local_currency_units_per_1_USD`` (e.g. 31.85 TWD/USD),
 which is exactly the divisor for converting a local-currency amount to USD:
@@ -99,7 +100,10 @@ def parse_rates(payload: Any) -> tuple[dict[tuple[str, str], float], str | None]
     base_code = payload.get("base_code")
     if not isinstance(base_code, str) or base_code.upper() != "USD":
         raise FxError("fx_wrong_base")
-    rates_map = payload.get("rates")
+    # The keyed endpoint returns rates under ``conversion_rates``; the older
+    # keyless (open.er-api.com) shape uses ``rates``. Accept both so a custom
+    # FUNDAMENTALS_FX_URL pointing at either is handled.
+    rates_map = payload.get("conversion_rates", payload.get("rates"))
     if not isinstance(rates_map, dict):
         raise FxError("fx_invalid_payload")
 
@@ -128,14 +132,17 @@ class FxClient:
     def fetch_rates(self) -> tuple[dict[tuple[str, str], float], str | None]:
         if not self._url:
             raise FxError("fx_invalid_config")
-        request = urllib.request.Request(self._url, headers={"Accept": "application/json", "User-Agent": "stock-autotrader/1.0"})
+        # Build the request inside the try so a malformed non-empty URL (e.g.
+        # FUNDAMENTALS_FX_URL=garbage) raises ValueError here and is converted to
+        # FxError rather than aborting the run with a raw ValueError.
         try:
+            request = urllib.request.Request(self._url, headers={"Accept": "application/json", "User-Agent": "stock-autotrader/1.0"})
             with self._opener(request, timeout=self._timeout) as response:
                 if response.status != 200:
                     raise FxError(f"fx_http_{response.status}")
                 payload = json.loads(response.read().decode("utf-8"))
         except FxError:
             raise
-        except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError) as exc:
             raise FxError("fx_request_failed") from exc
         return parse_rates(payload)

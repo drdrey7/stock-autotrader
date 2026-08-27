@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import urllib.error
 import urllib.request
 from typing import Any
@@ -231,7 +232,11 @@ class D1Client:
             )
 
     def get_fx_rates(self) -> dict[tuple[str, str], float]:
-        """Read last-known-good rates. Empty dict when none have ever been stored."""
+        """Read last-known-good rates. Empty dict when none have ever been stored.
+
+        Rejects booleans, zero/negative, NaN and infinities so a malformed or
+        corrupt stored row can never be accepted as a usable rate.
+        """
         rows = self._query("SELECT base_currency, counter_currency, rate FROM fx_rates")
         rates: dict[tuple[str, str], float] = {}
         for row in rows:
@@ -240,7 +245,14 @@ class D1Client:
             base = row.get("base_currency")
             counter = row.get("counter_currency")
             rate = row.get("rate")
-            if isinstance(base, str) and isinstance(counter, str) and isinstance(rate, (int, float)) and rate > 0:
+            if (
+                isinstance(base, str)
+                and isinstance(counter, str)
+                and isinstance(rate, (int, float))
+                and not isinstance(rate, bool)
+                and math.isfinite(rate)
+                and rate > 0
+            ):
                 rates[(base, counter)] = float(rate)
         return rates
 

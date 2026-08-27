@@ -52,6 +52,14 @@ class FxTests(unittest.TestCase):
         self.assertEqual(as_of, "2026-08-25")
         self.assertEqual(rates[("USD", "TWD")], 31.0)
 
+    def test_parse_accepts_keyed_conversion_rates_field(self):
+        # The official keyed endpoint v6.exchangerate-api.com returns rates under
+        # ``conversion_rates``, unlike the legacy keyless ``rates`` field.
+        payload = {"result": "success", "base_code": "USD", "time_last_update_utc": "Thu, 27 Aug 2026 00:02:31 +0000", "conversion_rates": {"USD": 1.0, "TWD": 31.8, "DKK": 6.4, "EUR": 0.86}}
+        rates, as_of = parse_rates(payload)
+        self.assertEqual(as_of, "2026-08-27")
+        self.assertEqual(rates, {("USD", "TWD"): 31.8, ("USD", "DKK"): 6.4, ("USD", "EUR"): 0.86})
+
     def test_parse_raises_when_required_pair_missing(self):
         payload = {"result": "success", "base_code": "USD", "date": "2026-08-26", "rates": {"TWD": 31.0, "EUR": 0.85}}  # no DKK
         with self.assertRaises(FxError):
@@ -139,6 +147,19 @@ class FxTests(unittest.TestCase):
                 return R()
 
         client = FxClient(opener=FailingOpener())
+        with self.assertRaises(FxError):
+            client.fetch_rates()
+
+    def test_client_raises_fxerror_not_valueerror_on_malformed_url(self):
+        # A malformed non-empty FUNDAMENTALS_FX_URL (e.g. "garbage") must produce
+        # FxError so _load_fx falls back to LKG, never a raw ValueError that would
+        # abort the whole refresh.
+        client = FxClient(url="garbage")  # Request("garbage") would raise ValueError
+        with self.assertRaises(FxError):
+            client.fetch_rates()
+
+    def test_client_raises_fxerror_on_missing_protocol_url(self):
+        client = FxClient(url="not-a-url")
         with self.assertRaises(FxError):
             client.fetch_rates()
 

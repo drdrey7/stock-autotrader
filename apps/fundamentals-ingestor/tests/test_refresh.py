@@ -211,6 +211,42 @@ class RefreshTests(unittest.TestCase):
         self.assertEqual(len(d1.writes), 1)
         self.assertEqual(d1.writes[0][0], "MSFT")
 
+    def test_malformed_fx_url_uses_lkg_and_does_not_abort(self):
+        class TsmFinnhub:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def fetch(self, symbol):
+                return MarketData(
+                    market_cap=6.314532e13,
+                    pe_ttm=27.86,
+                    beta=1.1,
+                    eps_ttm=87.38,
+                    dividend_yield=1.3,
+                    checked_at="2026-08-26T00:00:00Z",
+                    fcf_per_share_ttm=43.88,
+                    revenue_per_share_ttm=172.35,
+                    book_value_per_share=248.05,
+                )
+
+        d1 = FakeD1()
+        d1.fx_rates = {("USD", "TWD"): 31.85, ("USD", "DKK"): 6.41, ("USD", "EUR"): 0.857}
+        # REAL FxClient with a malformed non-empty URL: Request() raises ValueError
+        # which fetch_rates must convert to FxError so _load_fx falls back to LKG.
+        settings = Settings("key", "token", "account", "database", "", Path("unused"), fx_url="garbage")
+        with (
+            patch("fundamentals_ingestor.main.load_universe", return_value=["TSM"]),
+            patch("fundamentals_ingestor.main.FinnhubClient", TsmFinnhub),
+            patch("fundamentals_ingestor.main.MarketD1Client", return_value=d1),
+        ):
+            # no patch of FxClient -> real malformed-URL client is exercised
+            result = run(settings)
+
+        self.assertEqual(result, {"processed": 1, "failed": 0, "written": 1, "skipped": 0})
+        market = d1.writes[0][1]
+        # LKG applied: canonical per-ADR USD
+        self.assertAlmostEqual(market.eps_ttm, 87.38 * 5 / 31.85, places=3)
+
     def test_fx_fetch_failure_uses_last_known_good_for_foreign_symbol(self):
         class NoFxFlaky:
             def __init__(self, *args, **kwargs):
