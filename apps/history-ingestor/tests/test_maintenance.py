@@ -128,6 +128,10 @@ class MaintenanceCycleTests(unittest.TestCase):
             nv = report2["symbols"]["NVDA"]
             self.assertEqual(nv["rows_updated"], 1)  # only the new week
             self.assertEqual(len(d1.weekly["NVDA"]), 261)
+            self.assertEqual(
+                d1.meta["historyReconcileSplitStatus:NVDA"]["status"],
+                "pending",
+            )
             # Metrics re-anchored to the new week.
             self.assertIn("2026-08-21", d1.metrics["NVDA"]["anchor_week"])
 
@@ -191,6 +195,10 @@ class MaintenanceCycleTests(unittest.TestCase):
             # split_events durable and reconciled.
             self.assertEqual(len(d1.read_split_events("NVDA")), 1)
             self.assertEqual(d1.read_split_events("NVDA")[0]["split_factor"], 10.0)
+            self.assertEqual(
+                d1.meta["historyReconcileSplitStatus:NVDA"]["status"],
+                "done",
+            )
 
     def test_malformed_splits_keep_existing_events_history_intact(self):
         # Spec #5: NVDA has stored split_events + adjusted history; the provider

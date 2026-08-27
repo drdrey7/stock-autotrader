@@ -56,7 +56,7 @@ VALUES ('ADBE', 109431750000, 15.1379, 25198000000, 9090000000, 9111000000,
 DELETE FROM split_events WHERE symbol = 'MSFT';
 DELETE FROM weekly_prices WHERE symbol = 'MSFT';
 INSERT OR REPLACE INTO app_meta (key, value)
-VALUES ('historyReconcileSplitState', '{"version":1,"splits":{"MSFT":"done"}}');
+VALUES ('historyReconcileSplitStatus:MSFT', '{"version":1,"symbol":"MSFT","status":"done"}');
 INSERT OR REPLACE INTO latest_quotes
 (symbol, price, change_abs, change_pct, day_high, day_low, day_open, previous_close, provider, provider_timestamp, updated_at)
 VALUES ('MSFT', 500, 5, 1, 505, 490, 492, 495, 'finnhub', '2026-08-21T14:59:00.000Z', '2026-08-21T14:59:05.000Z');

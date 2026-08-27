@@ -274,6 +274,7 @@ function servedHistorySplitState(
   return "safe";
 }
 
+/** Classify weekly history only when its split scale has sufficient evidence. */
 function servedHistoryScaleState(
   weeklyRows: readonly WeeklyPriceRow[],
   effectiveSplits: readonly StockDetailSplitEventRow[],

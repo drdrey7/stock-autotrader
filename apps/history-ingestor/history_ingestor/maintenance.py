@@ -360,6 +360,15 @@ class MaintenanceRunner:
                 write = self._d1.upsert_weekly_rows(changed)
                 if write.failed:
                     raise ProviderError(f"D1 weekly write failed: {write.error}")
+                # A weekly provider correction changes the evidence that was
+                # previously reconciled. Force the low-frequency SPLITS pass
+                # to verify the symbol again before Stock Detail serves it as
+                # safe. The durable state write follows the weekly write so a
+                # crash cannot leave a changed history marked verified.
+                rstore = self._get_reconcile_store()
+                rstore.state.mark(symbol, STATUS_PENDING)
+                if not rstore.save():
+                    raise ProviderError(f"split reconciliation invalidation failed for {symbol}")
                 result["rows_updated"] = len(changed)
                 if len(changed) > 1:
                     result["anomalies"].append(f"{symbol}: provider correction rewrote {len(changed)} rows")

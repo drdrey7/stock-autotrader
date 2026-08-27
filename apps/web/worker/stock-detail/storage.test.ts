@@ -174,14 +174,15 @@ describe("Stock Detail symbol-specific storage", () => {
   });
 
   it("only treats an empty split history as verified when reconciliation says so", async () => {
-    const { db } = createBatchDb([
+    const { db, calls } = createBatchDb([
       [{ symbol: "MSFT", company: "Microsoft Corporation", logo_url: null }],
       [], [], [], [], [], [],
-      [{ value: JSON.stringify({ version: 1, splits: { MSFT: "done" } }) }],
+      [{ value: JSON.stringify({ version: 1, symbol: "MSFT", status: "done" }) }],
       [],
     ]);
     const snapshot = await readStockDetailStorageSnapshot(db, "MSFT");
     expect(snapshot.splitHistoryVerified).toBe(true);
+    expect(calls.binds).toContainEqual(["historyReconcileSplitStatus:MSFT"]);
   });
 
   it("contains no provider/network request path", () => {

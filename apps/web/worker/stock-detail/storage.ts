@@ -52,8 +52,10 @@ const SPLIT_EVENTS_SQL = `SELECT effective_date, split_factor
   ORDER BY effective_date ASC`;
 const SPLIT_RECONCILIATION_SQL = `SELECT value
   FROM app_meta
-  WHERE key = 'historyReconcileSplitState'
+  WHERE key = ?
   LIMIT 1`;
+/** Per-symbol app_meta markers avoid parsing the global reconciliation document. */
+const SPLIT_RECONCILIATION_META_PREFIX = "historyReconcileSplitStatus:";
 const FUNDAMENTALS_SQL = `SELECT symbol, market_cap, pe_ttm, eps_ttm, fcf_per_share_ttm,
   revenue_per_share_ttm, book_value_per_share,
   revenue_growth_ttm_yoy_pct, revenue_growth_3y_pct, revenue_growth_5y_pct, roe_ttm_pct,
@@ -252,13 +254,14 @@ function parseFundamentals(row: unknown): StockFundamentalsSnapshotRow | null {
   return value as unknown as StockFundamentalsSnapshotRow;
 }
 
+/** Parse the per-symbol durable reconciliation marker from app_meta. */
 function parseSplitHistoryVerified(row: unknown, symbol: string): boolean {
   if (!row || typeof row !== "object") return false;
   const value = (row as { value?: unknown }).value;
   if (typeof value !== "string") return false;
   try {
-    const payload = JSON.parse(value) as { splits?: Record<string, unknown> };
-    return payload.splits?.[symbol] === "done";
+    const payload = JSON.parse(value) as { symbol?: unknown; status?: unknown };
+    return payload.symbol === symbol && payload.status === "done";
   } catch {
     return false;
   }
@@ -280,7 +283,7 @@ export async function readStockDetailStorageSnapshot(
     db.prepare(INTRINSIC_VALUE_SQL).bind(symbol),
     db.prepare(WEEKLY_HISTORY_SQL).bind(symbol, historyLimit),
     db.prepare(SPLIT_EVENTS_SQL).bind(symbol),
-    db.prepare(SPLIT_RECONCILIATION_SQL),
+    db.prepare(SPLIT_RECONCILIATION_SQL).bind(`${SPLIT_RECONCILIATION_META_PREFIX}${symbol}`),
     db.prepare(FUNDAMENTALS_SQL).bind(symbol),
   ]);
 

@@ -47,6 +47,7 @@ STATUS_ERROR = "error"
 
 D1_META_KEY = "historyMaintenanceState"
 RECONCILE_D1_META_KEY = "historyReconcileSplitState"
+RECONCILE_STATUS_META_PREFIX = "historyReconcileSplitStatus:"
 
 
 def _utc_now_iso() -> str:
@@ -179,7 +180,10 @@ class ReconcileState:
     forever reset reconciliation progress and re-fetch every symbol. This state
     owns only ``splits`` (pending | done | error) per symbol, persisted to
     ``app_meta.historyReconcileSplitState``. The current pass's membership is
-    the set of ``splits`` keys, so it survives serialization/restart.
+    the set of ``splits`` keys, so it survives serialization/restart. Completed
+    symbol markers are also written to ``app_meta`` under
+    ``historyReconcileSplitStatus:<SYMBOL>`` so read models can query one
+    symbol without parsing the entire checkpoint document.
 
     Cycle semantics:
     - A capped/partial pass leaves unprocessed symbols ``pending``; the next run
@@ -192,6 +196,7 @@ class ReconcileState:
     def __init__(self, splits: dict[str, str] | None = None, updated_at: str = "") -> None:
         self.splits: dict[str, str] = dict(splits or {})
         self.updated_at = updated_at or _utc_now_iso()
+        self._dirty_symbols: set[str] = set()
 
     def to_dict(self) -> dict:
         return {
@@ -214,7 +219,9 @@ class ReconcileState:
         return self.splits.get(symbol, STATUS_PENDING)
 
     def mark(self, symbol: str, status: str) -> None:
+        """Set one symbol's status and queue its per-symbol marker for save."""
         self.splits[symbol] = status
+        self._dirty_symbols.add(symbol)
         self.updated_at = _utc_now_iso()
 
     def all_done(self) -> bool:
@@ -268,13 +275,28 @@ class ReconcileStore:
         """
         for symbol in symbols:
             self._state.splits[symbol] = STATUS_PENDING
+            self._state._dirty_symbols.add(symbol)
         self._state.updated_at = _utc_now_iso()
 
     def save(self) -> bool:
+        """Persist the global checkpoint and all changed per-symbol markers."""
         datum = self._state.to_dict()
         ok = True
         try:
             ok = self._d1.write_app_meta(RECONCILE_D1_META_KEY, datum) and ok
+            for symbol in sorted(self._state._dirty_symbols):
+                status = self._state.status(symbol)
+                status_payload = {
+                    "version": 1,
+                    "symbol": symbol,
+                    "status": status,
+                    "updated_at": self._state.updated_at,
+                }
+                ok = self._d1.write_app_meta(
+                    f"{RECONCILE_STATUS_META_PREFIX}{symbol}", status_payload,
+                ) and ok
+            if ok:
+                self._state._dirty_symbols.clear()
         except Exception:
             ok = False
         try:
