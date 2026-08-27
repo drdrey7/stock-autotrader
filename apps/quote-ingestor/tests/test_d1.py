@@ -21,6 +21,8 @@ TOKEN = "test-token-value"
 ACCOUNT = "account-1"
 DATABASE = "db-1"
 TRADE_MS = 1_787_073_678_242  # 2026-08-18, a regular Tuesday session.
+PRIOR_CLOSE_MS = int(dt.datetime(2026, 8, 17, 19, 59, tzinfo=dt.UTC).timestamp() * 1000)
+CURRENT_OPEN_MS = int(dt.datetime(2026, 8, 18, 14, 0, tzinfo=dt.UTC).timestamp() * 1000)
 
 SESSION_SCHEMA = """
 CREATE TABLE latest_quotes (
@@ -103,6 +105,13 @@ def _ok_response(changes: int) -> str:
     })
 
 
+def _bad_response(message: str = "bad sql") -> _Resp:
+    return _Resp(json.dumps({
+        "success": False,
+        "errors": [{"message": message}],
+    }).encode(), status=400)
+
+
 class D1ClientTest(unittest.TestCase):
     def test_multi_values_sql_has_session_rollover_split_guard_and_newer_wins(self) -> None:
         sql = build_upsert_sql(2).upper()
@@ -159,6 +168,83 @@ class D1ClientTest(unittest.TestCase):
         self.assertEqual(len(transport.requests[0]["body"]["params"]), 12)
         self.assertEqual(len(transport.requests[1]["body"]["params"]), 8)
 
+    def test_rollover_candidate_is_written_before_current_tick(self) -> None:
+        transport = FakeTransport()
+        transport.queue.extend([
+            _Resp(_ok_response(1).encode()),
+            _Resp(_ok_response(1).encode()),
+        ])
+        client = _client(transport)
+
+        result = client.upsert_quotes([
+            ("AAPL", 100.0, PRIOR_CLOSE_MS),
+            ("AAPL", 102.0, CURRENT_OPEN_MS),
+        ])
+
+        self.assertEqual(result.written, ["AAPL"])
+        self.assertEqual(result.failed, [])
+        self.assertEqual(len(transport.requests), 2)
+        first_params = transport.requests[0]["body"]["params"]
+        second_params = transport.requests[1]["body"]["params"]
+        self.assertEqual(first_params[0], "2026-08-17")
+        self.assertEqual(first_params[4:6], ["AAPL", 100.0])
+        self.assertEqual(second_params[0], "2026-08-18")
+        self.assertEqual(second_params[4:6], ["AAPL", 102.0])
+
+    def test_failed_rollover_candidate_blocks_current_tick_for_same_symbol(self) -> None:
+        transport = FakeTransport()
+        transport.queue.append(_bad_response("candidate failed"))
+        client = _client(transport)
+
+        result = client.upsert_quotes([
+            ("AAPL", 100.0, PRIOR_CLOSE_MS),
+            ("AAPL", 102.0, CURRENT_OPEN_MS),
+        ])
+
+        self.assertEqual(result.written, [])
+        self.assertEqual(result.failed, ["AAPL"])
+        self.assertEqual(len(transport.requests), 1)
+        self.assertIn("candidate failed", result.error or "")
+
+    def test_failed_candidate_does_not_block_unrelated_current_symbol(self) -> None:
+        transport = FakeTransport()
+        transport.queue.extend([
+            _bad_response("AAPL candidate failed"),
+            _Resp(_ok_response(1).encode()),
+        ])
+        client = _client(transport)
+
+        result = client.upsert_quotes([
+            ("AAPL", 100.0, PRIOR_CLOSE_MS),
+            ("AAPL", 102.0, CURRENT_OPEN_MS),
+            ("MSFT", 50.0, CURRENT_OPEN_MS),
+        ])
+
+        self.assertEqual(result.written, ["MSFT"])
+        self.assertEqual(result.failed, ["AAPL"])
+        self.assertEqual(len(transport.requests), 2)
+        second_params = transport.requests[1]["body"]["params"]
+        self.assertEqual(second_params[0], "2026-08-18")
+        self.assertEqual(second_params[4:6], ["MSFT", 50.0])
+
+    def test_current_failure_after_candidate_success_keeps_symbol_failed(self) -> None:
+        transport = FakeTransport()
+        transport.queue.extend([
+            _Resp(_ok_response(1).encode()),
+            _bad_response("current failed"),
+        ])
+        client = _client(transport)
+
+        result = client.upsert_quotes([
+            ("AAPL", 100.0, PRIOR_CLOSE_MS),
+            ("AAPL", 102.0, CURRENT_OPEN_MS),
+        ])
+
+        self.assertEqual(result.written, [])
+        self.assertEqual(result.failed, ["AAPL"])
+        self.assertEqual(len(transport.requests), 2)
+        self.assertIn("current failed", result.error or "")
+
     def test_rejected_statement_marks_chunk_failed(self) -> None:
         transport = FakeTransport()
         transport.queue.append(_Resp(json.dumps({
@@ -190,9 +276,7 @@ class D1ClientTest(unittest.TestCase):
 
     def test_http400_is_not_retried(self) -> None:
         transport = FakeTransport()
-        transport.queue.append(_Resp(json.dumps({
-            "success": False, "errors": [{"message": "bad sql"}],
-        }).encode(), status=400))
+        transport.queue.append(_bad_response())
         client = _client(transport)
         result = client.upsert_quotes([("AAPL", 1.0, TRADE_MS)])
         self.assertEqual(len(transport.requests), 1)
