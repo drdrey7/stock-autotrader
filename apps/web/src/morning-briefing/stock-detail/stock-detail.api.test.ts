@@ -22,7 +22,7 @@ function responseBody(): StockDetailApiResponse {
       price: 500,
       changeAbs: 5,
       changePct: 1,
-      provider: "finnhub-quote",
+      provider: "finnhub-websocket",
       asOf: "2026-08-21T14:29:00.000Z",
       updatedAt: "2026-08-21T14:29:05.000Z",
       state: "Live",
@@ -72,7 +72,7 @@ function responseBody(): StockDetailApiResponse {
 beforeEach(() => vi.clearAllMocks());
 
 describe("ApiStockDetailDataSource", () => {
-  it("maps a valid 200 response into the UI model without inventing fundamentals", async () => {
+  it("maps a valid WebSocket-backed response into the UI model", async () => {
     apiClientMock.requestJson.mockResolvedValue({ ok: true, status: 200, body: responseBody() });
     const detail = await new ApiStockDetailDataSource().getStockDetail("MSFT");
     expect(detail?.quote.price).toBe(500);
@@ -102,9 +102,21 @@ describe("ApiStockDetailDataSource", () => {
     expect(detail?.quote.marketState).toBe("closed");
   });
 
-  it("suppresses WebSocket 1D change until the session baseline rollover is fixed", async () => {
+  it("shows validated WebSocket 1D change during the regular session", async () => {
     const body = responseBody();
-    body.quote.provider = "finnhub-websocket";
+    apiClientMock.requestJson.mockResolvedValue({ ok: true, status: 200, body });
+
+    const detail = await new ApiStockDetailDataSource().getStockDetail("MSFT");
+
+    expect(detail?.quote.price).toBe(500);
+    expect(detail?.quote.change).toBe(5);
+    expect(detail?.quote.changePct).toBe(1);
+    expect(detail?.quote.marketState).toBe("open");
+  });
+
+  it("suppresses 1D change for a non-live regular-session quote", async () => {
+    const body = responseBody();
+    body.quote.state = "Cached";
     apiClientMock.requestJson.mockResolvedValue({ ok: true, status: 200, body });
 
     const detail = await new ApiStockDetailDataSource().getStockDetail("MSFT");
@@ -112,12 +124,11 @@ describe("ApiStockDetailDataSource", () => {
     expect(detail?.quote.price).toBe(500);
     expect(detail?.quote.change).toBeNull();
     expect(detail?.quote.changePct).toBeNull();
-    expect(detail?.quote.marketState).toBe("open");
   });
 
-  it("suppresses 1D change for a non-live regular-session quote", async () => {
+  it("suppresses 1D change when the Worker marks either derived value unavailable", async () => {
     const body = responseBody();
-    body.quote.state = "Cached";
+    body.quote.changePct = null;
     apiClientMock.requestJson.mockResolvedValue({ ok: true, status: 200, body });
 
     const detail = await new ApiStockDetailDataSource().getStockDetail("MSFT");

@@ -2,14 +2,17 @@
 
 The ingestor keeps a single latest value per Core Universe symbol here and a
 ``changed`` set of symbols whose price moved since the last *successful* flush.
-Ticks are never stored as history. ``drain``/``ack`` are split so that a failed
-flush does not lose pending symbols (only success clears the flag).
+Ticks are never stored as history. ``pending_changed`` is session-aware: once a
+new regular session has produced a tick, failed pending snapshots from an older
+session are expired rather than replayed or allowed to block the current one.
 """
 
 from __future__ import annotations
 
+import datetime as dt
 import threading
 
+from .market_hours import trading_session_date
 from .types import QuoteState, TradeTick
 
 
@@ -53,17 +56,37 @@ class QuoteStateStore:
             self._changed.add(tick.symbol)
             return True
 
-    def pending_changed(self) -> list[TradeTick]:
-        """Snapshot of changed symbols as ticks (symbol, latest price, ts).
+    @staticmethod
+    def _session_of(timestamp_ms: int) -> dt.date | None:
+        instant = dt.datetime.fromtimestamp(timestamp_ms / 1000, tz=dt.UTC)
+        return trading_session_date(instant)
 
-        Does not clear anything — a failed flush must not lose pendings.
+    def pending_changed(self) -> list[TradeTick]:
+        """Snapshot pending symbols, expiring older-session leftovers.
+
+        A failed final flush intentionally remains pending for retry during the
+        same session/grace. If the process stays alive into a later session,
+        however, replaying those old rows is invalid and a mixed-session D1
+        batch would block current data. Once any newer-session tick exists,
+        older pending flags are therefore expired. The latest value itself is
+        retained in memory until a fresh tick replaces it; only the obsolete
+        *pending write* is discarded.
         """
         with self._lock:
-            return [
+            pending = [
                 TradeTick(symbol=s, price=self._latest[s].price, timestamp_ms=self._latest[s].as_of_ms)
                 for s in sorted(self._changed)
                 if s in self._latest
             ]
+            dated = [(tick, self._session_of(tick.timestamp_ms)) for tick in pending]
+            valid_sessions = [session for _, session in dated if session is not None]
+            if not valid_sessions:
+                return pending
+            newest_session = max(valid_sessions)
+            for tick, session in dated:
+                if session is not None and session < newest_session:
+                    self._changed.discard(tick.symbol)
+            return [tick for tick, session in dated if session == newest_session or session is None]
 
     def has_changed(self) -> bool:
         with self._lock:

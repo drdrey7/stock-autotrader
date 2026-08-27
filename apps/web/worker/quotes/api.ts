@@ -20,6 +20,7 @@ import {
   readWsIngestorHealth,
   type WSCollectorState,
 } from "./health";
+import { deriveDailyChange } from "./daily-change";
 import { readLatestQuotes } from "./storage";
 import { computeLiveSma200w, type QuoteInput } from "../sma/metrics";
 import {
@@ -45,11 +46,7 @@ interface CompanyRow extends AutomaticValuationFundamentals {
   industry: string | null;
 }
 
-/**
- * Core Universe company + last-known-good valuation facts in one D1 query.
- * The LEFT JOIN keeps fundamentals best-effort and avoids any provider request
- * in the Screener path.
- */
+/** Core Universe company + last-known-good valuation facts in one D1 query. */
 async function readCoreCompanies(db: D1Database): Promise<CompanyRow[]> {
   try {
     const result = await db.prepare(
@@ -95,11 +92,7 @@ function safeguardWsCollectorState(
   return base;
 }
 
-/**
- * Price comparisons are only safe when the quote is provably on the current
- * post-split scale. The quote itself may still be displayed while stale; only
- * derived comparisons such as IV distance/support triggering are suppressed.
- */
+/** Price comparisons are only safe when the quote is provably post-split. */
 function splitSafeComparisonPrice(
   currentPrice: number | null,
   providerTimestamp: string | null | undefined,
@@ -116,8 +109,7 @@ function splitSafeComparisonPrice(
 
 /**
  * Screener read model: pure D1 serving. IV selection is deterministic:
- * split-safe Manual first, otherwise Automatic V2 Base from the persisted
- * last-known-good fundamentals snapshot. There is no fundamentals age TTL.
+ * split-safe Manual first, otherwise Automatic V2 Base from persisted facts.
  */
 export async function readScreenerApi(env: Env, now = new Date()): Promise<ScreenerApiResponse> {
   const currentMarketDate = nyDateKeyOf(now);
@@ -156,15 +148,26 @@ export async function readScreenerApi(env: Env, now = new Date()): Promise<Scree
       : null;
     const sma = computeLiveSma200w(quoteInput, metrics.get(symbol) ?? null, latestSplitEffectiveDates);
     const currentPrice = quote?.price ?? null;
+    const effectiveSplitDate = splitEffectiveDatesAsOf.get(symbol);
     const comparisonPrice = splitSafeComparisonPrice(
       currentPrice,
       quote?.provider_timestamp,
-      splitEffectiveDatesAsOf.get(symbol),
+      effectiveSplitDate,
     );
+    const strictSplitRows = effectiveSplitEvents?.get(symbol) ?? [];
+    const strictEffectiveSplitDate = strictSplitRows.at(-1)?.effective_date;
+    const dailyChange = effectiveSplitEvents === null
+      ? null
+      : deriveDailyChange(
+          quote,
+          currentMarketDate,
+          marketState,
+          strictEffectiveSplitDate,
+        );
     const manualIntrinsicValue = buildIntrinsicValue(
       comparisonPrice,
       intrinsicValues.get(symbol),
-      splitEffectiveDatesAsOf.get(symbol),
+      effectiveSplitDate,
       currentMarketDate ?? undefined,
     );
     const automaticIntrinsicValue = currentMarketDate && effectiveSplitEvents !== null
@@ -173,7 +176,7 @@ export async function readScreenerApi(env: Env, now = new Date()): Promise<Scree
           company?.industry ?? null,
           comparisonPrice,
           company,
-          effectiveSplitEvents.get(symbol) ?? [],
+          strictSplitRows,
           currentMarketDate,
         )
       : null;
@@ -184,8 +187,8 @@ export async function readScreenerApi(env: Env, now = new Date()): Promise<Scree
       symbol,
       company: company?.company ?? null,
       price: currentPrice,
-      changeAbs: quote?.change_abs ?? null,
-      changePct: quote?.change_pct ?? null,
+      changeAbs: dailyChange?.changeAbs ?? null,
+      changePct: dailyChange?.changePct ?? null,
       dayHigh: quote?.day_high ?? null,
       dayLow: quote?.day_low ?? null,
       dayOpen: quote?.day_open ?? null,
@@ -202,7 +205,7 @@ export async function readScreenerApi(env: Env, now = new Date()): Promise<Scree
       supportLevels: buildSupportLevels(
         comparisonPrice,
         supportLevels.get(symbol),
-        splitEffectiveDatesAsOf.get(symbol),
+        effectiveSplitDate,
         currentMarketDate ?? undefined,
       ),
       intrinsicValue,

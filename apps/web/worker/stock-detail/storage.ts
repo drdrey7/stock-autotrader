@@ -22,7 +22,8 @@ const PREVIEW_COMPANY_SQL = `SELECT symbol, symbol AS company, NULL AS logo_url,
   WHERE symbol = ?
   LIMIT 1`;
 const QUOTE_SQL = `SELECT symbol, price, change_abs, change_pct, day_high, day_low, day_open,
-  previous_close, provider, provider_timestamp, updated_at
+  previous_close, provider, provider_timestamp, updated_at,
+  quote_session_date, previous_close_session_date, daily_change_valid
   FROM latest_quotes
   WHERE symbol = ?
   LIMIT 1`;
@@ -181,6 +182,9 @@ function parseLatestQuote(row: LatestQuoteRow | null): LatestQuoteRow | null {
     || typeof row.provider !== "string" || !row.provider.trim()
     || !Number.isFinite(Date.parse(row.provider_timestamp))
     || !Number.isFinite(Date.parse(row.updated_at))
+    || (row.quote_session_date !== null && typeof row.quote_session_date !== "string")
+    || (row.previous_close_session_date !== null && typeof row.previous_close_session_date !== "string")
+    || !isFiniteNumber(row.daily_change_valid)
   ) return null;
   return row;
 }
@@ -242,11 +246,7 @@ function parseFundamentals(row: unknown): StockFundamentalsSnapshotRow | null {
   return value as unknown as StockFundamentalsSnapshotRow;
 }
 
-/**
- * Canonical Stock Detail serving read. `batch()` keeps the eight independent
- * data families in one bounded, coherent D1 operation. Providers never run in
- * this request path.
- */
+/** Canonical Stock Detail D1 snapshot. Providers never run in this request path. */
 export async function readStockDetailStorageSnapshot(
   db: D1Database,
   symbol: string,

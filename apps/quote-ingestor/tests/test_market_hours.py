@@ -10,7 +10,9 @@ from quote_ingestor.market_hours import (
     in_flush_window,
     is_us_market_holiday,
     market_phase,
+    previous_trading_session_date,
     session_close_minutes,
+    trading_session_date,
 )
 
 
@@ -97,6 +99,20 @@ class MarketHoursTest(unittest.TestCase):
     def test_naive_utc_input_handled(self) -> None:
         naive = dt.datetime(2026, 8, 18, 14, 0)  # assume UTC
         self.assertTrue(in_flush_window(naive))
+
+    def test_trading_session_date_uses_new_york_calendar(self) -> None:
+        self.assertEqual(
+            trading_session_date(utc(2026, 8, 27, 14, 0)),
+            dt.date(2026, 8, 27),
+        )
+        self.assertIsNone(trading_session_date(utc(2026, 8, 29, 14, 0)))
+
+    def test_previous_trading_session_skips_weekend(self) -> None:
+        self.assertEqual(previous_trading_session_date(dt.date(2026, 8, 31)), dt.date(2026, 8, 28))
+
+    def test_previous_trading_session_skips_market_holiday(self) -> None:
+        # Tuesday after US Labor Day 2026 rolls back to the prior Friday.
+        self.assertEqual(previous_trading_session_date(dt.date(2026, 9, 8)), dt.date(2026, 9, 4))
 
     # ------------------------------------------------------------- (P2 #4)
 

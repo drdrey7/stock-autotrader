@@ -9,7 +9,8 @@ function canShowDailyChange(api: StockDetailApiResponse): boolean {
   return api.quote.marketState === "regular"
     && api.quote.state === "Live"
     && api.quote.scaleState === "safe"
-    && api.quote.provider === "finnhub-quote";
+    && api.quote.changeAbs !== null
+    && api.quote.changePct !== null;
 }
 
 function toUiModel(api: StockDetailApiResponse): StockDetail {

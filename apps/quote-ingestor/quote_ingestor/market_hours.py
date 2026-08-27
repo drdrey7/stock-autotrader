@@ -114,14 +114,10 @@ def _early_close_minutes_for(day: dt.date) -> int | None:
     agree: Black Friday, Christmas Eve (weekday), and July 3 when Independence
     Day falls on a weekday.
     """
-    # Black Friday: the day after Thanksgiving.
     if day == _thanksgiving_date(day.year) + dt.timedelta(days=1):
         return EARLY_CLOSE_MINUTES
-    # Christmas Eve on a weekday.
     if day.month == 12 and day.day == 24 and day.weekday() < 5:
         return EARLY_CLOSE_MINUTES
-    # July 3 when Independence Day (July 4) is a weekday (the NYSE early
-    # close before the observed holiday).
     independence_weekday = dt.date(day.year, 7, 4).weekday()
     if day.month == 7 and day.day == 3 and independence_weekday < 5:
         return EARLY_CLOSE_MINUTES
@@ -133,6 +129,23 @@ def session_close_minutes(day: dt.date | dt.datetime) -> int:
     date = day.date() if isinstance(day, dt.datetime) else day
     early = _early_close_minutes_for(date)
     return early if early is not None else DEFAULT_CLOSE_MINUTES
+
+
+def session_close_utc(day: dt.date) -> dt.datetime:
+    """Exact UTC close for a known NYSE/Nasdaq trading date."""
+    key = _day_key(day.year, day.month, day.day)
+    if day.weekday() >= 5 or key in _holidays_for_year(day.year):
+        raise ValueError("not_a_trading_session")
+    close_minutes = session_close_minutes(day)
+    close_local = dt.datetime(
+        day.year,
+        day.month,
+        day.day,
+        close_minutes // 60,
+        close_minutes % 60,
+        tzinfo=NEW_YORK_TZ,
+    )
+    return close_local.astimezone(dt.UTC)
 
 
 def _as_utc(instant: dt.datetime) -> dt.datetime:
@@ -149,15 +162,37 @@ def _session_bounds_utc(now_utc: dt.datetime) -> tuple[dt.datetime, dt.datetime]
     if is_us_market_holiday(local):
         return None
     date = local.date()
-    close_minutes = session_close_minutes(date)
+    close_utc = session_close_utc(date)
     open_local = dt.datetime(date.year, date.month, date.day, 9, 30, tzinfo=NEW_YORK_TZ)
-    close_local = dt.datetime(date.year, date.month, date.day, close_minutes // 60, close_minutes % 60, tzinfo=NEW_YORK_TZ)
-    return open_local.astimezone(dt.UTC), close_local.astimezone(dt.UTC)
+    return open_local.astimezone(dt.UTC), close_utc
 
 
 def is_us_market_holiday(instant: dt.datetime) -> bool:
     local = _as_utc(instant).astimezone(NEW_YORK_TZ)
     return _day_key(local.year, local.month, local.day) in _holidays_for_year(local.year)
+
+
+def trading_session_date(instant: dt.datetime) -> dt.date | None:
+    """Return the New York trading date for ``instant``, or None on closed days."""
+    local = _as_utc(instant).astimezone(NEW_YORK_TZ)
+    day = local.date()
+    if day.weekday() >= 5:
+        return None
+    if _day_key(day.year, day.month, day.day) in _holidays_for_year(day.year):
+        return None
+    return day
+
+
+def previous_trading_session_date(day: dt.date | dt.datetime) -> dt.date:
+    """Immediately preceding NYSE/Nasdaq trading date, skipping holidays/weekends."""
+    current = day.date() if isinstance(day, dt.datetime) else day
+    candidate = current - dt.timedelta(days=1)
+    for _ in range(10):
+        key = _day_key(candidate.year, candidate.month, candidate.day)
+        if candidate.weekday() < 5 and key not in _holidays_for_year(candidate.year):
+            return candidate
+        candidate -= dt.timedelta(days=1)
+    raise RuntimeError("previous_trading_session_not_found")
 
 
 def market_phase(instant: dt.datetime) -> MarketPhase:
@@ -182,25 +217,14 @@ def market_phase(instant: dt.datetime) -> MarketPhase:
 
 
 def in_flush_window(instant: dt.datetime) -> bool:
-    """True while D1 quote writes are allowed: regular session + close grace.
-
-    The grace window lets the closing auction / very last regular ticks land
-    in a final flush instead of being dropped at 16:00:00.
-    """
+    """True while D1 quote writes are allowed: regular session + close grace."""
     return market_phase(instant) in ("open", "grace")
 
 
 def accept_regular_trade(trade_ts: dt.datetime, now: dt.datetime) -> bool:
-    """Whether a trade belongs to the CURRENT regular session.
-
-    The trade's timestamp must fall inside [session open, session close) of
-    the trading day of ``now``, and we must still be inside the session or
-    close-grace window. A late after-hours tick (timestamp after the session
-    close) is rejected for the regular latest-price — it must never overwrite
-    the regular close or fake "Live" data for a session that has ended.
-    """
+    """Whether a trade belongs to the CURRENT regular session."""
     if market_phase(now) not in ("open", "grace"):
-        return False  # before the open or after the grace: no regular intake
+        return False
     now_utc = _as_utc(now)
     bounds = _session_bounds_utc(now_utc)
     if bounds is None:

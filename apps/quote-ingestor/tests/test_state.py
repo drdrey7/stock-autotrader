@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import unittest
 
 from quote_ingestor.state import QuoteStateStore
@@ -12,6 +13,10 @@ SYMBOLS = ["AAPL", "MSFT", "NVDA"]
 
 def tick(symbol: str, price: float, ts: int) -> TradeTick:
     return TradeTick(symbol=symbol, price=price, timestamp_ms=ts)
+
+
+def epoch_ms(value: str) -> int:
+    return int(dt.datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp() * 1000)
 
 
 class QuoteStateStoreTest(unittest.TestCase):
@@ -64,6 +69,21 @@ class QuoteStateStoreTest(unittest.TestCase):
         self.store.apply_tick(tick("MSFT", 50.0, 1_000))
         self.store.mark_failed({"AAPL", "MSFT"})
         self.assertEqual({p.symbol for p in self.store.pending_changed()}, {"AAPL", "MSFT"})
+
+    def test_new_session_expires_failed_pending_rows_from_prior_session(self) -> None:
+        prior_close_tick = epoch_ms("2026-08-26T19:59:00Z")
+        current_tick = epoch_ms("2026-08-27T14:00:00Z")
+        self.store.apply_tick(tick("AAPL", 100.0, prior_close_tick))
+        self.store.mark_failed({"AAPL"})
+
+        # A different symbol trades in the new session while AAPL remains quiet.
+        # The stale AAPL pending write must not poison the whole mixed-session batch.
+        self.store.apply_tick(tick("MSFT", 50.0, current_tick))
+        pending = self.store.pending_changed()
+
+        self.assertEqual([item.symbol for item in pending], ["MSFT"])
+        # Expiring the obsolete pending flag must not erase the last known price.
+        self.assertEqual(self.store.snapshot()["AAPL"].price, 100.0)
 
     def test_partial_ack_clears_only_acked(self) -> None:
         self.store.apply_tick(tick("AAPL", 100.0, 1_000))

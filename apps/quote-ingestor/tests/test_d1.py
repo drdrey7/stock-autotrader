@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import io
 import json
+import sqlite3
 import unittest
 import urllib.error
 
@@ -13,10 +15,37 @@ from quote_ingestor.d1 import (
     build_upsert_sql,
     iso_from_ms,
 )
+from quote_ingestor.market_hours import session_close_utc
 
 TOKEN = "test-token-value"
 ACCOUNT = "account-1"
 DATABASE = "db-1"
+TRADE_MS = 1_787_073_678_242  # 2026-08-18, a regular Tuesday session.
+
+SESSION_SCHEMA = """
+CREATE TABLE latest_quotes (
+  symbol TEXT PRIMARY KEY,
+  price REAL NOT NULL,
+  change_abs REAL NOT NULL,
+  change_pct REAL NOT NULL,
+  day_high REAL,
+  day_low REAL,
+  day_open REAL,
+  previous_close REAL,
+  provider TEXT NOT NULL,
+  provider_timestamp TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  quote_session_date TEXT,
+  previous_close_session_date TEXT,
+  daily_change_valid INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE split_events (
+  symbol TEXT NOT NULL,
+  effective_date TEXT NOT NULL,
+  split_factor REAL NOT NULL,
+  PRIMARY KEY(symbol, effective_date)
+);
+"""
 
 
 class _Resp(io.BytesIO):
@@ -75,23 +104,28 @@ def _ok_response(changes: int) -> str:
 
 
 class D1ClientTest(unittest.TestCase):
-    def test_multi_values_sql_has_newer_wins_guard_and_preserves_fields(self) -> None:
+    def test_multi_values_sql_has_session_rollover_split_guard_and_newer_wins(self) -> None:
         sql = build_upsert_sql(2).upper()
+        self.assertIn(
+            "WITH SESSION_CTX(CURRENT_SESSION_DATE, PREVIOUS_SESSION_DATE, PREVIOUS_CLOSE_NOT_BEFORE, PREVIOUS_SESSION_CLOSE)",
+            sql,
+        )
         self.assertIn("EXCLUDED.PROVIDER_TIMESTAMP >= LATEST_QUOTES.PROVIDER_TIMESTAMP", sql)
         self.assertIn("LATEST_QUOTES.PREVIOUS_CLOSE", sql)
-        self.assertIn("LATEST_QUOTES.DAY_HIGH", sql)
-        self.assertIn("LATEST_QUOTES.DAY_LOW", sql)
-        self.assertIn("LATEST_QUOTES.DAY_OPEN", sql)
+        self.assertIn("LATEST_QUOTES.QUOTE_SESSION_DATE", sql)
+        self.assertIn("PREVIOUS_CLOSE_SESSION_DATE", sql)
+        self.assertIn("DAILY_CHANGE_VALID", sql)
+        self.assertIn("PREVIOUS_CLOSE_NOT_BEFORE", sql)
+        self.assertIn("PREVIOUS_SESSION_CLOSE", sql)
+        self.assertIn("SPLIT_EVENTS", sql)
         self.assertIn("ON CONFLICT(SYMBOL)", sql)
-        # two VALUES rows
-        self.assertEqual(sql.count("FINNHUB-WEBSOCKET"), 2)
-        self.assertEqual(sql.count("(?, ?, 0, 0, NULL, NULL, NULL, NULL, 'FINNHUB-WEBSOCKET', ?, ?)"), 2)
+        self.assertEqual(sql.count("'FINNHUB-WEBSOCKET'"), 2)
 
     def test_write_ok_success(self) -> None:
         transport = FakeTransport()
         transport.queue.append(_Resp(_ok_response(2).encode()))
         client = _client(transport)
-        rows = [("AAPL", 310.63, 1_787_073_678_242), ("NVDA", 900.0, 1_787_073_678_242)]
+        rows = [("AAPL", 310.63, TRADE_MS), ("NVDA", 900.0, TRADE_MS)]
         result = client.upsert_quotes(rows)
         self.assertEqual(result.written, ["AAPL", "NVDA"])
         self.assertEqual(result.failed, [])
@@ -101,24 +135,29 @@ class D1ClientTest(unittest.TestCase):
         self.assertIsInstance(body, dict)
         self.assertEqual(body["sql"], build_upsert_sql(2))
         params = body["params"]
-        self.assertEqual(params[0], "AAPL")
-        self.assertEqual(params[1], 310.63)
-        # provider_timestamp is ISO 8601 UTC (comparable with the REST writer)
-        self.assertRegex(params[2], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$")
-        # 2 rows x 4 params each
-        self.assertEqual(len(params), 8)
+        self.assertEqual(params[0], "2026-08-18")
+        self.assertEqual(params[1], "2026-08-17")
+        self.assertEqual(params[2], "2026-08-17T19:55:00.000Z")
+        self.assertEqual(params[3], "2026-08-17T20:00:00.000Z")
+        self.assertEqual(params[4], "AAPL")
+        self.assertEqual(params[5], 310.63)
+        # provider_timestamp is ISO 8601 UTC and follows the four session params.
+        self.assertRegex(params[6], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$")
+        # 4 session params + 2 rows x 4 params each.
+        self.assertEqual(len(params), 12)
 
     def test_chunking_splits_beyond_batch_max_rows(self) -> None:
         transport = FakeTransport()
         transport.queue.append(_Resp(_ok_response(2).encode()))
         transport.queue.append(_Resp(_ok_response(1).encode()))
         client = _client(transport)  # batch_max_rows=2
-        rows = [("A", 1.0, 1000), ("B", 2.0, 1000), ("C", 3.0, 1000)]
+        rows = [("A", 1.0, TRADE_MS), ("B", 2.0, TRADE_MS), ("C", 3.0, TRADE_MS)]
         result = client.upsert_quotes(rows)
         self.assertEqual(result.written, ["A", "B", "C"])
         self.assertEqual(len(transport.requests), 2)
-        self.assertEqual(len(transport.requests[0]["body"]["params"]), 8)  # rows 1-2
-        self.assertEqual(len(transport.requests[1]["body"]["params"]), 4)  # row 3
+        # Each chunk repeats the four session-context params, then four per row.
+        self.assertEqual(len(transport.requests[0]["body"]["params"]), 12)
+        self.assertEqual(len(transport.requests[1]["body"]["params"]), 8)
 
     def test_rejected_statement_marks_chunk_failed(self) -> None:
         transport = FakeTransport()
@@ -126,7 +165,7 @@ class D1ClientTest(unittest.TestCase):
             "success": False, "errors": [{"code": 7400, "message": "Invalid input"}],
         }).encode(), status=400))
         client = _client(transport)
-        result = client.upsert_quotes([("AAPL", 1.0, 1000), ("NVDA", 2.0, 1000)])
+        result = client.upsert_quotes([("AAPL", 1.0, TRADE_MS), ("NVDA", 2.0, TRADE_MS)])
         self.assertEqual(result.written, [])
         self.assertEqual(result.failed, ["AAPL", "NVDA"])
 
@@ -135,7 +174,7 @@ class D1ClientTest(unittest.TestCase):
         transport.queue.append(urllib.error.URLError("boom"))
         transport.queue.append(_Resp(_ok_response(1).encode()))
         client = _client(transport)
-        result = client.upsert_quotes([("AAPL", 1.0, 1000)])
+        result = client.upsert_quotes([("AAPL", 1.0, TRADE_MS)])
         self.assertEqual(result.written, ["AAPL"])
         self.assertEqual(client.error_count, 1)
         self.assertGreaterEqual(len(transport.requests), 2)
@@ -145,7 +184,7 @@ class D1ClientTest(unittest.TestCase):
         transport.queue.append(_Resp(b"", status=500))
         transport.queue.append(_Resp(_ok_response(1).encode()))
         client = _client(transport)
-        result = client.upsert_quotes([("AAPL", 1.0, 1000)])
+        result = client.upsert_quotes([("AAPL", 1.0, TRADE_MS)])
         self.assertEqual(result.written, ["AAPL"])
         self.assertGreaterEqual(len(transport.requests), 2)
 
@@ -155,7 +194,7 @@ class D1ClientTest(unittest.TestCase):
             "success": False, "errors": [{"message": "bad sql"}],
         }).encode(), status=400))
         client = _client(transport)
-        result = client.upsert_quotes([("AAPL", 1.0, 1000)])
+        result = client.upsert_quotes([("AAPL", 1.0, TRADE_MS)])
         self.assertEqual(len(transport.requests), 1)
         self.assertEqual(result.failed, ["AAPL"])
         self.assertIsNotNone(result.error)
@@ -166,7 +205,7 @@ class D1ClientTest(unittest.TestCase):
         for _ in range(5):
             transport.queue.append(_Resp(b"", status=429))
         client = _client(transport)
-        result = client.upsert_quotes([("AAPL", 1.0, 1000)])
+        result = client.upsert_quotes([("AAPL", 1.0, TRADE_MS)])
         # max_retries=2 => 3 attempts total, then failure result
         self.assertEqual(len(transport.requests), 3)
         self.assertEqual(result.failed, ["AAPL"])
@@ -175,9 +214,12 @@ class D1ClientTest(unittest.TestCase):
         transport = FakeTransport()
         transport.queue.append(_Resp(_ok_response(1).encode()))
         client = _client(transport)
-        client.upsert_quotes([("AAPL", 1.0, 1000)])
+        client.upsert_quotes([("AAPL", 1.0, TRADE_MS)])
         auth = transport.requests[0]["headers"].get("Authorization")
         self.assertEqual(auth, "Bearer test-token-value")
+
+    def test_transport_error_class_is_retry_layer_marker(self) -> None:
+        self.assertTrue(issubclass(D1TransportError, RuntimeError))
 
     def test_health_mirror_upsert(self) -> None:
         transport = FakeTransport()
@@ -189,9 +231,161 @@ class D1ClientTest(unittest.TestCase):
 
     def test_iso_from_ms(self) -> None:
         self.assertEqual(
-            iso_from_ms(1_787_073_678_242),
+            iso_from_ms(TRADE_MS),
             "2026-08-18T17:21:18.242Z",
         )
+
+
+class SessionBaselineSqlTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.db = sqlite3.connect(":memory:")
+        self.db.executescript(SESSION_SCHEMA)
+
+    def tearDown(self) -> None:
+        self.db.close()
+
+    def _seed(
+        self,
+        *,
+        price: float,
+        session: str,
+        previous_close: float | None = None,
+        previous_session: str | None = None,
+        valid: int = 0,
+        provider_time: str = "19:59:00.000Z",
+    ) -> None:
+        self.db.execute(
+            """INSERT INTO latest_quotes
+            (symbol, price, change_abs, change_pct, previous_close, provider,
+             provider_timestamp, updated_at, quote_session_date,
+             previous_close_session_date, daily_change_valid)
+            VALUES ('AAPL', ?, 999, 999, ?, 'finnhub-websocket',
+                    ? || 'T' || ?, ? || 'T' || ?, ?, ?, ?)""",
+            (
+                price,
+                previous_close,
+                session,
+                provider_time,
+                session,
+                provider_time,
+                session,
+                previous_session,
+                valid,
+            ),
+        )
+        self.db.commit()
+
+    def _write(self, *, price: float, current: str, previous: str, timestamp: str) -> sqlite3.Row:
+        previous_close = session_close_utc(dt.date.fromisoformat(previous))
+        previous_close_not_before = previous_close - dt.timedelta(minutes=5)
+        self.db.execute(
+            build_upsert_sql(1),
+            [
+                current,
+                previous,
+                iso_from_ms(int(previous_close_not_before.timestamp() * 1000)),
+                iso_from_ms(int(previous_close.timestamp() * 1000)),
+                "AAPL",
+                price,
+                timestamp,
+                timestamp,
+            ],
+        )
+        self.db.row_factory = sqlite3.Row
+        row = self.db.execute("SELECT * FROM latest_quotes WHERE symbol='AAPL'").fetchone()
+        assert row is not None
+        return row
+
+    def test_first_tick_of_next_session_promotes_prior_close(self) -> None:
+        self._seed(price=100.0, session="2026-08-26")
+        row = self._write(
+            price=102.0,
+            current="2026-08-27",
+            previous="2026-08-26",
+            timestamp="2026-08-27T14:00:00.000Z",
+        )
+        self.assertEqual(row["previous_close"], 100.0)
+        self.assertEqual(row["previous_close_session_date"], "2026-08-26")
+        self.assertEqual(row["daily_change_valid"], 1)
+        self.assertAlmostEqual(row["change_abs"], 2.0)
+        self.assertAlmostEqual(row["change_pct"], 2.0)
+
+    def test_intraday_prior_session_price_is_not_promoted_as_close(self) -> None:
+        self._seed(price=100.0, session="2026-08-26", provider_time="16:00:00.000Z")
+        row = self._write(
+            price=102.0,
+            current="2026-08-27",
+            previous="2026-08-26",
+            timestamp="2026-08-27T14:00:00.000Z",
+        )
+        self.assertIsNone(row["previous_close"])
+        self.assertIsNone(row["previous_close_session_date"])
+        self.assertEqual(row["daily_change_valid"], 0)
+
+    def test_restart_same_session_preserves_baseline_and_recomputes(self) -> None:
+        self._seed(
+            price=102.0,
+            session="2026-08-27",
+            previous_close=100.0,
+            previous_session="2026-08-26",
+            valid=1,
+            provider_time="14:00:00.000Z",
+        )
+        row = self._write(
+            price=103.0,
+            current="2026-08-27",
+            previous="2026-08-26",
+            timestamp="2026-08-27T15:00:00.000Z",
+        )
+        self.assertEqual(row["previous_close"], 100.0)
+        self.assertEqual(row["daily_change_valid"], 1)
+        self.assertAlmostEqual(row["change_abs"], 3.0)
+        self.assertAlmostEqual(row["change_pct"], 3.0)
+
+    def test_gap_never_reuses_older_baseline(self) -> None:
+        self._seed(price=100.0, session="2026-08-25", previous_close=99.0, previous_session="2026-08-24", valid=1)
+        row = self._write(
+            price=105.0,
+            current="2026-08-27",
+            previous="2026-08-26",
+            timestamp="2026-08-27T14:00:00.000Z",
+        )
+        self.assertIsNone(row["previous_close"])
+        self.assertIsNone(row["previous_close_session_date"])
+        self.assertEqual(row["daily_change_valid"], 0)
+        self.assertEqual(row["change_abs"], 0)
+        self.assertEqual(row["change_pct"], 0)
+
+    def test_effective_split_invalidates_rollover(self) -> None:
+        self._seed(price=500.0, session="2026-08-26")
+        self.db.execute("INSERT INTO split_events VALUES ('AAPL', '2026-08-27', 5.0)")
+        row = self._write(
+            price=101.0,
+            current="2026-08-27",
+            previous="2026-08-26",
+            timestamp="2026-08-27T14:00:00.000Z",
+        )
+        self.assertIsNone(row["previous_close"])
+        self.assertEqual(row["daily_change_valid"], 0)
+
+    def test_split_discovered_mid_session_clears_existing_baseline(self) -> None:
+        self._seed(
+            price=102.0,
+            session="2026-08-27",
+            previous_close=100.0,
+            previous_session="2026-08-26",
+            valid=1,
+            provider_time="14:00:00.000Z",
+        )
+        self.db.execute("INSERT INTO split_events VALUES ('AAPL', '2026-08-27', 2.0)")
+        row = self._write(
+            price=103.0,
+            current="2026-08-27",
+            previous="2026-08-26",
+            timestamp="2026-08-27T15:00:00.000Z",
+        )
+        self.assertIsNone(row["previous_close"])
+        self.assertEqual(row["daily_change_valid"], 0)
 
 
 if __name__ == "__main__":
