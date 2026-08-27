@@ -70,19 +70,21 @@ class QuoteStateStoreTest(unittest.TestCase):
         self.store.mark_failed({"AAPL", "MSFT"})
         self.assertEqual({p.symbol for p in self.store.pending_changed()}, {"AAPL", "MSFT"})
 
-    def test_new_session_expires_failed_pending_rows_from_prior_session(self) -> None:
+    def test_previous_session_pending_stays_until_durable(self) -> None:
         prior_close_tick = epoch_ms("2026-08-26T19:59:00Z")
         current_tick = epoch_ms("2026-08-27T14:00:00Z")
         self.store.apply_tick(tick("AAPL", 100.0, prior_close_tick))
         self.store.mark_failed({"AAPL"})
 
-        # A different symbol trades in the new session while AAPL remains quiet.
-        # The stale AAPL row must not poison the mixed-session batch.
+        # MSFT opens first. AAPL's immediately-prior-session work stays pending
+        # so D1 can make the close candidate durable in a separate session group.
         self.store.apply_tick(tick("MSFT", 50.0, current_tick))
         pending = self.store.pending_changed()
 
-        self.assertEqual([item.symbol for item in pending], ["MSFT"])
-        # Retiring the obsolete pending flag must not erase the last known price.
+        self.assertEqual(
+            [(item.symbol, item.timestamp_ms) for item in pending],
+            [("AAPL", prior_close_tick), ("MSFT", current_tick)],
+        )
         self.assertEqual(self.store.snapshot()["AAPL"].price, 100.0)
 
     def test_failed_prior_close_is_replayed_before_first_current_tick(self) -> None:
@@ -104,19 +106,24 @@ class QuoteStateStoreTest(unittest.TestCase):
         self.store.ack_flushed({"AAPL"}, {"AAPL": current_tick})
         self.assertEqual(self.store.pending_changed(), [])
 
-    def test_retired_failed_close_survives_other_symbol_current_tick(self) -> None:
+    def test_failed_close_survives_partial_other_symbol_success(self) -> None:
         prior_close_tick = epoch_ms("2026-08-26T19:59:00Z")
         current_tick = epoch_ms("2026-08-27T14:00:00Z")
         self.store.apply_tick(tick("AAPL", 100.0, prior_close_tick))
         self.store.mark_failed({"AAPL"})
-
-        # MSFT opens first. This retires AAPL from the current batch but must
-        # preserve AAPL's undurable prior-session candidate for when AAPL trades.
         self.store.apply_tick(tick("MSFT", 50.0, current_tick))
-        first_pending = self.store.pending_changed()
-        self.assertEqual([item.symbol for item in first_pending], ["MSFT"])
-        self.store.ack_flushed({"MSFT"}, {"MSFT": current_tick})
 
+        first_pending = self.store.pending_changed()
+        self.assertEqual(
+            [(item.symbol, item.timestamp_ms) for item in first_pending],
+            [("AAPL", prior_close_tick), ("MSFT", current_tick)],
+        )
+        # Model D1 partitioning: AAPL close write fails, MSFT current write lands.
+        self.store.ack_flushed({"MSFT"}, {"MSFT": current_tick})
+        self.store.mark_failed({"AAPL"})
+
+        # When AAPL finally trades, its failed close is preserved before the
+        # in-memory value is overwritten and is replayed before the current tick.
         self.store.apply_tick(tick("AAPL", 102.0, current_tick + 1_000))
         pending = self.store.pending_changed()
         self.assertEqual(
