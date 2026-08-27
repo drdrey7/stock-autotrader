@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -13,9 +12,9 @@ from quote_ingestor.durable_state import CloseCandidateCheckpoint
 from quote_ingestor.types import TradeTick
 
 SYMBOLS = ["AAPL", "MSFT"]
-NORMAL_CLOSE_FIRST_MS = 1_787_086_500_000  # 2026-08-18T19:55:00Z
-NORMAL_CLOSE_LATEST_MS = 1_787_086_799_000  # 2026-08-18T19:59:59Z
-OUTSIDE_CLOSE_MS = 1_787_068_800_000  # 2026-08-18T15:00:00Z
+NORMAL_CLOSE_FIRST_MS = 1_787_082_900_000  # 2026-08-18T19:55:00Z
+NORMAL_CLOSE_LATEST_MS = 1_787_083_199_000  # 2026-08-18T19:59:59Z
+OUTSIDE_CLOSE_MS = 1_787_065_200_000  # 2026-08-18T15:00:00Z
 
 
 class CloseCandidateCheckpointTest(unittest.TestCase):
