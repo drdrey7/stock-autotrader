@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from quote_ingestor.config import from_env
+from quote_ingestor.config import ConfigError, from_env
 from quote_ingestor.durable_state import CloseCandidateCheckpoint
 from quote_ingestor.types import TradeTick
 
@@ -95,6 +95,10 @@ class DurableStateConfigTest(unittest.TestCase):
         }
         env.update(extra)
         return env
+
+    def test_runtime_refuses_to_start_without_durable_state_path(self) -> None:
+        with self.assertRaisesRegex(ConfigError, "durable quote state is not configured"):
+            from_env(self._env())
 
     def test_systemd_state_directory_is_canonical_default(self) -> None:
         settings = from_env(self._env(STATE_DIRECTORY="/var/lib/stock-autotrader-finnhub-ws"))
