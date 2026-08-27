@@ -9,7 +9,7 @@ from pathlib import Path
 
 from history_ingestor.config import Settings
 from history_ingestor.maintenance import MaintenanceRunner
-from history_ingestor.maintenance_state import MaintenanceStore, ReconcileStore, STATUS_DONE, STATUS_ERROR
+from history_ingestor.maintenance_state import STATUS_DONE, STATUS_ERROR, MaintenanceStore, ReconcileStore
 
 try:
     from test_bootstrap import FakeD1, FakeProvider, future_splits_payload, splits_payload, weekly_payload
