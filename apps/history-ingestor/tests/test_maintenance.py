@@ -122,6 +122,9 @@ class MaintenanceCycleTests(unittest.TestCase):
                 splits_payloads={"NVDA": splits_payload("NVDA")},
             )
             runner2, _ = make_runner(d1, provider2, tmp, MON_2)
+            rstore = runner2._get_reconcile_store()
+            rstore.state.mark("NVDA", "done")
+            self.assertTrue(rstore.save())
             report2 = runner2.run(universe=["NVDA"])
             self.assertEqual(report2["status"], "complete")
             self.assertEqual(report2["cycle_week"], "2026-W34")
@@ -130,10 +133,54 @@ class MaintenanceCycleTests(unittest.TestCase):
             self.assertEqual(len(d1.weekly["NVDA"]), 261)
             self.assertEqual(
                 d1.meta["historyReconcileSplitStatus:NVDA"]["status"],
-                "pending",
+                "done",
             )
             # Metrics re-anchored to the new week.
             self.assertIn("2026-08-21", d1.metrics["NVDA"]["anchor_week"])
+
+    def test_provider_correction_invalidates_before_weekly_rows_are_written(self):
+        class TrackingD1(FakeD1):
+            def __init__(self):
+                super().__init__()
+                self.operations: list[tuple[str, str]] = []
+
+            def write_app_meta(self, key, value):
+                self.operations.append(("meta", key))
+                return super().write_app_meta(key, value)
+
+            def upsert_weekly_rows(self, rows):
+                self.operations.append(("weekly", rows[0][0]))
+                return super().upsert_weekly_rows(rows)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = TrackingD1()
+            runner, _ = make_runner(
+                d1,
+                FakeProvider(weekly_payloads={"NVDA": weekly_payload("NVDA")}),
+                tmp,
+                MON_1,
+            )
+            runner.run(universe=["NVDA"])
+
+            corrected = weekly_payload("NVDA", n_weeks=261, end="2026-08-21")
+            corrected["Weekly Time Series"]["2026-08-14"]["4. close"] = "22.5"
+            runner2, _ = make_runner(
+                d1,
+                FakeProvider(weekly_payloads={"NVDA": corrected}),
+                tmp,
+                MON_2,
+            )
+            rstore = runner2._get_reconcile_store()
+            rstore.state.mark("NVDA", "done")
+            self.assertTrue(rstore.save())
+            d1.operations.clear()
+
+            report = runner2.run(universe=["NVDA"])
+            self.assertEqual(report["symbols"]["NVDA"]["rows_updated"], 2, report)
+            self.assertEqual(d1.meta["historyReconcileSplitStatus:NVDA"]["status"], "pending")
+            pending_index = d1.operations.index(("meta", "historyReconcileSplitStatus:NVDA"))
+            weekly_index = d1.operations.index(("weekly", "NVDA"))
+            self.assertLess(pending_index, weekly_index)
 
     def test_quota_resume_across_days(self):
         # Monday WEEKLY quota-blocked mid-way; next run resumes the remaining

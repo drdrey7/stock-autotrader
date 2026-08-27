@@ -349,28 +349,31 @@ class MaintenanceRunner:
             # Only changed/new rows are written — never a blanket rewrite.
             stored = self._stored_rows(symbol)
             changed = []
+            has_provider_correction = False
             for bar, factor, adj_close in adjusted_full:
                 old = stored.get(bar.week_end_date)
                 if old is None or self._row_differs(old, bar, factor, adj_close):
+                    has_provider_correction = has_provider_correction or old is not None
                     changed.append((
                         bar.symbol, bar.week_end_date, bar.open, bar.high, bar.low,
                         bar.close, bar.volume, float(factor), adj_close, _now_iso(),
                     ))
             if changed:
+                if has_provider_correction:
+                    # A corrected existing row can change the evidence that was
+                    # previously reconciled. Persist pending BEFORE publishing
+                    # that row, so any crash/failure is fail-closed. A normal
+                    # appended completed week uses the already-verified split
+                    # history and keeps the symbol available.
+                    rstore = self._get_reconcile_store()
+                    rstore.state.mark(symbol, STATUS_PENDING)
+                    if not rstore.save():
+                        raise ProviderError(f"split reconciliation invalidation failed for {symbol}")
                 write = self._d1.upsert_weekly_rows(changed)
                 if write.failed:
                     raise ProviderError(f"D1 weekly write failed: {write.error}")
-                # A weekly provider correction changes the evidence that was
-                # previously reconciled. Force the low-frequency SPLITS pass
-                # to verify the symbol again before Stock Detail serves it as
-                # safe. The durable state write follows the weekly write so a
-                # crash cannot leave a changed history marked verified.
-                rstore = self._get_reconcile_store()
-                rstore.state.mark(symbol, STATUS_PENDING)
-                if not rstore.save():
-                    raise ProviderError(f"split reconciliation invalidation failed for {symbol}")
                 result["rows_updated"] = len(changed)
-                if len(changed) > 1:
+                if has_provider_correction:
                     result["anomalies"].append(f"{symbol}: provider correction rewrote {len(changed)} rows")
 
             self._store.state.mark_symbol(symbol, "weekly", STATUS_DONE)
