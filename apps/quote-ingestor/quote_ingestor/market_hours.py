@@ -34,7 +34,7 @@ EARLY_CLOSE_MINUTES = 13 * 60
 # last regular ticks are not lost. After the grace the write window is closed.
 CLOSE_GRACE_MINUTES = 5
 # A previous-session quote is trusted as rollover proof only when its provider
-timestamp belongs to the final five minutes before the regular close.
+# timestamp belongs to the final five minutes before the regular close.
 CLOSE_BASELINE_WINDOW_MINUTES = 5
 
 MarketPhase = Literal["pre_open", "open", "grace", "closed"]
