@@ -56,6 +56,7 @@ class Settings:
 
 def from_env(environ: dict[str, str] | None = None) -> Settings:
     values = dict(os.environ if environ is None else environ)
+    fx_url = (values.get("FUNDAMENTALS_FX_URL") or "").strip() or "https://open.er-api.com/v6/latest/USD"
     return Settings(
         finnhub_api_key=_required("FINNHUB_API_KEY", values),
         cloudflare_api_token=_required("CLOUDFLARE_API_TOKEN", values),
@@ -68,5 +69,5 @@ def from_env(environ: dict[str, str] | None = None) -> Settings:
         )),
         request_timeout_seconds=_positive_float("FUNDAMENTALS_REQUEST_TIMEOUT", 30.0, values),
         finnhub_min_interval_seconds=_positive_float("FINNHUB_MIN_INTERVAL_SECONDS", 1.05, values),
-        fx_url=(values.get("FUNDAMENTALS_FX_URL") or "https://open.er-api.com/v6/latest/USD").strip(),
+        fx_url=fx_url,
     )
