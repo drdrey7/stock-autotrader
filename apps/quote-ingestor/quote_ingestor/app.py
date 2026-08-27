@@ -18,8 +18,9 @@ from collections.abc import Callable
 from . import __version__
 from .config import ConfigError, Settings, from_env, secret_present
 from .d1 import D1Client, D1QueryError
+from .durable_state import CloseCandidateCheckpoint
 from .health import HealthTracker
-from .market_hours import accept_regular_trade, in_flush_window, market_phase
+from .market_hours import accept_regular_trade, in_flush_window, is_close_baseline_candidate, market_phase
 from .parser import TradeFrameParser
 from .state import QuoteStateStore
 from .universe import UniverseError, load_core_universe
@@ -53,6 +54,7 @@ class Ingestor:
         d1: D1Client,
         clock: Callable[[], dt.datetime] | None = None,
         accept_trade_fn: Callable[[dt.datetime, dt.datetime], bool] | None = None,
+        close_checkpoint: CloseCandidateCheckpoint | None = None,
     ) -> None:
         self.settings = settings
         self.symbols = symbols
@@ -60,6 +62,13 @@ class Ingestor:
         self.clock = clock or (lambda: dt.datetime.now(dt.UTC))
         self.accept_trade_fn = accept_trade_fn or accept_regular_trade
         self.store = QuoteStateStore(symbols)
+        self.close_checkpoint = close_checkpoint
+        if self.close_checkpoint is not None:
+            restored = self.close_checkpoint.restore()
+            for tick in restored:
+                self.store.apply_tick(tick)
+            if restored:
+                log_event("close_checkpoint_restored", candidates=len(restored))
         # The parser validates "plausible future" against the same injected
         # clock as the session gate, so tests (and DST boundaries) are exact.
         self.parser = TradeFrameParser(
@@ -115,6 +124,8 @@ class Ingestor:
             accepted_regular = True
             if self.store.apply_tick(tick):
                 self.health.on_tick()
+                if is_close_baseline_candidate(tick.timestamp_ms):
+                    self._checkpoint_first_close_tick(tick)
         if accepted_regular:
             self.health.on_accepted_regular_tick()
 
@@ -131,6 +142,35 @@ class Ingestor:
             return True
         self.health.on_ignored_non_regular(1)
         return False
+
+    def _checkpoint_first_close_tick(self, tick) -> None:
+        if self.close_checkpoint is None:
+            return
+        try:
+            self.close_checkpoint.ensure_candidate(tick)
+        except OSError as exc:
+            # D1 may still succeed; local checkpoint failure must not stop quote
+            # ingestion. The error class is enough for operators and cannot leak
+            # path contents or credentials.
+            log_event("close_checkpoint_write_error", operation="ensure", error=exc.__class__.__name__)
+
+    def _checkpoint_pending_close_ticks(self, pending) -> None:
+        if self.close_checkpoint is None:
+            return
+        try:
+            self.close_checkpoint.record_candidates(pending)
+        except OSError as exc:
+            log_event("close_checkpoint_write_error", operation="refresh", error=exc.__class__.__name__)
+
+    def _ack_close_checkpoint(self, written_as_of: dict[str, int]) -> None:
+        if self.close_checkpoint is None or not written_as_of:
+            return
+        try:
+            self.close_checkpoint.ack_written(written_as_of)
+        except OSError as exc:
+            # Safe failure: the candidate remains/reappears on restart and D1's
+            # timestamp guard makes the replay idempotent.
+            log_event("close_checkpoint_write_error", operation="ack", error=exc.__class__.__name__)
 
     # --------------------------------------------------------------- flush
 
@@ -161,14 +201,26 @@ class Ingestor:
         if not pending:
             self._write_health_record()
             return
+
+        # Make any close-window evidence crash-safe BEFORE the network write.
+        # This is deliberately local state: D1 cannot be its own fallback while
+        # D1 is unavailable.
+        self._checkpoint_pending_close_ticks(pending)
         rows = [(t.symbol, t.price, t.timestamp_ms) for t in pending]
         started = time.monotonic()
         result = self.d1.upsert_quotes(rows)
         duration_ms = int((time.monotonic() - started) * 1000)
 
         if result.written:
-            written_as_of = {s: ts for s, _, ts in rows if s in set(result.written)}
-            self.store.ack_flushed(set(result.written), written_as_of)
+            written_set = set(result.written)
+            written_as_of: dict[str, int] = {}
+            for symbol, _, timestamp_ms in rows:
+                if symbol in written_set:
+                    written_as_of[symbol] = max(written_as_of.get(symbol, 0), timestamp_ms)
+            self.store.ack_flushed(written_set, written_as_of)
+            # Local workflow state is cleared only after the latest submitted
+            # row for the symbol is known durable in D1.
+            self._ack_close_checkpoint(written_as_of)
             self.health.on_flush_success(len(result.written))
         if result.failed:
             self.store.mark_failed(set(result.failed))
@@ -391,7 +443,12 @@ def main(argv: list[str] | None = None) -> int:
         retry_base_seconds=settings.d1_retry_base_seconds,
         request_timeout_seconds=settings.d1_request_timeout_seconds,
     )
-    ingestor = Ingestor(settings, symbols, d1)
+    close_checkpoint = (
+        CloseCandidateCheckpoint(settings.close_candidate_state_path, symbols)
+        if settings.close_candidate_state_path is not None
+        else None
+    )
+    ingestor = Ingestor(settings, symbols, d1, close_checkpoint=close_checkpoint)
     ingestor.baseline_read()
 
     ws = FinnhubWebSocketClient(
