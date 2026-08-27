@@ -33,6 +33,9 @@ class FxError(RuntimeError):
 
 
 def _first_number(value: Any) -> float | None:
+    """Return a finite numeric value, rejecting booleans and malformed inputs."""
+    if isinstance(value, bool):
+        return None
     try:
         number = float(value)
     except (TypeError, ValueError):
@@ -40,14 +43,16 @@ def _first_number(value: Any) -> float | None:
     return number if number == number and abs(number) != float("inf") else None
 
 
-def _rate_as_of(updated_text: str | None) -> str | None:
-    if not updated_text or not updated_text.strip():
+def _rate_as_of(updated_text: Any) -> str | None:
+    """Normalize a provider update label to YYYY-MM-DD when it is a string."""
+    if not isinstance(updated_text, str) or not updated_text.strip():
         return None
+    normalized = updated_text.strip()
     try:
-        parsed = parsedate_to_datetime(updated_text.strip())
+        parsed = parsedate_to_datetime(normalized)
     except (TypeError, ValueError, OverflowError):
         # Fallback: extract a leading ISO-ish date if present.
-        match = __import__("re").search(r"\d{4}-\d{2}-\d{2}", updated_text)
+        match = __import__("re").search(r"\d{4}-\d{2}-\d{2}", normalized)
         return match.group(0) if match else None
     return parsed.date().isoformat()
 
@@ -77,6 +82,8 @@ def parse_rates(payload: Any) -> tuple[dict[tuple[str, str], float], str | None]
 
 
 class FxClient:
+    """Small HTTP client for the single daily USD FX feed."""
+
     def __init__(
         self,
         timeout_seconds: float = 30.0,
@@ -84,18 +91,22 @@ class FxClient:
         opener: Callable[..., Any] | None = None,
     ) -> None:
         self._timeout = timeout_seconds
-        self._url = url
+        self._url = (url or "").strip() or DEFAULT_FX_URL
         self._opener = opener or urllib.request.urlopen
 
     def fetch_rates(self) -> tuple[dict[tuple[str, str], float], str | None]:
-        request = urllib.request.Request(self._url, headers={"Accept": "application/json", "User-Agent": "stock-autotrader/1.0"})
+        """Fetch and validate the required FX pairs, raising FxError on failure."""
         try:
+            request = urllib.request.Request(
+                self._url,
+                headers={"Accept": "application/json", "User-Agent": "stock-autotrader/1.0"},
+            )
             with self._opener(request, timeout=self._timeout) as response:
                 if response.status != 200:
                     raise FxError(f"fx_http_{response.status}")
                 payload = json.loads(response.read().decode("utf-8"))
         except FxError:
             raise
-        except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError) as exc:
             raise FxError("fx_request_failed") from exc
         return parse_rates(payload)
