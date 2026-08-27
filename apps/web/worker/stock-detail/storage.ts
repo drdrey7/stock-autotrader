@@ -50,6 +50,10 @@ const SPLIT_EVENTS_SQL = `SELECT effective_date, split_factor
   FROM split_events
   WHERE symbol = ?
   ORDER BY effective_date ASC`;
+const SPLIT_RECONCILIATION_SQL = `SELECT value
+  FROM app_meta
+  WHERE key = 'historyReconcileSplitState'
+  LIMIT 1`;
 const FUNDAMENTALS_SQL = `SELECT symbol, market_cap, pe_ttm, eps_ttm, fcf_per_share_ttm,
   revenue_per_share_ttm, book_value_per_share,
   revenue_growth_ttm_yoy_pct, revenue_growth_3y_pct, revenue_growth_5y_pct, roe_ttm_pct,
@@ -156,6 +160,8 @@ export interface StockDetailStorageSnapshot {
   intrinsicValue: IntrinsicValuesForSymbol | undefined;
   weeklyRows: WeeklyPriceRow[];
   splitEvents: StockDetailSplitEventRow[];
+  /** True only after the durable SPLITS reconciliation pass verified this symbol. */
+  splitHistoryVerified?: boolean;
   fundamentals: StockFundamentalsSnapshotRow | null;
 }
 
@@ -246,6 +252,18 @@ function parseFundamentals(row: unknown): StockFundamentalsSnapshotRow | null {
   return value as unknown as StockFundamentalsSnapshotRow;
 }
 
+function parseSplitHistoryVerified(row: unknown, symbol: string): boolean {
+  if (!row || typeof row !== "object") return false;
+  const value = (row as { value?: unknown }).value;
+  if (typeof value !== "string") return false;
+  try {
+    const payload = JSON.parse(value) as { splits?: Record<string, unknown> };
+    return payload.splits?.[symbol] === "done";
+  } catch {
+    return false;
+  }
+}
+
 /** Canonical Stock Detail D1 snapshot. Providers never run in this request path. */
 export async function readStockDetailStorageSnapshot(
   db: D1Database,
@@ -262,6 +280,7 @@ export async function readStockDetailStorageSnapshot(
     db.prepare(INTRINSIC_VALUE_SQL).bind(symbol),
     db.prepare(WEEKLY_HISTORY_SQL).bind(symbol, historyLimit),
     db.prepare(SPLIT_EVENTS_SQL).bind(symbol),
+    db.prepare(SPLIT_RECONCILIATION_SQL),
     db.prepare(FUNDAMENTALS_SQL).bind(symbol),
   ]);
 
@@ -277,7 +296,8 @@ export async function readStockDetailStorageSnapshot(
     intrinsicValue: parseIntrinsicValue(symbol, firstRow(rows[4])),
     weeklyRows: parseWeeklyRows(rows[5] ?? []),
     splitEvents: parseSplitEvents(rows[6] ?? []),
-    fundamentals: parseFundamentals(firstRow(rows[7])),
+    splitHistoryVerified: parseSplitHistoryVerified(firstRow(rows[7]), symbol),
+    fundamentals: parseFundamentals(firstRow(rows[8])),
   };
 }
 

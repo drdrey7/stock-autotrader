@@ -173,6 +173,17 @@ describe("Stock Detail symbol-specific storage", () => {
     await expect(readStockDetailCompany(db, "MSFT")).rejects.toThrow("D1 unavailable");
   });
 
+  it("only treats an empty split history as verified when reconciliation says so", async () => {
+    const { db } = createBatchDb([
+      [{ symbol: "MSFT", company: "Microsoft Corporation", logo_url: null }],
+      [], [], [], [], [], [],
+      [{ value: JSON.stringify({ version: 1, splits: { MSFT: "done" } }) }],
+      [],
+    ]);
+    const snapshot = await readStockDetailStorageSnapshot(db, "MSFT");
+    expect(snapshot.splitHistoryVerified).toBe(true);
+  });
+
   it("contains no provider/network request path", () => {
     expect(storageSource).not.toMatch(/\bfetch\s*\(/);
     expect(storageSource).not.toContain("FINNHUB_API_KEY");

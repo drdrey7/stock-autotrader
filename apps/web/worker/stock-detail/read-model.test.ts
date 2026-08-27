@@ -121,6 +121,7 @@ function baseSnapshot(overrides: Partial<StockDetailStorageSnapshot> = {}): Stoc
     fundamentals: null,
     weeklyRows: weeklyHistory(459),
     splitEvents: [],
+    splitHistoryVerified: true,
     ...overrides,
   };
 }
@@ -210,6 +211,27 @@ describe("split scale safety", () => {
       "2026-08-15T06:00:00.000Z",
       weeklyHistory(459),
       [],
+      true,
+    )).toBe("safe");
+  });
+
+  it("fails closed when history has no split events and no durable verification", () => {
+    expect(servedSplitScaleState(
+      { price: 500, provider_timestamp: "2026-08-21T14:59:00.000Z" },
+      "2026-08-15T06:00:00.000Z",
+      weeklyHistory(459),
+      [],
+      false,
+    )).toBe("unknown");
+  });
+
+  it("accepts a no-split history only after durable verification", () => {
+    expect(servedSplitScaleState(
+      { price: 500, provider_timestamp: "2026-08-21T14:59:00.000Z" },
+      "2026-08-15T06:00:00.000Z",
+      weeklyHistory(459),
+      [],
+      true,
     )).toBe("safe");
   });
 

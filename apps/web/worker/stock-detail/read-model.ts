@@ -277,8 +277,10 @@ function servedHistorySplitState(
 function servedHistoryScaleState(
   weeklyRows: readonly WeeklyPriceRow[],
   effectiveSplits: readonly StockDetailSplitEventRow[],
+  splitHistoryVerified = false,
 ): QuoteHistoryScaleState {
-  if (weeklyRows.length === 0 || effectiveSplits.length === 0) return "safe";
+  if (weeklyRows.length === 0) return "safe";
+  if (effectiveSplits.length === 0) return splitHistoryVerified ? "safe" : "unknown";
   const latestEffectiveSplit = effectiveSplits.at(-1) ?? null;
   if (!latestEffectiveSplit) return "safe";
   const splitMs = Date.parse(`${latestEffectiveSplit.effective_date}T00:00:00.000Z`);
@@ -292,13 +294,16 @@ export function servedSplitScaleState(
   metricCalculatedAt: string | null,
   weeklyRows: readonly WeeklyPriceRow[],
   effectiveSplits: readonly StockDetailSplitEventRow[],
+  splitHistoryVerified = false,
 ): QuoteHistoryScaleState {
   const latestEffectiveSplit = effectiveSplits.at(-1) ?? null;
-  if (!latestEffectiveSplit) return "safe";
+  if (!latestEffectiveSplit) {
+    return servedHistoryScaleState(weeklyRows, effectiveSplits, splitHistoryVerified);
+  }
   const splitMs = Date.parse(`${latestEffectiveSplit.effective_date}T00:00:00.000Z`);
   if (!Number.isFinite(splitMs)) return "unknown";
   if (weeklyRows.length === 0) return quoteSplitState(quote, splitMs);
-  const historyState = servedHistoryScaleState(weeklyRows, effectiveSplits);
+  const historyState = servedHistoryScaleState(weeklyRows, effectiveSplits, splitHistoryVerified);
   if (historyState !== "safe") return historyState;
   const quoteState = quoteSplitState(quote, splitMs);
   if (quoteState !== "safe" || metricCalculatedAt === null) return quoteState;
@@ -324,6 +329,7 @@ export async function readStockDetailApi(
     intrinsicValue: intrinsicRaw,
     weeklyRows,
     splitEvents,
+    splitHistoryVerified,
     fundamentals,
   } = env.ENVIRONMENT === "preview"
     ? await readStockDetailStorageSnapshot(env.DB, symbol, STOCK_DETAIL_HISTORY_LIMIT, "preview")
@@ -355,9 +361,15 @@ export async function readStockDetailApi(
   const quoteInput: QuoteInput | null = quote
     ? { price: quote.price, provider_timestamp: quote.provider_timestamp }
     : null;
-  const historyScaleState = servedHistoryScaleState(weeklyRows, effectiveSplitEvents);
+  const historyScaleState = servedHistoryScaleState(weeklyRows, effectiveSplitEvents, splitHistoryVerified === true);
   const historyScaleSafe = historyScaleState === "safe";
-  const scaleState = servedSplitScaleState(quoteInput, null, weeklyRows, effectiveSplitEvents);
+  const scaleState = servedSplitScaleState(
+    quoteInput,
+    null,
+    weeklyRows,
+    effectiveSplitEvents,
+    splitHistoryVerified === true,
+  );
   const quoteScaleSafe = scaleState === "safe";
   const currentPrice = quoteScaleSafe ? quote?.price ?? null : null;
   const marketState = quotesMarketState(now);
