@@ -68,12 +68,12 @@ def _required(name: str) -> str:
     return value
 
 
-def _close_candidate_state_path() -> Path | None:
-    """Resolve the crash-safe checkpoint path without inventing a writable home.
+def _close_candidate_state_path() -> Path:
+    """Resolve the mandatory crash-safe checkpoint path.
 
     systemd exports ``STATE_DIRECTORY`` for ``StateDirectory=`` services. A
-    direct override remains available for local/operator testing; plain local
-    development without either variable simply disables the optional checkpoint.
+    direct override remains available for local/operator validation. Production
+    must never silently run without durable rollover workflow state.
     """
     explicit = os.environ.get("QUOTE_INGESTOR_STATE_PATH", "").strip()
     if explicit:
@@ -81,7 +81,9 @@ def _close_candidate_state_path() -> Path | None:
     state_directory = os.environ.get("STATE_DIRECTORY", "").strip()
     if state_directory:
         return Path(state_directory) / "pending-close-candidates.json"
-    return None
+    raise ConfigError(
+        "durable quote state is not configured (STATE_DIRECTORY or QUOTE_INGESTOR_STATE_PATH required)"
+    )
 
 
 def secret_present(name: str) -> bool:
@@ -137,8 +139,8 @@ class Settings:
 def from_env(environ: os._Environ | dict[str, str] | None = None) -> Settings:
     """Build Settings from the process environment (or an explicit mapping).
 
-    Missing secrets raise ConfigError with a non-secret message so the service
-    dies fast with a clear journal entry instead of half-starting.
+    Missing secrets or durable state configuration raise ``ConfigError`` so the
+    service never half-starts without the restart-safety invariant it promises.
     """
     backup = os.environ
     try:
