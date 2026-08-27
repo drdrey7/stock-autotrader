@@ -20,8 +20,8 @@ import logging
 import math
 import os
 import threading
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 from .market_hours import is_close_baseline_candidate, trading_session_date
 from .types import TradeTick
