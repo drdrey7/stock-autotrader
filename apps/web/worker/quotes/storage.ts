@@ -13,6 +13,9 @@ export interface LatestQuoteRow {
   provider: string;
   provider_timestamp: string;
   updated_at: string;
+  quote_session_date?: string | null;
+  previous_close_session_date?: string | null;
+  daily_change_valid?: number;
 }
 
 const UPSERT_SQL = `
@@ -29,22 +32,21 @@ ON CONFLICT(symbol) DO UPDATE SET
   previous_close = excluded.previous_close,
   provider = excluded.provider,
   provider_timestamp = excluded.provider_timestamp,
-  updated_at = excluded.updated_at
+  updated_at = excluded.updated_at,
+  quote_session_date = NULL,
+  previous_close_session_date = NULL,
+  daily_change_valid = 0
 WHERE excluded.provider_timestamp >= latest_quotes.provider_timestamp
 `;
 
 /**
- * Upsert the latest quote state for a batch of symbols in one D1 batch call.
- * One row per symbol — refreshing a symbol updates its row, it never appends.
- * Defensive membership gate: only canonical Core Universe symbols persist.
+ * Upsert a REST quote observation defensively.
  *
- * Race guard (transition window, REST collector + Finnhub WebSocket ingestor
- * both writing latest_quotes): the UPSERT only overwrites when the incoming
- * `provider_timestamp` is at least as new as the stored one
- * (`WHERE excluded.provider_timestamp >= latest_quotes.provider_timestamp`).
- * Both writers store ISO 8601 UTC, so the lexicographic compare is
- * chronological — an older REST response can never regress a newer WebSocket
- * quote, and the WebSocket ingestor applies the same rule in its own SQL.
+ * The Finnhub WebSocket ingestor is the canonical automatic writer and owns
+ * regular-session provenance. If this legacy/provider-neutral write path is
+ * ever re-enabled, it deliberately invalidates session provenance rather than
+ * allowing an observation without a proven session lifecycle to inherit a
+ * previously-valid 1D baseline. Price still serves; 1D fails closed.
  */
 export async function upsertLatestQuotes(
   db: D1Database,
@@ -74,7 +76,8 @@ export async function upsertLatestQuotes(
 export async function readLatestQuotes(db: D1Database): Promise<LatestQuoteRow[]> {
   const result = await db.prepare(
     `SELECT symbol, price, change_abs, change_pct, day_high, day_low, day_open,
-            previous_close, provider, provider_timestamp, updated_at
+            previous_close, provider, provider_timestamp, updated_at,
+            quote_session_date, previous_close_session_date, daily_change_valid
        FROM latest_quotes`,
   ).all<LatestQuoteRow>();
   return result.results ?? [];

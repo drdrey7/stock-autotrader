@@ -15,6 +15,7 @@ import {
   calculateAutomaticIntrinsicValueFromPersistedFundamentals,
 } from "../intrinsic-values/automatic";
 import { buildIntrinsicValue, buildSupportLevels } from "../stocks/derived";
+import { deriveDailyChange } from "../quotes/daily-change";
 import { nyDateKeyOf, quoteState, quotesMarketState } from "../quotes/freshness";
 import type { Env } from "../index";
 import {
@@ -328,8 +329,6 @@ export async function readStockDetailApi(
     ? await readStockDetailStorageSnapshot(env.DB, symbol, STOCK_DETAIL_HISTORY_LIMIT, "preview")
     : await readStockDetailStorageSnapshot(env.DB, symbol);
 
-  // The existing metric cards may still fail closed after three days. Automatic
-  // IV intentionally does not use this TTL; it consumes last-known-good facts.
   const marketFundamentalsFresh = marketFundamentalsAreFresh(fundamentals, now);
   const cardMetrics = calculateAccountingCardMetrics(fundamentals);
   const marketCap = marketFundamentalsFresh ? fundamentals?.market_cap ?? null : null;
@@ -361,6 +360,10 @@ export async function readStockDetailApi(
   const scaleState = servedSplitScaleState(quoteInput, null, weeklyRows, effectiveSplitEvents);
   const quoteScaleSafe = scaleState === "safe";
   const currentPrice = quoteScaleSafe ? quote?.price ?? null : null;
+  const marketState = quotesMarketState(now);
+  const dailyChange = quoteScaleSafe
+    ? deriveDailyChange(quote, currentMarketDate, marketState, effectiveSplitAsOf ?? undefined)
+    : null;
   const liveSma = computeLiveSma200w(
     quoteScaleSafe ? quoteInput : null,
     metric,
@@ -452,13 +455,13 @@ export async function readStockDetailApi(
     },
     quote: {
       price: currentPrice,
-      changeAbs: quoteScaleSafe ? quote?.change_abs ?? null : null,
-      changePct: quoteScaleSafe ? quote?.change_pct ?? null : null,
+      changeAbs: dailyChange?.changeAbs ?? null,
+      changePct: dailyChange?.changePct ?? null,
       provider: quote?.provider ?? null,
       asOf: quote?.provider_timestamp ?? null,
       updatedAt: quote?.updated_at ?? null,
       state: quoteState(quote?.updated_at ?? null, now),
-      marketState: quotesMarketState(now),
+      marketState,
       scaleState,
     },
     valuation: {

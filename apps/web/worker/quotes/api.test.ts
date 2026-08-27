@@ -16,20 +16,26 @@ interface LatestRow {
   provider: string;
   provider_timestamp: string;
   updated_at: string;
+  quote_session_date?: string | null;
+  previous_close_session_date?: string | null;
+  daily_change_valid?: number;
 }
 
 const quoteRow = (symbol: string, price: number, updatedAt: string): LatestRow => ({
   symbol,
   price,
-  change_abs: 2,
-  change_pct: 1.2,
+  change_abs: 999,
+  change_pct: 999,
   day_high: price + 2,
   day_low: price - 2,
   day_open: price - 0.5,
   previous_close: price - 2,
-  provider: "finnhub-quote",
+  provider: "finnhub-websocket",
   provider_timestamp: updatedAt,
   updated_at: updatedAt,
+  quote_session_date: updatedAt === "2026-08-13T14:00:00.000Z" ? "2026-08-13" : null,
+  previous_close_session_date: updatedAt === "2026-08-13T14:00:00.000Z" ? "2026-08-12" : null,
+  daily_change_valid: updatedAt === "2026-08-13T14:00:00.000Z" ? 1 : 0,
 });
 
 function createApiDb(options: {
@@ -174,7 +180,8 @@ describe("readScreenerApi", () => {
     expect(apple.company).toBe("Apple Inc.");
     expect(apple.logoUrl).toBe("https://example.com/aapl.png");
     expect(apple.price).toBe(232.5);
-    expect(apple.changePct).toBe(1.2);
+    expect(apple.changeAbs).toBe(2);
+    expect(apple.changePct).toBeCloseTo((232.5 / 230.5 - 1) * 100, 10);
     expect(apple.state).toBe("Live");
     expect(apple.asOf).toBe(NOW_ISO);
     expect(apple.updatedAt).toBe(NOW_ISO);

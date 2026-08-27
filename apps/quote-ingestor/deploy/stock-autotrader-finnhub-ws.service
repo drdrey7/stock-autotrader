@@ -14,6 +14,11 @@ Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=/etc/stock-autotrader/finnhub.env
 # Cloudflare D1 credentials (chmod 600, same dir) — batched D1 HTTP API writes.
 EnvironmentFile=/etc/stock-autotrader/cloudflare.env
+# Crash-safe workflow state for close-window candidates. systemd creates
+# /var/lib/stock-autotrader-finnhub-ws owned by hermes and exports STATE_DIRECTORY.
+StateDirectory=stock-autotrader-finnhub-ws
+StateDirectoryMode=0750
+UMask=0077
 ExecStart=/usr/bin/python3 -m quote_ingestor
 Restart=on-failure
 RestartSec=5
@@ -21,8 +26,8 @@ TimeoutStopSec=20
 KillSignal=SIGTERM
 SendSIGKILL=no
 
-# Hardening: non-root user, read-only home (the ingestor only reads the Core
-# Universe file), private /tmp, no new privileges, no capabilities.
+# Hardening: non-root user, read-only home, private /tmp, no new privileges,
+# no capabilities. StateDirectory is the only persistent writable runtime path.
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=read-only
