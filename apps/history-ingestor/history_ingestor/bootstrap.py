@@ -23,6 +23,7 @@ from typing import Any
 
 from .config import Settings
 from .d1 import D1QueryError
+from .maintenance_state import RECONCILE_STATUS_META_PREFIX
 from .parser import SplitEvent, WeeklyBar
 from .provider import (
     AllKeysFailedError,
@@ -291,6 +292,7 @@ class BootstrapRunner:
                         write = self._d1.upsert_technical_metrics(metrics_row(symbol, metrics))
                         if write.failed:
                             raise ProviderError(f"technical_metrics write failed: {write.error}")
+                        self._publish_split_verification(symbol)
                     self._store.mark_symbol(symbol, "weekly", STATUS_DONE)
                 except QuotaExhaustedError:
                     self._store.save()
@@ -320,6 +322,21 @@ class BootstrapRunner:
                             rows_written, errors)
 
     # -------------------------------------------------------------- helpers
+
+    def _publish_split_verification(self, symbol: str) -> None:
+        """Publish serving eligibility only after the adjusted bootstrap is durable."""
+        payload = {
+            "version": 1,
+            "symbol": symbol,
+            "status": STATUS_DONE,
+            "updated_at": _now_iso(),
+        }
+        try:
+            written = self._d1.write_app_meta(f"{RECONCILE_STATUS_META_PREFIX}{symbol}", payload)
+        except Exception as exc:
+            raise ProviderError(f"split verification marker write failed: {exc}") from exc
+        if not written:
+            raise ProviderError("split verification marker write failed")
 
     def _persist_splits(self, symbol: str, events: list[SplitEvent]) -> None:
         """Persist split history durably (idempotent UPSERT) before completion.

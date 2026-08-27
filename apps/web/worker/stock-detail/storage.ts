@@ -58,6 +58,7 @@ const SPLIT_RECONCILIATION_SQL = `SELECT value
 const SPLIT_RECONCILIATION_META_PREFIX = "historyReconcileSplitStatus:";
 /** Legacy checkpoint retained only as a rollout fallback for already-verified symbols. */
 const LEGACY_SPLIT_RECONCILIATION_META_KEY = "historyReconcileSplitState";
+const BOOTSTRAP_META_KEY = "historyBootstrapState";
 const FUNDAMENTALS_SQL = `SELECT symbol, market_cap, pe_ttm, eps_ttm, fcf_per_share_ttm,
   revenue_per_share_ttm, book_value_per_share,
   revenue_growth_ttm_yoy_pct, revenue_growth_3y_pct, revenue_growth_5y_pct, roe_ttm_pct,
@@ -282,6 +283,20 @@ function parseLegacySplitHistoryVerified(row: unknown, symbol: string): boolean 
   }
 }
 
+/** Bootstrap's terminal per-symbol checkpoint is equivalent verification during rollout. */
+function parseBootstrapSplitHistoryVerified(row: unknown, symbol: string): boolean {
+  if (!row || typeof row !== "object") return false;
+  const value = (row as { value?: unknown }).value;
+  if (typeof value !== "string") return false;
+  try {
+    const payload = JSON.parse(value) as { symbols?: Record<string, Record<string, unknown>> };
+    const status = payload.symbols?.[symbol];
+    return status?.splits === "done" && status.weekly === "done";
+  } catch {
+    return false;
+  }
+}
+
 /** Canonical Stock Detail D1 snapshot. Providers never run in this request path. */
 export async function readStockDetailStorageSnapshot(
   db: D1Database,
@@ -308,10 +323,19 @@ export async function readStockDetailStorageSnapshot(
   const markerVerification = parseSplitHistoryVerification(firstRow(rows[7]), symbol);
   // Normal requests use only the compact per-symbol row. The legacy document is
   // consulted solely for already-verified symbols that predate marker rollout.
-  const splitHistoryVerified = markerVerification ?? parseLegacySplitHistoryVerified(
-    await db.prepare(SPLIT_RECONCILIATION_SQL).bind(LEGACY_SPLIT_RECONCILIATION_META_KEY).first(),
-    symbol,
-  );
+  const legacyVerification = markerVerification === undefined
+    ? parseLegacySplitHistoryVerified(
+      await db.prepare(SPLIT_RECONCILIATION_SQL).bind(LEGACY_SPLIT_RECONCILIATION_META_KEY).first(),
+      symbol,
+    )
+    : false;
+  let splitHistoryVerified = markerVerification ?? legacyVerification;
+  if (markerVerification === undefined && !legacyVerification) {
+    splitHistoryVerified = parseBootstrapSplitHistoryVerified(
+      await db.prepare(SPLIT_RECONCILIATION_SQL).bind(BOOTSTRAP_META_KEY).first(),
+      symbol,
+    );
+  }
 
   return {
     company,

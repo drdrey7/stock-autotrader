@@ -253,6 +253,7 @@ class BootstrapTests(unittest.TestCase):
             # Checkpoint marks both endpoints done.
             self.assertEqual(store.symbol_status("NVDA", "splits"), "done")
             self.assertEqual(store.symbol_status("NVDA", "weekly"), "done")
+            self.assertEqual(d1.meta["historyReconcileSplitStatus:NVDA"]["status"], "done")
 
     def test_resume_skips_done_symbols_no_duplicate_downloads(self):
         with tempfile.TemporaryDirectory() as tmp:

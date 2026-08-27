@@ -40,15 +40,17 @@ function createDb(options: { first?: unknown; rows?: unknown[]; throwOnPrepare?:
   return { db, calls };
 }
 
-function createBatchDb(resultRows: unknown[][], firstResult: unknown = null) {
+function createBatchDb(resultRows: unknown[][], firstResult: unknown | unknown[] = null) {
   const calls: DbCalls = { sql: [], binds: [] };
+  let firstCall = 0;
   const statement = {
     bind(...values: unknown[]) {
       calls.binds.push(values);
       return statement;
     },
     async first<T>() {
-      return firstResult as T | null;
+      const result = Array.isArray(firstResult) ? firstResult[firstCall++] : firstResult;
+      return result as T | null;
     },
   };
   const db = {
@@ -212,6 +214,19 @@ describe("Stock Detail symbol-specific storage", () => {
     const snapshot = await readStockDetailStorageSnapshot(db, "MSFT");
     expect(snapshot.splitHistoryVerified).toBe(false);
     expect(calls.binds).not.toContainEqual(["historyReconcileSplitState"]);
+  });
+
+  it("recognizes a terminal bootstrap checkpoint while markers are rolling out", async () => {
+    const { db, calls } = createBatchDb([
+      [{ symbol: "MSFT", company: "Microsoft Corporation", logo_url: null }],
+      [], [], [], [], [], [], [], [],
+    ], [
+      null,
+      { value: JSON.stringify({ version: 1, symbols: { MSFT: { splits: "done", weekly: "done" } } }) },
+    ]);
+    const snapshot = await readStockDetailStorageSnapshot(db, "MSFT");
+    expect(snapshot.splitHistoryVerified).toBe(true);
+    expect(calls.binds).toContainEqual(["historyBootstrapState"]);
   });
 
   it("contains no provider/network request path", () => {
