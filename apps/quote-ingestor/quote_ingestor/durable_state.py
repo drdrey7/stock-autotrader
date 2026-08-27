@@ -59,8 +59,10 @@ class CloseCandidateCheckpoint:
             existing = self._candidates.get(tick.symbol)
             if existing is not None and self._same_session(existing, tick):
                 return False
-            self._candidates[tick.symbol] = tick
-            self._persist_locked()
+            next_candidates = dict(self._candidates)
+            next_candidates[tick.symbol] = tick
+            self._persist_locked(next_candidates)
+            self._candidates = next_candidates
             return True
 
     def record_candidates(self, ticks: Iterable[TradeTick]) -> bool:
@@ -75,29 +77,35 @@ class CloseCandidateCheckpoint:
         if not latest:
             return False
 
-        changed = False
         with self._lock:
+            next_candidates = dict(self._candidates)
+            changed = False
             for symbol, tick in latest.items():
-                existing = self._candidates.get(symbol)
+                existing = next_candidates.get(symbol)
                 if existing is None or tick.timestamp_ms > existing.timestamp_ms:
-                    self._candidates[symbol] = tick
+                    next_candidates[symbol] = tick
                     changed = True
-            if changed:
-                self._persist_locked()
-        return changed
+            if not changed:
+                return False
+            self._persist_locked(next_candidates)
+            self._candidates = next_candidates
+            return True
 
     def ack_written(self, written_as_of: dict[str, int]) -> bool:
         """Forget candidates only after an equal/newer row is durable in D1."""
-        changed = False
         with self._lock:
+            next_candidates = dict(self._candidates)
+            changed = False
             for symbol, durable_timestamp in written_as_of.items():
-                candidate = self._candidates.get(symbol)
+                candidate = next_candidates.get(symbol)
                 if candidate is not None and candidate.timestamp_ms <= durable_timestamp:
-                    del self._candidates[symbol]
+                    del next_candidates[symbol]
                     changed = True
-            if changed:
-                self._persist_locked()
-        return changed
+            if not changed:
+                return False
+            self._persist_locked(next_candidates)
+            self._candidates = next_candidates
+            return True
 
     def _eligible(self, tick: TradeTick) -> bool:
         if tick.symbol not in self._symbols:
@@ -149,14 +157,14 @@ class CloseCandidateCheckpoint:
                 restored[symbol] = tick
         return restored
 
-    def _persist_locked(self) -> None:
+    def _persist_locked(self, candidates: dict[str, TradeTick]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temp_path = self.path.with_name(f".{self.path.name}.tmp")
         payload = {
             "version": CHECKPOINT_VERSION,
             "candidates": {
                 symbol: {"price": tick.price, "timestamp_ms": tick.timestamp_ms}
-                for symbol, tick in sorted(self._candidates.items())
+                for symbol, tick in sorted(candidates.items())
             },
         }
         try:
