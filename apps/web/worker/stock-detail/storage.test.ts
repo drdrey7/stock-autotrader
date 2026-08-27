@@ -40,12 +40,15 @@ function createDb(options: { first?: unknown; rows?: unknown[]; throwOnPrepare?:
   return { db, calls };
 }
 
-function createBatchDb(resultRows: unknown[][]) {
+function createBatchDb(resultRows: unknown[][], firstResult: unknown = null) {
   const calls: DbCalls = { sql: [], binds: [] };
   const statement = {
     bind(...values: unknown[]) {
       calls.binds.push(values);
       return statement;
+    },
+    async first<T>() {
+      return firstResult as T | null;
     },
   };
   const db = {
@@ -100,6 +103,8 @@ describe("Stock Detail symbol-specific storage", () => {
     const { db, calls } = createBatchDb([
       [],
       [staleQuote],
+      [],
+      [],
       [],
       [],
       [],
@@ -183,6 +188,30 @@ describe("Stock Detail symbol-specific storage", () => {
     const snapshot = await readStockDetailStorageSnapshot(db, "MSFT");
     expect(snapshot.splitHistoryVerified).toBe(true);
     expect(calls.binds).toContainEqual(["historyReconcileSplitStatus:MSFT"]);
+  });
+
+  it("uses the legacy completed checkpoint only until a per-symbol marker exists", async () => {
+    const { db, calls } = createBatchDb([
+      [{ symbol: "MSFT", company: "Microsoft Corporation", logo_url: null }],
+      [], [], [], [], [], [],
+      [],
+      [],
+    ], { value: JSON.stringify({ version: 1, splits: { MSFT: "done" } }) });
+    const snapshot = await readStockDetailStorageSnapshot(db, "MSFT");
+    expect(snapshot.splitHistoryVerified).toBe(true);
+    expect(calls.binds).toContainEqual(["historyReconcileSplitState"]);
+  });
+
+  it("does not let a pending per-symbol marker fall back to legacy verification", async () => {
+    const { db, calls } = createBatchDb([
+      [{ symbol: "MSFT", company: "Microsoft Corporation", logo_url: null }],
+      [], [], [], [], [], [],
+      [{ value: JSON.stringify({ version: 1, symbol: "MSFT", status: "pending" }) }],
+      [],
+    ]);
+    const snapshot = await readStockDetailStorageSnapshot(db, "MSFT");
+    expect(snapshot.splitHistoryVerified).toBe(false);
+    expect(calls.binds).not.toContainEqual(["historyReconcileSplitState"]);
   });
 
   it("contains no provider/network request path", () => {

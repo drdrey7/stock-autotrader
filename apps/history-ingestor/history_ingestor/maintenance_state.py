@@ -218,10 +218,16 @@ class ReconcileState:
     def status(self, symbol: str) -> str:
         return self.splits.get(symbol, STATUS_PENDING)
 
-    def mark(self, symbol: str, status: str) -> None:
-        """Set one symbol's status and queue its per-symbol marker for save."""
+    def mark(self, symbol: str, status: str, *, update_serving_marker: bool = True) -> None:
+        """Record job progress, optionally updating the public serving marker.
+
+        A pass reset and a transient provider failure affect retry progress, not
+        the already verified historical scale. Only successful verification or
+        evidence that changes stored weekly history may update the marker.
+        """
         self.splits[symbol] = status
-        self._dirty_symbols.add(symbol)
+        if update_serving_marker:
+            self._dirty_symbols.add(symbol)
         self.updated_at = _utc_now_iso()
 
     def all_done(self) -> bool:
@@ -275,8 +281,17 @@ class ReconcileStore:
         """
         for symbol in symbols:
             self._state.splits[symbol] = STATUS_PENDING
-            self._state._dirty_symbols.add(symbol)
         self._state.updated_at = _utc_now_iso()
+
+    def backfill_verified_markers(self) -> bool:
+        """Queue marker rows for legacy durable ``done`` statuses.
+
+        This preserves serving availability on rollout before a new pass resets
+        its progress checkpoint. Rewriting an identical marker is idempotent.
+        """
+        verified = [symbol for symbol, status in self._state.splits.items() if status == STATUS_DONE]
+        self._state._dirty_symbols.update(verified)
+        return bool(verified)
 
     def save(self) -> bool:
         """Persist the global checkpoint and all changed per-symbol markers."""

@@ -56,6 +56,8 @@ const SPLIT_RECONCILIATION_SQL = `SELECT value
   LIMIT 1`;
 /** Per-symbol app_meta markers avoid parsing the global reconciliation document. */
 const SPLIT_RECONCILIATION_META_PREFIX = "historyReconcileSplitStatus:";
+/** Legacy checkpoint retained only as a rollout fallback for already-verified symbols. */
+const LEGACY_SPLIT_RECONCILIATION_META_KEY = "historyReconcileSplitState";
 const FUNDAMENTALS_SQL = `SELECT symbol, market_cap, pe_ttm, eps_ttm, fcf_per_share_ttm,
   revenue_per_share_ttm, book_value_per_share,
   revenue_growth_ttm_yoy_pct, revenue_growth_3y_pct, revenue_growth_5y_pct, roe_ttm_pct,
@@ -255,13 +257,26 @@ function parseFundamentals(row: unknown): StockFundamentalsSnapshotRow | null {
 }
 
 /** Parse the per-symbol durable reconciliation marker from app_meta. */
-function parseSplitHistoryVerified(row: unknown, symbol: string): boolean {
-  if (!row || typeof row !== "object") return false;
+function parseSplitHistoryVerification(row: unknown, symbol: string): boolean | undefined {
+  if (!row || typeof row !== "object") return undefined;
   const value = (row as { value?: unknown }).value;
   if (typeof value !== "string") return false;
   try {
     const payload = JSON.parse(value) as { symbol?: unknown; status?: unknown };
     return payload.symbol === symbol && payload.status === "done";
+  } catch {
+    return false;
+  }
+}
+
+/** Read the pre-marker checkpoint during rollout; new marker rows always take precedence. */
+function parseLegacySplitHistoryVerified(row: unknown, symbol: string): boolean {
+  if (!row || typeof row !== "object") return false;
+  const value = (row as { value?: unknown }).value;
+  if (typeof value !== "string") return false;
+  try {
+    const payload = JSON.parse(value) as { splits?: Record<string, unknown> };
+    return payload.splits?.[symbol] === "done";
   } catch {
     return false;
   }
@@ -290,6 +305,13 @@ export async function readStockDetailStorageSnapshot(
   const rows = results.map((result) => (result.results ?? []) as unknown[]);
   const company = parseCompany(firstRow<StockDetailCompanyRow>(rows[0]));
   if (!company) throw new Error("stock_not_found");
+  const markerVerification = parseSplitHistoryVerification(firstRow(rows[7]), symbol);
+  // Normal requests use only the compact per-symbol row. The legacy document is
+  // consulted solely for already-verified symbols that predate marker rollout.
+  const splitHistoryVerified = markerVerification ?? parseLegacySplitHistoryVerified(
+    await db.prepare(SPLIT_RECONCILIATION_SQL).bind(LEGACY_SPLIT_RECONCILIATION_META_KEY).first(),
+    symbol,
+  );
 
   return {
     company,
@@ -299,7 +321,7 @@ export async function readStockDetailStorageSnapshot(
     intrinsicValue: parseIntrinsicValue(symbol, firstRow(rows[4])),
     weeklyRows: parseWeeklyRows(rows[5] ?? []),
     splitEvents: parseSplitEvents(rows[6] ?? []),
-    splitHistoryVerified: parseSplitHistoryVerified(firstRow(rows[7]), symbol),
+    splitHistoryVerified,
     fundamentals: parseFundamentals(firstRow(rows[8])),
   };
 }

@@ -9,7 +9,7 @@ from pathlib import Path
 
 from history_ingestor.config import Settings
 from history_ingestor.maintenance import MaintenanceRunner
-from history_ingestor.maintenance_state import MaintenanceStore
+from history_ingestor.maintenance_state import MaintenanceStore, ReconcileStore, STATUS_DONE, STATUS_ERROR
 
 try:
     from test_bootstrap import FakeD1, FakeProvider, future_splits_payload, splits_payload, weekly_payload
@@ -870,6 +870,29 @@ class ReconcileSplitsTests(unittest.TestCase):
     def _rstate(self, runner):
         """Return the runner's dedicated ReconcileStore state."""
         return runner._get_reconcile_store().state
+
+    def test_new_pass_and_retry_error_preserve_last_verified_serving_marker(self):
+        """Progress resets/errors must not hide already verified no-split history."""
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            # Simulate rollout from the old global-only checkpoint.
+            d1.meta["historyReconcileSplitState"] = {
+                "version": 1, "updated_at": "2026-08-17T00:00:00Z", "splits": {"NVDA": STATUS_DONE},
+            }
+            store = ReconcileStore(settings_with(), d1, state_path=Path(tmp) / "reconcile.json")
+            store.load()
+            self.assertTrue(store.backfill_verified_markers())
+            self.assertTrue(store.save())
+            self.assertEqual(d1.meta["historyReconcileSplitStatus:NVDA"]["status"], STATUS_DONE)
+
+            store.start_new_pass(["NVDA"])
+            self.assertTrue(store.save())
+            self.assertEqual(store.state.status("NVDA"), "pending")
+            self.assertEqual(d1.meta["historyReconcileSplitStatus:NVDA"]["status"], STATUS_DONE)
+
+            store.state.mark("NVDA", STATUS_ERROR, update_serving_marker=False)
+            self.assertTrue(store.save())
+            self.assertEqual(d1.meta["historyReconcileSplitStatus:NVDA"]["status"], STATUS_DONE)
 
     def test_reconcile_splits_dry_run_makes_zero_provider_calls(self):
         with tempfile.TemporaryDirectory() as tmp:

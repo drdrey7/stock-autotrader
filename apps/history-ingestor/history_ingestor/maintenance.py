@@ -304,7 +304,9 @@ class MaintenanceRunner:
             result["splits"] = "pending"
             return result
         except (ProviderError, AllKeysFailedError) as exc:
-            self._get_reconcile_store().state.mark(symbol, STATUS_ERROR)
+            # A failed attempt is not evidence that last-known-good history is
+            # invalid. Keep its serving marker while recording retry progress.
+            self._get_reconcile_store().state.mark(symbol, STATUS_ERROR, update_serving_marker=False)
             result["splits"] = STATUS_ERROR
             result["anomalies"].append(f"{symbol} splits: {str(exc)[:200]}")
             return result
@@ -635,6 +637,23 @@ class MaintenanceRunner:
                 "rows_updated": 0,
                 "metrics_updated": 0,
                 "anomalies": [],
+            }
+
+        # Idempotent rollout bridge: preserve legacy completed
+        # reconciliation before a fresh pass resets the global progress map.
+        # If this durable write fails, do not mutate progress or spend quota.
+        if rstore.backfill_verified_markers() and not rstore.save():
+            return {
+                "status": "error",
+                "symbols": {},
+                "requests_used_total": 0,
+                "keys_used": [],
+                "quota_exhausted": False,
+                "throttled": False,
+                "split_changes": 0,
+                "rows_updated": 0,
+                "metrics_updated": 0,
+                "anomalies": ["could not backfill durable split verification markers"],
             }
 
         # A completed pass means EVERY selected symbol is already reconciled; start a
