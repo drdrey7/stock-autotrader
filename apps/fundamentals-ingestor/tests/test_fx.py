@@ -1,7 +1,7 @@
 import json
 import unittest
 
-from fundamentals_ingestor.fx import FxClient, FxError, parse_rates
+from fundamentals_ingestor.fx import DEFAULT_FX_URL, FxClient, FxError, parse_rates
 
 VALID = {
     "result": "success",
@@ -29,8 +29,10 @@ class FakeResponse:
 class FakeOpener:
     def __init__(self, payload):
         self._payload = payload
+        self.last_url = None
 
     def __call__(self, request, timeout):
+        self.last_url = request.full_url
         return FakeResponse(self._payload)
 
 
@@ -50,6 +52,15 @@ class FxTests(unittest.TestCase):
         self.assertEqual(as_of, "2026-08-25")
         self.assertEqual(rates[("USD", "TWD")], 31.0)
 
+    def test_parse_treats_non_string_update_label_as_absent(self):
+        payload = {
+            "time_last_update_utc": {"unexpected": "object"},
+            "rates": {"TWD": 31.0, "DKK": 6.3, "EUR": 0.85},
+        }
+        rates, as_of = parse_rates(payload)
+        self.assertIsNone(as_of)
+        self.assertEqual(rates[("USD", "EUR")], 0.85)
+
     def test_parse_raises_when_required_pair_missing(self):
         payload = {"date": "2026-08-26", "rates": {"TWD": 31.0, "EUR": 0.85}}  # no DKK
         with self.assertRaises(FxError):
@@ -60,11 +71,24 @@ class FxTests(unittest.TestCase):
         with self.assertRaises(FxError):
             parse_rates(payload)
 
+    def test_parse_rejects_boolean_rate(self):
+        payload = {"date": "2026-08-26", "rates": {"TWD": True, "DKK": 6.3, "EUR": 0.85}}
+        with self.assertRaises(FxError):
+            parse_rates(payload)
+
     def test_client_fetch_uses_opener(self):
-        client = FxClient(opener=FakeOpener(VALID))
+        opener = FakeOpener(VALID)
+        client = FxClient(opener=opener)
         rates, as_of = client.fetch_rates()
         self.assertEqual(as_of, "2026-08-26")
         self.assertAlmostEqual(rates[("USD", "TWD")], 31.847672)
+        self.assertEqual(opener.last_url, DEFAULT_FX_URL)
+
+    def test_client_whitespace_url_falls_back_to_default(self):
+        opener = FakeOpener(VALID)
+        client = FxClient(url="   ", opener=opener)
+        client.fetch_rates()
+        self.assertEqual(opener.last_url, DEFAULT_FX_URL)
 
     def test_client_raises_on_non_200(self):
         class R:
