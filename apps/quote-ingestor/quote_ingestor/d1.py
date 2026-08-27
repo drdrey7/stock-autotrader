@@ -1,9 +1,8 @@
 """Cloudflare D1 writer via the HTTP API (no wrangler, no subprocess).
 
-``latest_quotes`` stays near 50 rows: every flush runs ONE HTTP request with a
-single multi-VALUES UPSERT statement (one row per changed symbol, never
-appending rows/snapshots). D1's HTTP API accepts exactly ONE statement object
-per request — arrays of statements are rejected with HTTP 400.
+``latest_quotes`` stays near 50 rows: every flush runs bounded multi-VALUES
+UPSERT statements (one durable row per symbol, never snapshots/history). D1's
+HTTP API accepts exactly ONE statement object per request.
 
 The WebSocket writer owns regular-session provenance. D1 persists the session
 of the current quote and of ``previous_close`` so a process restart cannot lose
@@ -12,6 +11,13 @@ last price is promoted to ``previous_close`` only when it belongs to the exact
 immediately preceding trading session, was observed inside the closing window,
 and no effective split lies between the two sessions. Gaps, stale intraday
 quotes, and split boundaries fail closed.
+
+A rare failed close-window write can leave the only close candidate in RAM.
+When state submits that retained candidate immediately before the symbol's
+current-session tick, this client processes session groups chronologically. A
+failed older-session write blocks only that symbol's newer row, preserving the
+candidate for retry instead of overwriting D1 with an unrecoverable invalid
+current-session baseline.
 
 ``change_abs`` and ``change_pct`` are persisted for diagnostics, but serving
 code re-derives them from ``price`` + ``previous_close`` after validating the
@@ -49,8 +55,8 @@ D1_ACCOUNT_QUERY_ENDPOINT = (
 # closed rather than promoting an arbitrary intraday price.
 CLOSE_BASELINE_WINDOW_MINUTES = 5
 
-# Session context is supplied once because every accepted current-session tick
-# in one flush belongs to the same regular trading date.
+# Session context is supplied once because every row inside one SQL statement
+# belongs to the same regular trading date.
 _UPSERT_ROW_SQL = (
     "(?, ?, 0, 0, NULL, NULL, NULL, NULL, 'finnhub-websocket', ?, ?, "
     "(SELECT current_session_date FROM session_ctx), NULL, 0)"
@@ -154,7 +160,7 @@ HEALTH_META_KEY = "quoteIngestorHealth"
 
 @dataclass
 class D1WriteResult:
-    """Per-flush result aligned with the changed symbols submitted."""
+    """Per-flush result aligned with the latest row submitted per symbol."""
 
     written: list[str] = field(default_factory=list)
     failed: list[str] = field(default_factory=list)
@@ -180,8 +186,8 @@ def _now_iso() -> str:
 def _session_context(rows: list[tuple[str, float, int]]) -> tuple[str, str, str, str] | None:
     """Return current/previous session dates plus a proven-close time window.
 
-    All rows that reach the D1 client must belong to one current regular
-    session. The previous-session close window is computed with the same
+    Every row in one SQL statement must belong to one current regular session.
+    The previous-session close window is computed with the same
     DST/holiday/early-close calendar used by intake.
     """
     dates: set[dt.date] = set()
@@ -203,6 +209,23 @@ def _session_context(rows: list[tuple[str, float, int]]) -> tuple[str, str, str,
         iso_from_ms(int(not_before.timestamp() * 1000)),
         iso_from_ms(int(previous_close.timestamp() * 1000)),
     )
+
+
+def _partition_rows_by_session(
+    rows: list[tuple[str, float, int]],
+) -> tuple[list[tuple[dt.date, list[tuple[str, float, int]]]], set[str]]:
+    """Partition rows chronologically and identify rows outside trading days."""
+    grouped: dict[dt.date, list[tuple[str, float, int]]] = {}
+    invalid_symbols: set[str] = set()
+    for row in rows:
+        symbol, _, timestamp_ms = row
+        trade = dt.datetime.fromtimestamp(timestamp_ms / 1000, tz=dt.UTC)
+        session = trading_session_date(trade)
+        if session is None:
+            invalid_symbols.add(symbol)
+            continue
+        grouped.setdefault(session, []).append(row)
+    return sorted(grouped.items(), key=lambda item: item[0]), invalid_symbols
 
 
 class D1Client:
@@ -262,13 +285,63 @@ class D1Client:
             raise D1TransportError(f"request failed: {exc.__class__.__name__}") from exc
 
     def upsert_quotes(self, rows: list[tuple[str, float, int]]) -> D1WriteResult:
-        """Persist changed quotes with restart-safe regular-session provenance."""
+        """Persist quote work in session order without losing rollover proof.
+
+        State may submit two rows for one symbol after an exceptional close
+        write failure: retained prior-session candidate first, current-session
+        tick second. Older session groups are made durable first. If an older
+        write fails, only that symbol is blocked from all newer groups so the
+        caller keeps both rows pending for retry. ``written`` reports a symbol
+        only when its latest submitted row landed, which keeps the existing
+        app-level acknowledgement contract correct.
+        """
         if not rows:
             return D1WriteResult()
+
+        symbol_order: list[str] = []
+        latest_timestamp: dict[str, int] = {}
+        for symbol, _, timestamp_ms in rows:
+            if symbol not in latest_timestamp:
+                symbol_order.append(symbol)
+                latest_timestamp[symbol] = timestamp_ms
+            else:
+                latest_timestamp[symbol] = max(latest_timestamp[symbol], timestamp_ms)
+
+        groups, invalid_symbols = _partition_rows_by_session(rows)
+        blocked = set(invalid_symbols)
+        latest_written: set[str] = set()
+        aggregated = D1WriteResult()
+        if invalid_symbols:
+            aggregated.error = "invalid_trading_session"
+
+        for _, session_rows in groups:
+            eligible = [row for row in session_rows if row[0] not in blocked]
+            if not eligible:
+                continue
+            result = self._upsert_single_session(eligible)
+            aggregated.total_changes += result.total_changes
+            aggregated.http_status = result.http_status or aggregated.http_status
+            if result.error:
+                aggregated.error = result.error
+            blocked.update(result.failed)
+
+            written_set = set(result.written)
+            for symbol, _, timestamp_ms in eligible:
+                if symbol in written_set and timestamp_ms == latest_timestamp[symbol]:
+                    latest_written.add(symbol)
+
+        aggregated.written = [symbol for symbol in symbol_order if symbol in latest_written]
+        aggregated.failed = [symbol for symbol in symbol_order if symbol not in latest_written]
+        if aggregated.failed and aggregated.error is None:
+            aggregated.error = "blocked_by_prior_session_write"
+        return aggregated
+
+    def _upsert_single_session(self, rows: list[tuple[str, float, int]]) -> D1WriteResult:
         session_context = _session_context(rows)
         if session_context is None:
-            symbols = [symbol for symbol, _, _ in rows]
+            symbols = list(dict.fromkeys(symbol for symbol, _, _ in rows))
             return self._failure_result(symbols, 0, "invalid_or_mixed_trading_session")
+
         current_session_date, previous_session_date, close_not_before, previous_session_close = session_context
         updated_at = _now_iso()
         aggregated = D1WriteResult()
@@ -286,9 +359,9 @@ class D1Client:
             aggregated.written.extend(result.written)
             aggregated.failed.extend(result.failed)
             aggregated.total_changes += result.total_changes
+            aggregated.http_status = result.http_status or aggregated.http_status
             if result.error:
                 aggregated.error = result.error
-                aggregated.http_status = result.http_status
         return aggregated
 
     def write_health(self, record: dict) -> bool:
