@@ -2,9 +2,11 @@
 
 The ingestor keeps a single latest value per Core Universe symbol here and a
 ``changed`` set of symbols whose price moved since the last *successful* flush.
-Ticks are never stored as history. Failed prior-session ticks are isolated from
-current-session batches, but a per-symbol rollover candidate is retained when a
-new-session tick would otherwise overwrite the only not-yet-durable prior tick.
+Ticks are never stored as history. Pending work from the immediately preceding
+trading session remains pending until it is durably written; the D1 client
+partitions mixed-session work so this cannot block unrelated current-session
+symbols. If the same symbol trades before that write succeeds, its old tick is
+retained as an explicit rollover candidate before the latest state is replaced.
 """
 
 from __future__ import annotations
@@ -37,11 +39,10 @@ class QuoteStateStore:
         newer quote already stored (this is the same rule the D1 UPSERT
         enforces against the REST collector).
 
-        If the previous in-memory tick belongs to the immediately preceding
-        trading session and is still pending, preserve it before overwriting it
-        with the first tick of the new session. A candidate already retained
-        when stale pending work was retired is kept. D1 decides whether the
-        candidate is close-window proof; state only guarantees it is not lost.
+        If a not-yet-durable tick belongs to the immediately preceding trading
+        session, preserve it before the first tick of the new session replaces
+        the latest in-memory value. D1 decides whether the retained tick is
+        close-window proof; state only guarantees it is not lost.
         """
         if tick.symbol not in self._symbols:
             return False
@@ -68,8 +69,6 @@ class QuoteStateStore:
                             price=current.price,
                             timestamp_ms=current.as_of_ms,
                         )
-                    # If pending_changed() already retired the old pending flag,
-                    # it stored the same candidate. Preserve it here.
                 elif incoming_session > current_session:
                     # A gap larger than one trading session can never provide
                     # the immediately-prior baseline required for 1D.
@@ -101,17 +100,16 @@ class QuoteStateStore:
         return candidate
 
     def pending_changed(self) -> list[TradeTick]:
-        """Snapshot pending work without letting stale sessions poison a batch.
+        """Snapshot pending work while preserving the immediately prior session.
 
-        Failed pending rows from symbols that have not traded in the new session
-        are retired as *current writes* once a newer session exists. Their last
-        known price remains in ``_latest`` and, when they are from the exact
-        immediately preceding session, the undurable tick is retained as a
-        rollover candidate before the pending flag is discarded.
+        The exact previous trading session is still potentially useful close
+        evidence and remains pending until D1 confirms it durable. Older gaps
+        cannot be a valid 1D baseline and their obsolete pending flags are
+        retired. Mixed previous/current rows are safe because ``D1Client``
+        writes session groups chronologically and isolates failures per symbol.
 
-        If that symbol later trades, this method emits candidate first, current
-        tick second. The D1 client processes those sessions in order and only
-        reports the symbol written if the latest/current row also lands.
+        If the same symbol already advanced to the current session, an explicit
+        retained candidate is emitted immediately before its current tick.
         """
         with self._lock:
             pending = [
@@ -125,13 +123,14 @@ class QuoteStateStore:
                 newest_session = max(valid_sessions)
                 previous_session = previous_trading_session_date(newest_session)
                 for tick, session in dated:
-                    if session is not None and session < newest_session:
-                        if session == previous_session:
-                            self._rollover_candidates[tick.symbol] = tick
-                        else:
-                            self._rollover_candidates.pop(tick.symbol, None)
+                    if session is not None and session < previous_session:
                         self._changed.discard(tick.symbol)
-                pending = [tick for tick, session in dated if session == newest_session or session is None]
+                        self._rollover_candidates.pop(tick.symbol, None)
+                pending = [
+                    tick
+                    for tick, session in dated
+                    if session is None or session >= previous_session
+                ]
 
             result: list[TradeTick] = []
             for tick in pending:
