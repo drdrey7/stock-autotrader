@@ -68,6 +68,22 @@ def _required(name: str) -> str:
     return value
 
 
+def _close_candidate_state_path() -> Path | None:
+    """Resolve the crash-safe checkpoint path without inventing a writable home.
+
+    systemd exports ``STATE_DIRECTORY`` for ``StateDirectory=`` services. A
+    direct override remains available for local/operator testing; plain local
+    development without either variable simply disables the optional checkpoint.
+    """
+    explicit = os.environ.get("QUOTE_INGESTOR_STATE_PATH", "").strip()
+    if explicit:
+        return Path(explicit)
+    state_directory = os.environ.get("STATE_DIRECTORY", "").strip()
+    if state_directory:
+        return Path(state_directory) / "pending-close-candidates.json"
+    return None
+
+
 def secret_present(name: str) -> bool:
     """Whether a non-empty secret env var is set. The only secret-adjacent
     boolean a log line may contain — never the value."""
@@ -105,6 +121,7 @@ class Settings:
     max_timestamp_future_seconds: float = 300.0
     max_timestamp_age_seconds: float = 24 * 60 * 60.0
     log_flush_summaries: bool = True
+    close_candidate_state_path: Path | None = None
     universe_path: Path = field(default_factory=lambda: Path(
         os.environ.get(
             "QUOTE_INGESTOR_UNIVERSE",
@@ -140,6 +157,7 @@ def from_env(environ: os._Environ | dict[str, str] | None = None) -> Settings:
             ws_market_stall_seconds=_positive_float("WS_MARKET_STALL_SECONDS", 180.0),
             ws_market_stall_cooldown_seconds=_positive_float("WS_MARKET_STALL_COOLDOWN_SECONDS", 300.0),
             d1_max_retries=_positive_int("D1_MAX_RETRIES", 3),
+            close_candidate_state_path=_close_candidate_state_path(),
             universe_path=Path(os.environ.get(
                 "QUOTE_INGESTOR_UNIVERSE",
                 str(Path(__file__).resolve().parents[3] / "packages" / "contracts" / "src" / "core-universe.v1.json"),
