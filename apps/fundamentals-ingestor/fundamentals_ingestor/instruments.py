@@ -72,9 +72,21 @@ def get_instrument(symbol: str) -> InstrumentMetadata:
     )
 
 
-def needs_conversion(meta: InstrumentMetadata) -> bool:
-    """True when Finnhub reports this listing in a different currency than the quote."""
-    return meta.fundamentals_currency != meta.quote_currency
+def needs_normalization(meta: InstrumentMetadata) -> bool:
+    """True when the raw Finnhub facts are not already per-traded-security in the
+    quote currency.
+
+    A listing needs normalization when either (a) Finnhub reports its per-share
+    facts in a different currency than the quote, or (b) the quoted security is
+    an ADR/ADS whose underlying-shares-per-listing ratio differs from 1 (e.g. a
+    hypothetical USD quote, USD fundamentals, ratio 5.0 listing still needs the
+    ADR scaling even though the currency is identical).  Only when the currency
+    is identical AND the ratio is 1 is the basis already canonical (no-op).
+    """
+    return (
+        meta.fundamentals_currency != meta.quote_currency
+        or meta.underlying_shares_per_listing != 1.0
+    )
 
 
 # Per-share anchors consumed by Automatic IV. Multiples (P/E, P/S, P/B, P/FCF)
@@ -112,20 +124,28 @@ def normalize_to_quote_currency(
     canonical_per_share = raw_finnhub_per_share
                           * underlying_shares_per_listing / fx_rate_to_quote
 
-    market cap is converted by FX only (it is total company value, independent
-    of the ADR ratio). Ratios and multiple histories are left untouched.
+    When the fundamentals currency equals the quote currency the FX factor is 1
+    (no rate is required); only a ratio != 1 then needs scaling. market cap is
+    converted by FX only (it is total company value, independent of the ADR
+    ratio). Ratios and multiple histories are left untouched.
 
-    When a conversion is required but the FX rate is missing, the affected
-    unit-dependent facts fail closed to NULL (no wrong-unit IV).
+    When a currency conversion is required but the FX rate is missing, the
+    affected unit-dependent facts fail closed to NULL (no wrong-unit IV); the
+    caller (main.run) additionally skips the D1 write entirely for such symbols
+    so a last-known-good canonical snapshot is never overwritten with NULLs.
     """
-    if not needs_conversion(meta):
+    if not needs_normalization(meta):
         return market
 
-    rate = fx_rates.get((meta.quote_currency, meta.fundamentals_currency))
-    if rate is None or rate <= 0:
-        return _fail_closed(market)
-
     ratio = meta.underlying_shares_per_listing
+    if meta.fundamentals_currency == meta.quote_currency:
+        # Identity currency: FX factor is 1. Only the ADR/ADS ratio applies.
+        rate = 1.0
+    else:
+        rate = fx_rates.get((meta.quote_currency, meta.fundamentals_currency))
+        if rate is None or rate <= 0:
+            return _fail_closed(market)
+
     scale = ratio / rate
 
     def multiply(value: float | None) -> float | None:

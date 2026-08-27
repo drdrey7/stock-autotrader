@@ -41,6 +41,15 @@ describe("Automatic IV V2", () => {
     expect(resolveValuationProfile("SOFI", "Credit Services")).toBe("growth-financial");
     expect(resolveValuationProfile("HOOD", "Capital Markets")).toBe("financial-platform");
     expect(resolveValuationProfile("COIN", "Financial Services")).toBe("financial-platform");
+    expect(resolveValuationProfile("CRCL", "Capital Markets")).toBe("financial-platform");
+    // DELL is hardware/infrastructure, NOT a semiconductor.
+    expect(resolveValuationProfile("DELL", "Computer Hardware")).toBe("mega-cap-quality");
+  });
+
+  it("maps every semiconductor to the single semiconductors profile", () => {
+    for (const symbol of ["AMD", "ARM", "AVGO", "INTC", "MU", "NVDA", "QCOM", "SNDK", "TSM", "ASML", "AMAT", "LRCX", "KLAC"]) {
+      expect(resolveValuationProfile(symbol, "Semiconductors")).toBe("semiconductors");
+    }
   });
 
   it("assigns every Core Universe symbol an explicit profile (zero generic fallback)", () => {
@@ -63,7 +72,7 @@ describe("Automatic IV V2", () => {
   it("anchors a semiconductor to its own P/E, P/FCF and P/S history", () => {
     const result = calculateAutomaticIntrinsicValue("AMD", "Semiconductors", amdInput(480));
     expect(result).not.toBeNull();
-    expect(result!.family).toBe("semiconductor-design");
+    expect(result!.family).toBe("semiconductors");
     expect(result!.methods).toEqual(["P/E", "P/FCF", "P/S"]);
     expect(result!.confidence).toBe("High");
     expect(result!.bear).toBeLessThanOrEqual(result!.base);

@@ -473,7 +473,7 @@ class RefreshFlowTests(unittest.TestCase):
             patch("fundamentals_ingestor.main.FxClient", self.FakeFx),
         ):
             result = run(self.settings())
-        self.assertEqual(result, {"processed": 1, "failed": 0, "written": 1})
+        self.assertEqual(result, {"processed": 1, "failed": 0, "written": 1, "skipped": 0})
         market = d1.writes[0][1]
         self.assertAlmostEqual(market.revenue_per_share_ttm, 11.8166)
         self.assertAlmostEqual(market.book_value_per_share, 8.9455)
@@ -496,7 +496,7 @@ class RefreshFlowTests(unittest.TestCase):
             patch("fundamentals_ingestor.main.FxClient", self.FakeFx),
         ):
             result = run(self.settings())
-        self.assertEqual(result, {"processed": 0, "failed": 1, "written": 0})
+        self.assertEqual(result, {"processed": 0, "failed": 1, "written": 0, "skipped": 0})
         self.assertEqual(d1.writes, [])
 
     def test_dry_run_normalizes_but_does_not_write(self):
@@ -508,7 +508,7 @@ class RefreshFlowTests(unittest.TestCase):
             patch("fundamentals_ingestor.main.FxClient", self.FakeFx),
         ):
             result = run(self.settings(), dry_run=True)
-        self.assertEqual(result, {"processed": 1, "failed": 0, "written": 0})
+        self.assertEqual(result, {"processed": 1, "failed": 0, "written": 0, "skipped": 0})
         self.assertEqual(d1.writes, [])
 
 

@@ -22,6 +22,9 @@ class FakeD1:
     def get_fx_rates(self):
         return dict(self.fx_rates)
 
+    def get_fx_last_as_of(self):
+        return None
+
 
 class FakeFx:
     def __init__(self, *args, **kwargs):
@@ -64,7 +67,7 @@ class RefreshTests(unittest.TestCase):
         ):
             result = run(self.settings())
 
-        self.assertEqual(result, {"processed": 1, "failed": 0, "written": 1})
+        self.assertEqual(result, {"processed": 1, "failed": 0, "written": 1, "skipped": 0})
         self.assertEqual(len(d1.writes), 1)
         symbol, market, updated_at = d1.writes[0]
         self.assertEqual(symbol, "MSFT")
@@ -102,7 +105,7 @@ class RefreshTests(unittest.TestCase):
         ):
             result = run(self.settings())
 
-        self.assertEqual(result, {"processed": 1, "failed": 0, "written": 1})
+        self.assertEqual(result, {"processed": 1, "failed": 0, "written": 1, "skipped": 0})
         self.assertIsNone(d1.writes[0][1].pe_ttm)
         self.assertIsNone(d1.writes[0][1].fcf_margin_pct)
 
@@ -123,7 +126,7 @@ class RefreshTests(unittest.TestCase):
         ):
             result = run(self.settings())
 
-        self.assertEqual(result, {"processed": 0, "failed": 1, "written": 0})
+        self.assertEqual(result, {"processed": 0, "failed": 1, "written": 0, "skipped": 0})
         self.assertEqual(d1.writes, [])
 
     def test_dry_run_fetches_but_does_not_write(self):
@@ -136,7 +139,7 @@ class RefreshTests(unittest.TestCase):
         ):
             result = run(self.settings(), dry_run=True)
 
-        self.assertEqual(result, {"processed": 1, "failed": 0, "written": 0})
+        self.assertEqual(result, {"processed": 1, "failed": 0, "written": 0, "skipped": 0})
         self.assertEqual(d1.writes, [])
 
     def test_legacy_annual_window_guard_remains_available_for_old_adapter_tests(self):
@@ -147,7 +150,7 @@ class RefreshTests(unittest.TestCase):
         rows = [Row(year) for year in range(2022, 2027)]
         self.assertTrue(_annual_window_is_safe(set(), rows))
 
-    def test_missing_fx_fails_foreign_per_share_closed_to_null(self):
+    def test_missing_fx_skips_foreign_write_preserving_snapshot(self):
         class NoFxFlaky:
             def __init__(self, *args, **kwargs):
                 pass
@@ -172,7 +175,7 @@ class RefreshTests(unittest.TestCase):
                     book_value_per_share=248.05,
                 )
 
-        d1 = FakeD1()  # no stored FX -> last-known-good empty
+        d1 = FakeD1()  # no stored FX -> no fresh and no last-known-good
         with (
             patch("fundamentals_ingestor.main.load_universe", return_value=["TSM"]),
             patch("fundamentals_ingestor.main.FinnhubClient", TsmFinnhub),
@@ -181,16 +184,32 @@ class RefreshTests(unittest.TestCase):
         ):
             result = run(self.settings())
 
-        self.assertEqual(result["processed"], 1)
-        market = d1.writes[0][1]
-        # conversion required + no FX -> fail closed, never wrong units
-        self.assertIsNone(market.eps_ttm)
-        self.assertIsNone(market.fcf_per_share_ttm)
-        self.assertIsNone(market.revenue_per_share_ttm)
-        self.assertIsNone(market.book_value_per_share)
-        self.assertIsNone(market.market_cap)
-        # non-unit-dependent ratio survives
-        self.assertEqual(market.pe_ttm, 27.86)
+        # A foreign listing with no fresh and no valid LKG FX must NOT overwrite
+        # its last-known-good canonical snapshot: upsert_market is never called.
+        self.assertEqual(result, {"processed": 0, "failed": 0, "written": 0, "skipped": 1})
+        self.assertEqual(d1.writes, [])
+
+    def test_domestic_usd_stock_still_refreshes_when_fx_unavailable(self):
+        class NoFxFlaky:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def fetch_rates(self):
+                raise FxError("fx_request_failed")
+
+        d1 = FakeD1()  # no FX at all
+        with (
+            patch("fundamentals_ingestor.main.load_universe", return_value=["MSFT"]),
+            patch("fundamentals_ingestor.main.FinnhubClient", FakeFinnhub),
+            patch("fundamentals_ingestor.main.MarketD1Client", return_value=d1),
+            patch("fundamentals_ingestor.main.FxClient", NoFxFlaky),
+        ):
+            result = run(self.settings())
+
+        # Domestic USD names require no FX and must refresh normally even with FX down.
+        self.assertEqual(result, {"processed": 1, "failed": 0, "written": 1, "skipped": 0})
+        self.assertEqual(len(d1.writes), 1)
+        self.assertEqual(d1.writes[0][0], "MSFT")
 
     def test_fx_fetch_failure_uses_last_known_good_for_foreign_symbol(self):
         class NoFxFlaky:

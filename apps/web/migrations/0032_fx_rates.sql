@@ -7,15 +7,16 @@
 -- a free daily FX feed server-side and persists last-known-good rates here so a
 -- failed fetch never clears a valid rate.
 --
--- rate is expressed as number of `quote_currency` units per `base_currency`
--- unit (e.g. USD->TWD = 31.85 means 31.85 TWD per 1 USD). as_of is the source
--- date; updated_at is when the ingestor last refreshed this row (idempotent
--- upsert on (base_currency, quote_currency)).
+-- rate is expressed as number of `counter_currency` units per `base_currency`
+-- unit (e.g. base=USD, counter=TWD, rate=31.85 means 31.85 TWD per 1 USD). The
+-- division direction used by normalization is therefore `local / rate = USD`.
+-- as_of is the source date; updated_at is when the ingestor last refreshed this
+-- row (idempotent upsert on (base_currency, counter_currency)).
 CREATE TABLE IF NOT EXISTS fx_rates (
   base_currency TEXT NOT NULL,
-  quote_currency TEXT NOT NULL,
+  counter_currency TEXT NOT NULL,
   rate REAL NOT NULL,
   as_of TEXT,
   updated_at TEXT NOT NULL,
-  PRIMARY KEY (base_currency, quote_currency)
+  PRIMARY KEY (base_currency, counter_currency)
 );

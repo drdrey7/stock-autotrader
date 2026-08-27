@@ -6,6 +6,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .fx import DEFAULT_FX_BASE_URL
+
 
 class ConfigError(RuntimeError):
     """Raised when required deployment configuration is missing or invalid."""
@@ -31,6 +33,18 @@ def _positive_float(name: str, default: float, environ: dict[str, str]) -> float
     return value
 
 
+def _fx_url(api_key: str, environ: dict[str, str]) -> str:
+    """Resolve the FX endpoint URL.
+
+    ``FUNDAMENTALS_FX_URL`` is optional. When set but whitespace-only or empty
+    it falls back to the official keyed default. The returned URL embeds the
+    API key server-side and must never be logged.
+    """
+    raw = environ.get("FUNDAMENTALS_FX_URL", "")
+    stripped = raw.strip() if isinstance(raw, str) else ""
+    return stripped or DEFAULT_FX_BASE_URL.format(api_key=api_key)
+
+
 @dataclass(frozen=True)
 class Settings:
     finnhub_api_key: str
@@ -43,20 +57,22 @@ class Settings:
     universe_path: Path = field(default_factory=lambda: Path(__file__).resolve().parents[3] / "packages/contracts/src/core-universe.v1.json")
     request_timeout_seconds: float = 30.0
     finnhub_min_interval_seconds: float = 1.05
-    fx_url: str = "https://open.er-api.com/v6/latest/USD"
+    fx_url: str = ""
+    exchange_rate_api_key: str = ""
 
     def __repr__(self) -> str:
         return (
             "Settings(finnhub_api_key='<redacted>', "
             "cloudflare_api_token='<redacted>', "
             f"cloudflare_account_id={self.cloudflare_account_id!r}, "
-            f"cloudflare_d1_database_id={self.cloudflare_d1_database_id!r})"
+            "cloudflare_d1_database_id='<redacted>', "
+            "exchange_rate_api_key='<redacted>')"
         )
 
 
 def from_env(environ: dict[str, str] | None = None) -> Settings:
     values = dict(os.environ if environ is None else environ)
-    fx_url = (values.get("FUNDAMENTALS_FX_URL") or "").strip() or "https://open.er-api.com/v6/latest/USD"
+    exchange_rate_api_key = _required("EXCHANGE_RATE_API_KEY", values)
     return Settings(
         finnhub_api_key=_required("FINNHUB_API_KEY", values),
         cloudflare_api_token=_required("CLOUDFLARE_API_TOKEN", values),
@@ -69,5 +85,6 @@ def from_env(environ: dict[str, str] | None = None) -> Settings:
         )),
         request_timeout_seconds=_positive_float("FUNDAMENTALS_REQUEST_TIMEOUT", 30.0, values),
         finnhub_min_interval_seconds=_positive_float("FINNHUB_MIN_INTERVAL_SECONDS", 1.05, values),
-        fx_url=fx_url,
+        fx_url=_fx_url(exchange_rate_api_key, values),
+        exchange_rate_api_key=exchange_rate_api_key,
     )

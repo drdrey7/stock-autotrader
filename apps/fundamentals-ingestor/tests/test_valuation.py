@@ -489,7 +489,7 @@ class RefreshFlowTests(unittest.TestCase):
         ):
             result = run(self.settings())
 
-        self.assertEqual(result, {"processed": 1, "failed": 0, "written": 1})
+        self.assertEqual(result, {"processed": 1, "failed": 0, "written": 1, "skipped": 0})
         market = d1.writes[0][1]
         self.assertAlmostEqual(market.revenue_growth_ttm_yoy_pct, 39.54)
         self.assertAlmostEqual(market.roe_ttm_pct, 10.07)
@@ -513,7 +513,7 @@ class RefreshFlowTests(unittest.TestCase):
         ):
             result = run(self.settings())
 
-        self.assertEqual(result, {"processed": 0, "failed": 1, "written": 0})
+        self.assertEqual(result, {"processed": 0, "failed": 1, "written": 0, "skipped": 0})
         self.assertEqual(d1.writes, [])
 
     def test_dry_run_does_not_write_but_still_normalizes(self):
@@ -526,7 +526,7 @@ class RefreshFlowTests(unittest.TestCase):
         ):
             result = run(self.settings(), dry_run=True)
 
-        self.assertEqual(result, {"processed": 1, "failed": 0, "written": 0})
+        self.assertEqual(result, {"processed": 1, "failed": 0, "written": 0, "skipped": 0})
         self.assertEqual(d1.writes, [])
 
 

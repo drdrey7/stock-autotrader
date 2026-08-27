@@ -1,7 +1,5 @@
 export type ValuationFamily =
   | "mega-cap-quality"
-  | "semiconductor-design"
-  | "semiconductor-manufacturing"
   | "semiconductors"
   | "quality-software"
   | "growth-software"
@@ -95,8 +93,6 @@ const METHOD_WEIGHTS: Readonly<Record<ValuationFamily, Readonly<Partial<Record<A
   "growth-financial": { "P/B": 0.55, "P/E": 0.30, "P/S": 0.15 },
   "mega-cap-quality": { "P/E": 0.45, "P/FCF": 0.45, "P/S": 0.10 },
   semiconductors: { "P/E": 0.45, "P/FCF": 0.40, "P/S": 0.15 },
-  "semiconductor-design": { "P/E": 0.45, "P/FCF": 0.40, "P/S": 0.15 },
-  "semiconductor-manufacturing": { "P/E": 0.45, "P/FCF": 0.40, "P/S": 0.15 },
   "software-growth": { "P/FCF": 0.45, "P/S": 0.35, "P/E": 0.20 },
   "quality-software": { "P/FCF": 0.45, "P/S": 0.35, "P/E": 0.20 },
   "growth-software": { "P/FCF": 0.40, "P/S": 0.40, "P/E": 0.20 },
@@ -115,12 +111,14 @@ const METHOD_WEIGHTS: Readonly<Record<ValuationFamily, Readonly<Partial<Record<A
  * registry falls back to industry-based classification for non-Core tickers
  * only; every Core symbol must be present here (enforced by a unit test).
  *
- * The taxonomy splits semiconductors into design vs manufacturing, software into
- * quality/growth/hypergrowth, and finance into bank / capital-markets /
- * growth-financial / financial-platform so economically distinct businesses are
- * not lumped into a generic profile (e.g. HOOD and COIN no longer fall into
- * `general`). Method weights remain profile-driven and are NOT recalibrated to
- * match any external benchmark.
+ * The taxonomy separates semiconductors, software (quality/growth/hypergrowth)
+ * and finance (bank / capital-markets / growth-financial / financial-platform)
+ * so economically distinct businesses are not lumped into a generic profile
+ * (e.g. HOOD and COIN no longer fall into `general`). Semiconductor fabless and
+ * wafer-manufacturing names share one `semiconductors` profile because their
+ * method weights and behaviour are identical (a split would be false precision).
+ * Method weights remain profile-driven and are NOT recalibrated to match any
+ * external benchmark.
  */
 export const CORE_VALUATION_PROFILES: Readonly<Record<string, ValuationFamily>> = Object.freeze({
   // mega-cap platform quality (steady, dominant)
@@ -130,22 +128,24 @@ export const CORE_VALUATION_PROFILES: Readonly<Record<string, ValuationFamily>> 
   META: "mega-cap-quality",
   MSFT: "mega-cap-quality",
   NFLX: "mega-cap-quality",
-  // semiconductor design / fabless IP
-  AMD: "semiconductor-design",
-  ARM: "semiconductor-design",
-  AVGO: "semiconductor-design",
-  INTC: "semiconductor-design",
-  MU: "semiconductor-design",
-  NVDA: "semiconductor-design",
-  QCOM: "semiconductor-design",
-  SNDK: "semiconductor-design",
-  // semiconductor manufacturing / heavy capex equipment
-  AMAT: "semiconductor-manufacturing",
-  ASML: "semiconductor-manufacturing",
-  DELL: "semiconductor-manufacturing",
-  KLAC: "semiconductor-manufacturing",
-  LRCX: "semiconductor-manufacturing",
-  TSM: "semiconductor-manufacturing",
+  // DELL: large-cap hardware / IT-infrastructure systems vendor — not a
+  // semiconductor. Earnings/FCF anchored with a low P/S weight suits a
+  // thin-margin systems business, so it maps to mega-cap-quality.
+  DELL: "mega-cap-quality",
+  // semiconductors and semiconductor-equipment (fabless design / foundry / wafers / capex-heavy equipment)
+  AMD: "semiconductors",
+  ARM: "semiconductors",
+  AVGO: "semiconductors",
+  INTC: "semiconductors",
+  MU: "semiconductors",
+  NVDA: "semiconductors",
+  QCOM: "semiconductors",
+  SNDK: "semiconductors",
+  AMAT: "semiconductors",
+  ASML: "semiconductors",
+  KLAC: "semiconductors",
+  LRCX: "semiconductors",
+  TSM: "semiconductors",
   // durable / profitable software
   ADBE: "quality-software",
   CRM: "quality-software",
@@ -173,6 +173,7 @@ export const CORE_VALUATION_PROFILES: Readonly<Record<string, ValuationFamily>> 
   // technology-driven financial platforms
   AFRM: "financial-platform",
   COIN: "financial-platform",
+  CRCL: "financial-platform",
   HOOD: "financial-platform",
   // healthcare
   LLY: "healthcare",
@@ -180,14 +181,13 @@ export const CORE_VALUATION_PROFILES: Readonly<Record<string, ValuationFamily>> 
   UNH: "healthcare",
   // consumer / retail / discretionary
   COST: "consumer-quality",
-  CRCL: "consumer-quality",
   RDDT: "consumer-quality",
   TSLA: "consumer-quality",
   UBER: "consumer-quality",
   WMT: "consumer-quality",
 });
 
-const IS_SEMICONDUCTOR_FAMILY = new Set<ValuationFamily>(["semiconductors", "semiconductor-design", "semiconductor-manufacturing"]);
+const IS_SEMICONDUCTOR_FAMILY = new Set<ValuationFamily>(["semiconductors"]);
 
 export function classifyValuationFamily(symbol: string, industry: string | null): ValuationFamily {
   const normalizedSymbol = symbol.trim().toUpperCase();
