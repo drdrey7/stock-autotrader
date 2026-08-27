@@ -105,6 +105,8 @@ jobs:
           python3 -m unittest discover -s tests -v
       - name: Test quote ingestor
         working-directory: apps/quote-ingestor
+        env:
+          QUOTE_INGESTOR_STATE_PATH: ${{ runner.temp }}/quote-ingestor-pending-close-candidates.json
         run: |
           pip install --quiet "websocket-client>=1.6,<2"
           python3 -m unittest discover -s tests -v
