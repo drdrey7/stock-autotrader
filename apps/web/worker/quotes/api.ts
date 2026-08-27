@@ -156,7 +156,7 @@ export async function readScreenerApi(env: Env, now = new Date()): Promise<Scree
     );
     const strictSplitRows = effectiveSplitEvents?.get(symbol) ?? [];
     const strictEffectiveSplitDate = strictSplitRows.at(-1)?.effective_date;
-    const dailyChange = effectiveSplitEvents === null
+    const dailyChange = state !== "Live" || effectiveSplitEvents === null
       ? null
       : deriveDailyChange(
           quote,
