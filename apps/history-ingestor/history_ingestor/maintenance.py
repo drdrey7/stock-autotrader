@@ -280,6 +280,13 @@ class MaintenanceRunner:
                 self._get_reconcile_store().state.mark(symbol, STATUS_DONE)
                 return result
 
+            # Hide the symbol before changing split_events or its separately
+            # chunked weekly rewrite. A crash can then only leave it pending.
+            rstore = self._get_reconcile_store()
+            rstore.state.mark(symbol, STATUS_PENDING)
+            if not rstore.save():
+                raise ProviderError("split verification invalidation write failed")
+
             # Reconcile the durable store: upsert the new set, then delete
             # events the provider no longer reports (a corrected/removed split).
             write = self._d1.upsert_split_events(split_events_to_rows(symbol, fresh_events, _now_iso()))
