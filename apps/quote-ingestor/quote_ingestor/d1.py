@@ -48,15 +48,8 @@ logger = logging.getLogger("quote_ingestor.d1")
 D1_ACCOUNT_QUERY_ENDPOINT = (
     "https://api.cloudflare.com/client/v4/accounts/{account_id}/d1/database/{database_id}/query"
 )
-
-# A previous-session quote is only trusted as a close baseline if it was
-# observed in the final five minutes of that regular session. Core Universe
-# symbols are liquid; if no such quote exists, correctness wins and 1D fails
-# closed rather than promoting an arbitrary intraday price.
 CLOSE_BASELINE_WINDOW_MINUTES = 5
 
-# Session context is supplied once because every row inside one SQL statement
-# belongs to the same regular trading date.
 _UPSERT_ROW_SQL = (
     "(?, ?, 0, 0, NULL, NULL, NULL, NULL, 'finnhub-websocket', ?, ?, "
     "(SELECT current_session_date FROM session_ctx), NULL, 0)"
@@ -154,14 +147,12 @@ APP_META_UPSERT_SQL = (
     "INSERT INTO app_meta (key, value) VALUES (?, ?) "
     "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
 )
-
 HEALTH_META_KEY = "quoteIngestorHealth"
 
 
 @dataclass
 class D1WriteResult:
     """Per-flush result aligned with the latest row submitted per symbol."""
-
     written: list[str] = field(default_factory=list)
     failed: list[str] = field(default_factory=list)
     total_changes: int = 0
@@ -184,12 +175,7 @@ def _now_iso() -> str:
 
 
 def _session_context(rows: list[tuple[str, float, int]]) -> tuple[str, str, str, str] | None:
-    """Return current/previous session dates plus a proven-close time window.
-
-    Every row in one SQL statement must belong to one current regular session.
-    The previous-session close window is computed with the same
-    DST/holiday/early-close calendar used by intake.
-    """
+    """Return current/previous session dates plus a proven-close time window."""
     dates: set[dt.date] = set()
     for _, _, timestamp_ms in rows:
         trade = dt.datetime.fromtimestamp(timestamp_ms / 1000, tz=dt.UTC)
@@ -204,17 +190,13 @@ def _session_context(rows: list[tuple[str, float, int]]) -> tuple[str, str, str,
     previous_close = session_close_utc(previous)
     not_before = previous_close - dt.timedelta(minutes=CLOSE_BASELINE_WINDOW_MINUTES)
     return (
-        current.isoformat(),
-        previous.isoformat(),
+        current.isoformat(), previous.isoformat(),
         iso_from_ms(int(not_before.timestamp() * 1000)),
         iso_from_ms(int(previous_close.timestamp() * 1000)),
     )
 
 
-def _partition_rows_by_session(
-    rows: list[tuple[str, float, int]],
-) -> tuple[list[tuple[dt.date, list[tuple[str, float, int]]]], set[str]]:
-    """Partition rows chronologically and identify rows outside trading days."""
+def _partition_rows_by_session(rows: list[tuple[str, float, int]]) -> tuple[list[tuple[dt.date, list[tuple[str, float, int]]]], set[str]]:
     grouped: dict[dt.date, list[tuple[str, float, int]]] = {}
     invalid_symbols: set[str] = set()
     for row in rows:
@@ -231,18 +213,10 @@ def _partition_rows_by_session(
 class D1Client:
     """Bounded-retry client for the Cloudflare D1 HTTP query API."""
 
-    def __init__(
-        self,
-        api_token: str,
-        account_id: str,
-        database_id: str,
-        max_retries: int = 3,
-        retry_base_seconds: float = 1.0,
-        request_timeout_seconds: float = 20.0,
-        batch_max_rows: int = 20,
-        random_source: random.Random | None = None,
-        urlopen: Any | None = None,
-    ) -> None:
+    def __init__(self, api_token: str, account_id: str, database_id: str, max_retries: int = 3,
+                 retry_base_seconds: float = 1.0, request_timeout_seconds: float = 20.0,
+                 batch_max_rows: int = 20, random_source: random.Random | None = None,
+                 urlopen: Any | None = None) -> None:
         self._token = api_token
         self._account_id = account_id
         self._database_id = database_id
@@ -257,19 +231,9 @@ class D1Client:
         self.last_error: str | None = None
 
     def _post(self, body: dict) -> tuple[int, dict]:
-        """POST a single statement object to the D1 query API."""
-        url = D1_ACCOUNT_QUERY_ENDPOINT.format(
-            account_id=self._account_id, database_id=self._database_id
-        )
-        request = urllib.request.Request(
-            url,
-            data=json.dumps(body).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {self._token}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
+        url = D1_ACCOUNT_QUERY_ENDPOINT.format(account_id=self._account_id, database_id=self._database_id)
+        request = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"), headers={
+            "Authorization": f"Bearer {self._token}", "Content-Type": "application/json"}, method="POST")
         self.request_count += 1
         try:
             with self._urlopen(request, self._timeout) as response:
@@ -285,19 +249,8 @@ class D1Client:
             raise D1TransportError(f"request failed: {exc.__class__.__name__}") from exc
 
     def upsert_quotes(self, rows: list[tuple[str, float, int]]) -> D1WriteResult:
-        """Persist quote work in session order without losing rollover proof.
-
-        State may submit two rows for one symbol after an exceptional close
-        write failure: retained prior-session candidate first, current-session
-        tick second. Older session groups are made durable first. If an older
-        write fails, only that symbol is blocked from all newer groups so the
-        caller keeps both rows pending for retry. ``written`` reports a symbol
-        only when its latest submitted row landed, which keeps the existing
-        app-level acknowledgement contract correct.
-        """
         if not rows:
             return D1WriteResult()
-
         symbol_order: list[str] = []
         latest_timestamp: dict[str, int] = {}
         for symbol, _, timestamp_ms in rows:
@@ -306,14 +259,12 @@ class D1Client:
                 latest_timestamp[symbol] = timestamp_ms
             else:
                 latest_timestamp[symbol] = max(latest_timestamp[symbol], timestamp_ms)
-
         groups, invalid_symbols = _partition_rows_by_session(rows)
         blocked = set(invalid_symbols)
         latest_written: set[str] = set()
         aggregated = D1WriteResult()
         if invalid_symbols:
             aggregated.error = "invalid_trading_session"
-
         for _, session_rows in groups:
             eligible = [row for row in session_rows if row[0] not in blocked]
             if not eligible:
@@ -324,12 +275,10 @@ class D1Client:
             if result.error:
                 aggregated.error = result.error
             blocked.update(result.failed)
-
             written_set = set(result.written)
             for symbol, _, timestamp_ms in eligible:
                 if symbol in written_set and timestamp_ms == latest_timestamp[symbol]:
                     latest_written.add(symbol)
-
         aggregated.written = [symbol for symbol in symbol_order if symbol in latest_written]
         aggregated.failed = [symbol for symbol in symbol_order if symbol not in latest_written]
         if aggregated.failed and aggregated.error is None:
@@ -341,20 +290,15 @@ class D1Client:
         if session_context is None:
             symbols = list(dict.fromkeys(symbol for symbol, _, _ in rows))
             return self._failure_result(symbols, 0, "invalid_or_mixed_trading_session")
-
         current_session_date, previous_session_date, close_not_before, previous_session_close = session_context
-        updated_at = _now_iso()
         aggregated = D1WriteResult()
         for chunk in _chunks(rows, self._batch_max_rows):
             symbols = [symbol for symbol, _, _ in chunk]
-            params: list[object] = [
-                current_session_date,
-                previous_session_date,
-                close_not_before,
-                previous_session_close,
-            ]
+            params: list[object] = [current_session_date, previous_session_date, close_not_before, previous_session_close]
             for symbol, price, as_of_ms in chunk:
-                params.extend([symbol, price, iso_from_ms(as_of_ms), updated_at])
+                provider_as_of = iso_from_ms(as_of_ms)
+                # Freshness follows the market observation, not the replay/write time.
+                params.extend([symbol, price, provider_as_of, provider_as_of])
             result = self._run_object(build_upsert_sql(len(chunk)), params, symbols)
             aggregated.written.extend(result.written)
             aggregated.failed.extend(result.failed)
@@ -365,22 +309,14 @@ class D1Client:
         return aggregated
 
     def write_health(self, record: dict) -> bool:
-        """Mirror the ingestor health snapshot into app_meta (one tiny row)."""
-        result = self._run_object(
-            APP_META_UPSERT_SQL,
-            [HEALTH_META_KEY, json.dumps(record, sort_keys=True)],
-            ["__health__"],
-        )
+        result = self._run_object(APP_META_UPSERT_SQL, [HEALTH_META_KEY, json.dumps(record, sort_keys=True)], ["__health__"])
         if result.failed:
             self.error_count += 1
             return False
         return result.written == ["__health__"]
 
     def read_latest_quotes_count(self) -> dict:
-        """Read-only population check used only for startup validation/smoke."""
-        status, payload = self._post({
-            "sql": "SELECT symbol, provider, provider_timestamp FROM latest_quotes ORDER BY symbol",
-        })
+        status, payload = self._post({"sql": "SELECT symbol, provider, provider_timestamp FROM latest_quotes ORDER BY symbol"})
         if status != 200 or not payload.get("success"):
             raise D1QueryError(f"read failed HTTP {status}")
         rows = (payload.get("result") or [{}])[0].get("results", [])
@@ -399,7 +335,6 @@ class D1Client:
                 self._sleep_before_retry(attempt)
                 attempt += 1
                 continue
-
             if status == 200 and payload.get("success"):
                 result = D1WriteResult(http_status=200)
                 statements = payload.get("result") or []
@@ -407,7 +342,6 @@ class D1Client:
                 result.total_changes = int(meta.get("changes", 0) or 0)
                 result.written = list(symbols)
                 return result
-
             message = self._error_message(status, payload)
             if status in (400, 401, 403, 404, 409):
                 self.error_count += 1
