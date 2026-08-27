@@ -77,13 +77,68 @@ class QuoteStateStoreTest(unittest.TestCase):
         self.store.mark_failed({"AAPL"})
 
         # A different symbol trades in the new session while AAPL remains quiet.
-        # The stale AAPL pending write must not poison the whole mixed-session batch.
+        # The stale AAPL row must not poison the mixed-session batch.
         self.store.apply_tick(tick("MSFT", 50.0, current_tick))
         pending = self.store.pending_changed()
 
         self.assertEqual([item.symbol for item in pending], ["MSFT"])
-        # Expiring the obsolete pending flag must not erase the last known price.
+        # Retiring the obsolete pending flag must not erase the last known price.
         self.assertEqual(self.store.snapshot()["AAPL"].price, 100.0)
+
+    def test_failed_prior_close_is_replayed_before_first_current_tick(self) -> None:
+        prior_close_tick = epoch_ms("2026-08-26T19:59:00Z")
+        current_tick = epoch_ms("2026-08-27T14:00:00Z")
+        self.store.apply_tick(tick("AAPL", 100.0, prior_close_tick))
+        self.store.mark_failed({"AAPL"})
+
+        self.store.apply_tick(tick("AAPL", 102.0, current_tick))
+        pending = self.store.pending_changed()
+
+        self.assertEqual(
+            [(item.symbol, item.price, item.timestamp_ms) for item in pending],
+            [
+                ("AAPL", 100.0, prior_close_tick),
+                ("AAPL", 102.0, current_tick),
+            ],
+        )
+        self.store.ack_flushed({"AAPL"}, {"AAPL": current_tick})
+        self.assertEqual(self.store.pending_changed(), [])
+
+    def test_retired_failed_close_survives_other_symbol_current_tick(self) -> None:
+        prior_close_tick = epoch_ms("2026-08-26T19:59:00Z")
+        current_tick = epoch_ms("2026-08-27T14:00:00Z")
+        self.store.apply_tick(tick("AAPL", 100.0, prior_close_tick))
+        self.store.mark_failed({"AAPL"})
+
+        # MSFT opens first. This retires AAPL from the current batch but must
+        # preserve AAPL's undurable prior-session candidate for when AAPL trades.
+        self.store.apply_tick(tick("MSFT", 50.0, current_tick))
+        first_pending = self.store.pending_changed()
+        self.assertEqual([item.symbol for item in first_pending], ["MSFT"])
+        self.store.ack_flushed({"MSFT"}, {"MSFT": current_tick})
+
+        self.store.apply_tick(tick("AAPL", 102.0, current_tick + 1_000))
+        pending = self.store.pending_changed()
+        self.assertEqual(
+            [(item.symbol, item.price, item.timestamp_ms) for item in pending],
+            [
+                ("AAPL", 100.0, prior_close_tick),
+                ("AAPL", 102.0, current_tick + 1_000),
+            ],
+        )
+
+    def test_gap_does_not_replay_non_previous_session_candidate(self) -> None:
+        old_tick = epoch_ms("2026-08-25T19:59:00Z")
+        current_tick = epoch_ms("2026-08-27T14:00:00Z")
+        self.store.apply_tick(tick("AAPL", 100.0, old_tick))
+        self.store.mark_failed({"AAPL"})
+        self.store.apply_tick(tick("AAPL", 105.0, current_tick))
+
+        pending = self.store.pending_changed()
+        self.assertEqual(
+            [(item.symbol, item.price, item.timestamp_ms) for item in pending],
+            [("AAPL", 105.0, current_tick)],
+        )
 
     def test_partial_ack_clears_only_acked(self) -> None:
         self.store.apply_tick(tick("AAPL", 100.0, 1_000))
