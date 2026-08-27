@@ -14,6 +14,7 @@ is idempotent because the D1 writer has a newer-timestamp guard.
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import logging
 import math
@@ -186,9 +187,7 @@ class CloseCandidateCheckpoint:
             os.close(fd)
 
 
-def trading_session_date_from_ms(timestamp_ms: int):
+def trading_session_date_from_ms(timestamp_ms: int) -> dt.date | None:
     """Resolve a trade epoch-ms to the shared New York trading-session date."""
-    import datetime as dt
-
     instant = dt.datetime.fromtimestamp(timestamp_ms / 1000, tz=dt.UTC)
     return trading_session_date(instant)
