@@ -33,6 +33,9 @@ EARLY_CLOSE_MINUTES = 13 * 60
 # for this long after the session close, so the closing auction and the very
 # last regular ticks are not lost. After the grace the write window is closed.
 CLOSE_GRACE_MINUTES = 5
+# A previous-session quote is trusted as rollover proof only when its provider
+timestamp belongs to the final five minutes before the regular close.
+CLOSE_BASELINE_WINDOW_MINUTES = 5
 
 MarketPhase = Literal["pre_open", "open", "grace", "closed"]
 
@@ -152,6 +155,18 @@ def _as_utc(instant: dt.datetime) -> dt.datetime:
     if instant.tzinfo is None:
         instant = instant.replace(tzinfo=dt.UTC)
     return instant.astimezone(dt.UTC)
+
+
+def is_close_baseline_candidate(timestamp_ms: int) -> bool:
+    """Whether a trade timestamp is valid close-proof for session rollover."""
+    if timestamp_ms <= 0:
+        return False
+    instant = dt.datetime.fromtimestamp(timestamp_ms / 1000, tz=dt.UTC)
+    session = trading_session_date(instant)
+    if session is None:
+        return False
+    close = session_close_utc(session)
+    return close - dt.timedelta(minutes=CLOSE_BASELINE_WINDOW_MINUTES) <= instant < close
 
 
 def _session_bounds_utc(now_utc: dt.datetime) -> tuple[dt.datetime, dt.datetime] | None:
