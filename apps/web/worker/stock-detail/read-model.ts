@@ -25,6 +25,7 @@ import {
   type StockDetailSplitEventRow,
   type StockDetailStorageSnapshot,
   type WeeklyPriceRow,
+  clearQuoteHistoryScaleMismatch,
   persistSplitScaleMismatch,
 } from "./storage";
 
@@ -546,7 +547,16 @@ export async function readStockDetailApi(
         previous_close_session_date: quote.previous_close_session_date,
         daily_change_valid: quote.daily_change_valid,
       }
-    : null;
+      : null;
+  const quoteHistoryScaleBlock = servingState?.state === "BLOCKED"
+    && servingState.reason === "quote_history_scale_mismatch";
+  // A quote-only block is a transient ordering state: the due-split job may
+  // have already made history safe while the quote still carries the prior
+  // session. Re-evaluate it below once a refreshed quote is provably safe.
+  // Every other BLOCKED reason remains authoritative and fail-closed.
+  const servingStateForScale = servingState?.state === "BLOCKED" && !quoteHistoryScaleBlock
+    ? "BLOCKED"
+    : undefined;
   const historyScaleState = servedHistoryScaleState(
     weeklyRows,
     effectiveSplitEvents,
@@ -558,7 +568,7 @@ export async function readStockDetailApi(
     weeklyRows,
     effectiveSplitEvents,
     splitHistoryVerified === true || servingState?.state === "READY",
-    servingState?.state,
+    servingStateForScale,
   );
   const unexpectedScaleMismatch = hasUnexpectedQuoteScaleMismatch(
     quoteInput,
@@ -570,8 +580,35 @@ export async function readStockDetailApi(
   // it must not make already-verified data disappear from serving.
   const verificationPending = servingState?.state !== "READY"
     && (splitHistoryStatus === "pending" || splitHistoryStatus === "error");
+  let quoteHistoryBlockCleared = false;
+  if (
+    quoteHistoryScaleBlock
+    && computedScaleState === "safe"
+    && !verificationPending
+    && !unexpectedScaleMismatch
+    && recoveryState?.status !== "running"
+  ) {
+    try {
+      quoteHistoryBlockCleared = await clearQuoteHistoryScaleMismatch(
+        env.DB,
+        symbol,
+        now.toISOString(),
+      );
+    } catch (error) {
+      // The response remains unavailable if the conditional publication
+      // cannot be confirmed. A later read or recovery run retries it.
+      console.error(JSON.stringify({
+        route: "stock-detail",
+        symbol,
+        status: "split_ready_publication_failed",
+        error: (error instanceof Error ? error.message : String(error)).slice(0, 160),
+      }));
+    }
+  }
   const scaleState: QuoteHistoryScaleState = (
-    servingState?.state === "BLOCKED" || verificationPending || unexpectedScaleMismatch
+    (servingState?.state === "BLOCKED" && !quoteHistoryBlockCleared)
+    || verificationPending
+    || unexpectedScaleMismatch
   ) ? "mismatch" : computedScaleState;
   const recoveryRequestActive = recoveryState?.status === "pending"
     || recoveryState?.status === "running"

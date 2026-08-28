@@ -75,6 +75,37 @@ const SPLIT_RECOVERY_STATE_UPSERT_SQL = `INSERT INTO app_meta (key, value) VALUE
     )
     ELSE excluded.value
   END`;
+// The quote can lag a due-split history rewrite by one provider cycle.  Clear
+// only that exact stale block, and never while a recovery worker has claimed
+// the queue row.  The delete runs first in the same D1 batch so the marker and
+// its inactive queue row cannot be published in opposite states.
+const SPLIT_RECOVERY_DELETE_IF_QUOTE_BLOCK_SQL = `DELETE FROM app_meta
+  WHERE key = ?
+    AND json_valid(value)
+    AND COALESCE(json_extract(value, '$.status'), '') <> 'running'
+    AND EXISTS (
+      SELECT 1 FROM app_meta AS serving
+      WHERE serving.key = ?
+        AND json_valid(serving.value)
+        AND json_extract(serving.value, '$.version') = 1
+        AND json_extract(serving.value, '$.state') = 'BLOCKED'
+        AND json_extract(serving.value, '$.reason') = 'quote_history_scale_mismatch'
+    )`;
+const SPLIT_SERVING_STATE_READY_IF_QUOTE_BLOCK_SQL = `UPDATE app_meta
+  SET value = ?
+  WHERE key = ?
+    AND json_valid(value)
+    AND json_extract(value, '$.version') = 1
+    AND json_extract(value, '$.state') = 'BLOCKED'
+    AND json_extract(value, '$.reason') = 'quote_history_scale_mismatch'
+    AND NOT EXISTS (
+      SELECT 1 FROM app_meta AS recovery
+      WHERE recovery.key = ?
+        AND (
+          NOT json_valid(recovery.value)
+          OR json_extract(recovery.value, '$.status') = 'running'
+        )
+    )`;
 const FUNDAMENTALS_SQL = `SELECT symbol, market_cap, pe_ttm, eps_ttm, fcf_per_share_ttm,
   revenue_per_share_ttm, book_value_per_share,
   revenue_growth_ttm_yoy_pct, revenue_growth_3y_pct, revenue_growth_5y_pct, roe_ttm_pct,
@@ -484,6 +515,33 @@ export async function persistSplitScaleMismatch(
     db.prepare(SPLIT_RECOVERY_STATE_UPSERT_SQL)
       .bind(`${SPLIT_RECOVERY_META_PREFIX}${symbol}`, recoveryPayload),
   ]);
+}
+
+/**
+ * Publish READY only for a previously quote-only block after the read model
+ * has independently proved that history, metrics and the refreshed quote are
+ * on the known split scale. The conditional batch is idempotent and leaves a
+ * running recovery operation blocked.
+ */
+export async function clearQuoteHistoryScaleMismatch(
+  db: D1Database,
+  symbol: string,
+  readyAt: string,
+): Promise<boolean> {
+  const readyPayload = JSON.stringify({
+    version: 1,
+    symbol,
+    state: "READY",
+    reason: "quote_scale_verified",
+    updated_at: readyAt,
+  });
+  const results = await db.batch([
+    db.prepare(SPLIT_RECOVERY_DELETE_IF_QUOTE_BLOCK_SQL)
+      .bind(`${SPLIT_RECOVERY_META_PREFIX}${symbol}`, `${SPLIT_SERVING_STATE_META_PREFIX}${symbol}`),
+    db.prepare(SPLIT_SERVING_STATE_READY_IF_QUOTE_BLOCK_SQL)
+      .bind(readyPayload, `${SPLIT_SERVING_STATE_META_PREFIX}${symbol}`, `${SPLIT_RECOVERY_META_PREFIX}${symbol}`),
+  ]);
+  return Number(results[1]?.meta?.changes ?? 0) === 1;
 }
 
 /** Individual strict reads are retained for focused storage tests/reuse. */

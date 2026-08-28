@@ -8,6 +8,7 @@ import {
   readStockDetailStorageSnapshot,
   readStockDetailSupports,
   readStockDetailWeeklyHistory,
+  clearQuoteHistoryScaleMismatch,
   persistSplitScaleMismatch,
   SPLIT_RECOVERY_META_PREFIX,
   SPLIT_SERVING_STATE_META_PREFIX,
@@ -43,7 +44,11 @@ function createDb(options: { first?: unknown; rows?: unknown[]; throwOnPrepare?:
   return { db, calls };
 }
 
-function createBatchDb(resultRows: unknown[][], firstResult: unknown | unknown[] = null) {
+function createBatchDb(
+  resultRows: unknown[][],
+  firstResult: unknown | unknown[] = null,
+  changes: number[] = [],
+) {
   const calls: DbCalls = { sql: [], binds: [] };
   let firstCall = 0;
   const statement = {
@@ -65,7 +70,10 @@ function createBatchDb(resultRows: unknown[][], firstResult: unknown | unknown[]
       if (statements.length !== resultRows.length) {
         throw new Error(`batch fixture has ${resultRows.length} results for ${statements.length} statements`);
       }
-      return resultRows.map((results) => ({ results }));
+      return resultRows.map((results, index) => ({
+        results,
+        meta: { changes: changes[index] ?? 0 },
+      }));
     },
   } as unknown as D1Database;
   return { db, calls };
@@ -332,6 +340,25 @@ describe("Stock Detail symbol-specific storage", () => {
       expect.stringContaining('"status":"pending"'),
     ]);
     expect(calls.sql.some((sql) => sql.includes("json_set") && sql.includes("$.attempts"))).toBe(true);
+  });
+
+  it("atomically clears only a completed quote-only block", async () => {
+    const { db, calls } = createBatchDb([[], []], null, [1, 1]);
+
+    await expect(clearQuoteHistoryScaleMismatch(
+      db,
+      "NVDA",
+      "2026-08-21T15:00:00.000Z",
+    )).resolves.toBe(true);
+
+    expect(calls.sql[0]).toContain("DELETE FROM app_meta");
+    expect(calls.sql[1]).toContain("UPDATE app_meta");
+    expect(calls.sql[1]).toContain("quote_history_scale_mismatch");
+    expect(calls.binds[1]).toEqual([
+      expect.stringContaining('"state":"READY"'),
+      `${SPLIT_SERVING_STATE_META_PREFIX}NVDA`,
+      `${SPLIT_RECOVERY_META_PREFIX}NVDA`,
+    ]);
   });
 
   it("contains no provider/network request path", () => {

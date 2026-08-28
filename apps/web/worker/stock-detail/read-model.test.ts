@@ -5,6 +5,7 @@ import type { StockDetailStorageSnapshot, WeeklyPriceRow } from "./storage";
 
 const storageMock = vi.hoisted(() => ({
   readStockDetailStorageSnapshot: vi.fn(),
+  clearQuoteHistoryScaleMismatch: vi.fn(),
   persistSplitScaleMismatch: vi.fn(),
 }));
 
@@ -858,6 +859,46 @@ describe("Stock Detail D1 read model", () => {
     expect(detail.chart.priceHistory).toEqual([]);
     expect(detail.technical.sma200w).toBeNull();
     expect(storageMock.persistSplitScaleMismatch).not.toHaveBeenCalled();
+  });
+
+  it("clears a stale quote-only block after history and the refreshed quote align", async () => {
+    const history = applySplitToHistory(weeklyHistory(459), "2026-08-10", 2);
+    storageMock.clearQuoteHistoryScaleMismatch.mockResolvedValue(true);
+    storageMock.readStockDetailStorageSnapshot.mockResolvedValue(baseSnapshot({
+      weeklyRows: history,
+      splitEvents: [{ effective_date: "2026-08-10", split_factor: 2 }],
+      servingState: { state: "BLOCKED", reason: "quote_history_scale_mismatch" },
+      recoveryState: { status: "retry" },
+      quote: { ...baseSnapshot().quote!, price: 250 },
+    }));
+
+    const detail = await readStockDetailApi(env, "MSFT", NOW);
+
+    expect(storageMock.clearQuoteHistoryScaleMismatch).toHaveBeenCalledWith(
+      env.DB,
+      "MSFT",
+      NOW.toISOString(),
+    );
+    expect(detail.quote.scaleState).toBe("safe");
+    expect(detail.quote.price).toBe(250);
+    expect(detail.chart.priceHistory.length).toBeGreaterThan(0);
+  });
+
+  it("does not clear a quote-only block while recovery is running", async () => {
+    const history = applySplitToHistory(weeklyHistory(459), "2026-08-10", 2);
+    storageMock.readStockDetailStorageSnapshot.mockResolvedValue(baseSnapshot({
+      weeklyRows: history,
+      splitEvents: [{ effective_date: "2026-08-10", split_factor: 2 }],
+      servingState: { state: "BLOCKED", reason: "quote_history_scale_mismatch" },
+      recoveryState: { status: "running" },
+      quote: { ...baseSnapshot().quote!, price: 250 },
+    }));
+
+    const detail = await readStockDetailApi(env, "MSFT", NOW);
+
+    expect(storageMock.clearQuoteHistoryScaleMismatch).not.toHaveBeenCalled();
+    expect(detail.quote.scaleState).toBe("mismatch");
+    expect(detail.quote.price).toBeNull();
   });
 
   it("treats READY as authoritative when workflow cleanup is stale", async () => {
