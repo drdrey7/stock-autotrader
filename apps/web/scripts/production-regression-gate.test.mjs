@@ -6,6 +6,7 @@ function snapshot({
   readable = true,
   down = [],
   states = { market: "Live", earnings: "Live" },
+  engineStates = {},
 } = {}) {
   return {
     liveness: { ok: live, httpStatus: live ? 200 : 503 },
@@ -15,6 +16,7 @@ function snapshot({
       critical: readable ? ["market", "earnings"] : [],
       down: readable ? down : [],
       states: readable ? states : {},
+      engineStates: readable ? engineStates : {},
     },
   };
 }
@@ -100,7 +102,7 @@ describe("evaluateRegression", () => {
     expect(result.reasons).toContain("critical source newly down: market");
   });
 
-  it("fails when a touched source worsens inside an already-down state", () => {
+  it("fails when a touched source worsens inside an already-down generic state", () => {
     const before = snapshot({ down: ["earnings"], states: { market: "Live", earnings: "Stale" } });
     const after = snapshot({ down: ["earnings"], states: { market: "Live", earnings: "Error" } });
     const scope = classifyChangedPaths(["apps/web/worker/earnings/logic.ts"]);
@@ -108,6 +110,24 @@ describe("evaluateRegression", () => {
     const result = evaluateRegression({ before, after, scope, bootstrap: healthyBootstrap });
     expect(result.ok).toBe(false);
     expect(result.reasons).toContain("touched critical source worsened: earnings (Stale -> Error)");
+  });
+
+  it("uses canonical earnings engineState to detect STALE to DEGRADED worsening", () => {
+    const before = snapshot({
+      down: ["earnings"],
+      states: { market: "Live", earnings: "Stale" },
+      engineStates: { earnings: "STALE" },
+    });
+    const after = snapshot({
+      down: ["earnings"],
+      states: { market: "Live", earnings: "Stale" },
+      engineStates: { earnings: "DEGRADED" },
+    });
+    const scope = classifyChangedPaths(["apps/web/worker/earnings/logic.ts"]);
+
+    const result = evaluateRegression({ before, after, scope, bootstrap: healthyBootstrap });
+    expect(result.ok).toBe(false);
+    expect(result.reasons).toContain("touched critical source worsened: earnings (STALE -> DEGRADED)");
   });
 
   it("does not block frontend-only work when source diagnostics were already unreadable", () => {
