@@ -57,6 +57,14 @@ describe("classifyChangedPaths", () => {
     });
   });
 
+  it("treats the production cron dispatcher as shared critical runtime", () => {
+    expect(classifyChangedPaths(["apps/web/worker/cron-dispatcher.ts"])).toMatchObject({
+      runtime: true,
+      core: false,
+      criticalSources: ["earnings", "market"],
+    });
+  });
+
   it("treats migrations as Core and both critical sources", () => {
     expect(classifyChangedPaths(["apps/web/migrations/0030_example.sql"])).toMatchObject({
       runtime: true,
