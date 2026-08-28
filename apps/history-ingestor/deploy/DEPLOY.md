@@ -79,10 +79,15 @@ The recurring work is deliberately aligned with how a 200-week SMA changes:
 - `bootstrap`: daily at 08:00 UTC only while initial historical loading remains
   incomplete. It is automatically disabled when all 50 Core Universe symbols
   have terminal SPLITS + WEEKLY bootstrap results.
-- `reconcile-splits`: first and third Tuesday of each month at 09:00 UTC. It is
-  bounded to at most 50 provider HTTP requests and shares the normal daily
-  provider ledger, so maintenance always has priority.
-- `apply-due-splits`: Tue-Sat at 13:10 UTC and makes zero provider calls.
+- `reconcile-splits`: every Sunday at 09:00 UTC. It is bounded to at most 50
+  provider HTTP requests and shares the normal daily provider ledger, so
+  maintenance always has priority. Sunday is one day ahead of the Monday WEEKLY
+  refresh, letting a Monday-effective split be discovered without competing
+  with Monday's ~50-request run.
+- `apply-due-splits`: Mon-Sat at 06:00 UTC and makes zero provider calls. On
+  Monday it runs BEFORE the 07:00 maintenance, applying the just-discovered
+  Monday-effective split to the RAW history and metric basis so the WEEKLY
+  refresh writes the new week on the split-adjusted scale.
 
 The website reads the durable D1 basis. A valid 200W SMA therefore remains
 available even when the VPS is temporarily offline; a missed refresh does not

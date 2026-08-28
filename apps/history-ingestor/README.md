@@ -159,17 +159,18 @@ python3 -m history_ingestor reconcile-splits --dry-run
 
 Production schedule:
 
-- first Tuesday of each month, 09:00 UTC;
-- third Tuesday of each month, 09:00 UTC;
+- every Sunday, 09:00 UTC;
 - `Persistent=false`;
 - explicit maximum 50 provider HTTP requests per invocation;
 - still constrained by the shared 25/key daily ledger.
 
-Tuesday is intentional. Monday can legitimately consume essentially all 50
-requests refreshing WEEKLY history. Tuesday maintenance runs first and gets any
-carry-over quota it needs; split reconciliation receives only the residual
-budget. Its independent durable checkpoint resumes unfinished work at the next
-scan rather than restarting from the beginning.
+Sunday is intentional, one day ahead of the Monday WEEKLY maintenance. A split
+announced effective Monday (Alpha Vantage returns splits before the effective
+date) is discovered and persisted to `split_events` on Sunday without competing
+with Monday's ~50-request WEEKLY run. Monday's 06:00 `apply-due-splits` then
+applies it before the 07:00 maintenance. The independent durable checkpoint
+resumes unfinished work at the next scan rather than restarting from the
+beginning.
 
 Filtered manual `--symbols` runs restrict processing only; they do not erase
 unrelated reconciliation progress.
@@ -181,7 +182,9 @@ python3 -m history_ingestor apply-due-splits
 ```
 
 This reads already-known future-dated split events from D1 and applies them when
-they become effective. It makes zero provider calls and is safe to run Tue-Sat.
+they become effective. It makes zero provider calls and runs Mon-Sat (Friday
+inclusive) at 06:00 UTC — on Monday it applies the just-discovered
+Monday-effective split before the 07:00 WEEKLY maintenance.
 
 ## Production systemd cadence
 
@@ -189,16 +192,20 @@ All times UTC:
 
 | Priority | Timer | Cadence | Provider work |
 |---|---|---|---|
-| 1 | `history-ingestor-maintenance.timer` | daily 07:00 | effectively weekly; catch-up only after Monday |
-| 2 | `history-ingestor-bootstrap.timer` | daily 08:00 while incomplete | max 6 HTTP/day; auto-disables at terminal 50/50 |
-| 3 | `history-ingestor-reconcile-split.timer` | first + third Tuesday 09:00 | max 50/run, residual shared quota only |
-| 4 | `history-ingestor-due-split.timer` | Tue-Sat 13:10 | zero-provider |
+| 1 | `history-ingestor-due-split.timer` | Mon-Sat 06:00 | zero-provider (applies due splits; Monday runs BEFORE maintenance) |
+| 2 | `history-ingestor-maintenance.timer` | daily 07:00 | effectively weekly; catch-up only after Monday |
+| 3 | `history-ingestor-bootstrap.timer` | daily 08:00 while incomplete | max 6 HTTP/day; auto-disables at terminal 50/50 |
+| 4 | `history-ingestor-reconcile-split.timer` | Sunday 09:00 | max 50/run, residual shared quota only |
 
 Operational priority is therefore:
 
 ```text
-maintenance > temporary bootstrap > split reconciliation > due-split
+due-split (Mon, zero-provider) > maintenance > temporary bootstrap > Sunday split reconciliation
 ```
+
+The Monday due-split pass must run before the 07:00 WEEKLY maintenance so the
+just-discovered Monday-effective split is applied to the RAW history and metric
+basis first (see `history-ingestor-due-split.service` / `Before=maintenance`).
 
 All provider-consuming paths share the same per-key daily ledger and the same
 process lock. Reconciliation is non-persistent so a missed scan cannot catch up

@@ -1,16 +1,31 @@
 # Daily zero-provider due-split reconciliation cadence.
 #
-# 13:10 UTC = 09:10 ET (before US market open at 09:30 ET). The daily check
-# reads stored split_events, applies only newly-effective splits, updates
-# affected weekly history and technical_metrics — ZERO Alpha Vantage requests.
+# Runs at 06:00 UTC — before the US market open and before the Monday
+# 07:00 WEEKLY maintenance. Reads stored split_events, applies only newly-
+# effective splits, updates the affected weekly history and technical_metrics
+# — all from stored RAW data, ZERO Alpha Vantage requests.
 #
-# Weekdays only (Tue-Sat). Monday is handled by the weekly maintenance timer.
+# Scheduled `OnCalendar` runs are Monday-Saturday only (Sunday is handled by
+# the separate reconcile-splits pass). Monday is the key pass: it applies the
+# split that Sunday's reconcile-splits just discovered (announced effective
+# Monday) BEFORE the 07:00 WEEKLY maintenance, so the WEEKLY refresh writes
+# the new week and recomputes metrics on the already split-adjusted scale.
+#
+# ZERO-PROVIDER, not necessarily ZERO-WRITE: any Mon-Sat run applies a stored
+# split_event that becomes effective that day (and is only a no-op when no
+# split is due), so it CAN write weekly_prices / technical_metrics.
+#
+# NOTE: `Persistent=true` is retained intentionally. A missed Mon-Sat event
+# (VPS/boot down) CAN trigger a catch-up run on any later activation day,
+# including Sunday — that catch-up is still zero-provider and may apply a
+# missed due split with writes; it is safe and not a scheduled Sunday run.
+# This behaviour is documented, not forbidden.
 # The random delay spreads load.
 [Unit]
-Description=Daily due-split reconciliation (zero provider)
+Description=Daily due-split reconciliation (zero provider, Mon-Sat before Monday maintenance)
 
 [Timer]
-OnCalendar=Tue..Sat *-*-* 13:10:00 UTC
+OnCalendar=Mon..Sat *-*-* 06:00:00 UTC
 RandomizedDelaySec=15m
 Persistent=true
 
