@@ -62,6 +62,16 @@ function isClearlyNonNearOneSplitFactor(factor: number): boolean {
   return factor <= 0.5 || factor >= 2;
 }
 
+function normalizedQuoteHistoryTolerance(factor: number): number {
+  // A 2x history/quote ratio can still be an ordinary 50% market move, so
+  // keep that ambiguous boundary exact. Larger conventional factors provide
+  // enough structural separation to tolerate normal weekly drift in the
+  // preceding old-scale candle.
+  return factor <= 1 / 3 || factor >= 3
+    ? STRUCTURAL_PRIOR_HISTORY_TOLERANCE
+    : STRUCTURAL_SPLIT_TOLERANCE;
+}
+
 interface AdjustedClosePoint {
   time: string;
   close: number;
@@ -495,17 +505,21 @@ export function hasUnexpectedQuoteScaleMismatch(
   const historyToPreviousCloseRatios = [latestWeeklyRow.raw_close, priorWeeklyRow.raw_close]
     .map((close) => close / (quote.previous_close ?? 1));
   // This fallback only applies when the quote's own daily ratio is ordinary;
-  // otherwise the first detector owns the evidence. Require the two history
-  // rows to agree tightly as a second independent check so a normal large move
-  // cannot create durable split-verification work by itself.
+  // otherwise the first detector owns the evidence. The latest historical row
+  // must still match a conventional factor tightly; the prior row corroborates
+  // the old regime with a factor-dependent tolerance. Keep the ambiguous 2x
+  // boundary tight so an ordinary 50% move cannot create durable work by
+  // itself, while larger splits can include normal weekly drift.
   if (!approximatelyWithin(quoteRatio, 1, STRUCTURAL_QUOTE_HISTORY_TOLERANCE)) return false;
   const [latestRatio, priorRatio] = historyToPreviousCloseRatios as [number, number];
-  if (!approximatelyWithin(latestRatio, priorRatio, STRUCTURAL_SPLIT_TOLERANCE)) return false;
   return STRUCTURAL_SPLIT_FACTORS.some((factor) => (
     isClearlyNonNearOneSplitFactor(factor)
-    && historyToPreviousCloseRatios.every((ratio) => approximatelyWithin(
-      ratio, factor, STRUCTURAL_QUOTE_HISTORY_TOLERANCE,
-    ))
+    && approximatelyWithin(latestRatio, factor, STRUCTURAL_QUOTE_HISTORY_TOLERANCE)
+    && approximatelyWithin(
+      priorRatio,
+      latestRatio,
+      normalizedQuoteHistoryTolerance(factor),
+    )
   ));
 }
 

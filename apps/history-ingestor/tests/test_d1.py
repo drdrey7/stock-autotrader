@@ -7,6 +7,7 @@ import unittest
 
 from history_ingestor.d1 import (
     D1Client,
+    D1MalformedMetaError,
     D1QueryError,
     D1TransportError,
     build_split_upsert_sql,
@@ -171,13 +172,13 @@ class D1ClientTests(unittest.TestCase):
     def test_read_app_meta_bad_json_raises(self):
         url = FakeURL([(200, {"success": True, "result": [{"results": [{"value": "not json"}]}]})])
         c = client(url)
-        with self.assertRaises(D1QueryError):
+        with self.assertRaises(D1MalformedMetaError):
             c.read_app_meta("k")
 
     def test_read_app_meta_non_object_raises(self):
         url = FakeURL([(200, {"success": True, "result": [{"results": [{"value": "[]"}]}]})])
         c = client(url)
-        with self.assertRaises(D1QueryError):
+        with self.assertRaises(D1MalformedMetaError):
             c.read_app_meta("k")
 
     def test_read_app_meta_prefix_decodes_rows_and_repairs_malformed_queue_values(self):

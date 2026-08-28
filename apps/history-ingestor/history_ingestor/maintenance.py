@@ -40,7 +40,7 @@ from collections.abc import Callable
 from typing import Any
 
 from .config import Settings
-from .d1 import D1QueryError
+from .d1 import D1MalformedMetaError, D1QueryError
 from .maintenance_state import (
     RECONCILE_D1_META_KEY,
     RECONCILE_STATUS_META_PREFIX,
@@ -164,6 +164,16 @@ class MaintenanceRunner:
         """
         try:
             payload = self._d1.read_app_meta(split_serving_state_key(symbol))
+        except D1MalformedMetaError:
+            # Prefix recovery has already established that this symbol owns a
+            # malformed marker. Treat it as repairable BLOCKED state instead
+            # of confusing metadata corruption with a D1 transport failure.
+            return {
+                "version": 1,
+                "symbol": symbol,
+                "state": SERVING_BLOCKED,
+                "reason": "invalid_serving_state",
+            }
         except D1QueryError as exc:
             raise ProviderError(f"serving state read failed for {symbol}: {exc}") from exc
         if payload is None:
@@ -1316,6 +1326,7 @@ class MaintenanceRunner:
                 known_data_work = reason in {
                     "scale_mismatch", "history_factor_mismatch", "quote_history_scale_mismatch",
                     "split_history_changed", "split_recovery_verified", "split_verification_pending", "due_split",
+                    "invalid_serving_state",
                 }
                 # The request reason may have been replaced by a transient
                 # write error after split_events became durable.  In that

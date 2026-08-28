@@ -321,9 +321,9 @@ class D1Client:
         try:
             parsed = json.loads(rows[0]["value"])
         except (KeyError, TypeError, json.JSONDecodeError) as exc:
-            raise D1QueryError(f"app_meta {key} is not valid JSON") from exc
+            raise D1MalformedMetaError(f"app_meta {key} is not valid JSON") from exc
         if not isinstance(parsed, dict):
-            raise D1QueryError(f"app_meta {key} must contain a JSON object")
+            raise D1MalformedMetaError(f"app_meta {key} must contain a JSON object")
         return parsed
 
     def read_app_meta_prefix(self, prefix: str) -> list[tuple[str, dict]]:
@@ -499,3 +499,7 @@ class D1TransportError(RuntimeError):
 
 class D1QueryError(RuntimeError):
     """Non-retryable D1 API error surfaced for operators."""
+
+
+class D1MalformedMetaError(D1QueryError):
+    """A stored app_meta value could not be decoded as a JSON object."""

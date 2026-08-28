@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from history_ingestor.d1 import D1MalformedMetaError
 from history_ingestor.maintenance import MaintenanceRunner
 from history_ingestor.maintenance_state import (
     RECONCILE_D1_META_KEY,
@@ -365,6 +366,27 @@ class SplitRecoveryQueueTests(unittest.TestCase):
             self.assertEqual(provider.splits_calls, ["NVDA"])
             self.assertEqual(report["symbols"]["NVDA"]["status"], "pending")
             self.assertEqual(d1.meta[split_recovery_key("NVDA")]["status"], "retry")
+
+    def test_malformed_serving_marker_is_repaired_by_recovery(self):
+        class MalformedServingStateD1(FakeD1):
+            def read_app_meta(self, key):
+                if key == split_serving_state_key("NVDA"):
+                    raise D1MalformedMetaError("app_meta serving marker is not valid JSON")
+                return super().read_app_meta(key)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = MalformedServingStateD1()
+            d1.meta[split_serving_state_key("NVDA")] = "not-json"
+            seed_weekly_row(d1)
+            provider = FakeProvider(
+                splits_payloads={"NVDA": {"symbol": "NVDA", "data": []}},
+            )
+
+            report = make_runner(d1, provider, tmp).recover_split_mismatches()
+
+            self.assertEqual(report["symbols"]["NVDA"]["status"], "recovered")
+            self.assertEqual(d1.meta[split_serving_state_key("NVDA")]["state"], SERVING_READY)
+            self.assertNotIn(split_recovery_key("NVDA"), d1.meta)
 
     def test_pending_symbol_marker_cannot_be_overridden_by_legacy_done_checkpoint(self):
         with tempfile.TemporaryDirectory() as tmp:
