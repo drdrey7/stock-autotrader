@@ -200,9 +200,13 @@ const sourceIsDown = (snapshot, source) => snapshot?.sources?.down?.includes(sou
 
 export function evaluateRegression({ before, after, scope, bootstrap = null }) {
   const reasons = [];
+  const beforeLive = before?.liveness?.ok === true;
+  const afterLive = after?.liveness?.ok === true;
 
-  if (!after?.liveness?.ok) {
-    reasons.push(`post-deploy Worker liveness failed (HTTP ${after?.liveness?.httpStatus ?? "unknown"})`);
+  if (beforeLive && !afterLive) {
+    reasons.push(`Worker liveness regressed after deploy (HTTP ${after?.liveness?.httpStatus ?? "unknown"})`);
+  } else if (!beforeLive && !afterLive && scope?.runtime) {
+    reasons.push("Worker liveness is unavailable, so runtime changes cannot be regression-verified");
   }
 
   const beforeReadable = before?.sources?.readable === true;
