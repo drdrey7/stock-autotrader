@@ -36,6 +36,10 @@ export function classifyChangedPaths(inputPaths) {
     const migrationPath = matchesPrefix(path, "apps/web/migrations");
     const contractsPath = matchesPrefix(path, "packages/contracts");
     const deployWorkflow = path === ".github/workflows/deploy.yml";
+    const deploymentTooling = deployWorkflow || [
+      "apps/web/scripts/bootstrap-production.mjs",
+      "apps/web/scripts/production-regression-gate.mjs",
+    ].includes(path);
     const webRuntimeConfig = [
       "apps/web/wrangler.jsonc",
       "apps/web/package.json",
@@ -47,9 +51,9 @@ export function classifyChangedPaths(inputPaths) {
       "apps/web/worker/dashboard.ts",
     ].includes(path);
 
-    if (workerPath || migrationPath || contractsPath || deployWorkflow || webRuntimeConfig) runtime = true;
+    if (workerPath || migrationPath || contractsPath || deploymentTooling || webRuntimeConfig) runtime = true;
 
-    if (migrationPath || contractsPath || sharedCriticalRuntime || deployWorkflow || webRuntimeConfig) {
+    if (migrationPath || contractsPath || sharedCriticalRuntime || deploymentTooling || webRuntimeConfig) {
       ALL_CRITICAL_SOURCES.forEach((source) => criticalSources.add(source));
     }
 
@@ -58,6 +62,7 @@ export function classifyChangedPaths(inputPaths) {
       || contractsPath
       || path === "apps/web/worker/bootstrap.ts"
       || path === "apps/web/worker/stock-universe.ts"
+      || path === "apps/web/worker/earnings/storage.ts"
       || matchesPrefix(path, "apps/web/worker/earnings/storage")
       || path === "apps/web/scripts/bootstrap-production.mjs"
     ) {
@@ -185,18 +190,24 @@ export function evaluateRegression({ before, after, scope, bootstrap = null }) {
     reasons.push("canonical /healthz/sources is unreadable, so runtime changes cannot be regression-verified");
   }
 
-  if (afterReadable) {
-    const beforeDown = new Set(beforeReadable ? before.sources.down : []);
+  if (beforeReadable && afterReadable) {
+    const beforeDown = new Set(before.sources.down);
     for (const source of after.sources.down) {
       if (!beforeDown.has(source)) reasons.push(`critical source newly down: ${source}`);
     }
 
     for (const source of scope?.criticalSources ?? []) {
-      if (!beforeReadable || !sourceIsDown(before, source) || !sourceIsDown(after, source)) continue;
+      if (!sourceIsDown(before, source) || !sourceIsDown(after, source)) continue;
       const beforeSeverity = sourceStateSeverity(before, source);
       const afterSeverity = sourceStateSeverity(after, source);
       if (beforeSeverity !== null && afterSeverity !== null && afterSeverity > beforeSeverity) {
         reasons.push(`touched critical source worsened: ${source} (${before.sources.states[source]} -> ${after.sources.states[source]})`);
+      }
+    }
+  } else if (!beforeReadable && afterReadable) {
+    for (const source of scope?.criticalSources ?? []) {
+      if (sourceIsDown(after, source)) {
+        reasons.push(`touched critical source is down and no readable baseline exists: ${source}`);
       }
     }
   }
