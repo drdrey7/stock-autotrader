@@ -13,6 +13,12 @@ const STATE_SEVERITY = new Map([
   ["Unavailable", 3],
   ["Error", 4],
 ]);
+const EARNINGS_ENGINE_SEVERITY = new Map([
+  ["HEALTHY", 0],
+  ["STALE", 1],
+  ["DEGRADED", 2],
+  ["UNINITIALIZED", 3],
+]);
 
 const ALL_CRITICAL_SOURCES = ["market", "earnings"];
 
@@ -143,9 +149,12 @@ export async function captureProductionSnapshot(workerUrl = process.env.PRODUCTI
     ? sourcesBody.down.filter((value) => typeof value === "string")
     : [];
   const states = {};
+  const engineStates = {};
   for (const source of critical) {
     const state = sourcesBody?.sources?.[source]?.state;
+    const engineState = sourcesBody?.sources?.[source]?.engineState;
     states[source] = typeof state === "string" ? state : null;
+    engineStates[source] = typeof engineState === "string" ? engineState : null;
   }
 
   return {
@@ -162,6 +171,7 @@ export async function captureProductionSnapshot(workerUrl = process.env.PRODUCTI
       critical,
       down,
       states,
+      engineStates,
       error: typeof sourcesBody?.error === "string" ? sourcesBody.error : null,
       networkError: sourcesResponse.networkError ?? null,
     },
@@ -169,8 +179,21 @@ export async function captureProductionSnapshot(workerUrl = process.env.PRODUCTI
 }
 
 const sourceStateSeverity = (snapshot, source) => {
+  if (source === "earnings") {
+    const engineState = snapshot?.sources?.engineStates?.[source];
+    const engineSeverity = EARNINGS_ENGINE_SEVERITY.get(engineState);
+    if (engineSeverity !== undefined) return engineSeverity;
+  }
   const state = snapshot?.sources?.states?.[source];
   return STATE_SEVERITY.get(state) ?? null;
+};
+
+const sourceStateLabel = (snapshot, source) => {
+  if (source === "earnings") {
+    const engineState = snapshot?.sources?.engineStates?.[source];
+    if (EARNINGS_ENGINE_SEVERITY.has(engineState)) return engineState;
+  }
+  return snapshot?.sources?.states?.[source] ?? "unknown";
 };
 
 const sourceIsDown = (snapshot, source) => snapshot?.sources?.down?.includes(source) === true;
@@ -202,7 +225,7 @@ export function evaluateRegression({ before, after, scope, bootstrap = null }) {
       const beforeSeverity = sourceStateSeverity(before, source);
       const afterSeverity = sourceStateSeverity(after, source);
       if (beforeSeverity !== null && afterSeverity !== null && afterSeverity > beforeSeverity) {
-        reasons.push(`touched critical source worsened: ${source} (${before.sources.states[source]} -> ${after.sources.states[source]})`);
+        reasons.push(`touched critical source worsened: ${source} (${sourceStateLabel(before, source)} -> ${sourceStateLabel(after, source)})`);
       }
     }
   } else if (!beforeReadable && afterReadable) {
@@ -236,7 +259,7 @@ function formatSources(snapshot) {
   if (!snapshot?.sources?.readable) return `unreadable(http=${snapshot?.sources?.httpStatus ?? "unknown"})`;
   const down = snapshot.sources.down.length > 0 ? snapshot.sources.down.join(",") : "none";
   const states = snapshot.sources.critical
-    .map((source) => `${source}=${snapshot.sources.states[source] ?? "unknown"}`)
+    .map((source) => `${source}=${sourceStateLabel(snapshot, source)}`)
     .join(",");
   return `down=[${down}] states=[${states}]`;
 }
