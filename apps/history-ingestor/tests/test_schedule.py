@@ -37,11 +37,17 @@ class SplitCadenceTests(unittest.TestCase):
 
     def test_due_split_runs_monday_to_saturday_06_utc(self):
         # apply-due-splits must include Monday (the key pass) and run before the
-        # 07:00 maintenance; it never runs on Sunday (reconcile does that).
+        # 07:00 maintenance; it never schedules a Sunday OnCalendar run
+        # (reconcile does that on Sunday).
         timer = _read(DUE_TIMER)
         self.assertIn("OnCalendar=Mon..Sat *-*-* 06:00:00 UTC", timer)
         self.assertNotIn("Tue..Sat", timer)
-        self.assertNotIn("Sun", timer.split("OnCalendar")[1])
+        # The actual [Timer] OnCalendar= line: Mon..Sat only — no Sunday slot.
+        calendar_line = next(
+            line for line in timer.splitlines()
+            if line.startswith("OnCalendar=")
+        )
+        self.assertNotIn("Sun", calendar_line)
 
     def test_maintenance_remains_daily_07_utc(self):
         timer = _read(MAINTENANCE_TIMER)
@@ -70,9 +76,15 @@ class SplitCadenceTests(unittest.TestCase):
 
     def test_reconcile_service_after_maintenance_and_bootstrap(self):
         # Provider-consuming reconcile must never starve the provider-priority
-        # maintenance/bootstrap that run earlier the same Sunday.
-        service = _read(RECONCILE_TIMER)
-        self.assertIn("09:00:00 UTC", service)
+        # maintenance/bootstrap that run earlier the same Sunday. Assert the
+        # service unit's real After= ordering (the Sunday 09:00 cadence itself
+        # is covered by test_reconcile_runs_sunday_09_utc).
+        service = _read("history-ingestor-reconcile-split.service")
+        self.assertIn(
+            "After=network-online.target history-ingestor-maintenance.service "
+            "history-ingestor-bootstrap.service",
+            service,
+        )
 
 
 if __name__ == "__main__":

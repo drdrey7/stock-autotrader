@@ -1,8 +1,13 @@
 # History ingestor weekly maintenance — recurring service (documented install).
 #
-# MAINTENANCE HAS STRICT PRIORITY over bootstrap and split reconciliation. It
-# runs weekly (Monday 07:00 UTC), fetches TIME_SERIES_WEEKLY for the
-# just-closed week and rolls every symbol's technical_metrics anchor forward.
+# MAINTENANCE HAS STRICT PRIORITY over bootstrap and split reconciliation.
+#
+# TIMER ACTIVATION is DAILY at 07:00 UTC (history-ingestor-maintenance.timer);
+# the PROVIDER WEEKLY WORK is effectively weekly:
+#   - Monday: normal refresh of the just-closed (Friday) week, rolling every
+#     symbol's technical_metrics anchor forward.
+#   - Tue-Sat: catch-up ONLY if a prior WEEKLY pass was missed; zero provider
+#     requests once the weekly cycle is complete (idempotent no-op).
 # It never depends on split reconciliation (separate low-frequency job) and
 # never blocks on it. On Monday the zero-provider apply-due-splits (06:00)
 # runs BEFORE this 07:00 pass (see history-ingestor-due-split.service), so the
