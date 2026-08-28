@@ -21,8 +21,9 @@ Finnhub latest quote + D1 SMA basis ─────────┴──► Work
 - Split serving state is per-symbol and fail-closed: only `READY` is served;
   a possible scale mismatch is `BLOCKED` until history and metrics are verified.
 - Unexpected mismatches enqueue one durable per-symbol recovery request; an
-  empty queue makes zero SPLITS requests and a non-empty queue is retried
-  automatically with the shared Alpha Vantage budget.
+  empty queue with no BLOCKED serving marker makes zero SPLITS requests, while
+  queued (or marker-recovered) work is retried automatically with the shared
+  Alpha Vantage budget.
 - Bootstrap is one-shot and disables itself when initial loading is complete.
 - D1 is the durable serving source; the frontend does not depend on VPS uptime.
 
@@ -197,12 +198,13 @@ therefore applied before the new weekly row is served.
 ## Automatic split recovery
 
 The Stock Detail Worker never calls a provider. If it sees durable evidence of
-a quote/history scale transition with no matching split event, it atomically
-persists `BLOCKED` plus one `historySplitRecovery:<SYMBOL>` request in D1. The
-hourly `recover-split-mismatches` job reads that queue before constructing any
-provider work:
+a quote/history scale transition with no matching split event, it durably
+persists `BLOCKED` followed by one `historySplitRecovery:<SYMBOL>` request in
+D1. The hourly `recover-split-mismatches` job reads that queue before
+constructing any provider work; if a crash leaves only the `BLOCKED` marker,
+the job reconstructs the missing request from that marker:
 
-- empty queue → zero Alpha Vantage requests;
+- empty queue and no `BLOCKED` marker → zero Alpha Vantage requests;
 - queued symbols → SPLITS requests only for those symbols, bounded to two per
   run by default and subject to the shared per-key ledger, throttle and flock;
 - provider still has no new event → remain `BLOCKED`, move the request to a
@@ -215,7 +217,11 @@ provider work:
 `pending`, `running`, `retry` and `done` are workflow state and never make a
 symbol serve data by themselves. A normal unchanged SPLITS check, weekly
 append/correction, or provider error preserves the last-known-good serving
-state.
+state. The recovery worker also discovers a durable `BLOCKED` serving marker
+that has no queue row (for example, a crash between the two app-meta writes),
+recreates the request before calling the provider, and therefore self-heals
+that narrow crash window without scanning or calling the provider for READY
+symbols.
 
 ## Production systemd cadence
 

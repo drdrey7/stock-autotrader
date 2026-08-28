@@ -38,7 +38,9 @@ class SplitScheduleTests(unittest.TestCase):
     def test_recovery_is_hourly_except_monday_maintenance_window(self):
         timer = unit("history-ingestor-split-recovery.timer")
         service = unit("history-ingestor-split-recovery.service")
-        self.assertIn("OnCalendar=*-*-* 00:30:00 UTC", timer)
+        for hour in ("00", "01", "02", "03", "04", "05"):
+            self.assertIn(f"OnCalendar=Tue..Sun *-*-* {hour}:30:00 UTC", timer)
+            self.assertNotIn(f"OnCalendar=*-*-* {hour}:30:00 UTC", timer)
         self.assertIn("OnCalendar=*-*-* 23:30:00 UTC", timer)
         self.assertIn("OnCalendar=Tue..Sun *-*-* 06:30:00 UTC", timer)
         self.assertNotIn("OnCalendar=Mon *-*-* 06:30:00 UTC", timer)
@@ -65,6 +67,13 @@ class SplitScheduleTests(unittest.TestCase):
         for name in expected:
             self.assertIn(name, installer)
         self.assertIn("history-ingestor-bootstrap-maybe-disable.service", installer)
+
+    def test_fresh_recovery_timer_is_activated_but_existing_states_are_preserved(self):
+        installer = unit("install-history-ingestor-root.sh")
+        self.assertIn("activate_fresh_recovery", installer)
+        self.assertIn("restore_timer_states 1", installer)
+        self.assertIn('"$prior_enablement" == "not-found"', installer)
+        self.assertIn('desired_enablement=enabled', installer)
 
 
 if __name__ == "__main__":

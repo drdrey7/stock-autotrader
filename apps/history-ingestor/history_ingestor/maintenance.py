@@ -50,6 +50,7 @@ from .maintenance_state import (
     SERVING_BLOCKED,
     SERVING_READY,
     SPLIT_RECOVERY_META_PREFIX,
+    SPLIT_SERVING_STATE_META_PREFIX,
     STATUS_DONE,
     STATUS_ERROR,
     STATUS_PENDING,
@@ -1168,6 +1169,7 @@ class MaintenanceRunner:
         rstore = self._get_reconcile_store()
         try:
             queue_rows = self._d1.read_app_meta_prefix(SPLIT_RECOVERY_META_PREFIX)
+            serving_rows = self._d1.read_app_meta_prefix(SPLIT_SERVING_STATE_META_PREFIX)
         except D1QueryError as exc:
             return {
                 "status": "error", "symbols": {}, "requests_used_total": 0,
@@ -1176,6 +1178,7 @@ class MaintenanceRunner:
             }
 
         pending: list[dict] = []
+        queued_symbols: set[str] = set()
         for key, payload in queue_rows:
             suffix = key.removeprefix(SPLIT_RECOVERY_META_PREFIX)
             # The app_meta key is the durable ownership boundary. Ignore a
@@ -1185,6 +1188,7 @@ class MaintenanceRunner:
             symbol = suffix
             if symbol not in universe:
                 continue
+            queued_symbols.add(symbol)
             request = dict(payload)
             request["symbol"] = symbol
             # A syntactically valid JSON object can still be an invalid queue
@@ -1197,6 +1201,39 @@ class MaintenanceRunner:
                 request.pop("next_attempt_at", None)
             if self._recovery_request_is_due(request):
                 pending.append(request)
+
+        # A BLOCKED marker is authoritative even if the process crashed in
+        # the narrow window after publishing that marker and before writing
+        # its separate queue row.  Reconstruct the missing work from D1 so a
+        # missing queue row cannot strand a symbol indefinitely.  READY rows
+        # are deliberately ignored, preserving the invariant that an empty
+        # queue with no blocked marker makes zero provider requests.
+        for key, payload in serving_rows:
+            suffix = key.removeprefix(SPLIT_SERVING_STATE_META_PREFIX)
+            symbol = suffix
+            if symbol not in universe or symbol in queued_symbols:
+                continue
+            state = payload.get("state") if isinstance(payload, dict) else None
+            if state == SERVING_READY:
+                continue
+            # The web read model fails closed for malformed serving metadata;
+            # route that same evidence through automatic split verification.
+            if state != SERVING_BLOCKED and state is not None:
+                reason = "invalid_serving_state"
+            else:
+                reason = str(
+                    (payload.get("reason") if isinstance(payload, dict) else None)
+                    or "scale_mismatch"
+                )
+            pending.append({
+                "version": 1,
+                "symbol": symbol,
+                "status": RECOVERY_PENDING,
+                "reason": reason[:160],
+                "attempts": 0,
+                "next_attempt_at": self._operation_now_iso(),
+                "_discovered_from_serving_marker": True,
+            })
 
         report: dict = {
             "status": "noop" if not pending else "partial",
@@ -1227,6 +1264,14 @@ class MaintenanceRunner:
                     continue
                 if serving is None:
                     self._persist_serving_state(symbol, SERVING_BLOCKED, "scale_mismatch")
+                if request.get("_discovered_from_serving_marker"):
+                    # Recreate the durable queue before the first provider
+                    # call. If this write fails, the handler reports retry and
+                    # makes no provider request; the BLOCKED marker remains a
+                    # discoverable fallback on the next run.
+                    self._ensure_recovery_request(
+                        symbol, str(request.get("reason") or "scale_mismatch")
+                    )
                 self._mark_recovery_request(request, RECOVERY_RUNNING)
                 _, fresh_events, _ = self._provider.fetch_splits(symbol)
                 try:

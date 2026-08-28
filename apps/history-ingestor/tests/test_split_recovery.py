@@ -215,6 +215,55 @@ class SplitRecoveryQueueTests(unittest.TestCase):
             self.assertEqual(provider.splits_calls, [])
             self.assertEqual(provider.requests_this_run, 0)
 
+    def test_blocked_marker_without_queue_reconstructs_recovery_work(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            d1.write_app_meta(split_serving_state_key("NVDA"), {
+                "version": 1, "symbol": "NVDA", "state": SERVING_BLOCKED,
+                "reason": "unexpected_scale_mismatch",
+            })
+            seed_weekly_row(d1)
+            provider = FakeProvider(
+                splits_payloads={"NVDA": splits_payload("NVDA")},
+                weekly_payloads={"NVDA": weekly_payload("NVDA")},
+            )
+
+            report = make_runner(d1, provider, tmp).recover_split_mismatches()
+
+            self.assertEqual(provider.splits_calls, ["NVDA"])
+            self.assertEqual(report["recovered"], 1)
+            self.assertEqual(d1.meta[split_serving_state_key("NVDA")]["state"], SERVING_READY)
+            self.assertNotIn(split_recovery_key("NVDA"), d1.meta)
+
+    def test_recovery_rebuilds_queue_after_block_write_window(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            seed_weekly_row(d1)
+            d1.meta_write_fail_keys.add(split_recovery_key("NVDA"))
+            discovery_provider = FakeProvider(
+                splits_payloads={"NVDA": splits_payload("NVDA")},
+            )
+
+            first = make_runner(d1, discovery_provider, tmp).reconcile_splits(
+                symbols_filter=["NVDA"],
+            )
+
+            self.assertEqual(first["status"], "partial")
+            self.assertEqual(d1.meta[split_serving_state_key("NVDA")]["state"], SERVING_BLOCKED)
+            self.assertNotIn(split_recovery_key("NVDA"), d1.meta)
+            self.assertEqual(discovery_provider.splits_calls, ["NVDA"])
+
+            d1.meta_write_fail_keys.clear()
+            recovery_provider = FakeProvider(
+                splits_payloads={"NVDA": splits_payload("NVDA")},
+            )
+            second = make_runner(d1, recovery_provider, tmp).recover_split_mismatches()
+
+            self.assertEqual(second["recovered"], 1)
+            self.assertEqual(recovery_provider.splits_calls, ["NVDA"])
+            self.assertEqual(d1.meta[split_serving_state_key("NVDA")]["state"], SERVING_READY)
+            self.assertNotIn(split_recovery_key("NVDA"), d1.meta)
+
     def test_only_pending_symbol_is_queried_and_other_symbols_continue(self):
         with tempfile.TemporaryDirectory() as tmp:
             d1 = FakeD1()

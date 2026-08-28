@@ -10,7 +10,8 @@
 #   1) snapshot timer enablement/activity and destination files
 #   2) quiesce active timers and verify services remain idle
 #   3) install helper + units, then daemon-reload
-#   4) restore each timer's prior enablement/activity exactly
+#   4) restore each timer's prior enablement/activity exactly; activate the
+#      newly introduced split-recovery timer on a fresh install
 # Any failure after quiescing rolls back destination files and timer state.
 set -euo pipefail
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
@@ -100,10 +101,24 @@ timers_snapshotted=0
 deployment_started=0
 
 restore_timer_states() {
-  local timer desired_enablement desired_active
+  local activate_fresh_recovery=${1:-0}
+  local timer desired_enablement desired_active prior_enablement
   for timer in "${TIMERS[@]}"; do
-    desired_enablement=${timer_enablement[$timer]:-not-found}
+    prior_enablement=${timer_enablement[$timer]:-not-found}
+    desired_enablement=$prior_enablement
     desired_active=${timer_was_active[$timer]:-0}
+
+    # The split-recovery timer is introduced by this installer.  A routine
+    # upgrade preserves the existing state, but a fresh/not-found timer must
+    # become active immediately or blocked symbols would wait for a manual
+    # systemctl enable/start operation.  Rollback calls this function without
+    # the flag, so a failed install still leaves the new unit disabled.
+    if [[ "$activate_fresh_recovery" -eq 1 \
+          && "$timer" == "history-ingestor-split-recovery.timer" \
+          && "$prior_enablement" == "not-found" ]]; then
+      desired_enablement=enabled
+      desired_active=1
+    fi
 
     case "$desired_enablement" in
       enabled)
@@ -254,11 +269,17 @@ echo "==> 4) daemon-reload"
 systemctl daemon-reload
 
 echo "==> 5) restore prior timer enablement + activity"
-restore_timer_states
+restore_timer_states 1
 
 # Verify exact state restoration before committing the deployment.
 for timer in "${TIMERS[@]}"; do
   desired_enablement=${timer_enablement[$timer]}
+  desired_active=${timer_was_active[$timer]}
+  if [[ "$timer" == "history-ingestor-split-recovery.timer" \
+        && "$desired_enablement" == "not-found" ]]; then
+    desired_enablement=enabled
+    desired_active=1
+  fi
   actual_enablement=$(systemctl is-enabled "$timer" 2>/dev/null || true)
   case "$desired_enablement" in
     not-found|"") desired_enablement=disabled ;;
@@ -266,7 +287,7 @@ for timer in "${TIMERS[@]}"; do
   [[ "$actual_enablement" == "$desired_enablement" ]] || \
     die "$timer enablement restore mismatch: wanted=$desired_enablement actual=$actual_enablement"
 
-  if [[ "${timer_was_active[$timer]}" -eq 1 ]]; then
+  if [[ "$desired_active" -eq 1 ]]; then
     systemctl is-active --quiet "$timer" || die "$timer should be active after restore"
   else
     if systemctl is-active --quiet "$timer" 2>/dev/null; then

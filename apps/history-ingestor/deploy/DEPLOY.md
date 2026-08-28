@@ -56,7 +56,9 @@ After installing the helper and eleven systemd unit files, it runs
 - previously enabled + active → enabled + active again;
 - previously enabled + inactive → enabled + inactive;
 - previously disabled → remains disabled;
-- fresh/not-found timer → installed but remains disabled + inactive;
+- fresh/not-found existing timer → installed but remains disabled + inactive;
+- fresh/not-found `history-ingestor-split-recovery.timer` → enabled + active so
+  durable blocked-symbol recovery starts automatically;
 - masked timer → installer fails closed instead of silently unmasking it.
 
 If anything fails after quiescing (install, `daemon-reload`, enable/start, or
@@ -65,7 +67,8 @@ runs `daemon-reload`, and best-effort restores the saved timer states. The
 systemd verification log is created inside the installer's private `mktemp -d`
 directory; no predictable `/tmp` file is used.
 
-For a **fresh installation**, activate the desired timers explicitly after
+For a **fresh installation**, the installer activates the split-recovery timer
+automatically; review and activate any other desired timers explicitly after
 reviewing their schedules. Routine upgrades preserve the existing operational
 state.
 
