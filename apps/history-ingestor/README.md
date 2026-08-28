@@ -18,6 +18,11 @@ Finnhub latest quote + D1 SMA basis ─────────┴──► Work
 - A valid SMA remains visible even if the VPS or provider is temporarily down.
 - Provider quota is spent on WEEKLY history before any secondary work.
 - Split discovery is independent from weekly maintenance.
+- Split serving state is per-symbol and fail-closed: only `READY` is served;
+  a possible scale mismatch is `BLOCKED` until history and metrics are verified.
+- Unexpected mismatches enqueue one durable per-symbol recovery request; an
+  empty queue makes zero SPLITS requests and a non-empty queue is retried
+  automatically with the shared Alpha Vantage budget.
 - Bootstrap is one-shot and disables itself when initial loading is complete.
 - D1 is the durable serving source; the frontend does not depend on VPS uptime.
 
@@ -33,6 +38,12 @@ newest in-progress week is excluded before persistence.
 
 `SPLITS?symbol=X` returns split events. Weekly history is split-adjusted only;
 dividends are never applied.
+
+The history ingestor keeps the provider event set in `split_events` and derives
+each row's cumulative factor from events effective on that row's side of the
+split. It persists raw OHLCV unchanged, then persists
+`split_adjustment_factor` and `split_adjusted_close`; the Worker divides every
+raw OHLC field by that factor when building candles.
 
 ## Stored data
 
@@ -159,17 +170,15 @@ python3 -m history_ingestor reconcile-splits --dry-run
 
 Production schedule:
 
-- first Tuesday of each month, 09:00 UTC;
-- third Tuesday of each month, 09:00 UTC;
+- every Sunday at 09:00 UTC;
 - `Persistent=false`;
 - explicit maximum 50 provider HTTP requests per invocation;
 - still constrained by the shared 25/key daily ledger.
 
-Tuesday is intentional. Monday can legitimately consume essentially all 50
-requests refreshing WEEKLY history. Tuesday maintenance runs first and gets any
-carry-over quota it needs; split reconciliation receives only the residual
-budget. Its independent durable checkpoint resumes unfinished work at the next
-scan rather than restarting from the beginning.
+Sunday is intentional: it discovers future-dated Monday splits without
+competing with Monday's weekly refresh. Its independent durable checkpoint
+resumes unfinished work at the next Sunday scan rather than restarting from the
+beginning.
 
 Filtered manual `--symbols` runs restrict processing only; they do not erase
 unrelated reconciliation progress.
@@ -181,7 +190,32 @@ python3 -m history_ingestor apply-due-splits
 ```
 
 This reads already-known future-dated split events from D1 and applies them when
-they become effective. It makes zero provider calls and is safe to run Tue-Sat.
+they become effective. It makes zero provider calls and runs Monday through
+Saturday before the weekly maintenance window. A Monday-effective split is
+therefore applied before the new weekly row is served.
+
+## Automatic split recovery
+
+The Stock Detail Worker never calls a provider. If it sees durable evidence of
+a quote/history scale transition with no matching split event, it atomically
+persists `BLOCKED` plus one `historySplitRecovery:<SYMBOL>` request in D1. The
+hourly `recover-split-mismatches` job reads that queue before constructing any
+provider work:
+
+- empty queue → zero Alpha Vantage requests;
+- queued symbols → SPLITS requests only for those symbols, bounded to two per
+  run by default and subject to the shared per-key ledger, throttle and flock;
+- provider still has no new event → remain `BLOCKED`, move the request to a
+  one-hour retry;
+- changed events → `BLOCKED`, durable split-event update, full raw-history
+  rewrite, metrics recompute, verification, then durable `READY` and queue
+  removal.
+
+`READY` and `BLOCKED` are serving state. Queue/checkpoint values such as
+`pending`, `running`, `retry` and `done` are workflow state and never make a
+symbol serve data by themselves. A normal unchanged SPLITS check, weekly
+append/correction, or provider error preserves the last-known-good serving
+state.
 
 ## Production systemd cadence
 
@@ -189,20 +223,24 @@ All times UTC:
 
 | Priority | Timer | Cadence | Provider work |
 |---|---|---|---|
-| 1 | `history-ingestor-maintenance.timer` | daily 07:00 | effectively weekly; catch-up only after Monday |
-| 2 | `history-ingestor-bootstrap.timer` | daily 08:00 while incomplete | max 6 HTTP/day; auto-disables at terminal 50/50 |
-| 3 | `history-ingestor-reconcile-split.timer` | first + third Tuesday 09:00 | max 50/run, residual shared quota only |
-| 4 | `history-ingestor-due-split.timer` | Tue-Sat 13:10 | zero-provider |
+| 1 | `history-ingestor-due-split.timer` | Mon-Sat 06:00 | zero-provider; before maintenance |
+| 2 | `history-ingestor-maintenance.timer` | daily 07:00 | effectively weekly; catch-up only after Monday |
+| 3 | `history-ingestor-bootstrap.timer` | daily 08:00 while incomplete | max 6 HTTP/day; auto-disables at terminal 50/50 |
+| 4 | `history-ingestor-reconcile-split.timer` | Sunday 09:00 | max 50/run, shared quota |
+| 5 | `history-ingestor-split-recovery.timer` | hourly; Monday resumes 07:30 | max 2 queued symbols/run, shared quota |
 
 Operational priority is therefore:
 
 ```text
-maintenance > temporary bootstrap > split reconciliation > due-split
+Monday due-split > Monday maintenance > bootstrap > Sunday split discovery
+> hourly recovery (Monday recovery resumes after maintenance)
 ```
 
 All provider-consuming paths share the same per-key daily ledger and the same
-process lock. Reconciliation is non-persistent so a missed scan cannot catch up
-at boot ahead of a due maintenance run.
+process lock. Recovery is persistent only as a D1 queue item, not as a missed
+timer catch-up (`Persistent=false`): it makes no call when the queue is empty
+and retries pending symbols on the next hourly window. Due-split remains
+zero-provider.
 
 ## Secrets and production paths
 

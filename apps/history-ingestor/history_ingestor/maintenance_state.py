@@ -49,6 +49,28 @@ D1_META_KEY = "historyMaintenanceState"
 RECONCILE_D1_META_KEY = "historyReconcileSplitState"
 RECONCILE_STATUS_META_PREFIX = "historyReconcileSplitStatus:"
 
+# Serving state is deliberately separate from workflow checkpoints.  The
+# former is authoritative for the read model; the latter only says what a job
+# has attempted and whether it should retry.
+SPLIT_SERVING_STATE_META_PREFIX = "historySplitServingState:"
+SPLIT_RECOVERY_META_PREFIX = "historySplitRecovery:"
+SERVING_READY = "READY"
+SERVING_BLOCKED = "BLOCKED"
+RECOVERY_PENDING = "pending"
+RECOVERY_RUNNING = "running"
+RECOVERY_RETRY = "retry"
+RECOVERY_DONE = "done"
+
+
+def split_serving_state_key(symbol: str) -> str:
+    """Return the durable per-symbol serving-state app_meta key."""
+    return f"{SPLIT_SERVING_STATE_META_PREFIX}{symbol}"
+
+
+def split_recovery_key(symbol: str) -> str:
+    """Return the durable per-symbol recovery-request app_meta key."""
+    return f"{SPLIT_RECOVERY_META_PREFIX}{symbol}"
+
 
 def _utc_now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()) + "Z"
@@ -287,9 +309,22 @@ class ReconcileStore:
         """Queue marker rows for legacy durable ``done`` statuses.
 
         This preserves serving availability on rollout before a new pass resets
-        its progress checkpoint. Rewriting an identical marker is idempotent.
+        its progress checkpoint. Only a genuinely absent per-symbol marker is
+        backfilled; a present pending/error/malformed marker is newer evidence
+        and must never be overwritten by the legacy global document.
         """
-        verified = [symbol for symbol, status in self._state.splits.items() if status == STATUS_DONE]
+        verified = []
+        for symbol, status in self._state.splits.items():
+            if status != STATUS_DONE:
+                continue
+            try:
+                marker = self._d1.read_app_meta(f"{RECONCILE_STATUS_META_PREFIX}{symbol}")
+            except Exception:
+                # An unreadable marker is fail-closed; the next pass can retry
+                # the rollout bridge without replacing unknown state.
+                continue
+            if marker is None:
+                verified.append(symbol)
         self._state._dirty_symbols.update(verified)
         return bool(verified)
 

@@ -282,6 +282,7 @@ class D1Client:
         return result
 
     def write_app_meta(self, key: str, value: dict) -> bool:
+        """Upsert one JSON app_meta value and report whether it was durable."""
         result = self._run_object(
             APP_META_UPSERT_SQL,
             [key, json.dumps(value, sort_keys=True)],
@@ -292,9 +293,22 @@ class D1Client:
             return False
         return True
 
+    def delete_app_meta(self, key: str) -> bool:
+        """Delete one app_meta key idempotently and report write success."""
+        result = self._run_object(
+            "DELETE FROM app_meta WHERE key = ?",
+            [key],
+            [f"__meta__{key}"],
+        )
+        if result.failed:
+            self.error_count += 1
+            return False
+        return True
+
     # ----------------------------------------------------------------- reads
 
     def read_app_meta(self, key: str) -> dict | None:
+        """Read and strictly decode one JSON app_meta value."""
         status, payload = self._post({
             "sql": "SELECT value FROM app_meta WHERE key = ? LIMIT 1",
             "params": [key],
@@ -308,7 +322,45 @@ class D1Client:
             parsed = json.loads(rows[0]["value"])
         except (KeyError, TypeError, json.JSONDecodeError) as exc:
             raise D1QueryError(f"app_meta {key} is not valid JSON") from exc
-        return parsed if isinstance(parsed, dict) else None
+        if not isinstance(parsed, dict):
+            raise D1QueryError(f"app_meta {key} must contain a JSON object")
+        return parsed
+
+    def read_app_meta_prefix(self, prefix: str) -> list[tuple[str, dict]]:
+        """Read JSON app_meta rows under ``prefix`` for durable work queues.
+
+        Malformed values are represented as a pending record for the symbol
+        encoded in its key.  The recovery consumer can therefore repair a
+        corrupt queue entry automatically, while still refusing keys outside
+        the canonical universe.  They are never interpreted as provider data.
+        """
+        status, payload = self._post({
+            "sql": "SELECT key, value FROM app_meta WHERE key LIKE ? ORDER BY key",
+            "params": [f"{prefix}%"],
+        })
+        if status != 200 or not payload.get("success"):
+            raise D1QueryError(f"read failed HTTP {status}")
+        rows = (payload.get("result") or [{}])[0].get("results", [])
+        decoded: list[tuple[str, dict]] = []
+        for row in rows:
+            key = row.get("key") if isinstance(row, dict) else None
+            raw = row.get("value") if isinstance(row, dict) else None
+            if not isinstance(key, str) or not isinstance(raw, str):
+                continue
+            try:
+                value = json.loads(raw)
+            except json.JSONDecodeError:
+                value = None
+            if not isinstance(value, dict):
+                value = {
+                    "version": 1,
+                    "symbol": key.removeprefix(prefix),
+                    "status": "pending",
+                    "reason": "invalid_recovery_state",
+                    "attempts": 0,
+                }
+            decoded.append((key, value))
+        return decoded
 
     def read_weekly_summary(self, symbol: str | None = None) -> dict:
         """Read-only coverage query for validation/status (never hot path)."""

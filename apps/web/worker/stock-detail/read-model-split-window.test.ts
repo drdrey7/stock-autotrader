@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { servedSplitScaleState } from "./read-model";
+import {
+  hasUnexplainedHistoricalScaleTransition,
+  servedSplitScaleState,
+} from "./read-model";
 import type { StockDetailSplitEventRow, WeeklyPriceRow } from "./storage";
 
 function weeklyRow(overrides: Partial<WeeklyPriceRow> = {}): WeeklyPriceRow {
@@ -36,10 +39,89 @@ const postSplitQuote = {
 
 const postSplitMetricAt = "2026-08-21T12:30:00.000Z";
 
+function mixedScaleHistory(): WeeklyPriceRow[] {
+  return [
+    weeklyRow({
+      week_end_date: "2024-06-28",
+      raw_open: 119,
+      raw_high: 122,
+      raw_low: 118,
+      raw_close: 120,
+      split_adjusted_close: 120,
+    }),
+    weeklyRow({
+      week_end_date: "2024-06-21",
+      raw_open: 117,
+      raw_high: 121,
+      raw_low: 115,
+      raw_close: 118,
+      split_adjusted_close: 118,
+    }),
+    weeklyRow({
+      week_end_date: "2024-06-14",
+      raw_open: 1170,
+      raw_high: 1210,
+      raw_low: 1150,
+      raw_close: 1180,
+      split_adjusted_close: 1180,
+    }),
+    weeklyRow({
+      week_end_date: "2024-06-07",
+      raw_open: 1190,
+      raw_high: 1220,
+      raw_low: 1180,
+      raw_close: 1200,
+      split_adjusted_close: 1200,
+    }),
+  ];
+}
+
+describe("legacy mixed-scale detection", () => {
+  it("finds a persisted OHLC scale transition without split events or quote data", () => {
+    expect(hasUnexplainedHistoricalScaleTransition(mixedScaleHistory())).toBe(true);
+  });
+
+  it("does not classify an ordinary 50% move with inconsistent OHLC ratios as a split", () => {
+    const rows = [
+      weeklyRow({
+        week_end_date: "2024-06-28",
+        raw_open: 50,
+        raw_high: 60,
+        raw_low: 45,
+        raw_close: 55,
+        split_adjusted_close: 55,
+      }),
+      weeklyRow({
+        week_end_date: "2024-06-21",
+        raw_open: 100,
+        raw_high: 110,
+        raw_low: 90,
+        raw_close: 105,
+        split_adjusted_close: 105,
+      }),
+      weeklyRow({
+        week_end_date: "2024-06-14",
+        raw_open: 102,
+        raw_high: 112,
+        raw_low: 92,
+        raw_close: 107,
+        split_adjusted_close: 107,
+      }),
+    ];
+    expect(hasUnexplainedHistoricalScaleTransition(rows)).toBe(false);
+  });
+
+  it("does not use a non-consecutive bucket as the scale witness", () => {
+    const rows = mixedScaleHistory();
+    rows[1] = { ...rows[1]!, week_end_date: "2024-06-07" };
+    expect(hasUnexplainedHistoricalScaleTransition(rows)).toBe(false);
+  });
+});
+
 describe("servedSplitScaleState with a split older than the loaded window", () => {
   it("accepts a fully reconciled post-split history window without a pre-split witness", () => {
     const rows = [
-      weeklyRow({ week_end_date: "2021-01-08", raw_close: 120, split_adjusted_close: 120 }),
+      weeklyRow({ week_end_date: "2021-01-08", raw_high: 130, raw_close: 120, split_adjusted_close: 120 }),
       weeklyRow({ week_end_date: "2020-01-03" }),
     ];
 

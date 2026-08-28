@@ -35,6 +35,8 @@ UNITS=(
   history-ingestor-reconcile-split.timer
   history-ingestor-due-split.service
   history-ingestor-due-split.timer
+  history-ingestor-split-recovery.service
+  history-ingestor-split-recovery.timer
 )
 SERVICES=(
   history-ingestor-bootstrap.service
@@ -42,12 +44,14 @@ SERVICES=(
   history-ingestor-maintenance.service
   history-ingestor-reconcile-split.service
   history-ingestor-due-split.service
+  history-ingestor-split-recovery.service
 )
 TIMERS=(
   history-ingestor-bootstrap.timer
   history-ingestor-maintenance.timer
   history-ingestor-reconcile-split.timer
   history-ingestor-due-split.timer
+  history-ingestor-split-recovery.timer
 )
 
 die() { echo "ERROR: $*" >&2; exit 1; }

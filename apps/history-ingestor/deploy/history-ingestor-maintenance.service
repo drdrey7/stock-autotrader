@@ -9,7 +9,7 @@
 Description=Stock Autotrader weekly history maintenance (Alpha Vantage, priority over bootstrap)
 After=network-online.target
 Wants=network-online.target
-Before=history-ingestor-bootstrap.service history-ingestor-reconcile-split.service history-ingestor-due-split.service
+Before=history-ingestor-bootstrap.service history-ingestor-reconcile-split.service
 
 [Service]
 Type=oneshot

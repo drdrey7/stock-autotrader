@@ -1,0 +1,39 @@
+# Hourly queued recovery.  Monday 06:30 is intentionally omitted so the
+# weekly 07:00 maintenance has quota priority; the 07:30 run is safe after the
+# maintenance window.  Other hours remain hourly, with a small jitter.
+[Unit]
+Description=Stock Autotrader queued split-scale recovery (hourly)
+
+[Timer]
+OnCalendar=*-*-* 00:30:00 UTC
+OnCalendar=*-*-* 01:30:00 UTC
+OnCalendar=*-*-* 02:30:00 UTC
+OnCalendar=*-*-* 03:30:00 UTC
+OnCalendar=*-*-* 04:30:00 UTC
+OnCalendar=*-*-* 05:30:00 UTC
+OnCalendar=Tue..Sun *-*-* 06:30:00 UTC
+OnCalendar=*-*-* 07:30:00 UTC
+OnCalendar=*-*-* 08:30:00 UTC
+OnCalendar=*-*-* 09:30:00 UTC
+OnCalendar=*-*-* 10:30:00 UTC
+OnCalendar=*-*-* 11:30:00 UTC
+OnCalendar=*-*-* 12:30:00 UTC
+OnCalendar=*-*-* 13:30:00 UTC
+OnCalendar=*-*-* 14:30:00 UTC
+OnCalendar=*-*-* 15:30:00 UTC
+OnCalendar=*-*-* 16:30:00 UTC
+OnCalendar=*-*-* 17:30:00 UTC
+OnCalendar=*-*-* 18:30:00 UTC
+OnCalendar=*-*-* 19:30:00 UTC
+OnCalendar=*-*-* 20:30:00 UTC
+OnCalendar=*-*-* 21:30:00 UTC
+OnCalendar=*-*-* 22:30:00 UTC
+OnCalendar=*-*-* 23:30:00 UTC
+RandomizedDelaySec=5m
+# The request itself is durable in D1. Do not replay a missed 06:30 event
+# immediately on boot into Monday's maintenance window; the next scheduled
+# slot will retry it after the priority jobs have had their window.
+Persistent=false
+
+[Install]
+WantedBy=timers.target

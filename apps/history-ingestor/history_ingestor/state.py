@@ -132,9 +132,18 @@ class KeyBudgetLedger:
             return
         self._store.mark_key_used(index, debit)
         self._run_used += debit
+        # Maintenance and split recovery share this ledger with bootstrap but
+        # can crash immediately after a provider response. Persist the debit
+        # at the provider boundary so a restart cannot spend the same quota a
+        # second time. A failed checkpoint is fatal to the current operation;
+        # continuing would make the external quota and durable state diverge.
+        if not self._store.save():
+            raise RuntimeError("shared provider quota ledger persistence failed")
 
     def mark_exhausted(self, index: int) -> None:
         self._store.mark_key_exhausted(index)
+        if not self._store.save():
+            raise RuntimeError("shared provider quota ledger persistence failed")
 
 
 class BootstrapBudgetLedger:
@@ -177,12 +186,16 @@ class BootstrapBudgetLedger:
         self._store.mark_bootstrap_http_used(debit)
         self._run_used += debit
         # Persist immediately after EACH real HTTP debit. A crash/restart can
-        # never forget provider quota already spent by bootstrap.
-        self._store.save()
+        # never forget provider quota already spent by bootstrap. A failed
+        # checkpoint is fatal: continuing would let a later process spend the
+        # same external quota against an older durable counter.
+        if not self._store.save():
+            raise RuntimeError("bootstrap provider quota ledger persistence failed")
 
     def mark_exhausted(self, index: int) -> None:
         self._store.mark_key_exhausted(index)
-        self._store.save()
+        if not self._store.save():
+            raise RuntimeError("bootstrap provider quota ledger persistence failed")
 
 
 class StateStore:

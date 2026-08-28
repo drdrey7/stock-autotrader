@@ -68,11 +68,20 @@ class FakeD1:
         self.metrics: dict[str, dict] = {}
         self.meta: dict[str, dict] = {}
         self.split_events: dict[str, list] = {}
+        self.operations: list[tuple[str, str]] = []
         self.written_rows = 0
+        self.weekly_write_fail = False
         self.split_write_fail = False
+        self.split_delete_fail = False
         self.metrics_write_fail = False
+        self.meta_write_fail_keys: set[str] = set()
+        self.serving_state_write_fail_states: set[str] = set()
+        self.delete_meta_fail = False
 
     def upsert_weekly_rows(self, rows):
+        self.operations.append(("weekly", rows[0][0]))
+        if self.weekly_write_fail:
+            return type("R", (), {"written": [], "failed": [r[0] for r in rows], "error": "D1 weekly write failed"})()
         self.written_rows += len(rows)
         for row in rows:
             # Real D1 semantics: UPSERT keyed by (symbol, week_end_date).
@@ -82,12 +91,14 @@ class FakeD1:
         return type("R", (), {"written": [r[0] for r in rows], "failed": [], "error": None})()
 
     def upsert_technical_metrics(self, metrics):
+        self.operations.append(("metrics", metrics["symbol"]))
         if self.metrics_write_fail:
             return type("R", (), {"written": [], "failed": [metrics["symbol"]], "error": "D1 metrics write failed"})()
         self.metrics[metrics["symbol"]] = metrics
         return type("R", (), {"written": [metrics["symbol"]], "failed": [], "error": None})()
 
     def upsert_split_events(self, rows):
+        self.operations.append(("split_events", rows[0][0] if rows else ""))
         if self.split_write_fail:
             return type("R", (), {"written": [], "failed": [r[0] for r in rows], "error": "D1 split write failed"})()
         for row in rows:
@@ -102,6 +113,9 @@ class FakeD1:
         return type("R", (), {"written": [r[0] for r in rows], "failed": [], "error": None})()
 
     def delete_extra_split_events(self, symbol, keep_dates):
+        self.operations.append(("split_events_delete", symbol))
+        if self.split_delete_fail:
+            return type("R", (), {"written": [], "failed": [symbol], "error": "D1 split delete failed"})()
         bucket = self.split_events.setdefault(symbol, [])
         keep = set(keep_dates)
         self.split_events[symbol] = [e for e in bucket if e["effective_date"] in keep]
@@ -125,11 +139,29 @@ class FakeD1:
         } for r in self.weekly.get(symbol, [])]
 
     def write_app_meta(self, key, value):
+        self.operations.append(("meta", key))
+        state = value.get("state") if isinstance(value, dict) else None
+        if (
+            self.delete_meta_fail
+            or key in self.meta_write_fail_keys
+            or (key.startswith("historySplitServingState:") and state in self.serving_state_write_fail_states)
+        ):
+            return False
         self.meta[key] = value
+        return True
+
+    def delete_app_meta(self, key):
+        self.operations.append(("meta_delete", key))
+        if self.delete_meta_fail:
+            return False
+        self.meta.pop(key, None)
         return True
 
     def read_app_meta(self, key):
         return self.meta.get(key)
+
+    def read_app_meta_prefix(self, prefix):
+        return [(key, value) for key, value in sorted(self.meta.items()) if key.startswith(prefix)]
 
 
 class FakeProvider:
@@ -254,6 +286,8 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual(store.symbol_status("NVDA", "splits"), "done")
             self.assertEqual(store.symbol_status("NVDA", "weekly"), "done")
             self.assertEqual(d1.meta["historyReconcileSplitStatus:NVDA"]["status"], "done")
+            self.assertEqual(d1.meta["historySplitServingState:NVDA"]["state"], "READY")
+            self.assertNotIn("historySplitRecovery:NVDA", d1.meta)
 
     def test_resume_skips_done_symbols_no_duplicate_downloads(self):
         with tempfile.TemporaryDirectory() as tmp:

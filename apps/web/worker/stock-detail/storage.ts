@@ -59,6 +59,10 @@ const SPLIT_RECONCILIATION_META_PREFIX = "historyReconcileSplitStatus:";
 /** Legacy checkpoint retained only as a rollout fallback for already-verified symbols. */
 const LEGACY_SPLIT_RECONCILIATION_META_KEY = "historyReconcileSplitState";
 const BOOTSTRAP_META_KEY = "historyBootstrapState";
+export const SPLIT_SERVING_STATE_META_PREFIX = "historySplitServingState:";
+export const SPLIT_RECOVERY_META_PREFIX = "historySplitRecovery:";
+const SPLIT_SERVING_STATE_UPSERT_SQL = `INSERT INTO app_meta (key, value) VALUES (?, ?)
+  ON CONFLICT(key) DO UPDATE SET value = excluded.value`;
 const FUNDAMENTALS_SQL = `SELECT symbol, market_cap, pe_ttm, eps_ttm, fcf_per_share_ttm,
   revenue_per_share_ttm, book_value_per_share,
   revenue_growth_ttm_yoy_pct, revenue_growth_3y_pct, revenue_growth_5y_pct, roe_ttm_pct,
@@ -100,6 +104,18 @@ export interface WeeklyPriceRow {
 export interface StockDetailSplitEventRow {
   effective_date: string;
   split_factor: number;
+}
+
+export interface StockDetailServingState {
+  state: "READY" | "BLOCKED";
+  reason: string;
+}
+
+export type SplitHistoryVerificationState = "verified" | "pending" | "error" | "unknown";
+export type SplitRecoveryWorkflowState = "pending" | "running" | "retry" | "invalid";
+
+export interface StockDetailSplitRecoveryState {
+  status: SplitRecoveryWorkflowState;
 }
 
 export interface StockFundamentalsSnapshotRow {
@@ -167,6 +183,12 @@ export interface StockDetailStorageSnapshot {
   splitEvents: StockDetailSplitEventRow[];
   /** True only after the durable SPLITS reconciliation pass verified this symbol. */
   splitHistoryVerified?: boolean;
+  /** Explicit legacy-marker status; pending/error must fail closed during rollout. */
+  splitHistoryStatus?: SplitHistoryVerificationState;
+  /** Authoritative post-rollout serving state, when published. */
+  servingState?: StockDetailServingState;
+  /** Durable recovery workflow row, used to avoid duplicate Worker enqueues. */
+  recoveryState?: StockDetailSplitRecoveryState;
   fundamentals: StockFundamentalsSnapshotRow | null;
 }
 
@@ -193,9 +215,13 @@ function parseLatestQuote(row: LatestQuoteRow | null): LatestQuoteRow | null {
     || typeof row.provider !== "string" || !row.provider.trim()
     || !Number.isFinite(Date.parse(row.provider_timestamp))
     || !Number.isFinite(Date.parse(row.updated_at))
-    || (row.quote_session_date !== null && typeof row.quote_session_date !== "string")
-    || (row.previous_close_session_date !== null && typeof row.previous_close_session_date !== "string")
-    || !isFiniteNumber(row.daily_change_valid)
+    || (row.quote_session_date !== undefined
+      && row.quote_session_date !== null
+      && typeof row.quote_session_date !== "string")
+    || (row.previous_close_session_date !== undefined
+      && row.previous_close_session_date !== null
+      && typeof row.previous_close_session_date !== "string")
+    || (row.daily_change_valid !== undefined && !isFiniteNumber(row.daily_change_valid))
   ) return null;
   return row;
 }
@@ -258,16 +284,28 @@ function parseFundamentals(row: unknown): StockFundamentalsSnapshotRow | null {
 }
 
 /** Parse the per-symbol durable reconciliation marker from app_meta. */
-function parseSplitHistoryVerification(row: unknown, symbol: string): boolean | undefined {
+function parseSplitHistoryStatus(row: unknown, symbol: string): SplitHistoryVerificationState | undefined {
   if (!row || typeof row !== "object") return undefined;
   const value = (row as { value?: unknown }).value;
-  if (typeof value !== "string") return false;
+  if (typeof value !== "string") return "error";
   try {
-    const payload = JSON.parse(value) as { symbol?: unknown; status?: unknown };
-    return payload.symbol === symbol && payload.status === "done";
+    const payload = JSON.parse(value) as { version?: unknown; symbol?: unknown; status?: unknown };
+    if (payload.version !== 1 || payload.symbol !== symbol) return "error";
+    if (payload.status === "done") return "verified";
+    if (payload.status === "pending") return "pending";
+    if (payload.status === "error") return "error";
+    return "error";
   } catch {
-    return false;
+    return "error";
   }
+}
+
+function parseSplitHistoryVerification(
+  row: unknown,
+  symbol: string,
+): boolean | undefined {
+  const status = parseSplitHistoryStatus(row, symbol);
+  return status === undefined ? undefined : status === "verified";
 }
 
 /** Read the pre-marker checkpoint during rollout; new marker rows always take precedence. */
@@ -297,6 +335,47 @@ function parseBootstrapSplitHistoryVerified(row: unknown, symbol: string): boole
   }
 }
 
+/** Parse the authoritative per-symbol serving state; invalid present state blocks. */
+function parseServingState(row: unknown, symbol: string): StockDetailServingState | undefined {
+  if (!row || typeof row !== "object") return undefined;
+  const raw = (row as { value?: unknown }).value;
+  if (typeof raw !== "string") return { state: "BLOCKED", reason: "invalid_serving_state" };
+  try {
+    const payload = JSON.parse(raw) as { version?: unknown; symbol?: unknown; state?: unknown; reason?: unknown };
+    if (
+      payload.version === 1
+      && payload.symbol === symbol
+      && (payload.state === "READY" || payload.state === "BLOCKED")
+      && typeof payload.reason === "string"
+    ) {
+      return { state: payload.state, reason: payload.reason };
+    }
+  } catch {
+    // A present malformed state is a safety block, not a legacy absence.
+  }
+  return { state: "BLOCKED", reason: "invalid_serving_state" };
+}
+
+/** Parse the per-symbol recovery row; malformed present work remains visible as invalid. */
+function parseRecoveryState(row: unknown, symbol: string): StockDetailSplitRecoveryState | undefined {
+  if (!row || typeof row !== "object") return undefined;
+  const raw = (row as { value?: unknown }).value;
+  if (typeof raw !== "string") return { status: "invalid" };
+  try {
+    const payload = JSON.parse(raw) as { symbol?: unknown; status?: unknown };
+    if (
+      payload.symbol === symbol
+      && (payload.status === "pending" || payload.status === "running" || payload.status === "retry")
+    ) {
+      return { status: payload.status };
+    }
+  } catch {
+    // A present malformed row is not executable work, but it must not hide a
+    // mismatch from the enqueue repair path.
+  }
+  return { status: "invalid" };
+}
+
 /** Canonical Stock Detail D1 snapshot. Providers never run in this request path. */
 export async function readStockDetailStorageSnapshot(
   db: D1Database,
@@ -315,12 +394,17 @@ export async function readStockDetailStorageSnapshot(
     db.prepare(SPLIT_EVENTS_SQL).bind(symbol),
     db.prepare(SPLIT_RECONCILIATION_SQL).bind(`${SPLIT_RECONCILIATION_META_PREFIX}${symbol}`),
     db.prepare(FUNDAMENTALS_SQL).bind(symbol),
+    db.prepare(SPLIT_RECONCILIATION_SQL).bind(`${SPLIT_SERVING_STATE_META_PREFIX}${symbol}`),
+    db.prepare(SPLIT_RECONCILIATION_SQL).bind(`${SPLIT_RECOVERY_META_PREFIX}${symbol}`),
   ]);
 
   const rows = results.map((result) => (result.results ?? []) as unknown[]);
   const company = parseCompany(firstRow<StockDetailCompanyRow>(rows[0]));
   if (!company) throw new Error("stock_not_found");
   const markerVerification = parseSplitHistoryVerification(firstRow(rows[7]), symbol);
+  const markerStatus = parseSplitHistoryStatus(firstRow(rows[7]), symbol);
+  const servingState = parseServingState(firstRow(rows[9]), symbol);
+  const recoveryState = parseRecoveryState(firstRow(rows[10]), symbol);
   // Normal requests use only the compact per-symbol row. The legacy document is
   // consulted solely for already-verified symbols that predate marker rollout.
   const legacyVerification = markerVerification === undefined
@@ -330,11 +414,14 @@ export async function readStockDetailStorageSnapshot(
     )
     : false;
   let splitHistoryVerified = markerVerification ?? legacyVerification;
+  let splitHistoryStatus: SplitHistoryVerificationState = markerStatus
+    ?? (legacyVerification ? "verified" : "unknown");
   if (markerVerification === undefined && !legacyVerification) {
     splitHistoryVerified = parseBootstrapSplitHistoryVerified(
       await db.prepare(SPLIT_RECONCILIATION_SQL).bind(BOOTSTRAP_META_KEY).first(),
       symbol,
     );
+    splitHistoryStatus = splitHistoryVerified ? "verified" : "unknown";
   }
 
   return {
@@ -346,8 +433,45 @@ export async function readStockDetailStorageSnapshot(
     weeklyRows: parseWeeklyRows(rows[5] ?? []),
     splitEvents: parseSplitEvents(rows[6] ?? []),
     splitHistoryVerified,
+    splitHistoryStatus,
+    servingState,
+    recoveryState,
     fundamentals: parseFundamentals(firstRow(rows[8])),
   };
+}
+
+/**
+ * Persist BLOCKED and its one-symbol recovery request atomically from the
+ * Worker read path.  This path never calls a provider; the VPS job owns that.
+ */
+export async function persistSplitScaleMismatch(
+  db: D1Database,
+  symbol: string,
+  reason: string,
+  observedAt: string,
+): Promise<void> {
+  const servingPayload = JSON.stringify({
+    version: 1,
+    symbol,
+    state: "BLOCKED",
+    reason: reason.slice(0, 160),
+    updated_at: observedAt,
+  });
+  const recoveryPayload = JSON.stringify({
+    version: 1,
+    symbol,
+    status: "pending",
+    reason: reason.slice(0, 160),
+    attempts: 0,
+    next_attempt_at: observedAt,
+    updated_at: observedAt,
+  });
+  await db.batch([
+    db.prepare(SPLIT_SERVING_STATE_UPSERT_SQL)
+      .bind(`${SPLIT_SERVING_STATE_META_PREFIX}${symbol}`, servingPayload),
+    db.prepare(SPLIT_SERVING_STATE_UPSERT_SQL)
+      .bind(`${SPLIT_RECOVERY_META_PREFIX}${symbol}`, recoveryPayload),
+  ]);
 }
 
 /** Individual strict reads are retained for focused storage tests/reuse. */

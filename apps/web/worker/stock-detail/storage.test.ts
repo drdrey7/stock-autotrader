@@ -8,6 +8,9 @@ import {
   readStockDetailStorageSnapshot,
   readStockDetailSupports,
   readStockDetailWeeklyHistory,
+  persistSplitScaleMismatch,
+  SPLIT_RECOVERY_META_PREFIX,
+  SPLIT_SERVING_STATE_META_PREFIX,
   STOCK_DETAIL_HISTORY_LIMIT,
 } from "./storage";
 
@@ -136,6 +139,21 @@ describe("Stock Detail symbol-specific storage", () => {
     await expect(readStockDetailQuote(db, "MSFT")).resolves.toBeNull();
   });
 
+  it("accepts a legacy quote row before session metadata migration", async () => {
+    const { db } = createDb({
+      first: {
+        symbol: "MSFT",
+        price: 500,
+        change_abs: 5,
+        change_pct: 1,
+        provider: "finnhub",
+        provider_timestamp: "2026-08-21T15:00:00.000Z",
+        updated_at: "2026-08-21T15:00:00.000Z",
+      },
+    });
+    await expect(readStockDetailQuote(db, "MSFT")).resolves.toMatchObject({ price: 500 });
+  });
+
   it("uses the fundamentals-only company fallback only for preview validation", async () => {
     const { db, calls } = createDb({ first: { symbol: "AMZN", company: "AMZN", logo_url: null } });
     await expect(readStockDetailCompany(db, "AMZN", "preview")).resolves.toMatchObject({ symbol: "AMZN" });
@@ -227,6 +245,77 @@ describe("Stock Detail symbol-specific storage", () => {
     const snapshot = await readStockDetailStorageSnapshot(db, "MSFT");
     expect(snapshot.splitHistoryVerified).toBe(true);
     expect(calls.binds).toContainEqual(["historyBootstrapState"]);
+  });
+
+  it("parses authoritative BLOCKED serving state from the tenth batch result", async () => {
+    const { db } = createBatchDb([
+      [{ symbol: "MSFT", company: "Microsoft Corporation", logo_url: null }],
+      [], [], [], [], [], [], [], [],
+      [{ value: JSON.stringify({
+        version: 1,
+        symbol: "MSFT",
+        state: "BLOCKED",
+        reason: "unexpected_scale_mismatch",
+      }) }],
+    ]);
+    const snapshot = await readStockDetailStorageSnapshot(db, "MSFT");
+    expect(snapshot.servingState).toEqual({
+      state: "BLOCKED",
+      reason: "unexpected_scale_mismatch",
+    });
+  });
+
+  it("parses the durable recovery state from the eleventh batch result", async () => {
+    const { db, calls } = createBatchDb([
+      [{ symbol: "MSFT", company: "Microsoft Corporation", logo_url: null }],
+      [], [], [], [], [], [], [], [], [],
+      [{ value: JSON.stringify({
+        version: 1,
+        symbol: "MSFT",
+        status: "retry",
+      }) }],
+    ]);
+    const snapshot = await readStockDetailStorageSnapshot(db, "MSFT");
+    expect(snapshot.recoveryState).toEqual({ status: "retry" });
+    expect(calls.binds).toContainEqual(["historySplitRecovery:MSFT"]);
+  });
+
+  it("fails closed for a present malformed serving-state value", async () => {
+    const { db } = createBatchDb([
+      [{ symbol: "MSFT", company: "Microsoft Corporation", logo_url: null }],
+      [], [], [], [], [], [], [], [],
+      [{ value: "not-json" }],
+    ]);
+    const snapshot = await readStockDetailStorageSnapshot(db, "MSFT");
+    expect(snapshot.servingState).toEqual({
+      state: "BLOCKED",
+      reason: "invalid_serving_state",
+    });
+  });
+
+  it("fails closed for a legacy split marker without the current version", async () => {
+    const { db } = createBatchDb([
+      [{ symbol: "MSFT", company: "Microsoft Corporation", logo_url: null }],
+      [], [], [], [], [], [],
+      [{ value: JSON.stringify({ symbol: "MSFT", status: "done" }) }],
+      [], [], [],
+    ]);
+    const snapshot = await readStockDetailStorageSnapshot(db, "MSFT");
+    expect(snapshot.splitHistoryVerified).toBe(false);
+    expect(snapshot.splitHistoryStatus).toBe("error");
+  });
+
+  it("persists BLOCKED and one idempotent recovery request in one D1 batch", async () => {
+    const { db, calls } = createBatchDb([]);
+    await persistSplitScaleMismatch(db, "NVDA", "unexpected_scale_mismatch", "2026-08-21T15:00:00.000Z");
+    expect(calls.binds).toContainEqual([
+      `${SPLIT_SERVING_STATE_META_PREFIX}NVDA`,
+      expect.stringContaining('"state":"BLOCKED"'),
+    ]);
+    expect(calls.binds).toContainEqual([
+      `${SPLIT_RECOVERY_META_PREFIX}NVDA`,
+      expect.stringContaining('"status":"pending"'),
+    ]);
   });
 
   it("contains no provider/network request path", () => {

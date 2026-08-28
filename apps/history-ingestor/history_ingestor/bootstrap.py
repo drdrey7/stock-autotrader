@@ -23,7 +23,14 @@ from typing import Any
 
 from .config import Settings
 from .d1 import D1QueryError
-from .maintenance_state import RECONCILE_STATUS_META_PREFIX
+from .maintenance_state import (
+    RECONCILE_STATUS_META_PREFIX,
+    RECOVERY_PENDING,
+    SERVING_BLOCKED,
+    SERVING_READY,
+    split_recovery_key,
+    split_serving_state_key,
+)
 from .parser import SplitEvent, WeeklyBar
 from .provider import (
     AllKeysFailedError,
@@ -34,7 +41,7 @@ from .provider import (
 )
 from .sma import TechnicalMetrics, compute_technical_metrics
 from .splits import adjust_series, split_events_from_rows, split_events_to_rows
-from .state import STATUS_DONE, STATUS_ERROR, StateStore
+from .state import STATUS_DONE, STATUS_ERROR, STATUS_PENDING, StateStore
 from .universe import load_core_universe
 from .weeks import completed_bars_filter, ny_date_of
 
@@ -202,9 +209,14 @@ class BootstrapRunner:
                     # history is persisted — a crash before the write leaves
                     # the status pending so the next run re-does it (idempotent
                     # UPSERT, never duplicate history).
-                    self._persist_splits(symbol, events)
+                    split_set_changed = self._persist_splits(symbol, events)
                     self._splits_cache[symbol] = events
                     self._store.mark_symbol(symbol, "splits", STATUS_DONE)
+                    if split_set_changed and self._store.symbol_status(symbol, "weekly") == STATUS_DONE:
+                        # A partially completed legacy bootstrap may have
+                        # weekly data from a different split set. Re-fetch the
+                        # full weekly series before publishing READY.
+                        self._store.mark_symbol(symbol, "weekly", STATUS_PENDING)
                     splits_fetched += 1
                 except QuotaExhaustedError:
                     self._store.save()
@@ -323,13 +335,63 @@ class BootstrapRunner:
 
     # -------------------------------------------------------------- helpers
 
+    def _operation_now_iso(self) -> str:
+        """Return the injected bootstrap clock as a UTC timestamp."""
+        now = self._now()
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=dt.UTC)
+        return now.astimezone(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def _publish_serving_state(self, symbol: str, state: str, reason: str) -> None:
+        """Persist the authoritative per-symbol serving state."""
+        payload = {
+            "version": 1,
+            "symbol": symbol,
+            "state": state,
+            "reason": reason[:160],
+            "updated_at": self._operation_now_iso(),
+        }
+        try:
+            written = self._d1.write_app_meta(split_serving_state_key(symbol), payload)
+        except Exception as exc:
+            raise ProviderError(f"serving state write failed for {symbol}: {exc}") from exc
+        if not written:
+            raise ProviderError(f"serving state write failed for {symbol}")
+
+    def _ensure_recovery_request(self, symbol: str, reason: str) -> None:
+        """Persist a retry request so a crash after BLOCKED self-heals."""
+        try:
+            existing = self._d1.read_app_meta(split_recovery_key(symbol))
+        except D1QueryError:
+            existing = None
+        try:
+            attempts = max(0, int((existing or {}).get("attempts", 0)))
+        except (TypeError, ValueError):
+            attempts = 0
+        payload = {
+            "version": 1,
+            "symbol": symbol,
+            "status": RECOVERY_PENDING,
+            "reason": reason[:160],
+            "attempts": attempts,
+            "next_attempt_at": self._operation_now_iso(),
+            "updated_at": self._operation_now_iso(),
+        }
+        try:
+            written = self._d1.write_app_meta(split_recovery_key(symbol), payload)
+        except Exception as exc:
+            raise ProviderError(f"split recovery request write failed for {symbol}: {exc}") from exc
+        if not written:
+            raise ProviderError(f"split recovery request write failed for {symbol}")
+
     def _publish_split_verification(self, symbol: str) -> None:
-        """Publish serving eligibility only after the adjusted bootstrap is durable."""
+        """Publish READY only after adjusted history and metrics are durable."""
+        self._publish_serving_state(symbol, SERVING_READY, "bootstrap")
         payload = {
             "version": 1,
             "symbol": symbol,
             "status": STATUS_DONE,
-            "updated_at": _now_iso(),
+            "updated_at": self._operation_now_iso(),
         }
         try:
             written = self._d1.write_app_meta(f"{RECONCILE_STATUS_META_PREFIX}{symbol}", payload)
@@ -337,16 +399,51 @@ class BootstrapRunner:
             raise ProviderError(f"split verification marker write failed: {exc}") from exc
         if not written:
             raise ProviderError("split verification marker write failed")
+        try:
+            self._d1.delete_app_meta(split_recovery_key(symbol))
+        except Exception:
+            # The recovery worker also removes a stale request after observing
+            # READY.  Cleanup is best-effort and never weakens the serving
+            # publication that has already been confirmed.
+            logger.warning("bootstrap split recovery cleanup failed for %s", symbol)
 
-    def _persist_splits(self, symbol: str, events: list[SplitEvent]) -> None:
+    def _persist_splits(self, symbol: str, events: list[SplitEvent]) -> bool:
         """Persist split history durably (idempotent UPSERT) before completion.
 
         Raises ProviderError so the caller treats a failed durable write as an
         endpoint failure (the symbol stays pending and is retried next run).
         """
-        write = self._d1.upsert_split_events(split_events_to_rows(symbol, events, _now_iso()))
+        try:
+            stored_rows = self._d1.read_split_events(symbol)
+            stored_events = split_events_from_rows(stored_rows)
+        except D1QueryError as exc:
+            raise ProviderError(f"D1 split_events read failed: {exc}") from exc
+        changed = len(stored_events) != len(events) or any(
+            left.effective_date != right.effective_date or left.ratio != right.ratio
+            for left, right in zip(sorted(stored_events, key=lambda e: e.effective_date),
+                                   sorted(events, key=lambda e: e.effective_date))
+        )
+        if changed:
+            try:
+                existing_history = self._d1.read_weekly_rows(symbol)
+            except D1QueryError as exc:
+                raise ProviderError(f"D1 weekly read failed: {exc}") from exc
+            # A fresh symbol has no serving data to hide. Any existing history
+            # (including legacy factor=1 history) must be hidden before its
+            # split set changes, because weekly/metrics may still be old-scale.
+            if existing_history or stored_rows:
+                self._publish_serving_state(symbol, SERVING_BLOCKED, "split_history_changed")
+                self._ensure_recovery_request(symbol, "split_history_changed")
+
+        write = self._d1.upsert_split_events(split_events_to_rows(symbol, events, self._operation_now_iso()))
         if write.failed:
             raise ProviderError(f"D1 split_events write failed: {write.error}")
+        deleted = self._d1.delete_extra_split_events(
+            symbol, [event.effective_date for event in events]
+        )
+        if deleted.failed:
+            raise ProviderError(f"D1 split_events cleanup failed: {deleted.error}")
+        return changed
 
     def _splits_from_store(self, symbol: str) -> tuple[list[SplitEvent], bool]:
         """Load split history from the durable split_events store.

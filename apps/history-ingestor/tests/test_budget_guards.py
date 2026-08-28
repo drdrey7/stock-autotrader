@@ -122,6 +122,7 @@ class BudgetGuardTests(unittest.TestCase):
         self.assertEqual(provider.requests_this_run, 1)
         self.assertEqual(sum(store.key_used), 1)
         self.assertEqual(ledger.remaining(1), 0)
+        self.assertGreaterEqual(store.save_calls, 1)
 
     def test_bootstrap_daily_http_counter_survives_new_ledger_instance(self) -> None:
         store = _FakeBootstrapStore()

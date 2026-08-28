@@ -1,0 +1,33 @@
+# Automatic recovery for symbols durably blocked by a split-scale mismatch.
+# The command reads app_meta first and makes zero provider requests when the
+# queue is empty.  It uses the same D1 client, Alpha Vantage key ledger and
+# process flock as normal reconciliation.
+[Unit]
+Description=Stock Autotrader queued split-scale recovery (bounded provider check)
+After=network-online.target history-ingestor-due-split.service history-ingestor-maintenance.service history-ingestor-bootstrap.service history-ingestor-reconcile-split.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=hermes
+Group=hermes
+WorkingDirectory=/opt/stock-autotrader/apps/history-ingestor
+Environment=PYTHONPATH=/opt/stock-autotrader/apps/history-ingestor
+EnvironmentFile=/etc/stock-autotrader/alpha-vantage.env
+EnvironmentFile=/etc/stock-autotrader/cloudflare.env
+Environment=SPLIT_RECOVERY_MAX_REQUESTS=2
+Environment=HISTORY_INGESTOR_STATE=/var/lib/history-ingestor/checkpoint.json
+Environment=HISTORY_INGESTOR_MAINTENANCE_STATE=/var/lib/history-ingestor/maintenance.json
+StateDirectory=history-ingestor
+ExecStart=/usr/bin/flock /var/lib/history-ingestor/run.lock /usr/bin/python3 -m history_ingestor recover-split-mismatches
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=true
+NoNewPrivileges=true
+CapabilityBoundingSet=
+Restart=on-failure
+RestartSec=120
+TimeoutStartSec=900
+
+[Install]
+WantedBy=multi-user.target

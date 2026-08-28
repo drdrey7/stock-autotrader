@@ -5,6 +5,7 @@ import storageSource from "./storage.ts?raw";
 
 const storageMock = vi.hoisted(() => ({
   readStockDetailStorageSnapshot: vi.fn(),
+  persistSplitScaleMismatch: vi.fn(),
 }));
 
 vi.mock("./storage", () => ({

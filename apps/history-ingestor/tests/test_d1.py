@@ -174,6 +174,37 @@ class D1ClientTests(unittest.TestCase):
         with self.assertRaises(D1QueryError):
             c.read_app_meta("k")
 
+    def test_read_app_meta_non_object_raises(self):
+        url = FakeURL([(200, {"success": True, "result": [{"results": [{"value": "[]"}]}]})])
+        c = client(url)
+        with self.assertRaises(D1QueryError):
+            c.read_app_meta("k")
+
+    def test_read_app_meta_prefix_decodes_rows_and_repairs_malformed_queue_values(self):
+        url = FakeURL([(200, {"success": True, "result": [{"results": [
+            {"key": "historySplitRecovery:NVDA", "value": '{"status":"pending"}'},
+            {"key": "historySplitRecovery:AAPL", "value": "not json"},
+        ]}]})])
+        c = client(url)
+        self.assertEqual(c.read_app_meta_prefix("historySplitRecovery:"), [
+            ("historySplitRecovery:NVDA", {"status": "pending"}),
+            ("historySplitRecovery:AAPL", {
+                "version": 1,
+                "symbol": "AAPL",
+                "status": "pending",
+                "reason": "invalid_recovery_state",
+                "attempts": 0,
+            }),
+        ])
+
+    def test_delete_app_meta(self):
+        url = FakeURL()
+        c = client(url)
+        self.assertTrue(c.delete_app_meta("historySplitRecovery:NVDA"))
+        _, body = url.calls[0]
+        self.assertIn("DELETE FROM app_meta", body["sql"])
+        self.assertEqual(body["params"], ["historySplitRecovery:NVDA"])
+
     def test_read_failure_raises(self):
         url = FakeURL([(500, {"success": False, "errors": []})])
         c = client(url)

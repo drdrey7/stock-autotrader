@@ -150,6 +150,10 @@ class Settings:
     # whole day ahead of the priority weekly maintenance. None = unbounded
     # (default); the service/timer should pass an explicit cap.
     reconcile_splits_max_requests: int | None = None
+    # Recovery is intentionally small and bounded so a burst of affected
+    # symbols cannot starve the normal weekly universe refresh.  The shared
+    # per-key ledger remains the final quota authority.
+    split_recovery_max_requests: int = 2
     log_flush_summaries: bool = True
 
     @property
@@ -175,6 +179,7 @@ def from_env(environ: os._Environ | dict[str, str] | None = None) -> Settings:
             av_budget_per_key_per_day=_positive_int("AV_BUDGET_PER_KEY_PER_DAY", 25),
             bootstrap_max_requests_per_day=_positive_int("BOOTSTRAP_MAX_REQUESTS_PER_DAY", 6),
             reconcile_splits_max_requests=_optional_positive_int("RECONCILE_SPLITS_MAX_REQUESTS"),
+            split_recovery_max_requests=_positive_int("SPLIT_RECOVERY_MAX_REQUESTS", 2),
             d1_max_retries=_positive_int("D1_MAX_RETRIES", 3),
             d1_batch_max_rows=_positive_int("D1_BATCH_MAX_ROWS", 10),
             universe_path=Path(os.environ.get(

@@ -5,6 +5,7 @@ import type { StockDetailStorageSnapshot, WeeklyPriceRow } from "./storage";
 
 const storageMock = vi.hoisted(() => ({
   readStockDetailStorageSnapshot: vi.fn(),
+  persistSplitScaleMismatch: vi.fn(),
 }));
 
 vi.mock("./storage", () => ({
@@ -17,6 +18,7 @@ vi.mock("./storage", () => ({
 import {
   buildHistoricalSma200w,
   calculateAccountingCardMetrics,
+  hasUnexpectedQuoteScaleMismatch,
   readStockDetailApi,
   servedSplitScaleState,
   toSplitAdjustedPricePoint,
@@ -267,6 +269,157 @@ describe("split scale safety", () => {
       "2026-08-07T20:00:00.000Z",
       history,
       [{ effective_date: "2026-08-10", split_factor: 2 }],
+    )).toBe("mismatch");
+  });
+
+  it("blocks an unannounced structural 10:1 scale transition", () => {
+    const rows = weeklyHistory(3).map((row) => ({
+      ...row,
+      raw_close: 1_200,
+      raw_open: 1_190,
+      raw_high: 1_220,
+      raw_low: 1_180,
+      split_adjusted_close: 1_200,
+    }));
+    expect(hasUnexpectedQuoteScaleMismatch(
+      {
+        price: 120,
+        previous_close: 1_200,
+        provider_timestamp: "2026-08-21T14:59:00.000Z",
+        quote_session_date: "2026-08-21",
+        previous_close_session_date: "2026-08-20",
+        daily_change_valid: 1,
+      },
+      rows,
+      [],
+    )).toBe(true);
+  });
+
+  it("does not turn a normal 50% move without multi-week scale evidence into a split", () => {
+    const rows = weeklyHistory(3).map((row, index) => ({
+      ...row,
+      raw_close: index === 0 ? 200 : 170,
+      raw_open: index === 0 ? 198 : 168,
+      raw_high: index === 0 ? 205 : 175,
+      raw_low: index === 0 ? 195 : 165,
+      split_adjusted_close: index === 0 ? 200 : 170,
+    }));
+    expect(hasUnexpectedQuoteScaleMismatch(
+      {
+        price: 100,
+        previous_close: 200,
+        provider_timestamp: "2026-08-21T14:59:00.000Z",
+        quote_session_date: "2026-08-21",
+        previous_close_session_date: "2026-08-20",
+        daily_change_valid: 1,
+      },
+      rows,
+      [],
+    )).toBe(false);
+  });
+
+  it("does not treat a sustained near-one ratio as a split without OHLC regime evidence", () => {
+    const rows = weeklyHistory(3).map((row, index) => ({
+      ...row,
+      raw_close: index === 0 ? 118 : index === 1 ? 116 : 114,
+      raw_open: index === 0 ? 117 : index === 1 ? 115 : 113,
+      raw_high: index === 0 ? 120 : index === 1 ? 118 : 116,
+      raw_low: index === 0 ? 115 : index === 1 ? 113 : 111,
+      split_adjusted_close: index === 0 ? 118 : index === 1 ? 116 : 114,
+    }));
+    expect(hasUnexpectedQuoteScaleMismatch(
+      {
+        price: 100,
+        previous_close: 100,
+        provider_timestamp: "2026-08-21T14:59:00.000Z",
+        quote_session_date: "2026-08-21",
+        previous_close_session_date: "2026-08-20",
+        daily_change_valid: 1,
+      },
+      rows,
+      [],
+    )).toBe(false);
+  });
+
+  it("detects a quote already normalized while two recent historical closes remain raw", () => {
+    const rows = weeklyHistory(3).map((row, index) => ({
+      ...row,
+      raw_open: index === 0 ? 1_190 : index === 1 ? 1_140 : 1_090,
+      raw_high: index === 0 ? 1_220 : index === 1 ? 1_180 : 1_130,
+      raw_low: index === 0 ? 1_180 : index === 1 ? 1_130 : 1_080,
+      raw_close: index === 0 ? 1_200 : index === 1 ? 1_150 : 1_100,
+      split_adjusted_close: index === 0 ? 1_200 : index === 1 ? 1_150 : 1_100,
+    }));
+    expect(hasUnexpectedQuoteScaleMismatch(
+      {
+        price: 122,
+        previous_close: 120,
+        provider_timestamp: "2026-08-21T14:59:00.000Z",
+        quote_session_date: "2026-08-21",
+        previous_close_session_date: "2026-08-20",
+        daily_change_valid: 1,
+      },
+      rows,
+      [],
+    )).toBe(true);
+  });
+
+  it("does not infer a split from two non-consecutive weekly rows", () => {
+    const rows = weeklyHistory(3).map((row) => ({
+      ...row,
+      raw_close: 1_200,
+      raw_open: 1_190,
+      raw_high: 1_220,
+      raw_low: 1_180,
+      split_adjusted_close: 1_200,
+    }));
+    rows[1] = { ...rows[1]!, week_end_date: "2026-07-24" };
+    expect(hasUnexpectedQuoteScaleMismatch(
+      {
+        price: 120,
+        previous_close: 1_200,
+        provider_timestamp: "2026-08-21T14:59:00.000Z",
+        quote_session_date: "2026-08-21",
+        previous_close_session_date: "2026-08-20",
+        daily_change_valid: 1,
+      },
+      rows,
+      [],
+    )).toBe(false);
+  });
+
+  it("recognizes a structurally evidenced reverse split without guessing from a move alone", () => {
+    const rows = weeklyHistory(3).map((row) => ({
+      ...row,
+      raw_close: 100,
+      raw_open: 99,
+      raw_high: 102,
+      raw_low: 98,
+      split_adjusted_close: 100,
+    }));
+    expect(hasUnexpectedQuoteScaleMismatch(
+      {
+        price: 200,
+        previous_close: 100,
+        provider_timestamp: "2026-08-21T14:59:00.000Z",
+        quote_session_date: "2026-08-21",
+        previous_close_session_date: "2026-08-20",
+        daily_change_valid: 1,
+      },
+      rows,
+      [],
+    )).toBe(true);
+  });
+
+  it("honors authoritative BLOCKED even when effective split events are present", () => {
+    const history = applySplitToHistory(weeklyHistory(459), "2026-08-10", 2);
+    expect(servedSplitScaleState(
+      { price: 250, provider_timestamp: "2026-08-21T14:59:00.000Z" },
+      "2026-08-15T06:00:00.000Z",
+      history,
+      [{ effective_date: "2026-08-10", split_factor: 2 }],
+      true,
+      "BLOCKED",
     )).toBe("mismatch");
   });
 });
@@ -583,6 +736,123 @@ describe("Stock Detail D1 read model", () => {
     expect(detail.quote.changeAbs).toBeNull();
     expect(detail.quote.changePct).toBeNull();
     expect(detail.technical.sma200w).toBeNull();
+  });
+
+  it("persists an automatic recovery request when an unannounced scale transition is evident", async () => {
+    const rows = weeklyHistory(459).map((row) => ({
+      ...row,
+      raw_close: 1_200,
+      raw_open: 1_190,
+      raw_high: 1_220,
+      raw_low: 1_180,
+      split_adjusted_close: 1_200,
+    }));
+    storageMock.readStockDetailStorageSnapshot.mockResolvedValue(baseSnapshot({
+      weeklyRows: rows,
+      quote: {
+        ...baseSnapshot().quote!,
+        price: 120,
+        previous_close: 1_200,
+        quote_session_date: "2026-08-21",
+        previous_close_session_date: "2026-08-20",
+        daily_change_valid: 1,
+      },
+      splitEvents: [],
+    }));
+    const detail = await readStockDetailApi(env, "MSFT", NOW);
+    expect(detail.quote.price).toBeNull();
+    expect(detail.chart.priceHistory).toEqual([]);
+    expect(detail.technical.sma200w).toBeNull();
+    expect(storageMock.persistSplitScaleMismatch).toHaveBeenCalledWith(
+      env.DB,
+      "MSFT",
+      "unexpected_scale_mismatch",
+      NOW.toISOString(),
+    );
+  });
+
+  it("blocks an explicit pending verification marker even with mathematically valid event rows", async () => {
+    const history = applySplitToHistory(weeklyHistory(459), "2026-08-10", 2);
+    storageMock.readStockDetailStorageSnapshot.mockResolvedValue(baseSnapshot({
+      weeklyRows: history,
+      splitEvents: [{ effective_date: "2026-08-10", split_factor: 2 }],
+      splitHistoryVerified: false,
+      splitHistoryStatus: "pending",
+      quote: { ...baseSnapshot().quote!, price: 250 },
+    }));
+    const detail = await readStockDetailApi(env, "MSFT", NOW);
+    expect(detail.quote.scaleState).toBe("mismatch");
+    expect(detail.quote.price).toBeNull();
+    expect(detail.chart.priceHistory).toEqual([]);
+  });
+
+  it("does not publish READY data while the authoritative serving state is BLOCKED", async () => {
+    storageMock.readStockDetailStorageSnapshot.mockResolvedValue(baseSnapshot({
+      servingState: { state: "BLOCKED", reason: "unexpected_scale_mismatch" },
+      recoveryState: { status: "pending" },
+    }));
+    const detail = await readStockDetailApi(env, "MSFT", NOW);
+    expect(detail.quote.price).toBeNull();
+    expect(detail.quote.state).toBe("Unavailable");
+    expect(detail.chart.priceHistory).toEqual([]);
+    expect(detail.technical.sma200w).toBeNull();
+    expect(storageMock.persistSplitScaleMismatch).not.toHaveBeenCalled();
+  });
+
+  it("treats READY as authoritative when workflow cleanup is stale", async () => {
+    storageMock.readStockDetailStorageSnapshot.mockResolvedValue(baseSnapshot({
+      splitHistoryStatus: "error",
+      servingState: { state: "READY", reason: "split_history_verified" },
+    }));
+    const detail = await readStockDetailApi(env, "MSFT", NOW);
+    expect(detail.quote.scaleState).toBe("safe");
+    expect(detail.quote.price).toBe(500);
+    expect(detail.technical.supports).toHaveLength(2);
+    expect(detail.valuation.intrinsicValue?.base).toBe(600);
+  });
+
+  it("hides all price-scale-derived values during a split mismatch", async () => {
+    const rows = weeklyHistory(459).map((row) => ({
+      ...row,
+      raw_close: 1_200,
+      raw_open: 1_190,
+      raw_high: 1_220,
+      raw_low: 1_180,
+      split_adjusted_close: 1_200,
+    }));
+    storageMock.readStockDetailStorageSnapshot.mockResolvedValue(baseSnapshot({
+      weeklyRows: rows,
+      splitEvents: [],
+      quote: {
+        ...baseSnapshot().quote!,
+        price: 120,
+        previous_close: 1_200,
+        quote_session_date: "2026-08-21",
+        previous_close_session_date: "2026-08-20",
+        daily_change_valid: 1,
+      },
+    }));
+    const detail = await readStockDetailApi(env, "MSFT", NOW);
+    expect(detail.quote.scaleState).toBe("mismatch");
+    expect(detail.technical.supports).toEqual([]);
+    expect(detail.valuation.intrinsicValue).toBeNull();
+    expect(detail.valuation.automatic).toBeNull();
+  });
+
+  it("hides market-cap and P/E values while the quote scale is blocked", async () => {
+    storageMock.readStockDetailStorageSnapshot.mockResolvedValue(baseSnapshot({
+      servingState: { state: "BLOCKED", reason: "unexpected_scale_mismatch" },
+      recoveryState: { status: "pending" },
+      fundamentals: accountingFundamentals({
+        market_cap: 1_000_000,
+        pe_ttm: 25,
+        market_checked_at: "2026-08-21T14:59:00.000Z",
+      }),
+    }));
+    const detail = await readStockDetailApi(env, "MSFT", NOW);
+    expect(detail.fundamentals.marketCap).toBeNull();
+    expect(detail.fundamentals.peTtm).toBeNull();
+    expect(detail.fundamentals.roicPct).toBeCloseTo(45.3514739229025, 10);
   });
 
   it("degrades quote and current SMA honestly when the quote row is absent", async () => {

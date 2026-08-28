@@ -4,6 +4,7 @@ Subcommands:
   bootstrap        — resumable historical bootstrap (SPLITS+WEEKLY)
   maintenance      — priority WEEKLY refresh + metrics
   reconcile-splits — bounded provider SPLITS discovery with durable progress
+  recover-split-mismatches — provider SPLITS retry for queued symbols only
   apply-due-splits — zero-provider application of stored due splits
   status           — checkpoint + D1 coverage summary
   validate         — local data-quality validation for one symbol (D1 read-only)
@@ -155,6 +156,19 @@ def cmd_reconcile_splits(settings: Settings, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_recover_split_mismatches(settings: Settings, args: argparse.Namespace) -> int:
+    """Run the durable per-symbol split-recovery queue with shared quota."""
+    configured = settings.split_recovery_max_requests
+    effective_limit = configured if args.limit is None else min(configured, args.limit)
+    d1, provider, store = _build(settings, provider_run_limit=effective_limit)
+    store.load()
+    mstore = MaintenanceStore(settings, d1)
+    runner = MaintenanceRunner(settings, d1, provider, mstore, key_store=store)
+    report = runner.recover_split_mismatches(symbols_filter=args.symbols, limit=effective_limit)
+    _emit("recover_split_mismatches_report", **report)
+    return 0
+
+
 def cmd_status(settings: Settings) -> int:
     d1, provider, store = _build(settings)
     state = store.load()
@@ -264,6 +278,14 @@ def main(argv: list[str] | None = None) -> int:
     p_recon.add_argument("--limit", type=int, default=None, help="cap total provider requests")
     p_recon.add_argument("--symbols", nargs="*", default=None, help="restrict to these symbols")
     p_recon.set_defaults(handler=cmd_reconcile_splits)
+
+    p_recovery = sub.add_parser(
+        "recover-split-mismatches",
+        help="hourly provider SPLITS retry for durable mismatch requests",
+    )
+    p_recovery.add_argument("--limit", type=int, default=None, help="cap total provider requests")
+    p_recovery.add_argument("--symbols", nargs="*", default=None, help="restrict to these symbols")
+    p_recovery.set_defaults(handler=cmd_recover_split_mismatches)
 
     p_status = sub.add_parser("status", help="checkpoint + D1 coverage summary")
     p_status.set_defaults(handler=lambda _s, _a: cmd_status(_s))

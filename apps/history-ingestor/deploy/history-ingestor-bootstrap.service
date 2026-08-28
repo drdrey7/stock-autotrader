@@ -12,7 +12,6 @@
 Description=Stock Autotrader history bootstrap (daily residual run; after maintenance; request-capped)
 After=network-online.target history-ingestor-maintenance.service
 Wants=network-online.target
-Before=history-ingestor-due-split.service
 OnSuccess=history-ingestor-bootstrap-maybe-disable.service
 
 [Service]

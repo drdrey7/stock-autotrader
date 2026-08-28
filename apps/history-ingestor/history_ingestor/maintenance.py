@@ -9,9 +9,10 @@ provider's free-tier quota and resume without repeating completed work.
 
 Cycle shape (state machine, self-healing from per-symbol status):
 
-  SPLITS phase (typically Sunday, but resumes any day after quota):
+    SPLITS phase (typically Sunday, but resumes any day after quota):
     for each symbol: fetch SPLITS, compare with the durable split_events;
-    unchanged  -> mark done, NO historical rewrite;
+    unchanged  -> validate the history (and repair a legacy mixed basis when
+                  it is provable from durable split data);
     changed    -> reconcile split_events (upsert + delete extras), recompute
                   the whole affected history from stored raw rows + new
                   factors, recompute technical_metrics — never a mixed regime.
@@ -33,6 +34,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import math
 import time
 from collections.abc import Callable
 from typing import Any
@@ -40,10 +42,20 @@ from typing import Any
 from .config import Settings
 from .d1 import D1QueryError
 from .maintenance_state import (
+    RECONCILE_D1_META_KEY,
+    RECONCILE_STATUS_META_PREFIX,
+    RECOVERY_PENDING,
+    RECOVERY_RETRY,
+    RECOVERY_RUNNING,
+    SERVING_BLOCKED,
+    SERVING_READY,
+    SPLIT_RECOVERY_META_PREFIX,
     STATUS_DONE,
     STATUS_ERROR,
     STATUS_PENDING,
     ReconcileStore,
+    split_recovery_key,
+    split_serving_state_key,
 )
 from .parser import SplitEvent, WeeklyBar
 from .provider import (
@@ -72,6 +84,17 @@ from .weeks import (
 )
 
 logger = logging.getLogger("history_ingestor.maintenance")
+
+# A single large weekly close move is not enough to infer a split.  The
+# fail-closed legacy detector below requires all four raw OHLC values to move
+# by the same conventional factor across consecutive ISO weeks, with the
+# newer scale persisting for another week.  This catches a mixed historical
+# regime without turning an ordinary market move or one corrected candle into
+# a split event.
+STRUCTURAL_SCALE_TOLERANCE = 0.005
+STRUCTURAL_SCALE_MIN_RATIO = 0.8
+STRUCTURAL_SCALE_MAX_RATIO = 1.25
+STRUCTURAL_REGIME_TOLERANCE = 0.25
 
 
 def _now_iso() -> str:
@@ -114,6 +137,318 @@ class MaintenanceRunner:
             self._reconcile_store = ReconcileStore(self._settings, self._d1, state_path=base.with_name("reconcile.json"))
             self._reconcile_store.load()
         return self._reconcile_store
+
+    # --------------------------------------------------------- serving state
+
+    def _operation_now_iso(self) -> str:
+        """Return the injected clock as a canonical UTC timestamp."""
+        now = self._now()
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=dt.UTC)
+        return now.astimezone(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def _read_serving_state(self, symbol: str) -> dict | None:
+        """Read one symbol's authoritative READY/BLOCKED state.
+
+        ``None`` means the rollout has not published a per-symbol state yet.
+        A present but malformed value is deliberately interpreted as BLOCKED;
+        corrupt metadata must never silently fall back to last-known-good data.
+        """
+        try:
+            payload = self._d1.read_app_meta(split_serving_state_key(symbol))
+        except D1QueryError as exc:
+            raise ProviderError(f"serving state read failed for {symbol}: {exc}") from exc
+        if payload is None:
+            return None
+        if not isinstance(payload, dict):
+            return {
+                "version": 1,
+                "symbol": symbol,
+                "state": SERVING_BLOCKED,
+                "reason": "invalid_serving_state",
+            }
+        if (
+            payload.get("version") == 1
+            and payload.get("symbol") == symbol
+            and payload.get("state") in (SERVING_READY, SERVING_BLOCKED)
+        ):
+            return payload
+        return {
+            "version": 1,
+            "symbol": symbol,
+            "state": SERVING_BLOCKED,
+            "reason": "invalid_serving_state",
+        }
+
+    def _persist_serving_state(self, symbol: str, state: str, reason: str) -> None:
+        """Durably publish one serving state, failing closed on write errors."""
+        if state not in (SERVING_READY, SERVING_BLOCKED):
+            raise ValueError(f"invalid serving state {state!r}")
+        payload = {
+            "version": 1,
+            "symbol": symbol,
+            "state": state,
+            "reason": reason[:160],
+            "updated_at": self._operation_now_iso(),
+        }
+        try:
+            written = self._d1.write_app_meta(split_serving_state_key(symbol), payload)
+        except Exception as exc:
+            raise ProviderError(f"serving state write failed for {symbol}: {exc}") from exc
+        if not written:
+            raise ProviderError(f"serving state write failed for {symbol}")
+
+    def _ensure_recovery_request(self, symbol: str, reason: str) -> None:
+        """Create/update a single durable recovery request (idempotently)."""
+        key = split_recovery_key(symbol)
+        try:
+            existing = self._d1.read_app_meta(key)
+        except D1QueryError:
+            existing = None
+        try:
+            attempts = max(0, int((existing or {}).get("attempts", 0)))
+        except (TypeError, ValueError):
+            attempts = 0
+        payload = {
+            "version": 1,
+            "symbol": symbol,
+            "status": RECOVERY_PENDING,
+            "reason": reason[:160],
+            "attempts": attempts,
+            "next_attempt_at": self._operation_now_iso(),
+            "updated_at": self._operation_now_iso(),
+        }
+        try:
+            written = self._d1.write_app_meta(key, payload)
+        except Exception as exc:
+            raise ProviderError(f"split recovery request write failed for {symbol}: {exc}") from exc
+        if not written:
+            raise ProviderError(f"split recovery request write failed for {symbol}")
+
+    def _mark_recovery_request(self, request: dict, status: str, error: str | None = None) -> None:
+        """Persist recovery workflow progress without changing serving state."""
+        symbol = str(request.get("symbol") or "")
+        if not symbol:
+            return
+        try:
+            attempts = max(0, int(request.get("attempts", 0)))
+        except (TypeError, ValueError):
+            attempts = 0
+        now = self._now()
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=dt.UTC)
+        next_attempt = now + dt.timedelta(hours=1)
+        payload = {
+            "version": 1,
+            "symbol": symbol,
+            "status": status,
+            "reason": str(request.get("reason") or "scale_mismatch")[:160],
+            "attempts": attempts + (1 if status == RECOVERY_RETRY else 0),
+            "next_attempt_at": next_attempt.astimezone(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "updated_at": self._operation_now_iso(),
+        }
+        if error:
+            payload["last_error"] = error[:240]
+        try:
+            written = self._d1.write_app_meta(split_recovery_key(symbol), payload)
+        except Exception as exc:
+            raise ProviderError(f"split recovery state write failed for {symbol}: {exc}") from exc
+        if not written:
+            raise ProviderError(f"split recovery state write failed for {symbol}")
+
+    def _clear_recovery_request(self, symbol: str) -> bool:
+        """Remove a completed request; a failed cleanup is safe to retry."""
+        try:
+            return bool(self._d1.delete_app_meta(split_recovery_key(symbol)))
+        except Exception:
+            logger.warning("split recovery cleanup failed for %s", symbol)
+            return False
+
+    def _block_for_scale_operation(self, symbol: str, reason: str, queue: bool) -> None:
+        """Publish BLOCKED before any split/history mutation."""
+        self._persist_serving_state(symbol, SERVING_BLOCKED, reason)
+        if queue:
+            self._ensure_recovery_request(symbol, reason)
+
+    @staticmethod
+    def _raw_ohlc(row: dict) -> tuple[float, float, float, float] | None:
+        """Decode a valid positive raw candle for structural comparisons."""
+        try:
+            values = tuple(float(row[name]) for name in ("raw_open", "raw_high", "raw_low", "raw_close"))
+        except (KeyError, TypeError, ValueError):
+            return None
+        if not all(math.isfinite(value) and value > 0 for value in values):
+            return None
+        raw_open, raw_high, raw_low, raw_close = values
+        if raw_high < max(raw_open, raw_low, raw_close) or raw_low > min(raw_open, raw_high, raw_close):
+            return None
+        return values
+
+    @staticmethod
+    def _consecutive_iso_weeks(older: dt.date, newer: dt.date) -> bool:
+        """Accept Friday/holiday bucket dates in adjacent ISO weeks."""
+        older_monday = older - dt.timedelta(days=older.weekday())
+        newer_monday = newer - dt.timedelta(days=newer.weekday())
+        return (newer_monday - older_monday).days == 7
+
+    @classmethod
+    def _structural_scale_between(cls, older: dict, newer: dict) -> float | None:
+        """Return an evidenced raw scale ratio, or None for ordinary movement."""
+        old_values = cls._raw_ohlc(older)
+        new_values = cls._raw_ohlc(newer)
+        if old_values is None or new_values is None:
+            return None
+        ratios = [old / new for old, new in zip(old_values, new_values)]
+        scale = ratios[0]
+        if not math.isfinite(scale) or scale <= 0:
+            return None
+        if any(abs(ratio / scale - 1) > STRUCTURAL_SCALE_TOLERANCE for ratio in ratios[1:]):
+            return None
+        if STRUCTURAL_SCALE_MIN_RATIO < scale < STRUCTURAL_SCALE_MAX_RATIO:
+            return None
+        return scale
+
+    @classmethod
+    def _has_unexplained_scale_transition(cls, rows: list[dict]) -> bool:
+        """Detect a persisted mixed raw regime without inventing an event.
+
+        The extra newer-side witness is deliberate: a provider correction to a
+        single weekly candle can change every OHLC field together, but it does
+        not keep the new scale for the following week.  This detector only
+        blocks serving; the recovery job still waits for Alpha Vantage to
+        publish authoritative SPLITS before mutating split_events.
+        """
+        ordered: list[tuple[dt.date, dict]] = []
+        for row in rows:
+            try:
+                day = date_from_iso(str(row["week_end_date"]))
+                factor = float(row["split_adjustment_factor"])
+                raw_close = float(row["raw_close"])
+                adjusted_close = float(row["split_adjusted_close"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if (
+                not math.isfinite(factor)
+                or not math.isfinite(raw_close)
+                or not math.isfinite(adjusted_close)
+                or abs(factor - 1) > 1e-9
+                or abs(adjusted_close - raw_close) > max(1e-6, abs(raw_close) * 1e-6)
+            ):
+                continue
+            ordered.append((day, row))
+        ordered.sort(key=lambda item: item[0])
+        for index in range(len(ordered) - 2):
+            older_day, older = ordered[index]
+            newer_day, newer = ordered[index + 1]
+            witness_day, witness = ordered[index + 2]
+            if not cls._consecutive_iso_weeks(older_day, newer_day):
+                continue
+            if not cls._consecutive_iso_weeks(newer_day, witness_day):
+                continue
+            scale = cls._structural_scale_between(older, newer)
+            if scale is None:
+                continue
+            try:
+                older_close = float(older["raw_close"])
+                witness_close = float(witness["raw_close"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            witness_ratio = older_close / witness_close
+            if math.isfinite(witness_ratio) and abs(witness_ratio / scale - 1) <= STRUCTURAL_REGIME_TOLERANCE:
+                return True
+        return False
+
+    def _history_matches_events(self, symbol: str, events: list[SplitEvent]) -> bool:
+        """Verify every stored row is internally consistent and split-fresh.
+
+        The Worker serves all four adjusted OHLC values, not only close.  A
+        close-only check could therefore publish a candle with a stale high or
+        low after a repair.  Validate the complete persisted row before READY.
+        """
+        try:
+            rows = self._d1.read_weekly_rows(symbol)
+        except D1QueryError as exc:
+            raise ProviderError(f"weekly read failed for {symbol}: {exc}") from exc
+        if not rows:
+            return True
+        as_of = ny_date_of(self._now())
+        as_of_iso = f"{as_of.year:04d}-{as_of.month:02d}-{as_of.day:02d}"
+        try:
+            effective_events = sorted(
+                (event for event in events if date_from_iso(event.effective_date) <= as_of),
+                key=lambda event: event.effective_date,
+            )
+            latest_effective = effective_events[-1].effective_date if effective_events else None
+            latest_effective_date = date_from_iso(latest_effective) if latest_effective else None
+        except (TypeError, ValueError):
+            return False
+        split_ms = None
+        if latest_effective_date is not None:
+            split_ms = dt.datetime.combine(
+                latest_effective_date, dt.time.min, tzinfo=dt.UTC,
+            ).timestamp()
+        for row in rows:
+            try:
+                week_end = date_from_iso(str(row["week_end_date"]))
+                raw_open = float(row["raw_open"])
+                raw_high = float(row["raw_high"])
+                raw_low = float(row["raw_low"])
+                raw_close = float(row["raw_close"])
+                volume = float(row["volume"])
+                factor = float(row["split_adjustment_factor"])
+                adjusted_close = float(row["split_adjusted_close"])
+                expected = float(cumulative_split_factor(row["week_end_date"], events, as_of_date=as_of_iso))
+                fetched = dt.datetime.fromisoformat(
+                    str(row["source_fetched_at"]).replace("Z", "+00:00")
+                )
+            except (KeyError, TypeError, ValueError, ZeroDivisionError):
+                return False
+            if fetched.tzinfo is None:
+                fetched = fetched.replace(tzinfo=dt.UTC)
+            if not all(math.isfinite(value) and value > 0 for value in (
+                raw_open, raw_high, raw_low, raw_close, factor, adjusted_close, expected,
+            )):
+                return False
+            if raw_high < max(raw_open, raw_low, raw_close) or raw_low > min(raw_open, raw_high, raw_close):
+                return False
+            if not math.isfinite(volume) or volume < 0 or not volume.is_integer():
+                return False
+            if abs(factor - expected) > max(1e-9, expected * 1e-9):
+                return False
+            expected_close = raw_close / expected
+            if abs(adjusted_close - expected_close) > max(1e-6, abs(expected_close) * 1e-6):
+                return False
+            if split_ms is not None and latest_effective_date is not None and week_end < latest_effective_date:
+                if fetched.timestamp() < split_ms:
+                    return False
+        # A legacy checkpoint can say "done" while split_events is empty and
+        # raw history contains both sides of a split.  Do not publish READY in
+        # that state merely because factor=1 is internally self-consistent.
+        # Future-only events do not adjust today's rows, so the same guard also
+        # applies while an announced split is waiting for its effective date.
+        if not effective_events and self._has_unexplained_scale_transition(rows):
+            return False
+        return True
+
+    @staticmethod
+    def _can_publish_ready(serving: dict | None) -> bool:
+        """Allow recovery only for data-workflow blocks, never quote-only blocks."""
+        if serving is None or serving.get("state") == SERVING_READY:
+            return True
+        reason = str(serving.get("reason") or "")
+        return reason in {
+            "split_history_changed",
+            "split_recovery_verified",
+            "due_split",
+            "history_factor_mismatch",
+            "bootstrap",
+            "legacy_rollout_backfill",
+            "invalid_serving_state",
+        }
+
+    def _publish_reconciled_ready(self, symbol: str, reason: str) -> None:
+        """Publish READY only after the persisted history has been verified."""
+        self._persist_serving_state(symbol, SERVING_READY, reason)
 
     # ------------------------------------------------------------------ core
 
@@ -255,6 +590,69 @@ class MaintenanceRunner:
 
     # ----------------------------------------------------------------- phases
 
+    def _reconcile_event_set(
+        self,
+        symbol: str,
+        stored_events: list[SplitEvent],
+        fresh_events: list[SplitEvent],
+        result: dict,
+        *,
+        events_changed: bool,
+        reason: str,
+    ) -> None:
+        """Apply one complete split-history operation with fail-closed ordering.
+
+        Serving BLOCKED is durable before any split_events/history mutation.
+        READY is written only after split_events, every weekly row and metrics
+        are durable and the resulting factors have been checked again.  Every
+        write is idempotent, so a later recovery can safely repeat the batch.
+        """
+        rstore = self._get_reconcile_store()
+        self._block_for_scale_operation(symbol, reason, queue=True)
+        rstore.state.mark(symbol, STATUS_PENDING)
+        if not rstore.save():
+            raise ProviderError(f"split workflow invalidation failed for {symbol}")
+
+        if events_changed:
+            split_write = self._d1.upsert_split_events(
+                split_events_to_rows(symbol, fresh_events, self._operation_now_iso())
+            )
+            if split_write.failed:
+                raise ProviderError(f"split_events write failed: {split_write.error}")
+            delete_write = self._d1.delete_extra_split_events(
+                symbol, [event.effective_date for event in fresh_events]
+            )
+            if delete_write.failed:
+                raise ProviderError(f"split_events cleanup failed: {delete_write.error}")
+
+        # An unchanged event set can still have a stale/mixed weekly basis (the
+        # original NVDA incident).  Rebuild it whenever there is durable split
+        # evidence.  With no events, a factor mismatch is an unknown split and
+        # must stay blocked until the provider supplies evidence; writing factor
+        # 1 would be unsafe.
+        if events_changed or stored_events:
+            self._rewrite_history_from_stored(symbol, fresh_events, result)
+        elif not self._history_matches_events(symbol, fresh_events):
+            raise ProviderError(
+                f"{symbol} history scale mismatch has no durable split evidence"
+            )
+
+        if not self._history_matches_events(symbol, fresh_events):
+            raise ProviderError(f"{symbol} history verification failed after rewrite")
+
+        # READY is the authoritative final write.  The old reconciliation
+        # marker is updated only afterwards, so it can never create a safe
+        # rollout fallback if this publication fails.
+        self._publish_reconciled_ready(symbol, "split_history_verified")
+        rstore.state.mark(symbol, STATUS_DONE)
+        if not rstore.save():
+            # The serving state is already safe; the workflow checkpoint will
+            # retry/repair on the next pass and the recovery row remains.
+            raise ProviderError(f"split workflow completion write failed for {symbol}")
+        self._clear_recovery_request(symbol)
+        result["splits"] = STATUS_DONE
+        result["history_repaired"] = not events_changed
+
     def _reconcile_splits(self, symbol: str, dry_run: bool) -> dict:
         """Sunday SPLITS pass for one symbol (provider compare, exact)."""
         result: dict = {
@@ -271,8 +669,30 @@ class MaintenanceRunner:
                 raise ProviderError(f"split_events read failed: {exc}") from exc
 
             if split_events_equal(fresh_events, stored_events):
-                # Unchanged history: no weekly rewrite, no provider refetch.
-                self._get_reconcile_store().state.mark(symbol, STATUS_DONE)
+                # Unchanged provider history is normally a no-op, but it is
+                # also the repair opportunity for a legacy/mixed weekly basis.
+                # A READY symbol remains READY; a quote-only BLOCKED symbol is
+                # never unblocked merely because SPLITS is unchanged.
+                if not self._history_matches_events(symbol, stored_events):
+                    self._reconcile_event_set(
+                        symbol,
+                        stored_events,
+                        fresh_events,
+                        result,
+                        events_changed=False,
+                        reason="history_factor_mismatch",
+                    )
+                else:
+                    serving = self._read_serving_state(symbol)
+                    if self._can_publish_ready(serving) and (serving is None or serving.get("state") != SERVING_READY):
+                        self._publish_reconciled_ready(symbol, "split_history_verified")
+                    # A previous run can have completed all data writes and
+                    # READY publication but died before deleting its queue
+                    # item.  Unchanged, verified history is sufficient to
+                    # remove that stale workflow row without another fetch.
+                    if serving is None or serving.get("state") == SERVING_READY:
+                        self._clear_recovery_request(symbol)
+                    self._get_reconcile_store().state.mark(symbol, STATUS_DONE)
                 return result
 
             result["split_changed"] = True
@@ -280,25 +700,14 @@ class MaintenanceRunner:
                 self._get_reconcile_store().state.mark(symbol, STATUS_DONE)
                 return result
 
-            # Hide the symbol before changing split_events or its separately
-            # chunked weekly rewrite. A crash can then only leave it pending.
-            rstore = self._get_reconcile_store()
-            rstore.state.mark(symbol, STATUS_PENDING)
-            if not rstore.save():
-                raise ProviderError("split verification invalidation write failed")
-
-            # Reconcile the durable store: upsert the new set, then delete
-            # events the provider no longer reports (a corrected/removed split).
-            write = self._d1.upsert_split_events(split_events_to_rows(symbol, fresh_events, _now_iso()))
-            if write.failed:
-                raise ProviderError(f"split_events write failed: {write.error}")
-            self._d1.delete_extra_split_events(symbol, [event.effective_date for event in fresh_events])
-
-            # Rewrite the affected historical rows from stored RAW data with
-            # the new factors — never a mixed adjustment regime. No provider
-            # WEEKLY request needed: the raw history is already in D1.
-            self._rewrite_history_from_stored(symbol, fresh_events, result)
-            self._get_reconcile_store().state.mark(symbol, STATUS_DONE)
+            self._reconcile_event_set(
+                symbol,
+                stored_events,
+                fresh_events,
+                result,
+                events_changed=True,
+                reason="split_history_changed",
+            )
             return result
         except QuotaExhaustedError:
             result["quota"] = True
@@ -357,6 +766,27 @@ class MaintenanceRunner:
 
             # Only changed/new rows are written — never a blanket rewrite.
             stored = self._stored_rows(symbol)
+            serving = self._read_serving_state(symbol)
+            serving_reason = str((serving or {}).get("reason") or "")
+            due_events = [
+                event for event in stored_events
+                if date_from_iso(event.effective_date) <= as_of
+            ]
+            # apply-due-splits normally performs this transition before the
+            # weekly timer.  Keep the weekly boundary safe if that timer was
+            # missed, delayed, or raced with this process: an old stored
+            # basis must become BLOCKED before the first weekly mutation.
+            due_history_rewrite = bool(due_events and stored) and not self._history_matches_events(
+                symbol, stored_events,
+            )
+            if due_history_rewrite:
+                if serving is None or serving.get("state") == SERVING_READY:
+                    self._block_for_scale_operation(symbol, "due_split", queue=True)
+                else:
+                    # Preserve an existing quote-only BLOCKED reason.  It is
+                    # not safe to relabel that state as a data repair merely
+                    # because a stored split is also due.
+                    self._ensure_recovery_request(symbol, serving_reason or "due_split")
             changed = []
             has_provider_correction = False
             for bar, factor, adj_close in adjusted_full:
@@ -368,35 +798,45 @@ class MaintenanceRunner:
                         bar.close, bar.volume, float(factor), adj_close, _now_iso(),
                     ))
             if changed:
-                if has_provider_correction:
-                    # A corrected existing row can change the evidence that was
-                    # previously reconciled. Persist pending BEFORE publishing
-                    # that row, so any crash/failure is fail-closed. A normal
-                    # appended completed week uses the already-verified split
-                    # history and keeps the symbol available.
-                    rstore = self._get_reconcile_store()
-                    rstore.state.mark(symbol, STATUS_PENDING)
-                    if not rstore.save():
-                        raise ProviderError(f"split reconciliation invalidation failed for {symbol}")
                 write = self._d1.upsert_weekly_rows(changed)
                 if write.failed:
                     raise ProviderError(f"D1 weekly write failed: {write.error}")
                 result["rows_updated"] = len(changed)
                 if has_provider_correction:
-                    result["anomalies"].append(f"{symbol}: provider correction rewrote {len(changed)} rows")
+                    # OHLC corrections are not split evidence.  Keep the
+                    # last-known-good serving state; split-scale verification
+                    # remains the independent reconciliation responsibility.
+                    result["anomalies"].append(f"{symbol}: provider correction rewrote {len(changed)} rows (serving state preserved)")
 
             self._store.state.mark_symbol(symbol, "weekly", STATUS_DONE)
-            metrics = compute_technical_metrics(symbol, [(bar, close) for bar, _f, close in adjusted_full])
-            try:
-                self._upsert_metrics(symbol, metrics)
+            if due_history_rewrite:
+                # Include the newly fetched rows in the durable raw history,
+                # then rebuild the complete series from those raw rows.  This
+                # covers a missed Monday due-split run without ever exposing
+                # a partially rewritten READY history.
+                self._rewrite_history_from_stored(symbol, stored_events, result)
+                if not self._history_matches_events(symbol, stored_events):
+                    raise ProviderError(f"{symbol} history verification failed after weekly due split")
+                if self._can_publish_ready(serving):
+                    self._publish_reconciled_ready(symbol, "due_split_applied")
+                    self._clear_recovery_request(symbol)
+                else:
+                    result["anomalies"].append(
+                        f"{symbol}: due split history repaired; existing quote-scale block preserved"
+                    )
                 self._store.state.mark_symbol(symbol, "metrics", STATUS_DONE)
-                result["metrics_updated"] = True
-            except (ProviderError, D1QueryError) as exc:
-                # weekly data is safely stored; metrics recompute alone is
-                # retried from D1 (no provider call) on the next run.
-                self._store.state.mark_symbol(symbol, "metrics", STATUS_ERROR)
-                result["metrics"] = STATUS_ERROR
-                result["anomalies"].append(f"{symbol} metrics: {str(exc)[:200]}")
+            else:
+                metrics = compute_technical_metrics(symbol, [(bar, close) for bar, _f, close in adjusted_full])
+                try:
+                    self._upsert_metrics(symbol, metrics)
+                    self._store.state.mark_symbol(symbol, "metrics", STATUS_DONE)
+                    result["metrics_updated"] = True
+                except (ProviderError, D1QueryError) as exc:
+                    # weekly data is safely stored; metrics recompute alone is
+                    # retried from D1 (no provider call) on the next run.
+                    self._store.state.mark_symbol(symbol, "metrics", STATUS_ERROR)
+                    result["metrics"] = STATUS_ERROR
+                    result["anomalies"].append(f"{symbol} metrics: {str(exc)[:200]}")
 
             # Coverage verification.
             if result["completed_weeks"] < 199:
@@ -443,20 +883,51 @@ class MaintenanceRunner:
             or abs(old[6] - adj_close) > 1e-9
         )
 
+    def _row_needs_split_timestamp_refresh(
+        self,
+        row: dict,
+        events: list[SplitEvent],
+        as_of: dt.date,
+    ) -> bool:
+        """Detect a correctly-valued row fetched before its governing split."""
+        try:
+            week_end = date_from_iso(str(row["week_end_date"]))
+            applicable = [
+                event for event in events
+                if week_end < date_from_iso(event.effective_date)
+                and date_from_iso(event.effective_date) <= as_of
+            ]
+            if not applicable:
+                return False
+            fetched_dt = dt.datetime.fromisoformat(
+                str(row["source_fetched_at"]).replace("Z", "+00:00")
+            )
+            if fetched_dt.tzinfo is None:
+                fetched_dt = fetched_dt.replace(tzinfo=dt.UTC)
+            fetched = fetched_dt.timestamp()
+            latest = max(date_from_iso(event.effective_date) for event in applicable)
+            split_timestamp = dt.datetime.fromisoformat(f"{latest}T00:00:00+00:00").timestamp()
+            return fetched < split_timestamp
+        except (KeyError, TypeError, ValueError):
+            return True
+
     def _stored_rows(self, symbol: str) -> dict[str, tuple]:
         """Map week_end_date -> (open, high, low, close, volume, factor, adj)."""
         try:
             rows = self._d1.read_weekly_rows(symbol)
-        except D1QueryError:
-            return {}
-        return {
-            row["week_end_date"]: (
-                float(row["raw_open"]), float(row["raw_high"]), float(row["raw_low"]),
-                float(row["raw_close"]), int(row["volume"]),
-                float(row["split_adjustment_factor"]), float(row["split_adjusted_close"]),
-            )
-            for row in rows
-        }
+        except D1QueryError as exc:
+            raise ProviderError(f"weekly read failed for {symbol}: {exc}") from exc
+        try:
+            return {
+                row["week_end_date"]: (
+                    float(row["raw_open"]), float(row["raw_high"]), float(row["raw_low"]),
+                    float(row["raw_close"]), int(row["volume"]),
+                    float(row["split_adjustment_factor"]), float(row["split_adjusted_close"]),
+                )
+                for row in rows
+            }
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ProviderError(f"weekly row decode failed for {symbol}: {exc}") from exc
 
     def _rewrite_history_from_stored(
         self,
@@ -490,11 +961,26 @@ class MaintenanceRunner:
         as_of = ny_date_of(self._now())
         as_of_iso = f"{as_of.year:04d}-{as_of.month:02d}-{as_of.day:02d}"
         adjusted_full = list(adjust_series(bars, events, as_of_date=as_of_iso))
-        stored = self._stored_rows(symbol)
+        try:
+            stored = {
+                row["week_end_date"]: (
+                    float(row["raw_open"]), float(row["raw_high"]), float(row["raw_low"]),
+                    float(row["raw_close"]), int(row["volume"]),
+                    float(row["split_adjustment_factor"]), float(row["split_adjusted_close"]),
+                )
+                for row in stored_rows
+            }
+            source_rows = {row["week_end_date"]: row for row in stored_rows}
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ProviderError(f"weekly row decode failed for {symbol}: {exc}") from exc
         changed = []
         for bar, factor, adj_close in adjusted_full:
             old = stored.get(bar.week_end_date)
-            if old is None or self._row_differs(old, bar, factor, adj_close):
+            source_row = source_rows.get(bar.week_end_date)
+            needs_timestamp_refresh = source_row is not None and self._row_needs_split_timestamp_refresh(
+                source_row, events, as_of,
+            )
+            if old is None or self._row_differs(old, bar, factor, adj_close) or needs_timestamp_refresh:
                 changed.append((
                     bar.symbol, bar.week_end_date, bar.open, bar.high, bar.low,
                     bar.close, bar.volume, float(factor), adj_close, _now_iso(),
@@ -520,17 +1006,7 @@ class MaintenanceRunner:
             )
 
     def apply_due_splits(self, symbols_filter: list[str] | None = None) -> dict:
-        """Daily ZERO-PROVIDER reconciliation: apply splits whose effective
-        date has been reached.
-
-        For each symbol, reads stored ``split_events`` from D1, finds any
-        split whose ``effective_date <= today`` (NY) that has not yet been
-        applied to the historical basis, and recomputes the affected weekly
-        rows + technical_metrics — all from stored RAW data, no Alpha Vantage
-        request.
-
-        Idempotent: a second run on the same day finds nothing to do.
-        """
+        """Apply due stored splits with zero provider requests and fail closed."""
         symbols = load_core_universe(self._settings.universe_path)
         if symbols_filter is not None:
             wanted = set(symbols_filter)
@@ -567,34 +1043,397 @@ class MaintenanceRunner:
                 ))
             # Compute with all splits effective up to today
             adjusted_full = list(adjust_series(bars, stored_events, as_of_date=today_iso))
-            stored = self._stored_rows(symbol)
+            try:
+                stored = {
+                    row["week_end_date"]: (
+                        float(row["raw_open"]), float(row["raw_high"]), float(row["raw_low"]),
+                        float(row["raw_close"]), int(row["volume"]),
+                        float(row["split_adjustment_factor"]), float(row["split_adjusted_close"]),
+                    )
+                    for row in stored_rows
+                }
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ProviderError(f"weekly row decode failed for {symbol}: {exc}") from exc
+            source_rows = {row["week_end_date"]: row for row in stored_rows}
+            today_date = date_from_iso(today_iso)
             changed = []
             for bar, factor, adj_close in adjusted_full:
                 old = stored.get(bar.week_end_date)
-                if old is None or self._row_differs(old, bar, factor, adj_close):
+                needs_timestamp_refresh = (
+                    bar.week_end_date in source_rows
+                    and self._row_needs_split_timestamp_refresh(
+                        source_rows[bar.week_end_date], stored_events, today_date,
+                    )
+                )
+                if (
+                    old is None
+                    or self._row_differs(old, bar, factor, adj_close)
+                    or needs_timestamp_refresh
+                ):
                     changed.append((
                         bar.symbol, bar.week_end_date, bar.open, bar.high, bar.low,
                         bar.close, bar.volume, float(factor), adj_close, _now_iso(),
                     ))
-            if changed:
-                write = self._d1.upsert_weekly_rows(changed)
-                if write.failed:
-                    report["symbols"][symbol] = {"status": "error", "error": write.error}
-                    continue
-            metrics = compute_technical_metrics(symbol, [(bar, close) for bar, _f, close in adjusted_full])
             try:
-                self._upsert_metrics(symbol, metrics)
+                serving = self._read_serving_state(symbol)
+                serving_reason = str((serving or {}).get("reason") or "")
+                was_blocked_before = serving is not None and serving.get("state") == SERVING_BLOCKED
+                operation_was_blocked = was_blocked_before
+                if changed and not operation_was_blocked:
+                    # The serving state is written and confirmed before the
+                    # first weekly mutation. A Monday crash is therefore safe.
+                    self._block_for_scale_operation(symbol, "due_split", queue=True)
+                    operation_was_blocked = True
+                elif changed and operation_was_blocked:
+                    # A prior run may have persisted BLOCKED but lost the
+                    # durable queue write, or a different workflow may have
+                    # left the symbol blocked. Keep one retry request alive
+                    # before mutating history.
+                    self._ensure_recovery_request(symbol, serving_reason or "due_split")
+
+                if changed:
+                    write = self._d1.upsert_weekly_rows(changed)
+                    if write.failed:
+                        raise ProviderError(f"D1 weekly write failed: {write.error}")
+
+                # If a previous due-split run died after BLOCKED, recompute
+                # metrics even when the row diff is now empty, then publish
+                # READY only for this known due-split workflow. An unexpected
+                # quote-scale block remains blocked until SPLITS confirms it.
+                if changed or (operation_was_blocked and serving_reason == "due_split"):
+                    metrics = compute_technical_metrics(symbol, [(bar, close) for bar, _f, close in adjusted_full])
+                    self._upsert_metrics(symbol, metrics)
+                    if not self._history_matches_events(symbol, stored_events):
+                        raise ProviderError(f"{symbol} history verification failed after due split")
+                    if not was_blocked_before or serving_reason in {
+                        "", "due_split", "split_history_changed", "history_factor_mismatch",
+                        "bootstrap", "legacy_rollout_backfill", "invalid_serving_state",
+                    }:
+                        self._publish_reconciled_ready(symbol, "due_split_applied")
+                        self._clear_recovery_request(symbol)
+
+                if not changed:
+                    continue
+                report["symbols"][symbol] = {"status": "applied", "rows_updated": len(changed)}
+                report["rows_updated"] += len(changed)
+                report["metrics_updated"] += 1
+                report["splits_applied"] += 1
+                report["status"] = "applied"
             except (ProviderError, D1QueryError) as exc:
+                # If BLOCKED was already durable, leave it untouched. If the
+                # block write itself failed, no data write was attempted.
                 report["symbols"][symbol] = {"status": "error", "error": str(exc)[:200]}
-                continue
-            if not changed:
-                continue
-            report["symbols"][symbol] = {"status": "applied", "rows_updated": len(changed)}
-            report["rows_updated"] += len(changed)
-            report["metrics_updated"] += 1
-            report["splits_applied"] += 1
-            report["status"] = "applied"
         return report
+
+    def _recovery_request_is_due(self, request: dict) -> bool:
+        """Return whether a pending/retry/running request may be attempted."""
+        if request.get("status") not in (RECOVERY_PENDING, RECOVERY_RETRY, RECOVERY_RUNNING):
+            return False
+        raw = request.get("next_attempt_at")
+        if not isinstance(raw, str) or not raw:
+            return True
+        try:
+            due = dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            return True
+        now = self._now()
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=dt.UTC)
+        if due.tzinfo is None:
+            due = due.replace(tzinfo=dt.UTC)
+        return due <= now.astimezone(dt.UTC)
+
+    def recover_split_mismatches(
+        self,
+        symbols_filter: list[str] | None = None,
+        limit: int | None = None,
+    ) -> dict:
+        """Retry only durable split-verification requests.
+
+        An empty queue returns before constructing a provider call.  Requests
+        are claimed in app_meta, use the same Alpha Vantage client and shared
+        key ledger as normal reconciliation, and remain BLOCKED when the
+        provider still reports the old split history.
+        """
+        universe = load_core_universe(self._settings.universe_path)
+        if symbols_filter is not None:
+            wanted = set(symbols_filter)
+            universe = [symbol for symbol in universe if symbol in wanted]
+        self._store.load()
+        if self._key_store is not None:
+            try:
+                self._key_store.load()
+            except Exception:
+                logger.warning("split recovery: shared budget ledger unreadable — keys will report empty")
+        rstore = self._get_reconcile_store()
+        try:
+            queue_rows = self._d1.read_app_meta_prefix(SPLIT_RECOVERY_META_PREFIX)
+        except D1QueryError as exc:
+            return {
+                "status": "error", "symbols": {}, "requests_used_total": 0,
+                "keys_used": [], "quota_exhausted": False, "throttled": False,
+                "anomalies": [f"split recovery queue read failed: {exc}"],
+            }
+
+        pending: list[dict] = []
+        for key, payload in queue_rows:
+            suffix = key.removeprefix(SPLIT_RECOVERY_META_PREFIX)
+            # The app_meta key is the durable ownership boundary. Ignore a
+            # stale/malformed payload symbol rather than allowing a corrupted
+            # NVDA key to trigger a provider call for another ticker or clear
+            # another ticker's request.
+            symbol = suffix
+            if symbol not in universe:
+                continue
+            request = dict(payload)
+            request["symbol"] = symbol
+            # A syntactically valid JSON object can still be an invalid queue
+            # record (for example, missing status/version). Normalize that
+            # case to executable pending work so corruption self-heals instead
+            # of silently disappearing from the recovery scan.
+            if request.get("status") not in (RECOVERY_PENDING, RECOVERY_RETRY, RECOVERY_RUNNING):
+                request["status"] = RECOVERY_PENDING
+                request["reason"] = "invalid_recovery_state"
+                request.pop("next_attempt_at", None)
+            if self._recovery_request_is_due(request):
+                pending.append(request)
+
+        report: dict = {
+            "status": "noop" if not pending else "partial",
+            "symbols": {},
+            "requests_used_total": 0,
+            "keys_used": [],
+            "quota_exhausted": False,
+            "throttled": False,
+            "anomalies": [],
+            "recovered": 0,
+            "pending": len(pending),
+        }
+        configured_cap = max(1, int(getattr(self._settings, "split_recovery_max_requests", 2)))
+        effective_limit = configured_cap if limit is None else min(configured_cap, max(0, int(limit)))
+
+        for request in pending:
+            symbol = str(request["symbol"])
+            if self._provider.requests_this_run >= effective_limit:
+                report["anomalies"].append("recovery run cap reached; remaining requests stay pending")
+                break
+            try:
+                serving = self._read_serving_state(symbol)
+                if serving is not None and serving.get("state") == SERVING_READY:
+                    # A prior attempt published READY but crashed before queue
+                    # cleanup. Remove the stale queue item without a provider call.
+                    self._clear_recovery_request(symbol)
+                    report["symbols"][symbol] = {"status": "cleaned"}
+                    continue
+                if serving is None:
+                    self._persist_serving_state(symbol, SERVING_BLOCKED, "scale_mismatch")
+                self._mark_recovery_request(request, RECOVERY_RUNNING)
+                _, fresh_events, _ = self._provider.fetch_splits(symbol)
+                try:
+                    stored_events = split_events_from_rows(self._d1.read_split_events(symbol))
+                except D1QueryError as exc:
+                    raise ProviderError(f"split_events read failed: {exc}") from exc
+
+                if not split_events_equal(fresh_events, stored_events):
+                    symbol_result = {
+                        "splits": STATUS_PENDING, "weekly": STATUS_DONE,
+                        "metrics": STATUS_PENDING, "split_changed": True,
+                        "rows_updated": 0, "metrics_updated": False,
+                        "completed_weeks": 0, "quota": False, "throttled": False,
+                        "anomalies": [],
+                    }
+                    self._reconcile_event_set(
+                        symbol,
+                        stored_events,
+                        fresh_events,
+                        symbol_result,
+                        events_changed=True,
+                        reason="split_recovery_verified",
+                    )
+                    report["symbols"][symbol] = {
+                        "status": "recovered",
+                        "rows_updated": symbol_result["rows_updated"],
+                        "metrics_updated": symbol_result["metrics_updated"],
+                    }
+                    report["recovered"] += 1
+                    continue
+
+                # The provider has not published new evidence.  A known data
+                # workflow (factor mismatch or due split) may be repaired from
+                # durable events; a quote-only mismatch must remain blocked.
+                reason = str(request.get("reason") or "scale_mismatch")
+                known_data_work = reason in {
+                    "history_factor_mismatch", "quote_history_scale_mismatch",
+                    "split_history_changed", "split_recovery_verified", "due_split",
+                }
+                # The request reason may have been replaced by a transient
+                # write error after split_events became durable.  In that
+                # crash window the authoritative evidence is the blocked
+                # symbol plus history that no longer matches the stored event
+                # set, not the last human-readable retry message.
+                history_needs_rewrite = (
+                    bool(stored_events)
+                    and not self._history_matches_events(symbol, stored_events)
+                )
+                if stored_events and (known_data_work or history_needs_rewrite):
+                    symbol_result = {
+                        "splits": STATUS_PENDING, "weekly": STATUS_DONE,
+                        "metrics": STATUS_PENDING, "split_changed": False,
+                        "rows_updated": 0, "metrics_updated": False,
+                        "completed_weeks": 0, "quota": False, "throttled": False,
+                        "anomalies": [],
+                    }
+                    self._rewrite_history_from_stored(symbol, stored_events, symbol_result)
+                    if not self._history_matches_events(symbol, stored_events):
+                        raise ProviderError(f"{symbol} history verification failed during recovery")
+                    if self._can_publish_ready(serving):
+                        self._publish_reconciled_ready(symbol, "split_recovery_verified")
+                        rstore.state.mark(symbol, STATUS_DONE)
+                        if not rstore.save():
+                            raise ProviderError(f"split workflow completion write failed for {symbol}")
+                        self._clear_recovery_request(symbol)
+                        report["symbols"][symbol] = {
+                            "status": "recovered",
+                            "rows_updated": symbol_result["rows_updated"],
+                            "metrics_updated": symbol_result["metrics_updated"],
+                        }
+                        report["recovered"] += 1
+                    else:
+                        # History is now internally correct, but this request
+                        # originated from a quote-vs-history mismatch.  Do not
+                        # turn a still-unsafe quote into READY; retain the
+                        # durable request for the next provider verification.
+                        self._mark_recovery_request(
+                            request,
+                            RECOVERY_RETRY,
+                            "history verified; quote scale block remains active",
+                        )
+                        report["symbols"][symbol] = {
+                            "status": "pending",
+                            "reason": "quote scale block remains active",
+                        }
+                else:
+                    self._mark_recovery_request(
+                        request,
+                        RECOVERY_RETRY,
+                        "provider split history unchanged; verification remains pending",
+                    )
+                    report["symbols"][symbol] = {
+                        "status": "pending",
+                        "reason": "provider split history unchanged",
+                    }
+            except QuotaExhaustedError:
+                self._mark_recovery_request(request, RECOVERY_RETRY, "provider daily quota exhausted")
+                report["quota_exhausted"] = True
+                report["anomalies"].append(f"{symbol}: provider daily quota exhausted")
+                break
+            except ThrottleExhaustedError:
+                self._mark_recovery_request(request, RECOVERY_RETRY, "provider throttle")
+                report["throttled"] = True
+                report["anomalies"].append(f"{symbol}: provider throttle")
+                break
+            except (ProviderError, AllKeysFailedError) as exc:
+                try:
+                    self._mark_recovery_request(request, RECOVERY_RETRY, str(exc))
+                except ProviderError as state_exc:
+                    report["anomalies"].append(str(state_exc)[:200])
+                report["symbols"][symbol] = {"status": "retry", "error": str(exc)[:200]}
+                report["anomalies"].append(f"{symbol}: {str(exc)[:200]}")
+
+        report["requests_used_total"] = self._provider.requests_this_run
+        report["keys_used"] = [
+            {"index": key.get("index"), "used": key.get("used", 0)}
+            for key in (self._key_store.state.keys if self._key_store is not None else [])
+        ]
+        if self._key_store is not None:
+            self._key_store.save()
+        if report["quota_exhausted"]:
+            report["status"] = "quota"
+        elif report["throttled"]:
+            report["status"] = "throttled"
+        elif not pending:
+            report["status"] = "noop"
+        elif report["recovered"] == len(pending):
+            report["status"] = "complete"
+        elif pending:
+            report["status"] = "partial"
+        return report
+
+    def _backfill_legacy_serving_states(self, symbols: list[str]) -> int:
+        """Publish READY once for legacy terminal checkpoints during rollout."""
+        rstore = self._get_reconcile_store()
+        bootstrap_payload: dict | None = None
+        legacy_payload: dict | None = None
+        written = 0
+        for symbol in symbols:
+            if self._read_serving_state(symbol) is not None:
+                continue
+            try:
+                marker = self._d1.read_app_meta(f"{RECONCILE_STATUS_META_PREFIX}{symbol}")
+            except D1QueryError as exc:
+                raise ProviderError(f"legacy split marker read failed for {symbol}: {exc}") from exc
+            symbol_marker_present = marker is not None
+            verified = (
+                isinstance(marker, dict)
+                and marker.get("symbol") == symbol
+                and marker.get("status") == STATUS_DONE
+            ) if symbol_marker_present else rstore.state.status(symbol) == STATUS_DONE
+            # A present non-terminal per-symbol marker is newer workflow
+            # evidence than the legacy global document. Never let the global
+            # checkpoint publish READY over pending/error state.
+            if symbol_marker_present and not verified:
+                continue
+            if not verified:
+                if legacy_payload is None:
+                    try:
+                        legacy_payload = self._d1.read_app_meta(RECONCILE_D1_META_KEY)
+                    except D1QueryError as exc:
+                        raise ProviderError(f"legacy split checkpoint read failed: {exc}") from exc
+                legacy_splits = (
+                    legacy_payload.get("splits")
+                    if isinstance(legacy_payload, dict) else None
+                )
+                verified = isinstance(legacy_splits, dict) and legacy_splits.get(symbol) == STATUS_DONE
+            if not verified:
+                if bootstrap_payload is None:
+                    try:
+                        bootstrap_payload = self._d1.read_app_meta("historyBootstrapState")
+                    except D1QueryError as exc:
+                        raise ProviderError(f"bootstrap checkpoint read failed: {exc}") from exc
+                bootstrap_symbols = (
+                    bootstrap_payload.get("symbols")
+                    if isinstance(bootstrap_payload, dict) else None
+                )
+                bootstrap_status = (
+                    bootstrap_symbols.get(symbol, {})
+                    if isinstance(bootstrap_symbols, dict) else {}
+                )
+                verified = (
+                    isinstance(bootstrap_status, dict)
+                    and bootstrap_status.get("splits") == STATUS_DONE
+                    and bootstrap_status.get("weekly") == STATUS_DONE
+                )
+            if verified:
+                try:
+                    stored_events = split_events_from_rows(self._d1.read_split_events(symbol))
+                except D1QueryError as exc:
+                    raise ProviderError(f"legacy split history read failed for {symbol}: {exc}") from exc
+                # A terminal legacy checkpoint is evidence of completed work,
+                # not a substitute for validating the rows that will actually
+                # be served.  This protects rollout from the original mixed
+                # NVDA regime (global `done` plus factor-1 historical rows).
+                if not self._history_matches_events(symbol, stored_events):
+                    self._block_for_scale_operation(symbol, "history_factor_mismatch", queue=True)
+                    # Do not let the later legacy-marker backfill recreate a
+                    # durable `done` marker for a symbol we just proved is
+                    # unsafe.  The serving state is already BLOCKED, but the
+                    # workflow checkpoint must also stop advertising verified
+                    # split history until the queued repair completes.
+                    rstore.state.mark(symbol, STATUS_ERROR, update_serving_marker=False)
+                    continue
+                self._publish_reconciled_ready(symbol, "legacy_rollout_backfill")
+                written += 1
+        return written
 
     def reconcile_splits(self, symbols_filter: list[str] | None = None, dry_run: bool = False, limit: int | None = None) -> dict:
         """LOW-FREQUENCY (weekly/monthly) provider SPLITS reconciliation.
@@ -646,9 +1485,29 @@ class MaintenanceRunner:
                 "anomalies": [],
             }
 
-        # Idempotent rollout bridge: preserve legacy completed
-        # reconciliation before a fresh pass resets the global progress map.
-        # If this durable write fails, do not mutate progress or spend quota.
+        # Idempotent rollout bridge: validate legacy terminal evidence and
+        # publish the authoritative serving state BEFORE materialising any new
+        # per-symbol verification marker.  If a process dies between these
+        # writes, a malformed/mixed legacy history is already BLOCKED rather
+        # than temporarily looking verified to the Worker.
+        try:
+            self._backfill_legacy_serving_states(symbols)
+        except ProviderError as exc:
+            return {
+                "status": "error",
+                "symbols": {},
+                "requests_used_total": 0,
+                "keys_used": [],
+                "quota_exhausted": False,
+                "throttled": False,
+                "split_changes": 0,
+                "rows_updated": 0,
+                "metrics_updated": 0,
+                "anomalies": [str(exc)[:240]],
+            }
+        # Preserve legacy completed reconciliation before a fresh pass resets
+        # the global progress map. If this durable marker write fails, do not
+        # spend provider quota; the serving state remains authoritative.
         if rstore.backfill_verified_markers() and not rstore.save():
             return {
                 "status": "error",
@@ -726,7 +1585,16 @@ class MaintenanceRunner:
                 report["throttled"] = True
                 break
             # Persist dedicated reconciliation progress after every symbol.
-            rstore.save()
+            # A successful serving publication is not enough to report a
+            # completed workflow: the retry cursor itself must also be
+            # durable.  Mark the in-memory workflow as an error if this write
+            # fails so the final report cannot claim completion.
+            if not rstore.save():
+                symbol_report["splits"] = STATUS_ERROR
+                symbol_report["anomalies"].append(
+                    f"{symbol} split workflow checkpoint write failed"
+                )
+                rstore.state.mark(symbol, STATUS_ERROR, update_serving_marker=False)
         # Completion reads the dedicated state across the FULL selected universe
         # (never the per-run `report`, which omits unvisited symbols after a cap).
         remaining = rstore.state.pending_in(symbols)
@@ -737,11 +1605,15 @@ class MaintenanceRunner:
         ]
         if self._key_store is not None:
             self._key_store.save()
-        rstore.save()
+        checkpoint_saved = rstore.save()
+        if not checkpoint_saved:
+            report["anomalies"].append("split workflow checkpoint write failed")
         if report["quota_exhausted"]:
             report["status"] = "quota"
         elif report["throttled"]:
             report["status"] = "throttled"
+        elif not checkpoint_saved:
+            report["status"] = "error"
         elif remaining:
             report["status"] = "partial"
         else:

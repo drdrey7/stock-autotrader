@@ -50,7 +50,7 @@ timer, backs up the currently installed helper/unit files, then quiesces only
 timers that were active. Active timers must stop successfully; a stop failure
 aborts the deployment.
 
-After installing the helper and nine systemd unit files, it runs
+After installing the helper and eleven systemd unit files, it runs
 `daemon-reload` and restores each timer's exact prior state:
 
 - previously enabled + active → enabled + active again;
@@ -79,10 +79,13 @@ The recurring work is deliberately aligned with how a 200-week SMA changes:
 - `bootstrap`: daily at 08:00 UTC only while initial historical loading remains
   incomplete. It is automatically disabled when all 50 Core Universe symbols
   have terminal SPLITS + WEEKLY bootstrap results.
-- `reconcile-splits`: first and third Tuesday of each month at 09:00 UTC. It is
-  bounded to at most 50 provider HTTP requests and shares the normal daily
-  provider ledger, so maintenance always has priority.
-- `apply-due-splits`: Tue-Sat at 13:10 UTC and makes zero provider calls.
+- `apply-due-splits`: Mon-Sat at 06:00 UTC and makes zero provider calls. Its
+  randomized delay ends before the 07:00 maintenance window.
+- `reconcile-splits`: every Sunday at 09:00 UTC. It is bounded to at most 50
+  provider HTTP requests and shares the normal daily provider ledger.
+- `recover-split-mismatches`: hourly from a D1 queue, bounded to two queued
+  symbols per run. It makes zero provider calls when the queue is empty and
+  resumes at 07:30 Monday so maintenance has priority.
 
 The website reads the durable D1 basis. A valid 200W SMA therefore remains
 available even when the VPS is temporarily offline; a missed refresh does not

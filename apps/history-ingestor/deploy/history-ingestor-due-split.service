@@ -1,7 +1,7 @@
 # Daily ZERO-PROVIDER due-split reconciliation — recurring service.
 #
-# Runs once per trading-day morning before the US market opens (13:10 UTC =
-# 09:10 ET, before the 09:30 ET open). Reconciles splits whose effective
+# Runs at 06:00 UTC before the Monday maintenance window (and before the US
+# market opens on other days). Reconciles splits whose effective
 # date has been reached by reading stored split_events from D1 and applying
 # them to affected weekly history + technical_metrics — all from stored RAW
 # data, ZERO Alpha Vantage requests.
@@ -9,7 +9,8 @@
 # Normally a no-op (no writes). Idempotent. Does not affect Finnhub service.
 [Unit]
 Description=Stock Autotrader daily due-split reconciliation (zero provider)
-After=network-online.target history-ingestor-bootstrap.service history-ingestor-maintenance.service
+After=network-online.target
+Before=history-ingestor-maintenance.service
 Wants=network-online.target
 
 [Service]

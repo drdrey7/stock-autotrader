@@ -5,6 +5,7 @@ import type { StockDetailStorageSnapshot, WeeklyPriceRow } from "./storage";
 
 const storageMock = vi.hoisted(() => ({
   readStockDetailStorageSnapshot: vi.fn(),
+  persistSplitScaleMismatch: vi.fn(),
 }));
 
 vi.mock("./storage", () => ({

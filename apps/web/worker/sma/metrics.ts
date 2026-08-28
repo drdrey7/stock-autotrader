@@ -10,6 +10,10 @@ import { isoWeekOfDateKey, isoWeekOfNyInstant, weekDiffDays } from "./weeks";
 export interface QuoteInput {
   price: number;
   provider_timestamp: string;
+  previous_close?: number | null;
+  quote_session_date?: string | null;
+  previous_close_session_date?: string | null;
+  daily_change_valid?: number;
 }
 
 export interface LiveSmaResult {

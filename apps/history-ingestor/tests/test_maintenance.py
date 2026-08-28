@@ -138,19 +138,10 @@ class MaintenanceCycleTests(unittest.TestCase):
             # Metrics re-anchored to the new week.
             self.assertIn("2026-08-21", d1.metrics["NVDA"]["anchor_week"])
 
-    def test_provider_correction_invalidates_before_weekly_rows_are_written(self):
+    def test_provider_correction_preserves_ready_serving_state(self):
         class TrackingD1(FakeD1):
             def __init__(self):
                 super().__init__()
-                self.operations: list[tuple[str, str]] = []
-
-            def write_app_meta(self, key, value):
-                self.operations.append(("meta", key))
-                return super().write_app_meta(key, value)
-
-            def upsert_weekly_rows(self, rows):
-                self.operations.append(("weekly", rows[0][0]))
-                return super().upsert_weekly_rows(rows)
 
         with tempfile.TemporaryDirectory() as tmp:
             d1 = TrackingD1()
@@ -161,6 +152,10 @@ class MaintenanceCycleTests(unittest.TestCase):
                 MON_1,
             )
             runner.run(universe=["NVDA"])
+            d1.write_app_meta(
+                "historySplitServingState:NVDA",
+                {"version": 1, "symbol": "NVDA", "state": "READY", "reason": "bootstrap"},
+            )
 
             corrected = weekly_payload("NVDA", n_weeks=261, end="2026-08-21")
             corrected["Weekly Time Series"]["2026-08-14"]["4. close"] = "22.5"
@@ -177,10 +172,69 @@ class MaintenanceCycleTests(unittest.TestCase):
 
             report = runner2.run(universe=["NVDA"])
             self.assertEqual(report["symbols"]["NVDA"]["rows_updated"], 2, report)
-            self.assertEqual(d1.meta["historyReconcileSplitStatus:NVDA"]["status"], "pending")
-            pending_index = d1.operations.index(("meta", "historyReconcileSplitStatus:NVDA"))
+            self.assertEqual(d1.meta["historySplitServingState:NVDA"]["state"], "READY")
+            self.assertEqual(d1.meta["historyReconcileSplitStatus:NVDA"]["status"], "done")
+            self.assertNotIn(
+                ("meta", "historySplitServingState:NVDA"),
+                d1.operations,
+            )
+
+    def test_weekly_catches_a_missed_due_split_before_mutating_history(self):
+        """The weekly boundary remains fail-closed if the due timer was missed."""
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            d1.upsert_split_events([("NVDA", "2024-06-10", 10.0, "2026-08-16T00:00:00Z")])
+            d1.upsert_weekly_rows([(
+                "NVDA", "2024-06-07", 1_190, 1_220, 1_180, 1_200, 1_000,
+                1.0, 1_200.0, "2026-08-16T00:00:00Z",
+            )])
+            d1.operations.clear()
+            provider = FakeProvider(weekly_payloads={"NVDA": weekly_payload("NVDA")})
+            runner, _ = make_runner(d1, provider, tmp, MON_1)
+
+            report = runner.run(universe=["NVDA"])
+
+            self.assertEqual(report["status"], "complete")
+            self.assertEqual(d1.meta["historySplitServingState:NVDA"]["state"], "READY")
+            self.assertLess(
+                d1.operations.index(("meta", "historySplitServingState:NVDA")),
+                d1.operations.index(("weekly", "NVDA")),
+            )
+            old_row = next(row for row in d1.weekly["NVDA"] if row[1] == "2024-06-07")
+            self.assertEqual(old_row[7], 10.0)
+            self.assertAlmostEqual(old_row[8], old_row[5] / 10.0, places=6)
+            self.assertIn("NVDA", d1.metrics)
+            self.assertNotIn("historySplitRecovery:NVDA", d1.meta)
+
+    def test_weekly_missed_due_split_failure_keeps_symbol_blocked_for_retry(self):
+        """A failed weekly rewrite cannot leave a due split looking READY."""
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            d1.upsert_split_events([("NVDA", "2024-06-10", 10.0, "2026-08-16T00:00:00Z")])
+            d1.upsert_weekly_rows([(
+                "NVDA", "2024-06-07", 1_190, 1_220, 1_180, 1_200, 1_000,
+                1.0, 1_200.0, "2026-08-16T00:00:00Z",
+            )])
+            provider = FakeProvider(weekly_payloads={"NVDA": weekly_payload("NVDA")})
+            runner, _ = make_runner(d1, provider, tmp, MON_1)
+            d1.weekly_write_fail = True
+
+            first = runner.run(universe=["NVDA"])
+
+            self.assertEqual(first["status"], "partial")
+            self.assertEqual(d1.meta["historySplitServingState:NVDA"]["state"], "BLOCKED")
+            self.assertEqual(d1.meta["historySplitRecovery:NVDA"]["status"], "pending")
+            old_row = next(row for row in d1.weekly["NVDA"] if row[1] == "2024-06-07")
+            self.assertEqual(old_row[7], 1.0)
+
+            d1.weekly_write_fail = False
+            retry = runner.run(universe=["NVDA"])
+
+            self.assertEqual(retry["status"], "complete")
+            self.assertEqual(d1.meta["historySplitServingState:NVDA"]["state"], "READY")
+            self.assertNotIn("historySplitRecovery:NVDA", d1.meta)
             weekly_index = d1.operations.index(("weekly", "NVDA"))
-            self.assertLess(pending_index, weekly_index)
+            self.assertGreater(weekly_index, 0)
 
     def test_quota_resume_across_days(self):
         # Monday WEEKLY quota-blocked mid-way; next run resumes the remaining
@@ -791,33 +845,51 @@ class DueSplitReconciliationTests(unittest.TestCase):
     def test_apply_due_splits_metrics_write_failure_reports_error(self):
         # If the metrics UPSERT fails in apply_due_splits, the error must be
         # reported per-symbol (not abort the whole run).
-        from history_ingestor.bootstrap import BootstrapRunner
-        from history_ingestor.state import StateStore
-
         with tempfile.TemporaryDirectory() as tmp:
             d1 = FakeD1()
             d1.metrics_write_fail = True
-            settings = settings_with()
-            provider = FakeProvider(
-                weekly_payloads={"NVDA": weekly_payload("NVDA")},
-                splits_payloads={"NVDA": future_splits_payload("NVDA", future_date="2026-08-17")},
-            )
-            # Bootstrap first to populate weekly rows + split_events.
-            bootstrap_store = StateStore(settings, d1, state_path=Path(tmp) / "bootstrap.json")
-            bootstrap_runner = BootstrapRunner(settings, d1, provider, bootstrap_store, now_fn=lambda: MON_1)
-            bootstrap_runner.run(universe=["NVDA"])
-            self.assertIn("NVDA", d1.weekly)
-            self.assertTrue(d1.read_split_events("NVDA"))
+            d1.upsert_split_events([("NVDA", "2026-08-17", 4.0, "2026-08-16T00:00:00Z")])
+            d1.upsert_weekly_rows([(
+                "NVDA", "2026-08-14", 100, 101, 99, 100, 1000, 1.0, 100.0,
+                "2026-08-16T00:00:00Z",
+            )])
 
             # apply_due_splits: split effective 2026-08-17 (Monday), run on Tuesday.
+            settings = settings_with()
+            provider = FakeProvider()
             TUE = dt.datetime(2026, 8, 18, 12, 0, tzinfo=dt.UTC)
             maintenance_store = MaintenanceStore(settings, d1, state_path=Path(tmp) / "maintenance.json")
             maintenance_runner = MaintenanceRunner(settings, d1, provider, maintenance_store, now_fn=lambda: TUE)
             report = maintenance_runner.apply_due_splits(symbols_filter=["NVDA"])
-            # The metrics write failure must surface in the report.
+            # The metrics write failure must surface and leave serving BLOCKED.
             self.assertIn("NVDA", report["symbols"])
             self.assertEqual(report["symbols"]["NVDA"]["status"], "error")
             self.assertIn("technical_metrics write failed", report["symbols"]["NVDA"]["error"])
+            self.assertEqual(d1.meta["historySplitServingState:NVDA"]["state"], "BLOCKED")
+
+    def test_apply_due_splits_refreshes_stale_split_timestamp_even_when_values_match(self):
+        """A missed due run must repair split freshness, not only numeric factors."""
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            d1.upsert_split_events([("NVDA", "2026-08-17", 4.0, "2026-08-16T00:00:00Z")])
+            d1.upsert_weekly_rows([(
+                "NVDA", "2026-08-14", 100, 101, 99, 100, 1000, 4.0, 25.0,
+                "2026-08-16T00:00:00Z",
+            )])
+            runner, _ = make_runner(
+                d1, FakeProvider(), tmp,
+                dt.datetime(2026, 8, 18, 12, 0, tzinfo=dt.UTC),
+            )
+
+            report = runner.apply_due_splits(symbols_filter=["NVDA"])
+
+            self.assertEqual(report["status"], "applied")
+            self.assertEqual(report["rows_updated"], 1)
+            row = d1.weekly["NVDA"][0]
+            self.assertEqual(row[7], 4.0)
+            self.assertEqual(row[8], 25.0)
+            self.assertGreaterEqual(row[9], "2026-08-17T00:00:00Z")
+            self.assertEqual(d1.meta["historySplitServingState:NVDA"]["state"], "READY")
 
 
 class D1MetricsWriteFailureTests(unittest.TestCase):
