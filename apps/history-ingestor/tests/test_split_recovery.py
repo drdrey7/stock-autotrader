@@ -377,6 +377,19 @@ class SplitRecoveryQueueTests(unittest.TestCase):
             self.assertEqual(d1.meta[split_serving_state_key("NVDA")]["state"], SERVING_READY)
             self.assertNotIn(split_recovery_key("NVDA"), d1.meta)
 
+    def test_pending_verification_recovers_after_unchanged_empty_split_refresh(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            seed_recovery_request(d1, reason="split_verification_pending")
+            seed_weekly_row(d1, factor=1.0, adjusted=1_200.0)
+            provider = FakeProvider(splits_payloads={"NVDA": {"symbol": "NVDA", "data": []}})
+
+            report = make_runner(d1, provider, tmp).recover_split_mismatches()
+
+            self.assertEqual(report["symbols"]["NVDA"]["status"], "recovered")
+            self.assertEqual(d1.meta[split_serving_state_key("NVDA")]["state"], SERVING_READY)
+            self.assertNotIn(split_recovery_key("NVDA"), d1.meta)
+
     def test_retry_after_restart_recovers_when_provider_publishes_split(self):
         with tempfile.TemporaryDirectory() as tmp:
             d1 = FakeD1()

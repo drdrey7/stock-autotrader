@@ -434,6 +434,44 @@ describe("split scale safety", () => {
     )).toBe(true);
   });
 
+  it("detects a new scale transition after an older known split", () => {
+    const rows = weeklyHistory(3).map((row) => ({
+      ...row,
+      raw_close: 120,
+      raw_open: 119,
+      raw_high: 122,
+      raw_low: 118,
+      split_adjusted_close: 120,
+    }));
+    expect(hasUnexpectedQuoteScaleMismatch(
+      {
+        price: 12,
+        previous_close: 120,
+        provider_timestamp: "2026-08-21T14:59:00.000Z",
+        quote_session_date: "2026-08-21",
+        previous_close_session_date: "2026-08-20",
+        daily_change_valid: 1,
+      },
+      rows,
+      [{ effective_date: "2024-06-10", split_factor: 10 }],
+    )).toBe(true);
+  });
+
+  it("does not disable normal scale checks just because an older split is known", () => {
+    expect(hasUnexpectedQuoteScaleMismatch(
+      {
+        price: 500,
+        previous_close: 495,
+        provider_timestamp: "2026-08-21T14:59:00.000Z",
+        quote_session_date: "2026-08-21",
+        previous_close_session_date: "2026-08-20",
+        daily_change_valid: 1,
+      },
+      weeklyHistory(3),
+      [{ effective_date: "2024-06-10", split_factor: 10 }],
+    )).toBe(false);
+  });
+
   it("honors authoritative BLOCKED even when effective split events are present", () => {
     const history = applySplitToHistory(weeklyHistory(459), "2026-08-10", 2);
     expect(servedSplitScaleState(

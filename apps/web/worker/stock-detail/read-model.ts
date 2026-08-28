@@ -414,19 +414,23 @@ export function servedSplitScaleState(
 }
 
 /**
- * Detect only strong scale evidence with no known split event. A persisted
- * historical transition can independently prove a mixed legacy regime; for a
- * current quote transition, the quote and two consecutive weekly closes must
- * agree with the same conventional split ratio. A percentage move alone
- * (including a normal 50% move) is never sufficient.
+ * Detect only strong scale evidence not explained by the known split history.
+ * A persisted historical transition after the latest known split can
+ * independently prove a mixed regime; for a current quote transition, the
+ * quote and two consecutive weekly closes must agree with the same
+ * conventional split ratio. A percentage move alone (including a normal 50%
+ * move) is never sufficient.
  */
 export function hasUnexpectedQuoteScaleMismatch(
   quote: QuoteInput | null,
   weeklyRows: readonly WeeklyPriceRow[],
   effectiveSplits: readonly StockDetailSplitEventRow[],
 ): boolean {
-  if (effectiveSplits.length > 0) return false;
-  if (hasUnexplainedHistoricalScaleTransition(weeklyRows)) return true;
+  const latestKnownEffectiveDate = effectiveSplits.at(-1)?.effective_date ?? null;
+  const rowsAfterLatestKnownSplit = latestKnownEffectiveDate
+    ? weeklyRows.filter((row) => row.week_end_date >= latestKnownEffectiveDate)
+    : weeklyRows;
+  if (hasUnexplainedHistoricalScaleTransition(rowsAfterLatestKnownSplit)) return true;
   const latestWeeklyRow = weeklyRows[0] ?? null;
   const priorWeeklyRow = weeklyRows[1] ?? null;
   if (!quote || !latestWeeklyRow || !priorWeeklyRow) return false;
@@ -451,6 +455,9 @@ export function hasUnexpectedQuoteScaleMismatch(
     || priorWeek === null
     || latestWeeklyRow.week_end_date <= priorWeeklyRow.week_end_date
     || weekDiffDays(latestWeek, priorWeek) !== 7
+    || (latestKnownEffectiveDate !== null
+      && (latestWeeklyRow.week_end_date < latestKnownEffectiveDate
+        || priorWeeklyRow.week_end_date < latestKnownEffectiveDate))
   ) return false;
   const quoteSessionMs = Date.parse(`${quote.quote_session_date}T00:00:00.000Z`);
   const historyMs = Date.parse(`${latestWeeklyRow.week_end_date}T00:00:00.000Z`);

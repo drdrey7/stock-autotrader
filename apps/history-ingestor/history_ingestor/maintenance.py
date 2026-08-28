@@ -1313,7 +1313,7 @@ class MaintenanceRunner:
                     bool(stored_events)
                     and not self._history_matches_events(symbol, stored_events)
                 )
-                if stored_events and (known_data_work or history_needs_rewrite):
+                if known_data_work or history_needs_rewrite:
                     symbol_result = {
                         "splits": STATUS_PENDING, "weekly": STATUS_DONE,
                         "metrics": STATUS_PENDING, "split_changed": False,
