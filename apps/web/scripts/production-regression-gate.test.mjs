@@ -186,14 +186,32 @@ describe("evaluateRegression", () => {
     expect(evaluateRegression({ before, after, scope, bootstrap })).toEqual({ ok: true, reasons: [] });
   });
 
-  it("fails when the post-deploy Worker is not live", () => {
+  it("fails when Worker liveness regresses after deploy", () => {
     const before = snapshot();
     const after = snapshot({ live: false });
     const scope = classifyChangedPaths(["apps/web/src/App.tsx"]);
 
     const result = evaluateRegression({ before, after, scope, bootstrap: healthyBootstrap });
     expect(result.ok).toBe(false);
-    expect(result.reasons[0]).toContain("post-deploy Worker liveness failed");
+    expect(result.reasons).toContain("Worker liveness regressed after deploy (HTTP 503)");
+  });
+
+  it("does not block frontend-only work for an unchanged pre-existing Worker outage", () => {
+    const before = snapshot({ live: false });
+    const after = snapshot({ live: false });
+    const scope = classifyChangedPaths(["apps/web/src/App.tsx"]);
+
+    expect(evaluateRegression({ before, after, scope, bootstrap: healthyBootstrap })).toEqual({ ok: true, reasons: [] });
+  });
+
+  it("fails runtime changes when Worker liveness was already unavailable and remains unavailable", () => {
+    const before = snapshot({ live: false });
+    const after = snapshot({ live: false });
+    const scope = classifyChangedPaths(["apps/web/worker/ai-analysis/api.ts"]);
+
+    const result = evaluateRegression({ before, after, scope, bootstrap: healthyBootstrap });
+    expect(result.ok).toBe(false);
+    expect(result.reasons).toContain("Worker liveness is unavailable, so runtime changes cannot be regression-verified");
   });
 
   it("fails the Core invariant when Core-sensitive files changed", () => {
