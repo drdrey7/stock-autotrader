@@ -117,6 +117,28 @@ class AdjustSeriesTests(unittest.TestCase):
         self.assertEqual(split_factor_float(Fraction(4, 1)), 4.0)
         self.assertEqual(split_factor_float(Fraction(1, 2)), 0.5)
 
+    def test_nvda_style_10_for_1_full_ohlc(self):
+        # Legacy-style NVDA: a historical pre-split week at raw 1000 with a
+        # 10:1 split (NVIDIA 2024-06-10) must render as 100 on the current
+        # scale for every OHLC field — open/high/low/close all divided by 10.
+        bars = [
+            bar("NVDA", "2024-06-03", 1000.0, open_=980.0, high=1050.0, low=960.0),
+            bar("NVDA", "2024-06-10", 120.0, open_=118.0, high=121.0, low=117.0),
+            bar("NVDA", "2024-06-17", 122.0, open_=120.0, high=124.0, low=119.0),
+        ]
+        splits = [split("NVDA", "2024-06-10", "10/1")]
+        compiled = adjust_series(bars, splits)
+        # Pre-split week: factor 10, every raw /10 -> ~98/105/96/100.
+        self.assertEqual(compiled[0][1], Fraction(10, 1))
+        self.assertAlmostEqual(compiled[0][0].open / float(compiled[0][1]), 98.0, places=6)
+        self.assertAlmostEqual(compiled[0][0].high / float(compiled[0][1]), 105.0, places=6)
+        self.assertAlmostEqual(compiled[0][0].low / float(compiled[0][1]), 96.0, places=6)
+        self.assertAlmostEqual(compiled[0][2], 100.0, places=6)   # 1000 / 10
+        # Split week + after: factor 1, unchanged on the new scale.
+        self.assertEqual(compiled[1][1], Fraction(1, 1))
+        self.assertAlmostEqual(compiled[1][2], 120.0, places=6)
+        self.assertAlmostEqual(compiled[2][2], 122.0, places=6)
+
 
 class FutureSplitTests(unittest.TestCase):
     """P2-1: future-dated splits must NOT be applied before effective date."""

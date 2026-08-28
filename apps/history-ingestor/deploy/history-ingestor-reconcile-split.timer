@@ -1,30 +1,27 @@
-# LOW-FREQUENCY provider SPLITS reconciliation — roughly fortnightly Tuesdays.
+# Sunday provider SPLITS discovery cadence.
 #
-# This is the SEPARATE split-discovery responsibility, independent of the
-# weekly SMA refresh. Splits are rare for the 50-symbol Core Universe, so a
-# provider scan every day is unnecessary. The job runs on the first and third
-# Tuesday of each month (roughly every two weeks) and resumes from its durable
-# checkpoint if provider quota is unavailable.
+# The SPLITS scan runs every Sunday at 09:00 UTC — one day ahead of the
+# Monday WEEKLY maintenance — so a Monday-effective split (as announced by
+# Alpha Vantage) is discovered, persisted to split_events and left for the
+# Monday 06:00 apply-due-splits pass to apply before the WEEKLY refresh.
+# It therefore does NOT compete with Monday's ~50-request WEEKLY run.
 #
-# ORDERING (MAINTENANCE HAS ABSOLUTE PRIORITY):
-#   maintenance  -- daily 07:00 UTC (weekly refresh on Monday; carryover first)
-#   bootstrap    -- daily 08:00 UTC while bootstrap is incomplete only
-#   reconcile    -- first + third Tuesday 09:00 UTC (bounded residual scan)
-#   due-split    -- Tue..Sat 13:10 UTC (zero-provider)
+# ORDERING (weekly, with Monday effective splits in mind):
+#   Sat  ------- apply-due-splits  -- 06:00 (zero-provider)
+#   Sun  09:00  reconcile-splits  -- bounded SPLITS discovery (<=50 requests,
+#                                    residual shared quota only)
+#   Mon  06:00  apply-due-splits  -- applies the just-discovered Monday-effective
+#                                    split to RAW history + metrics (zero-provider)
+#   Mon  07:00  maintenance       -- WEEKLY refresh on the already-adjusted scale
 #
-# Tuesday is deliberate: a healthy Monday can use the full daily entitlement
-# refreshing the 50 WEEKLY series. Tuesday maintenance gets first chance to
-# finish any carryover; only then may reconciliation consume residual quota.
-#
-# Persistent=false: a missed scan is NOT auto-caught-up at boot into a due
-# maintenance window. The durable reconcile cursor resumes on the next
-# scheduled scan.
+# Persistent=false: a missed Sunday scan is NOT auto-caught-up at boot into the
+# Monday maintenance window. The durable reconcile cursor resumes on the next
+# Sunday scan.
 [Unit]
-Description=Stock Autotrader SPLITS reconciliation (fortnightly bounded residual scan)
+Description=Stock Autotrader SPLITS reconciliation (weekly Sunday bounded residual scan)
 
 [Timer]
-OnCalendar=Tue *-*-01..07 09:00:00 UTC
-OnCalendar=Tue *-*-15..21 09:00:00 UTC
+OnCalendar=Sun *-*-* 09:00:00 UTC
 RandomizedDelaySec=15m
 Persistent=false
 

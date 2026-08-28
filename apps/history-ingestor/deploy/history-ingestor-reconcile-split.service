@@ -1,17 +1,18 @@
-# LOW-FREQUENCY provider SPLITS reconciliation — bounded residual service.
+# LOW-FREQUENCY provider SPLITS reconciliation — weekly Sunday bounded service.
 #
 # Decoupled from weekly maintenance so split discovery NEVER blocks or starves
 # the WEEKLY SMA refresh. Shares the same Alpha Vantage per-key ledger.
 #
 # QUOTA: provider entitlement is 25 requests/day per key; with two keys that is
-# 50/day total. This service is scheduled on the first and third Tuesday of each
-# month, after maintenance and (while it still exists) bootstrap. It may use at
-# most 50 provider HTTP requests in one invocation, but the shared provider
-# ledger means it can consume only the real residual budget left that day. If
-# maintenance or bootstrap already used quota, reconciliation stops safely and
-# resumes from its durable cursor on the next scheduled scan.
+# 50/day total. This service runs every Sunday at 09:00 UTC, one day ahead of
+# the Monday WEEKLY maintenance, so a Monday-effective split is discovered and
+# persisted to split_events without competing with Monday's ~50-request WEEKLY
+# run. It may use at most 50 provider HTTP requests in one invocation, but the
+# shared provider ledger means it can consume only the real residual budget
+# left that day. If maintenance or bootstrap already used quota, reconciliation
+# stops safely and resumes from its durable cursor on the next Sunday scan.
 [Unit]
-Description=Stock Autotrader SPLITS reconciliation (fortnightly bounded residual provider check)
+Description=Stock Autotrader SPLITS reconciliation (weekly Sunday bounded residual provider check)
 After=network-online.target history-ingestor-maintenance.service history-ingestor-bootstrap.service
 Wants=network-online.target
 

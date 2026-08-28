@@ -1,15 +1,18 @@
 # History ingestor weekly maintenance — recurring service (documented install).
 #
-# MAINTENANCE HAS STRICT PRIORITY over bootstrap. It runs weekly (Monday
-# 07:00 UTC), fetches TIME_SERIES_WEEKLY for the just-closed week and rolls
-# every symbol's technical_metrics anchor forward. It never depends on split
-# reconciliation (separate low-frequency job) and never blocks on it.
+# MAINTENANCE HAS STRICT PRIORITY over bootstrap and split reconciliation. It
+# runs weekly (Monday 07:00 UTC), fetches TIME_SERIES_WEEKLY for the
+# just-closed week and rolls every symbol's technical_metrics anchor forward.
+# It never depends on split reconciliation (separate low-frequency job) and
+# never blocks on it. On Monday the zero-provider apply-due-splits (06:00)
+# runs BEFORE this 07:00 pass (see history-ingestor-due-split.service), so the
+# WEEKLY refresh writes the new week on the already split-adjusted scale.
 
 [Unit]
 Description=Stock Autotrader weekly history maintenance (Alpha Vantage, priority over bootstrap)
-After=network-online.target
+After=network-online.target history-ingestor-due-split.service
 Wants=network-online.target
-Before=history-ingestor-bootstrap.service history-ingestor-reconcile-split.service history-ingestor-due-split.service
+Before=history-ingestor-bootstrap.service history-ingestor-reconcile-split.service
 
 [Service]
 Type=oneshot

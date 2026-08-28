@@ -201,6 +201,26 @@ describe("historical SMA200W", () => {
     const history = weeklyHistory(199).reverse().map((row) => ({ time: row.week_end_date, close: row.split_adjusted_close }));
     expect(buildHistoricalSma200w(history)).toEqual([]);
   });
+
+  it("computes on split-adjusted closes, never the raw pre-split scale", () => {
+    // NVDA-style: every historical weekly close is raw, then a 10:1 split is
+    // applied by reconciliation. The 200W SMA must be the average of the
+    // split-adjusted (raw/10) closes — otherwise the line sits ~10x above the
+    // chart. Build a constant raw series, apply a persistent factor -> the SMA
+    // must equal the adjusted close, not the raw close.
+    const rawClose = 1000;
+    const factor = 10;
+    const history = Array.from({ length: 201 }, (_, index) => ({
+      time: new Date(Date.UTC(2020, 0, 3 + index * 7)).toISOString().slice(0, 10),
+      close: rawClose / factor, // split-adjusted close for every week
+    }));
+    const sma = buildHistoricalSma200w(history);
+    expect(sma).toHaveLength(2);
+    expect(sma[0]!.value).toBeCloseTo(rawClose / factor, 6); // 100, not 1000
+    // Contrast: if the SMA had been computed on the raw 1000 closes, it would
+    // be ~1000 instead of 100 — the invariant is the same scale as the chart.
+    expect(sma[0]!.value).not.toBeCloseTo(rawClose, 6);
+  });
 });
 
 describe("split scale safety", () => {
