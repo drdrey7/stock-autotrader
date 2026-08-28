@@ -23,6 +23,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 22
@@ -46,6 +47,16 @@ jobs:
           if-no-files-found: error
           retention-days: 2
           include-hidden-files: false
+      - name: Classify production change scope (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        working-directory: apps/web
+        run: node scripts/production-regression-gate.mjs classify --base "${{ github.event.before }}" --head "${{ github.sha }}" --output "$RUNNER_TEMP/production-scope.json"
+      - name: Capture production baseline (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        working-directory: apps/web
+        run: node scripts/production-regression-gate.mjs snapshot --output "$RUNNER_TEMP/production-before.json"
+        env:
+          PRODUCTION_WORKER_URL: https://stock-autotrader-web.barroso-labs.workers.dev
       - name: Apply remote D1 migrations (production only)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         working-directory: apps/web
@@ -93,8 +104,18 @@ jobs:
       - name: Bootstrap and verify production Core/Earnings (main only)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         working-directory: apps/web
-        run: npm run db:bootstrap:production
+        run: node scripts/bootstrap-production.mjs --output "$RUNNER_TEMP/production-bootstrap.json"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PRODUCTION_WORKER_URL: https://stock-autotrader-web.barroso-labs.workers.dev
+      - name: Capture post-deploy production state (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        working-directory: apps/web
+        run: node scripts/production-regression-gate.mjs snapshot --output "$RUNNER_TEMP/production-after.json"
+        env:
+          PRODUCTION_WORKER_URL: https://stock-autotrader-web.barroso-labs.workers.dev
+      - name: Enforce scope-aware production regression gate (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        working-directory: apps/web
+        run: node scripts/production-regression-gate.mjs compare --before "$RUNNER_TEMP/production-before.json" --after "$RUNNER_TEMP/production-after.json" --scope "$RUNNER_TEMP/production-scope.json" --bootstrap "$RUNNER_TEMP/production-bootstrap.json"
