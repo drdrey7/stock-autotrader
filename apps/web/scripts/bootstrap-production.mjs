@@ -71,9 +71,13 @@ const argValue = (name) => {
 async function main() {
   const marketContextOnly = process.argv.includes("--market-context");
   const scheduledTime = argValue("--scheduled-time") ?? process.env.MARKET_CONTEXT_SCHEDULED_TIME ?? null;
+  const outputPath = argValue("--output");
   await prepareNonce();
   try {
     const body = await invoke(marketContextOnly ? "market-context" : "bootstrap", scheduledTime);
+    if (outputPath) {
+      await writeFile(outputPath, `${JSON.stringify(body, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+    }
     if (marketContextOnly) {
       const result = body?.result ?? {};
       const health = body?.health ?? {};
