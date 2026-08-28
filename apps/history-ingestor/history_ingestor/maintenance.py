@@ -438,6 +438,8 @@ class MaintenanceRunner:
             return True
         reason = str(serving.get("reason") or "")
         return reason in {
+            "scale_mismatch",
+            "split_verification_pending",
             "split_history_changed",
             "split_recovery_verified",
             "due_split",
@@ -1024,27 +1026,21 @@ class MaintenanceRunner:
         for symbol in symbols:
             try:
                 stored_events = split_events_from_rows(self._d1.read_split_events(symbol))
-            except D1QueryError:
-                continue
-            if not stored_events:
-                continue
-            try:
+                if not stored_events:
+                    continue
                 stored_rows = self._d1.read_weekly_rows(symbol)
-            except D1QueryError:
-                continue
-            if not stored_rows:
-                continue
-            bars: list[WeeklyBar] = []
-            for row in stored_rows:
-                bars.append(WeeklyBar(
-                    symbol=row["symbol"], week_end_date=row["week_end_date"],
-                    open=float(row["raw_open"]), high=float(row["raw_high"]),
-                    low=float(row["raw_low"]), close=float(row["raw_close"]),
-                    volume=int(row["volume"]),
-                ))
-            # Compute with all splits effective up to today
-            adjusted_full = list(adjust_series(bars, stored_events, as_of_date=today_iso))
-            try:
+                if not stored_rows:
+                    continue
+                bars: list[WeeklyBar] = []
+                for row in stored_rows:
+                    bars.append(WeeklyBar(
+                        symbol=row["symbol"], week_end_date=row["week_end_date"],
+                        open=float(row["raw_open"]), high=float(row["raw_high"]),
+                        low=float(row["raw_low"]), close=float(row["raw_close"]),
+                        volume=int(row["volume"]),
+                    ))
+                # Compute with all splits effective up to today
+                adjusted_full = list(adjust_series(bars, stored_events, as_of_date=today_iso))
                 stored = {
                     row["week_end_date"]: (
                         float(row["raw_open"]), float(row["raw_high"]), float(row["raw_low"]),
@@ -1053,29 +1049,26 @@ class MaintenanceRunner:
                     )
                     for row in stored_rows
                 }
-            except (KeyError, TypeError, ValueError) as exc:
-                raise ProviderError(f"weekly row decode failed for {symbol}: {exc}") from exc
-            source_rows = {row["week_end_date"]: row for row in stored_rows}
-            today_date = date_from_iso(today_iso)
-            changed = []
-            for bar, factor, adj_close in adjusted_full:
-                old = stored.get(bar.week_end_date)
-                needs_timestamp_refresh = (
-                    bar.week_end_date in source_rows
-                    and self._row_needs_split_timestamp_refresh(
-                        source_rows[bar.week_end_date], stored_events, today_date,
+                source_rows = {row["week_end_date"]: row for row in stored_rows}
+                today_date = date_from_iso(today_iso)
+                changed = []
+                for bar, factor, adj_close in adjusted_full:
+                    old = stored.get(bar.week_end_date)
+                    needs_timestamp_refresh = (
+                        bar.week_end_date in source_rows
+                        and self._row_needs_split_timestamp_refresh(
+                            source_rows[bar.week_end_date], stored_events, today_date,
+                        )
                     )
-                )
-                if (
-                    old is None
-                    or self._row_differs(old, bar, factor, adj_close)
-                    or needs_timestamp_refresh
-                ):
-                    changed.append((
-                        bar.symbol, bar.week_end_date, bar.open, bar.high, bar.low,
-                        bar.close, bar.volume, float(factor), adj_close, _now_iso(),
-                    ))
-            try:
+                    if (
+                        old is None
+                        or self._row_differs(old, bar, factor, adj_close)
+                        or needs_timestamp_refresh
+                    ):
+                        changed.append((
+                            bar.symbol, bar.week_end_date, bar.open, bar.high, bar.low,
+                            bar.close, bar.volume, float(factor), adj_close, _now_iso(),
+                        ))
                 serving = self._read_serving_state(symbol)
                 serving_reason = str((serving or {}).get("reason") or "")
                 was_blocked_before = serving is not None and serving.get("state") == SERVING_BLOCKED
@@ -1120,7 +1113,7 @@ class MaintenanceRunner:
                 report["metrics_updated"] += 1
                 report["splits_applied"] += 1
                 report["status"] = "applied"
-            except (ProviderError, D1QueryError) as exc:
+            except (ProviderError, D1QueryError, KeyError, TypeError, ValueError) as exc:
                 # If BLOCKED was already durable, leave it untouched. If the
                 # block write itself failed, no data write was attempted.
                 report["symbols"][symbol] = {"status": "error", "error": str(exc)[:200]}
@@ -1303,13 +1296,13 @@ class MaintenanceRunner:
                     report["recovered"] += 1
                     continue
 
-                # The provider has not published new evidence.  A known data
-                # workflow (factor mismatch or due split) may be repaired from
-                # durable events; a quote-only mismatch must remain blocked.
+                # The provider has not published new evidence. A known data or
+                # verification workflow may be repaired from durable events;
+                # a quote-only mismatch must remain blocked.
                 reason = str(request.get("reason") or "scale_mismatch")
                 known_data_work = reason in {
-                    "history_factor_mismatch", "quote_history_scale_mismatch",
-                    "split_history_changed", "split_recovery_verified", "due_split",
+                    "scale_mismatch", "history_factor_mismatch", "quote_history_scale_mismatch",
+                    "split_history_changed", "split_recovery_verified", "split_verification_pending", "due_split",
                 }
                 # The request reason may have been replaced by a transient
                 # write error after split_events became durable.  In that

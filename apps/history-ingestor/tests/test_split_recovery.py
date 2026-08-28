@@ -348,6 +348,35 @@ class SplitRecoveryQueueTests(unittest.TestCase):
             self.assertEqual(d1.meta[split_recovery_key("NVDA")]["status"], "retry")
             self.assertEqual(d1.read_split_events("NVDA")[0]["split_factor"], 10.0)
 
+    def test_generic_scale_mismatch_can_recover_from_verified_stored_events(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            seed_recovery_request(d1, reason="scale_mismatch")
+            d1.upsert_split_events([("NVDA", "2024-06-10", 10.0, "2026-08-16T00:00:00Z")])
+            seed_weekly_row(d1, factor=1.0, adjusted=1_200.0)
+            provider = FakeProvider(splits_payloads={"NVDA": splits_payload("NVDA")})
+
+            report = make_runner(d1, provider, tmp).recover_split_mismatches()
+
+            self.assertEqual(report["symbols"]["NVDA"]["status"], "recovered")
+            self.assertEqual(d1.meta[split_serving_state_key("NVDA")]["state"], SERVING_READY)
+            self.assertEqual(d1.weekly["NVDA"][0][7], 10.0)
+            self.assertEqual(d1.weekly["NVDA"][0][8], 120.0)
+
+    def test_pending_verification_recovers_after_unchanged_split_refresh(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            seed_recovery_request(d1, reason="split_verification_pending")
+            d1.upsert_split_events([("NVDA", "2024-06-10", 10.0, "2026-08-16T00:00:00Z")])
+            seed_weekly_row(d1, factor=10.0, adjusted=120.0)
+            provider = FakeProvider(splits_payloads={"NVDA": splits_payload("NVDA")})
+
+            report = make_runner(d1, provider, tmp).recover_split_mismatches()
+
+            self.assertEqual(report["symbols"]["NVDA"]["status"], "recovered")
+            self.assertEqual(d1.meta[split_serving_state_key("NVDA")]["state"], SERVING_READY)
+            self.assertNotIn(split_recovery_key("NVDA"), d1.meta)
+
     def test_retry_after_restart_recovers_when_provider_publishes_split(self):
         with tempfile.TemporaryDirectory() as tmp:
             d1 = FakeD1()

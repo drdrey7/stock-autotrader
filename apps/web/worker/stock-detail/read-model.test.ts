@@ -318,6 +318,29 @@ describe("split scale safety", () => {
     )).toBe(false);
   });
 
+  it("does not infer a split from ordinary-scale quote data and near-factor history alone", () => {
+    const rows = weeklyHistory(3).map((row, index) => ({
+      ...row,
+      raw_close: index === 0 ? 100 : index === 1 ? 98 : 96,
+      raw_open: index === 0 ? 99 : index === 1 ? 97 : 95,
+      raw_high: index === 0 ? 102 : index === 1 ? 100 : 98,
+      raw_low: index === 0 ? 98 : index === 1 ? 96 : 94,
+      split_adjusted_close: index === 0 ? 100 : index === 1 ? 98 : 96,
+    }));
+    expect(hasUnexpectedQuoteScaleMismatch(
+      {
+        price: 50,
+        previous_close: 50,
+        provider_timestamp: "2026-08-21T14:59:00.000Z",
+        quote_session_date: "2026-08-21",
+        previous_close_session_date: "2026-08-20",
+        daily_change_valid: 1,
+      },
+      rows,
+      [],
+    )).toBe(false);
+  });
+
   it("does not treat a sustained near-one ratio as a split without OHLC regime evidence", () => {
     const rows = weeklyHistory(3).map((row, index) => ({
       ...row,
@@ -344,11 +367,11 @@ describe("split scale safety", () => {
   it("detects a quote already normalized while two recent historical closes remain raw", () => {
     const rows = weeklyHistory(3).map((row, index) => ({
       ...row,
-      raw_open: index === 0 ? 1_190 : index === 1 ? 1_140 : 1_090,
-      raw_high: index === 0 ? 1_220 : index === 1 ? 1_180 : 1_130,
-      raw_low: index === 0 ? 1_180 : index === 1 ? 1_130 : 1_080,
-      raw_close: index === 0 ? 1_200 : index === 1 ? 1_150 : 1_100,
-      split_adjusted_close: index === 0 ? 1_200 : index === 1 ? 1_150 : 1_100,
+      raw_open: index === 0 ? 1_190 : index === 1 ? 1_188 : 1_186,
+      raw_high: index === 0 ? 1_220 : index === 1 ? 1_218 : 1_216,
+      raw_low: index === 0 ? 1_180 : index === 1 ? 1_178 : 1_176,
+      raw_close: index === 0 ? 1_200 : index === 1 ? 1_198 : 1_196,
+      split_adjusted_close: index === 0 ? 1_200 : index === 1 ? 1_198 : 1_196,
     }));
     expect(hasUnexpectedQuoteScaleMismatch(
       {

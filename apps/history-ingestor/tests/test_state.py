@@ -9,7 +9,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 from history_ingestor.config import Settings
-from history_ingestor.state import Checkpoint, StateStore
+from history_ingestor.state import (
+    BootstrapBudgetLedger,
+    BudgetPersistenceError,
+    Checkpoint,
+    KeyBudgetLedger,
+    StateStore,
+)
 
 META_KEY = "historyBootstrapState"
 TEST_TODAY = "2030-01-02"
@@ -35,6 +41,12 @@ class FakeD1:
         self.meta[key] = value
         self.saved.append((key, value))
         return True
+
+
+class FailingD1(FakeD1):
+    def write_app_meta(self, key, value):
+        self.saved.append((key, value))
+        return False
 
 
 class StateTests(unittest.TestCase):
@@ -146,6 +158,38 @@ class StateTests(unittest.TestCase):
             store.mark_key_exhausted(0)
             self.assertEqual(store.key_remaining(0), 0)
             self.assertFalse(store.any_budget_remaining())
+
+    def test_provider_ledger_treats_d1_failure_as_fatal_persistence_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = self._store(FailingD1(), tmp)
+            store.load()
+            with self.assertRaises(BudgetPersistenceError):
+                KeyBudgetLedger(store).mark_used(0)
+            self.assertFalse(store.last_d1_save_ok)
+            self.assertTrue(store.last_mirror_save_ok)
+
+    def test_provider_ledger_ignores_mirror_only_failure_after_d1_success(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mirror_path = Path(tmp) / "mirror"
+            mirror_path.mkdir()
+            d1 = FakeD1()
+            store = StateStore(settings_with(key_count=1), d1, state_path=mirror_path)
+            store.load()
+            KeyBudgetLedger(store).mark_used(0)
+            self.assertTrue(store.last_d1_save_ok)
+            self.assertFalse(store.last_mirror_save_ok)
+            self.assertEqual(store.key_used(0), 1)
+
+    def test_bootstrap_provider_ledger_uses_the_same_d1_mirror_distinction(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mirror_path = Path(tmp) / "mirror"
+            mirror_path.mkdir()
+            store = StateStore(settings_with(key_count=1), FakeD1(), state_path=mirror_path)
+            store.load()
+            BootstrapBudgetLedger(store, daily_limit=1).mark_used(0)
+            self.assertTrue(store.last_d1_save_ok)
+            self.assertFalse(store.last_mirror_save_ok)
+            self.assertEqual(store.bootstrap_http_used(), 1)
 
 
 if __name__ == "__main__":

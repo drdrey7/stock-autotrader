@@ -63,6 +63,18 @@ export const SPLIT_SERVING_STATE_META_PREFIX = "historySplitServingState:";
 export const SPLIT_RECOVERY_META_PREFIX = "historySplitRecovery:";
 const SPLIT_SERVING_STATE_UPSERT_SQL = `INSERT INTO app_meta (key, value) VALUES (?, ?)
   ON CONFLICT(key) DO UPDATE SET value = excluded.value`;
+const SPLIT_RECOVERY_STATE_UPSERT_SQL = `INSERT INTO app_meta (key, value) VALUES (?, ?)
+  ON CONFLICT(key) DO UPDATE SET value = CASE
+    WHEN json_valid(app_meta.value) AND json_extract(app_meta.value, '$.status')
+      IN ('pending', 'running', 'retry')
+    THEN json_set(
+      excluded.value,
+      '$.status', json_extract(app_meta.value, '$.status'),
+      '$.attempts', COALESCE(json_extract(app_meta.value, '$.attempts'), json_extract(excluded.value, '$.attempts')),
+      '$.next_attempt_at', COALESCE(json_extract(app_meta.value, '$.next_attempt_at'), json_extract(excluded.value, '$.next_attempt_at'))
+    )
+    ELSE excluded.value
+  END`;
 const FUNDAMENTALS_SQL = `SELECT symbol, market_cap, pe_ttm, eps_ttm, fcf_per_share_ttm,
   revenue_per_share_ttm, book_value_per_share,
   revenue_growth_ttm_yoy_pct, revenue_growth_3y_pct, revenue_growth_5y_pct, roe_ttm_pct,
@@ -469,7 +481,7 @@ export async function persistSplitScaleMismatch(
   await db.batch([
     db.prepare(SPLIT_SERVING_STATE_UPSERT_SQL)
       .bind(`${SPLIT_SERVING_STATE_META_PREFIX}${symbol}`, servingPayload),
-    db.prepare(SPLIT_SERVING_STATE_UPSERT_SQL)
+    db.prepare(SPLIT_RECOVERY_STATE_UPSERT_SQL)
       .bind(`${SPLIT_RECOVERY_META_PREFIX}${symbol}`, recoveryPayload),
   ]);
 }

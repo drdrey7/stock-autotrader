@@ -26,6 +26,15 @@ STATUS_ERROR = "error"
 D1_META_KEY = "historyBootstrapState"
 
 
+class BudgetPersistenceError(RuntimeError):
+    """The provider debit could not be durably recorded in D1.
+
+    This is deliberately not a ``ProviderError``: the Alpha Vantage client
+    retries ``ProviderError`` on another key, which would be unsafe after a
+    real HTTP debit whose quota ledger failed to persist.
+    """
+
+
 @dataclass
 class Checkpoint:
     day: str = ""  # UTC date the per-key usage refers to ("YYYY-MM-DD")
@@ -137,13 +146,13 @@ class KeyBudgetLedger:
         # at the provider boundary so a restart cannot spend the same quota a
         # second time. A failed checkpoint is fatal to the current operation;
         # continuing would make the external quota and durable state diverge.
-        if not self._store.save():
-            raise RuntimeError("shared provider quota ledger persistence failed")
+        if not self._store.save() and not getattr(self._store, "last_d1_save_ok", False):
+            raise BudgetPersistenceError("shared provider quota ledger persistence failed")
 
     def mark_exhausted(self, index: int) -> None:
         self._store.mark_key_exhausted(index)
-        if not self._store.save():
-            raise RuntimeError("shared provider quota ledger persistence failed")
+        if not self._store.save() and not getattr(self._store, "last_d1_save_ok", False):
+            raise BudgetPersistenceError("shared provider quota ledger persistence failed")
 
 
 class BootstrapBudgetLedger:
@@ -189,13 +198,13 @@ class BootstrapBudgetLedger:
         # never forget provider quota already spent by bootstrap. A failed
         # checkpoint is fatal: continuing would let a later process spend the
         # same external quota against an older durable counter.
-        if not self._store.save():
-            raise RuntimeError("bootstrap provider quota ledger persistence failed")
+        if not self._store.save() and not getattr(self._store, "last_d1_save_ok", False):
+            raise BudgetPersistenceError("bootstrap provider quota ledger persistence failed")
 
     def mark_exhausted(self, index: int) -> None:
         self._store.mark_key_exhausted(index)
-        if not self._store.save():
-            raise RuntimeError("bootstrap provider quota ledger persistence failed")
+        if not self._store.save() and not getattr(self._store, "last_d1_save_ok", False):
+            raise BudgetPersistenceError("bootstrap provider quota ledger persistence failed")
 
 
 class StateStore:
@@ -207,6 +216,11 @@ class StateStore:
         self._state_path = state_path or settings.state_path
         self._state: Checkpoint = Checkpoint()
         self._loaded = False
+        # D1 is the cross-process source of truth.  Keep the two persistence
+        # outcomes separate so a mirror-only failure cannot break a provider
+        # quota result whose D1 debit is already durable.
+        self.last_d1_save_ok: bool | None = None
+        self.last_mirror_save_ok: bool | None = None
 
     def load(self) -> Checkpoint:
         """Load state: D1 first, then the local file mirror, else fresh.
@@ -311,14 +325,17 @@ class StateStore:
     def save(self) -> bool:
         """Persist to D1 (primary) and the local file (mirror). Best effort."""
         payload = self._state.to_dict()
-        ok = True
+        d1_ok = True
         try:
-            ok = self._d1.write_app_meta(D1_META_KEY, payload) and ok
+            d1_ok = bool(self._d1.write_app_meta(D1_META_KEY, payload))
         except Exception:
-            ok = False
+            d1_ok = False
+        mirror_ok = True
         try:
             self._state_path.parent.mkdir(parents=True, exist_ok=True)
             self._state_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
         except OSError:
-            ok = False
-        return ok
+            mirror_ok = False
+        self.last_d1_save_ok = d1_ok
+        self.last_mirror_save_ok = mirror_ok
+        return d1_ok and mirror_ok

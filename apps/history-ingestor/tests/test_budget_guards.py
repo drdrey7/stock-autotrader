@@ -9,8 +9,8 @@ from history_ingestor.maintenance_state import (
     STATUS_PENDING,
     ReconcileStore,
 )
-from history_ingestor.provider import AlphaVantageClient, ThrottleExhaustedError
-from history_ingestor.state import BootstrapBudgetLedger, Checkpoint, KeyBudgetLedger
+from history_ingestor.provider import AlphaVantageClient, QuotaExhaustedError, ThrottleExhaustedError
+from history_ingestor.state import BootstrapBudgetLedger, BudgetPersistenceError, Checkpoint, KeyBudgetLedger
 
 
 class _FakeBootstrapStore:
@@ -52,6 +52,19 @@ class _InformationResponse:
         return json.dumps({"Information": "rate limited"}).encode("utf-8")
 
 
+class _QuotaResponse:
+    status = 200
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return json.dumps({"Note": "daily limit"}).encode("utf-8")
+
+
 class _FakeD1:
     def __init__(self) -> None:
         self.meta: dict[str, dict] = {}
@@ -62,6 +75,27 @@ class _FakeD1:
     def write_app_meta(self, key: str, value: dict) -> bool:
         self.meta[key] = value
         return True
+
+
+class _MirrorOnlyFailureStore(_FakeBootstrapStore):
+    last_d1_save_ok = True
+
+    def key_remaining(self, index: int) -> int:
+        if index != 0:
+            return 0
+        return super().key_remaining(index)
+
+    def save(self) -> bool:
+        self.save_calls += 1
+        return False
+
+
+class _D1FailureStore(_FakeBootstrapStore):
+    last_d1_save_ok = False
+
+    def save(self) -> bool:
+        self.save_calls += 1
+        return False
 
 
 class BudgetGuardTests(unittest.TestCase):
@@ -123,6 +157,33 @@ class BudgetGuardTests(unittest.TestCase):
         self.assertEqual(sum(store.key_used), 1)
         self.assertEqual(ledger.remaining(1), 0)
         self.assertGreaterEqual(store.save_calls, 1)
+
+    def test_quota_response_survives_mirror_only_checkpoint_failure(self) -> None:
+        store = _MirrorOnlyFailureStore()
+        provider = self._provider(KeyBudgetLedger(store), lambda _request, _timeout: _QuotaResponse())
+
+        with self.assertRaises(QuotaExhaustedError):
+            provider.fetch_splits("AAPL")
+
+        self.assertEqual(provider.requests_this_run, 1)
+        self.assertEqual(store.key_used[0], 25)
+
+    def test_quota_ledger_failure_does_not_retry_after_http_debit(self) -> None:
+        store = _D1FailureStore()
+        calls = 0
+
+        def urlopen(_request, _timeout):
+            nonlocal calls
+            calls += 1
+            return _QuotaResponse()
+
+        provider = self._provider(KeyBudgetLedger(store), urlopen)
+
+        with self.assertRaises(BudgetPersistenceError):
+            provider.fetch_splits("AAPL")
+
+        self.assertEqual(calls, 1)
+        self.assertEqual(provider.requests_this_run, 1)
 
     def test_bootstrap_daily_http_counter_survives_new_ledger_instance(self) -> None:
         store = _FakeBootstrapStore()

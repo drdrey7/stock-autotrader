@@ -61,7 +61,10 @@ function createBatchDb(resultRows: unknown[][], firstResult: unknown | unknown[]
       calls.sql.push(sql);
       return statement;
     },
-    async batch() {
+    async batch(statements: unknown[]) {
+      if (statements.length !== resultRows.length) {
+        throw new Error(`batch fixture has ${resultRows.length} results for ${statements.length} statements`);
+      }
       return resultRows.map((results) => ({ results }));
     },
   } as unknown as D1Database;
@@ -108,6 +111,8 @@ describe("Stock Detail symbol-specific storage", () => {
     const { db, calls } = createBatchDb([
       [],
       [staleQuote],
+      [],
+      [],
       [],
       [],
       [],
@@ -204,6 +209,8 @@ describe("Stock Detail symbol-specific storage", () => {
       [], [], [], [], [], [],
       [{ value: JSON.stringify({ version: 1, symbol: "MSFT", status: "done" }) }],
       [],
+      [],
+      [],
     ]);
     const snapshot = await readStockDetailStorageSnapshot(db, "MSFT");
     expect(snapshot.splitHistoryVerified).toBe(true);
@@ -214,6 +221,8 @@ describe("Stock Detail symbol-specific storage", () => {
     const { db, calls } = createBatchDb([
       [{ symbol: "MSFT", company: "Microsoft Corporation", logo_url: null }],
       [], [], [], [], [], [],
+      [],
+      [],
       [],
       [],
     ], { value: JSON.stringify({ version: 1, splits: { MSFT: "done" } }) });
@@ -228,6 +237,8 @@ describe("Stock Detail symbol-specific storage", () => {
       [], [], [], [], [], [],
       [{ value: JSON.stringify({ version: 1, symbol: "MSFT", status: "pending" }) }],
       [],
+      [],
+      [],
     ]);
     const snapshot = await readStockDetailStorageSnapshot(db, "MSFT");
     expect(snapshot.splitHistoryVerified).toBe(false);
@@ -238,6 +249,8 @@ describe("Stock Detail symbol-specific storage", () => {
     const { db, calls } = createBatchDb([
       [{ symbol: "MSFT", company: "Microsoft Corporation", logo_url: null }],
       [], [], [], [], [], [], [], [],
+      [],
+      [],
     ], [
       null,
       { value: JSON.stringify({ version: 1, symbols: { MSFT: { splits: "done", weekly: "done" } } }) },
@@ -257,6 +270,7 @@ describe("Stock Detail symbol-specific storage", () => {
         state: "BLOCKED",
         reason: "unexpected_scale_mismatch",
       }) }],
+      [],
     ]);
     const snapshot = await readStockDetailStorageSnapshot(db, "MSFT");
     expect(snapshot.servingState).toEqual({
@@ -285,6 +299,7 @@ describe("Stock Detail symbol-specific storage", () => {
       [{ symbol: "MSFT", company: "Microsoft Corporation", logo_url: null }],
       [], [], [], [], [], [], [], [],
       [{ value: "not-json" }],
+      [],
     ]);
     const snapshot = await readStockDetailStorageSnapshot(db, "MSFT");
     expect(snapshot.servingState).toEqual({
@@ -306,7 +321,7 @@ describe("Stock Detail symbol-specific storage", () => {
   });
 
   it("persists BLOCKED and one idempotent recovery request in one D1 batch", async () => {
-    const { db, calls } = createBatchDb([]);
+    const { db, calls } = createBatchDb([[], []]);
     await persistSplitScaleMismatch(db, "NVDA", "unexpected_scale_mismatch", "2026-08-21T15:00:00.000Z");
     expect(calls.binds).toContainEqual([
       `${SPLIT_SERVING_STATE_META_PREFIX}NVDA`,
@@ -316,6 +331,7 @@ describe("Stock Detail symbol-specific storage", () => {
       `${SPLIT_RECOVERY_META_PREFIX}NVDA`,
       expect.stringContaining('"status":"pending"'),
     ]);
+    expect(calls.sql.some((sql) => sql.includes("json_set") && sql.includes("$.attempts"))).toBe(true);
   });
 
   it("contains no provider/network request path", () => {

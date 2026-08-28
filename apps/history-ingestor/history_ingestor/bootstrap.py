@@ -40,7 +40,7 @@ from .provider import (
     ThrottleExhaustedError,
 )
 from .sma import TechnicalMetrics, compute_technical_metrics
-from .splits import adjust_series, split_events_from_rows, split_events_to_rows
+from .splits import adjust_series, split_events_equal, split_events_from_rows, split_events_to_rows
 from .state import STATUS_DONE, STATUS_ERROR, STATUS_PENDING, StateStore
 from .universe import load_core_universe
 from .weeks import completed_bars_filter, ny_date_of
@@ -418,11 +418,7 @@ class BootstrapRunner:
             stored_events = split_events_from_rows(stored_rows)
         except D1QueryError as exc:
             raise ProviderError(f"D1 split_events read failed: {exc}") from exc
-        changed = len(stored_events) != len(events) or any(
-            left.effective_date != right.effective_date or left.ratio != right.ratio
-            for left, right in zip(sorted(stored_events, key=lambda e: e.effective_date),
-                                   sorted(events, key=lambda e: e.effective_date))
-        )
+        changed = not split_events_equal(stored_events, events)
         if changed:
             try:
                 existing_history = self._d1.read_weekly_rows(symbol)

@@ -227,6 +227,12 @@ function approximatelyEqual(left: number, right: number): boolean {
   return Math.abs(left - right) <= tolerance;
 }
 
+function approximatelyWithin(value: number, target: number, relativeTolerance: number): boolean {
+  return isPositiveFinite(value)
+    && isPositiveFinite(target)
+    && Math.abs(value / target - 1) <= relativeTolerance;
+}
+
 function marketFundamentalsAreFresh(
   fundamentals: StockDetailStorageSnapshot["fundamentals"],
   now: Date,
@@ -469,10 +475,17 @@ export function hasUnexpectedQuoteScaleMismatch(
   // because a provider correction or an ordinary gap can move one candle.
   const historyToPreviousCloseRatios = [latestWeeklyRow.raw_close, priorWeeklyRow.raw_close]
     .map((close) => close / (quote.previous_close ?? 1));
+  // This fallback only applies when the quote's own daily ratio is ordinary;
+  // otherwise the first detector owns the evidence. Require the two history
+  // rows to agree tightly as a second independent check so a normal large move
+  // cannot create durable split-verification work by itself.
+  if (!approximatelyWithin(quoteRatio, 1, STRUCTURAL_QUOTE_HISTORY_TOLERANCE)) return false;
+  const [latestRatio, priorRatio] = historyToPreviousCloseRatios as [number, number];
+  if (!approximatelyWithin(latestRatio, priorRatio, STRUCTURAL_SPLIT_TOLERANCE)) return false;
   return STRUCTURAL_SPLIT_FACTORS.some((factor) => (
     isClearlyNonNearOneSplitFactor(factor)
-    && historyToPreviousCloseRatios.every((ratio) => (
-      Math.abs(ratio / factor - 1) <= STRUCTURAL_QUOTE_HISTORY_TOLERANCE
+    && historyToPreviousCloseRatios.every((ratio) => approximatelyWithin(
+      ratio, factor, STRUCTURAL_QUOTE_HISTORY_TOLERANCE,
     ))
   ));
 }
