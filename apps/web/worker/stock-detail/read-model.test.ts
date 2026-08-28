@@ -296,6 +296,29 @@ describe("split scale safety", () => {
     )).toBe(true);
   });
 
+  it("allows ordinary drift in the prior old-scale week when the latest week proves the transition", () => {
+    const rows = weeklyHistory(3).map((row, index) => ({
+      ...row,
+      raw_close: index === 0 ? 100 : index === 1 ? 95 : 90,
+      raw_open: index === 0 ? 99 : index === 1 ? 94 : 89,
+      raw_high: index === 0 ? 102 : index === 1 ? 97 : 92,
+      raw_low: index === 0 ? 98 : index === 1 ? 93 : 88,
+      split_adjusted_close: index === 0 ? 100 : index === 1 ? 95 : 90,
+    }));
+    expect(hasUnexpectedQuoteScaleMismatch(
+      {
+        price: 10,
+        previous_close: 100,
+        provider_timestamp: "2026-08-21T14:59:00.000Z",
+        quote_session_date: "2026-08-21",
+        previous_close_session_date: "2026-08-20",
+        daily_change_valid: 1,
+      },
+      rows,
+      [],
+    )).toBe(true);
+  });
+
   it("does not turn a normal 50% move without multi-week scale evidence into a split", () => {
     const rows = weeklyHistory(3).map((row, index) => ({
       ...row,

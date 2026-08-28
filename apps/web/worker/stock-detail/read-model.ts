@@ -41,6 +41,11 @@ const STRUCTURAL_SPLIT_FACTORS = [
 ] as const;
 const STRUCTURAL_SPLIT_TOLERANCE = 0.005;
 const STRUCTURAL_REGIME_TOLERANCE = 0.25;
+// The latest completed week must align tightly with the quote transition. The
+// preceding week only corroborates that the old scale persisted, so allow an
+// ordinary weekly move while still rejecting the larger move in the explicit
+// false-positive regression test.
+const STRUCTURAL_PRIOR_HISTORY_TOLERANCE = 0.1;
 // A quote already normalized by its provider can only be compared with the
 // last two weekly closes when both sources are nearly on the same conventional
 // ratio. Keep this narrow: a sustained ordinary 20% rally must not become a
@@ -469,10 +474,16 @@ export function hasUnexpectedQuoteScaleMismatch(
   const quoteRatio = (quote.previous_close ?? 0) / quote.price;
   const historyRatios = [latestWeeklyRow.raw_close, priorWeeklyRow.raw_close]
     .map((close) => close / quote.price);
+  const [latestHistoryRatio, priorHistoryRatio] = historyRatios as [number, number];
   if (STRUCTURAL_SPLIT_FACTORS.some((factor) => (
     isClearlyNonNearOneSplitFactor(factor)
     && Math.abs(quoteRatio / factor - 1) <= STRUCTURAL_SPLIT_TOLERANCE
-    && historyRatios.every((ratio) => Math.abs(ratio / factor - 1) <= STRUCTURAL_SPLIT_TOLERANCE)
+    && Math.abs(latestHistoryRatio / factor - 1) <= STRUCTURAL_SPLIT_TOLERANCE
+    && approximatelyWithin(
+      priorHistoryRatio,
+      latestHistoryRatio,
+      STRUCTURAL_PRIOR_HISTORY_TOLERANCE,
+    )
   ))) return true;
 
   // If the quote feed has already normalized its previous-close field to the
