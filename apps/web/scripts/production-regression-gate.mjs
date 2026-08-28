@@ -49,6 +49,7 @@ export function classifyChangedPaths(inputPaths) {
     const sharedCriticalRuntime = [
       "apps/web/worker/index.ts",
       "apps/web/worker/dashboard.ts",
+      "apps/web/worker/cron-dispatcher.ts",
     ].includes(path);
 
     if (workerPath || migrationPath || contractsPath || deploymentTooling || webRuntimeConfig) runtime = true;
