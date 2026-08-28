@@ -297,6 +297,54 @@ class SplitRecoveryQueueTests(unittest.TestCase):
             self.assertEqual(d1.meta[split_recovery_key("NVDA")]["attempts"], 1)
             self.assertEqual(d1.read_split_events("NVDA"), [])
 
+    def test_unchanged_provider_uses_durable_exponential_backoff(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d1 = FakeD1()
+            seed_recovery_request(d1)
+            seed_weekly_row(d1)
+            old_provider = FakeProvider(
+                splits_payloads={"NVDA": {"symbol": "NVDA", "data": []}},
+            )
+
+            first = make_runner(d1, old_provider, tmp).recover_split_mismatches()
+
+            self.assertEqual(first["symbols"]["NVDA"]["status"], "pending")
+            self.assertEqual(
+                d1.meta[split_recovery_key("NVDA")]["next_attempt_at"],
+                "2026-08-18T14:00:00Z",
+            )
+
+            hourly_provider = FakeProvider(
+                splits_payloads={"NVDA": {"symbol": "NVDA", "data": []}},
+            )
+            hourly = make_runner(
+                d1,
+                hourly_provider,
+                tmp,
+                now=NOW + dt.timedelta(hours=1),
+            ).recover_split_mismatches()
+
+            self.assertEqual(hourly["status"], "noop")
+            self.assertEqual(hourly_provider.splits_calls, [])
+
+            second_provider = FakeProvider(
+                splits_payloads={"NVDA": {"symbol": "NVDA", "data": []}},
+            )
+            second = make_runner(
+                d1,
+                second_provider,
+                tmp,
+                now=NOW + dt.timedelta(hours=2),
+            ).recover_split_mismatches()
+
+            self.assertEqual(second["symbols"]["NVDA"]["status"], "pending")
+            self.assertEqual(second_provider.splits_calls, ["NVDA"])
+            self.assertEqual(d1.meta[split_recovery_key("NVDA")]["attempts"], 2)
+            self.assertEqual(
+                d1.meta[split_recovery_key("NVDA")]["next_attempt_at"],
+                "2026-08-18T18:00:00Z",
+            )
+
     def test_malformed_json_object_is_normalized_to_pending_recovery_work(self):
         with tempfile.TemporaryDirectory() as tmp:
             d1 = FakeD1()

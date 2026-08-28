@@ -97,6 +97,13 @@ STRUCTURAL_SCALE_MIN_RATIO = 0.8
 STRUCTURAL_SCALE_MAX_RATIO = 1.25
 STRUCTURAL_REGIME_TOLERANCE = 0.25
 
+# Recovery is checked hourly, but an unchanged provider response is not a
+# reason to spend another request on every hourly tick.  The delay is stored
+# in each durable queue row via ``next_attempt_at`` and grows to one request
+# per day for a persistently unpublished split.  This leaves the shared daily
+# provider ledger available to the normal Sunday discovery and weekly work.
+RECOVERY_RETRY_MAX_HOURS = 24
+
 
 def _now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()) + "Z"
@@ -238,7 +245,16 @@ class MaintenanceRunner:
         now = self._now()
         if now.tzinfo is None:
             now = now.replace(tzinfo=dt.UTC)
-        next_attempt = now + dt.timedelta(hours=1)
+        # Use the number of completed retries, rather than the current
+        # process invocation, to choose the next attempt.  The hourly timer
+        # still notices the row, while repeated provider responses cannot
+        # consume the daily quota on every tick.  A new request (attempts=0)
+        # therefore retries after two hours; the delay then grows to 4/8/16
+        # hours and caps at one day.  A later process/restart reads the same
+        # timestamp and preserves this backoff.
+        retry_number = max(1, attempts + 1)
+        retry_delay_hours = min(RECOVERY_RETRY_MAX_HOURS, 2 ** retry_number)
+        next_attempt = now + dt.timedelta(hours=retry_delay_hours)
         payload = {
             "version": 1,
             "symbol": symbol,
@@ -1099,10 +1115,7 @@ class MaintenanceRunner:
                     self._upsert_metrics(symbol, metrics)
                     if not self._history_matches_events(symbol, stored_events):
                         raise ProviderError(f"{symbol} history verification failed after due split")
-                    if not was_blocked_before or serving_reason in {
-                        "", "due_split", "split_history_changed", "history_factor_mismatch",
-                        "bootstrap", "legacy_rollout_backfill", "invalid_serving_state",
-                    }:
+                    if self._can_publish_ready(serving):
                         self._publish_reconciled_ready(symbol, "due_split_applied")
                         self._clear_recovery_request(symbol)
 

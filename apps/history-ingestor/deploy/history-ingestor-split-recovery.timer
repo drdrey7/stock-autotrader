@@ -1,6 +1,6 @@
-# Hourly queued recovery.  Monday 06:30 is intentionally omitted so the
-# weekly 07:00 maintenance has quota priority; the 07:30 run is safe after the
-# maintenance window.  Other hours remain hourly, with a small jitter.
+# Hourly queued recovery. Monday 00:30 through 06:30 is intentionally omitted
+# so the weekly 07:00 maintenance has quota priority; the 07:30 run is safe
+# after that maintenance window. Other hours remain hourly, with a small jitter.
 [Unit]
 Description=Stock Autotrader queued split-scale recovery (hourly)
 

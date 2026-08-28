@@ -42,6 +42,14 @@ const postSplitMetricAt = "2026-08-21T12:30:00.000Z";
 function mixedScaleHistory(): WeeklyPriceRow[] {
   return [
     weeklyRow({
+      week_end_date: "2024-07-05",
+      raw_open: 54,
+      raw_high: 61,
+      raw_low: 46,
+      raw_close: 56,
+      split_adjusted_close: 56,
+    }),
+    weeklyRow({
       week_end_date: "2024-06-28",
       raw_open: 119,
       raw_high: 122,

@@ -38,12 +38,10 @@ class SplitScheduleTests(unittest.TestCase):
     def test_recovery_is_hourly_except_monday_maintenance_window(self):
         timer = unit("history-ingestor-split-recovery.timer")
         service = unit("history-ingestor-split-recovery.service")
-        for hour in ("00", "01", "02", "03", "04", "05"):
+        for hour in ("00", "01", "02", "03", "04", "05", "06"):
             self.assertIn(f"OnCalendar=Tue..Sun *-*-* {hour}:30:00 UTC", timer)
             self.assertNotIn(f"OnCalendar=*-*-* {hour}:30:00 UTC", timer)
         self.assertIn("OnCalendar=*-*-* 23:30:00 UTC", timer)
-        self.assertIn("OnCalendar=Tue..Sun *-*-* 06:30:00 UTC", timer)
-        self.assertNotIn("OnCalendar=Mon *-*-* 06:30:00 UTC", timer)
         self.assertIn("OnCalendar=*-*-* 07:30:00 UTC", timer)
         self.assertIn("Persistent=false", timer)
         self.assertIn("SPLIT_RECOVERY_MAX_REQUESTS=2", service)
