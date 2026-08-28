@@ -41,6 +41,14 @@ describe("classifyChangedPaths", () => {
     });
   });
 
+  it("marks earnings storage as Core-sensitive", () => {
+    expect(classifyChangedPaths(["apps/web/worker/earnings/storage.ts"])).toMatchObject({
+      runtime: true,
+      core: true,
+      criticalSources: ["earnings"],
+    });
+  });
+
   it("scopes market-context changes to market", () => {
     expect(classifyChangedPaths(["apps/web/worker/market-context.ts"])).toMatchObject({
       runtime: true,
@@ -100,6 +108,24 @@ describe("evaluateRegression", () => {
     const scope = classifyChangedPaths(["apps/web/src/App.tsx"]);
 
     expect(evaluateRegression({ before, after, scope, bootstrap: healthyBootstrap })).toEqual({ ok: true, reasons: [] });
+  });
+
+  it("does not invent a new frontend regression when an unreadable baseline later reveals a pre-existing source incident", () => {
+    const before = snapshot({ readable: false });
+    const after = snapshot({ down: ["earnings"], states: { market: "Live", earnings: "Error" } });
+    const scope = classifyChangedPaths(["apps/web/src/App.tsx"]);
+
+    expect(evaluateRegression({ before, after, scope, bootstrap: healthyBootstrap })).toEqual({ ok: true, reasons: [] });
+  });
+
+  it("fails a scoped source change when the baseline is unreadable and that source is down after deploy", () => {
+    const before = snapshot({ readable: false });
+    const after = snapshot({ down: ["earnings"], states: { market: "Live", earnings: "Error" } });
+    const scope = classifyChangedPaths(["apps/web/worker/earnings/logic.ts"]);
+
+    const result = evaluateRegression({ before, after, scope, bootstrap: healthyBootstrap });
+    expect(result.ok).toBe(false);
+    expect(result.reasons).toContain("touched critical source is down and no readable baseline exists: earnings");
   });
 
   it("fails runtime changes when canonical source health cannot be verified", () => {
