@@ -1,10 +1,9 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { writeFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 const execFile = promisify(execFileCallback);
-const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 const DEFAULT_WORKER_URL = "https://stock-autotrader-web.barroso-labs.workers.dev";
 const STATE_SEVERITY = new Map([
   ["Live", 0],
@@ -103,8 +102,13 @@ export function classifyChangedPaths(inputPaths) {
 async function changedPaths(base, head) {
   const zeroSha = /^0+$/.test(base ?? "");
   const range = !base || zeroSha ? `${head}^..${head}` : `${base}..${head}`;
+  const { stdout: repoRootOutput } = await execFile("git", ["rev-parse", "--show-toplevel"], {
+    cwd: process.cwd(),
+    maxBuffer: 64 * 1024,
+  });
+  const repoRoot = repoRootOutput.trim();
   const { stdout } = await execFile("git", ["diff", "--name-only", "--diff-filter=ACMRD", range], {
-    cwd: REPO_ROOT,
+    cwd: repoRoot,
     maxBuffer: 2 * 1024 * 1024,
   });
   return stdout.split("\n").map((line) => line.trim()).filter(Boolean);
@@ -328,7 +332,11 @@ async function runCli() {
   throw new Error("Expected one of: classify, snapshot, compare");
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+const isDirectRun = process.argv[1]
+  ? import.meta.url === pathToFileURL(process.argv[1]).href
+  : false;
+
+if (isDirectRun) {
   runCli().catch((error) => {
     console.error(error instanceof Error ? error.message : "Production regression gate failed");
     process.exitCode = 1;
