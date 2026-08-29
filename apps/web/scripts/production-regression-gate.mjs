@@ -45,6 +45,7 @@ export function classifyChangedPaths(inputPaths) {
     const deploymentTooling = deployWorkflow || [
       "apps/web/scripts/bootstrap-production.mjs",
       "apps/web/scripts/production-regression-gate.mjs",
+      "apps/web/scripts/production-scheduled-smoke.mjs",
     ].includes(path);
     const webRuntimeConfig = [
       "apps/web/wrangler.jsonc",
