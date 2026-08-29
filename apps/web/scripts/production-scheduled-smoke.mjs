@@ -6,6 +6,12 @@ import { promisify } from "node:util";
 const execFile = promisify(execFileCallback);
 const DEFAULT_WORKER_URL = "https://stock-autotrader-web.barroso-labs.workers.dev";
 const FETCH_TIMEOUT_MS = 10_000;
+const NEW_YORK_CLOCK = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
 
 const argValue = (name, args = process.argv.slice(2)) => {
   const index = args.indexOf(name);
@@ -33,7 +39,23 @@ export function marketSmokeScheduledTime(statusBody) {
   const candidate = statusBody?.market?.latestSourceTimestamp;
   if (typeof candidate !== "string") return null;
   const parsed = new Date(candidate);
-  return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : null;
+  if (!Number.isFinite(parsed.getTime())) return null;
+
+  const parts = Object.fromEntries(
+    NEW_YORK_CLOCK.formatToParts(parsed)
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, part.value]),
+  );
+  const hour = Number(parts.hour);
+  const minute = Number(parts.minute);
+  if (!Number.isInteger(hour) || !Number.isInteger(minute)) return null;
+
+  // Anchor the smoke to 10:00 ET on the latest canonical session date. The
+  // latest quote is often exactly 16:00 ET, which is intentionally outside
+  // marketCollectionWindow(); shifting within the same NY session date keeps
+  // the provider/date validation real while remaining DST-safe.
+  const deltaMinutes = (10 * 60) - (hour * 60 + minute);
+  return new Date(parsed.getTime() + deltaMinutes * 60_000).toISOString();
 }
 
 async function fetchProductionStatus(workerUrl) {
