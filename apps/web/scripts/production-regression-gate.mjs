@@ -246,8 +246,8 @@ export function evaluateRegression({ before, after, scope, bootstrap = null }) {
     }
   }
 
-  if (scope?.core && bootstrap) {
-    const core = bootstrap.core;
+  if (scope?.core) {
+    const core = bootstrap?.core;
     if (!core?.initialized || core.activeCount !== core.expectedCount) {
       reasons.push(`Core Universe invariant failed (${core?.activeCount ?? "unknown"}/${core?.expectedCount ?? "unknown"})`);
     }
