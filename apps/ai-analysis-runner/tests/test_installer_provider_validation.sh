@@ -24,6 +24,12 @@ run_case() {
 run_case openrouter-pass pass 'TRADINGAGENTS_LLM_PROVIDER=openrouter
 OPENROUTER_API_KEY=placeholder'
 run_case openrouter-missing-key fail 'TRADINGAGENTS_LLM_PROVIDER=openrouter'
+run_case openrouter-empty-key fail 'TRADINGAGENTS_LLM_PROVIDER=openrouter
+OPENROUTER_API_KEY='
+run_case openrouter-quoted-empty-key fail 'TRADINGAGENTS_LLM_PROVIDER=openrouter
+OPENROUTER_API_KEY=""'
+run_case quoted-empty-provider fail 'TRADINGAGENTS_LLM_PROVIDER=""
+OPENROUTER_API_KEY=placeholder'
 run_case google-pass pass 'TRADINGAGENTS_LLM_PROVIDER=google
 GOOGLE_API_KEY=placeholder'
 run_case openai-pass pass 'TRADINGAGENTS_LLM_PROVIDER=openai

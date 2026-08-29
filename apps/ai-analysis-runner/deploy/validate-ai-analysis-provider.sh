@@ -3,7 +3,13 @@ set -Eeuo pipefail
 
 require_env_key() {
   local file=$1 key=$2
-  grep -Eq "^${key}=[^[:space:]].*" "$file" || {
+  local value
+  value=$(sed -n "s/^${key}=//p" "$file" | tail -n 1)
+  case "$value" in
+    \"*\") value=${value#\"}; value=${value%\"} ;;
+    \'*\') value=${value#\'}; value=${value%\'} ;;
+  esac
+  [[ "$value" =~ [^[:space:]] ]] || {
     echo "ERROR: $key is missing from $file" >&2
     return 1
   }
@@ -13,6 +19,10 @@ validate_provider_env() {
   local file=$1
   local provider
   provider=$(sed -n 's/^TRADINGAGENTS_LLM_PROVIDER=//p' "$file" | tail -n 1)
+  case "$provider" in
+    \"*\") provider=${provider#\"}; provider=${provider%\"} ;;
+    \'*\') provider=${provider#\'}; provider=${provider%\'} ;;
+  esac
   case "$provider" in
     google) require_env_key "$file" GOOGLE_API_KEY ;;
     openai) require_env_key "$file" OPENAI_API_KEY ;;
