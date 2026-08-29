@@ -101,8 +101,7 @@ jobs:
         run: |
           set -euo pipefail
           ASSET_DIR="$RUNNER_TEMP/ai-web-preview-assets"
-          test -f "$ASSET_DIR/server/entry.mjs" || { echo "AI Web preview artifact has no server/entry.mjs" >&2; exit 1; }
-          test -f "$ASSET_DIR/client/_headers" || { echo "AI Web preview artifact has no client/_headers" >&2; exit 1; }
+          test -f "$ASSET_DIR/index.html" || { echo "AI Web preview artifact has no index.html" >&2; exit 1; }
           if find "$ASSET_DIR" -type l -print -quit | grep -q .; then
             echo "AI Web preview artifact must not contain symlinks" >&2
             exit 1
@@ -118,17 +117,15 @@ jobs:
           {
             "$schema": "https://unpkg.com/wrangler@4.125.0/config-schema.json",
             "name": "ai-web-preview",
-            "main": "./dist/server/entry.mjs",
+            "main": "./worker.js",
             "compatibility_date": "2026-08-29",
             "compatibility_flags": ["nodejs_compat"],
             "workers_dev": true,
             "preview_urls": true,
-            "services": [{ "binding": "AI_BACKEND", "service": "stock-autotrader-web" }],
             "assets": {
-              "directory": "./dist/client",
+              "directory": "./dist",
               "binding": "ASSETS",
-              "not_found_handling": "none",
-              "run_worker_first": ["/api/*"]
+              "not_found_handling": "single-page-application"
             },
             "observability": { "enabled": true, "head_sampling_rate": 1 }
           }

@@ -1,0 +1,1 @@
+export function Atmosphere(){return <div className="atmosphere" aria-hidden="true"><div className="grain"/><div className="stars stars-a"/><div className="stars stars-b"/><div className="nebula nebula-a"/><div className="nebula nebula-b"/><div className="planet"><div className="planet-rim"/><div className="planet-body"/></div></div>}
