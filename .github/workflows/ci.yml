@@ -126,6 +126,8 @@ jobs:
       - name: Syntax-check installer and run rollback harness
         run: |
           bash -n apps/ai-analysis-runner/deploy/install-ai-analysis-runner-root.sh
+          bash -n apps/ai-analysis-runner/deploy/validate-ai-analysis-provider.sh
+          bash apps/ai-analysis-runner/tests/test_installer_provider_validation.sh
           bash apps/ai-analysis-runner/tests/test_installer_rollback.sh
       - name: Test runner without paid calls
         working-directory: apps/ai-analysis-runner
