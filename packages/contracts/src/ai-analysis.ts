@@ -18,6 +18,15 @@ export type AiAnalysisRecommendation = (typeof aiAnalysisRecommendationValues)[n
 export const aiAnalysisRunStatusValues = ["queued", "running", "completed", "failed"] as const;
 export type AiAnalysisRunStatus = (typeof aiAnalysisRunStatusValues)[number];
 
+export const aiAnalysisProgressStageValues = [
+  "market", "sentiment", "news", "fundamentals", "bull", "bear",
+  "research-manager", "trader", "aggressive-risk", "neutral-risk",
+  "conservative-risk", "portfolio",
+] as const;
+export type AiAnalysisProgressStage = (typeof aiAnalysisProgressStageValues)[number];
+export const aiAnalysisProgressStageSchema = z.enum(aiAnalysisProgressStageValues);
+export const aiAnalysisProgressTotal = aiAnalysisProgressStageValues.length;
+
 export const aiAnalysisWorkflowStages = [
   {
     key: "market",
@@ -25,9 +34,14 @@ export const aiAnalysisWorkflowStages = [
     agents: ["Market Analyst"],
   },
   {
-    key: "sentiment-news",
-    label: "Sentiment & news review",
-    agents: ["Sentiment Analyst", "News Analyst"],
+    key: "sentiment",
+    label: "Sentiment review",
+    agents: ["Sentiment Analyst"],
+  },
+  {
+    key: "news",
+    label: "News review",
+    agents: ["News Analyst"],
   },
   {
     key: "fundamentals",
@@ -35,19 +49,39 @@ export const aiAnalysisWorkflowStages = [
     agents: ["Fundamentals Analyst"],
   },
   {
-    key: "research-debate",
-    label: "Bull & bear debate",
-    agents: ["Bull Researcher", "Bear Researcher"],
+    key: "bull",
+    label: "Bull case",
+    agents: ["Bull Researcher"],
   },
   {
-    key: "research-decision",
-    label: "Research decision & trade plan",
-    agents: ["Research Manager", "Trader"],
+    key: "bear",
+    label: "Bear case",
+    agents: ["Bear Researcher"],
   },
   {
-    key: "risk",
-    label: "Risk review",
-    agents: ["Aggressive Analyst", "Neutral Analyst", "Conservative Analyst"],
+    key: "research-manager",
+    label: "Research decision",
+    agents: ["Research Manager"],
+  },
+  {
+    key: "trader",
+    label: "Trade plan",
+    agents: ["Trader"],
+  },
+  {
+    key: "aggressive-risk",
+    label: "Aggressive risk review",
+    agents: ["Aggressive Analyst"],
+  },
+  {
+    key: "neutral-risk",
+    label: "Neutral risk review",
+    agents: ["Neutral Analyst"],
+  },
+  {
+    key: "conservative-risk",
+    label: "Conservative risk review",
+    agents: ["Conservative Analyst"],
   },
   {
     key: "portfolio",
@@ -117,8 +151,16 @@ export const aiAnalysisHistoryItemSchema = z.strictObject({
   runId: z.uuid(),
   symbol: stockSymbolSchema,
   company: companyNameSchema,
-  recommendation: z.enum(aiAnalysisRecommendationValues),
-  completedAt: isoTimestampSchema,
+  status: z.enum(aiAnalysisRunStatusValues),
+  requestedAt: isoTimestampSchema,
+  startedAt: isoTimestampSchema.nullable(),
+  completedAt: isoTimestampSchema.nullable(),
+  progressStage: aiAnalysisProgressStageSchema.nullable(),
+  progressStep: z.number().int().min(0).max(aiAnalysisProgressTotal),
+  progressTotal: z.literal(aiAnalysisProgressTotal),
+  progressUpdatedAt: isoTimestampSchema.nullable(),
+  recommendation: z.enum(aiAnalysisRecommendationValues).nullable(),
+  reused: z.boolean(),
 });
 export type AiAnalysisHistoryItem = z.infer<typeof aiAnalysisHistoryItemSchema>;
 
@@ -132,9 +174,16 @@ export type AiAnalysisViewerResponse = z.infer<typeof aiAnalysisViewerResponseSc
 const aiAnalysisRunBaseSchema = z.strictObject({
   schemaVersion: z.literal(1),
   runId: z.uuid(),
+  analysisId: z.uuid(),
   symbol: stockSymbolSchema,
   company: companyNameSchema,
   requestedAt: isoTimestampSchema,
+  startedAt: isoTimestampSchema.nullable(),
+  progressStage: aiAnalysisProgressStageSchema.nullable(),
+  progressStep: z.number().int().min(0).max(aiAnalysisProgressTotal),
+  progressTotal: z.literal(aiAnalysisProgressTotal),
+  progressUpdatedAt: isoTimestampSchema.nullable(),
+  reused: z.boolean(),
   creditsRemaining: z.number().int().nonnegative(),
 });
 

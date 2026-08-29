@@ -25,6 +25,10 @@ class Analysis:
     execution_token: str | None
     execution_message_id: str | None
     heartbeat_at: str | None
+    progress_stage: str | None
+    progress_step: int
+    progress_total: int
+    progress_updated_at: str | None
 
 
 @dataclass(frozen=True)
@@ -34,4 +38,3 @@ class EngineOutput:
     provider: str
     quick_model: str
     deep_model: str
-

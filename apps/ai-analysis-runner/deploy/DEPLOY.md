@@ -60,6 +60,13 @@ sudoedit /etc/stock-autotrader/ai-analysis.env
 
 Never put keys in the unit, repository, shell command line, or journal. `FRED_API_KEY` is optional but enables the pinned engine's FRED macro-data tool.
 
+For the Issue #109 production configuration, set
+`TRADINGAGENTS_LLM_PROVIDER=openrouter`, provide `OPENROUTER_API_KEY`, and
+use `openai/gpt-5.4-mini` / `openai/gpt-5.5` for the quick/deep models. Do not
+leave the previous `openai_compatible` OpenCode Go settings active; the
+runner rejects that endpoint. Existing unrelated OpenCode credentials do not
+need to be removed.
+
 ## 3. Install transactionally
 
 After deploying the repository to `/opt/stock-autotrader`, run:

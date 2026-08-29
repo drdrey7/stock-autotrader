@@ -2,9 +2,11 @@ import {
   aiAnalysisEngineName,
   aiAnalysisOwnedSymbolsLimit,
   aiAnalysisResultSchemaVersion,
+  aiAnalysisProgressTotal,
   CORE_UNIVERSE,
   CORE_UNIVERSE_VERSION,
   type AiAnalysisCatalogResponse,
+  type AiAnalysisProgressStage,
 } from "@stock-autotrader/contracts";
 
 export const AI_ANALYSIS_ENGINE = aiAnalysisEngineName;
@@ -27,6 +29,12 @@ export interface StoredRunView {
   symbol: string;
   company: string;
   requestedAt: string;
+  startedAt: string | null;
+  progressStage: AiAnalysisProgressStage | null;
+  progressStep: number;
+  progressTotal: typeof aiAnalysisProgressTotal;
+  progressUpdatedAt: string | null;
+  reused: boolean;
   runStatus: StoredRunStatus;
   analysisStatus: StoredAnalysisStatus;
   completedAt: string | null;
@@ -50,9 +58,16 @@ export interface HistoryRow {
   runId: string;
   symbol: string;
   company: string;
-  acquiredAt: string;
-  completedAt: string;
-  resultJson: string;
+  requestedAt: string;
+  startedAt: string | null;
+  status: StoredRunStatus;
+  progressStage: AiAnalysisProgressStage | null;
+  progressStep: number;
+  progressTotal: typeof aiAnalysisProgressTotal;
+  progressUpdatedAt: string | null;
+  completedAt: string | null;
+  resultJson: string | null;
+  reused: boolean;
 }
 
 export interface HistoryCursor {
@@ -73,9 +88,15 @@ interface StoredRunDbRow {
   requested_at: string;
   run_status: StoredRunStatus;
   analysis_status: StoredAnalysisStatus;
+  started_at: string | null;
+  progress_stage: AiAnalysisProgressStage | null;
+  progress_step: number;
+  progress_total: typeof aiAnalysisProgressTotal;
+  progress_updated_at: string | null;
   completed_at: string | null;
   result_json: string | null;
   credit_refunded_at: string | null;
+  credit_cost: number;
   credits_remaining: number;
 }
 
@@ -119,9 +140,16 @@ interface HistoryDbRow {
   run_id: string;
   symbol: string;
   company: string;
-  acquired_at: string;
-  completed_at: string;
-  result_json: string;
+  requested_at: string;
+  started_at: string | null;
+  status: StoredRunStatus;
+  progress_stage: AiAnalysisProgressStage | null;
+  progress_step: number;
+  progress_total: typeof aiAnalysisProgressTotal;
+  progress_updated_at: string | null;
+  completed_at: string | null;
+  result_json: string | null;
+  credit_cost: number;
 }
 
 interface DispatchClaimRow {
@@ -163,6 +191,12 @@ function toStoredRun(row: StoredRunDbRow): StoredRunView {
     symbol: row.symbol,
     company: row.company,
     requestedAt: row.requested_at,
+    startedAt: row.started_at,
+    progressStage: row.progress_stage,
+    progressStep: Number(row.progress_step),
+    progressTotal: aiAnalysisProgressTotal,
+    progressUpdatedAt: row.progress_updated_at,
+    reused: Number(row.credit_cost) === 0,
     runStatus: row.run_status,
     analysisStatus: row.analysis_status,
     completedAt: row.completed_at,
@@ -181,9 +215,15 @@ const RUN_VIEW_SQL = `
     run.requested_at,
     run.status AS run_status,
     analysis.status AS analysis_status,
+    analysis.started_at,
+    analysis.progress_stage,
+    analysis.progress_step,
+    analysis.progress_total,
+    analysis.progress_updated_at,
     analysis.completed_at,
     analysis.result_json,
     run.credit_refunded_at,
+    run.credit_cost,
     entitlement.credits_remaining
   FROM user_ai_analysis_runs AS run
   JOIN ai_analyses AS analysis ON analysis.id = run.analysis_id
@@ -235,11 +275,36 @@ async function readActiveRunForSymbol(
   return row ? toStoredRun(row) : null;
 }
 
+async function readReusableRunForSymbol(
+  db: D1Database,
+  userId: string,
+  symbol: string,
+  now: string,
+): Promise<StoredRunView | null> {
+  const row = await db.prepare(`${RUN_VIEW_SQL}
+    WHERE run.user_id = ?
+      AND run.symbol = ?
+      AND analysis.status = 'completed'
+      AND analysis.valid_until > ?
+      AND analysis.completed_at = (
+        SELECT MAX(candidate.completed_at)
+        FROM ai_analyses AS candidate
+        WHERE candidate.symbol = analysis.symbol
+          AND candidate.status = 'completed'
+          AND candidate.valid_until > ?
+      )
+    ORDER BY analysis.completed_at DESC, run.id DESC
+    LIMIT 1
+  `).bind(userId, symbol, now, now).first<StoredRunDbRow>();
+  return row ? toStoredRun(row) : null;
+}
+
 async function existingAcquisition(
   db: D1Database,
   userId: string,
   symbol: string,
   idempotencyKey: string,
+  now = new Date(),
 ): Promise<Acquisition | null> {
   const byKey = await readRunByIdempotency(db, userId, idempotencyKey);
   if (byKey) {
@@ -248,7 +313,9 @@ async function existingAcquisition(
   }
 
   const active = await readActiveRunForSymbol(db, userId, symbol);
-  return active ? { run: active, createdRun: false, createdCanonical: false } : null;
+  if (active) return { run: active, createdRun: false, createdCanonical: false };
+  const reusable = await readReusableRunForSymbol(db, userId, symbol, now.toISOString());
+  return reusable ? { run: reusable, createdRun: false, createdCanonical: false } : null;
 }
 
 function messageOf(error: unknown): string {
@@ -276,7 +343,7 @@ export async function acquireAnalysis(
   },
   retryBudget = 1,
 ): Promise<Acquisition> {
-  const preexisting = await existingAcquisition(db, input.userId, input.symbol, input.idempotencyKey);
+  const preexisting = await existingAcquisition(db, input.userId, input.symbol, input.idempotencyKey, input.now);
   if (preexisting) return preexisting;
 
   const now = input.now.toISOString();
@@ -307,14 +374,6 @@ export async function acquireAnalysis(
         WHERE reusable.symbol = ?
           AND reusable.status = 'completed'
           AND reusable.valid_until > ?
-          AND reusable.completed_at > COALESCE((
-            SELECT MAX(owned.completed_at)
-            FROM user_ai_analysis_runs AS owned_run
-            JOIN ai_analyses AS owned ON owned.id = owned_run.analysis_id
-            WHERE owned_run.user_id = ?
-              AND owned_run.symbol = ?
-              AND owned_run.status = 'completed'
-          ), '')
       )
     RETURNING id AS analysis_id
   `).bind(
@@ -328,8 +387,6 @@ export async function acquireAnalysis(
     input.symbol,
     input.symbol,
     now,
-    input.userId,
-    input.symbol,
   );
 
   const insertRun = db.prepare(`
@@ -345,7 +402,7 @@ export async function acquireAnalysis(
         WHEN analysis.status = 'running' THEN 'running'
         ELSE 'queued'
       END,
-      1,
+      CASE WHEN analysis.status = 'completed' THEN 0 ELSE 1 END,
       ?,
       CASE WHEN analysis.status = 'completed' THEN ? ELSE NULL END,
       NULL,
@@ -359,14 +416,6 @@ export async function acquireAnalysis(
         WHERE reusable.symbol = ?
           AND reusable.status = 'completed'
           AND reusable.valid_until > ?
-          AND reusable.completed_at > COALESCE((
-            SELECT MAX(owned.completed_at)
-            FROM user_ai_analysis_runs AS owned_run
-            JOIN ai_analyses AS owned ON owned.id = owned_run.analysis_id
-            WHERE owned_run.user_id = ?
-              AND owned_run.symbol = ?
-              AND owned_run.status = 'completed'
-          ), '')
         ORDER BY reusable.completed_at DESC, reusable.id DESC
         LIMIT 1
       ),
@@ -391,8 +440,6 @@ export async function acquireAnalysis(
     now,
     input.symbol,
     now,
-    input.userId,
-    input.symbol,
     input.symbol,
   );
 
@@ -414,7 +461,7 @@ export async function acquireAnalysis(
     // The race winner may have consumed the last credit before this request's
     // BEFORE trigger ran. Resolve logical idempotency before classifying the
     // trigger error as insufficient balance.
-    const raced = await existingAcquisition(db, input.userId, input.symbol, input.idempotencyKey);
+    const raced = await existingAcquisition(db, input.userId, input.symbol, input.idempotencyKey, input.now);
     if (raced) return raced;
 
     const message = messageOf(error);
@@ -484,16 +531,23 @@ export async function readHistoryPage(
 ): Promise<HistoryPage> {
   const boundedLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
   const cursorPredicate = cursor
-    ? "AND (run.acquired_at < ? OR (run.acquired_at = ? AND run.id < ?))"
+    ? "AND (run.requested_at < ? OR (run.requested_at = ? AND run.id < ?))"
     : "";
   const statement = db.prepare(`
     SELECT
       run.id AS run_id,
       run.symbol,
       COALESCE(universe.company, run.symbol) AS company,
-      run.acquired_at,
+      run.requested_at,
+      analysis.started_at,
+      run.status,
+      analysis.progress_stage,
+      analysis.progress_step,
+      analysis.progress_total,
+      analysis.progress_updated_at,
       analysis.completed_at,
-      analysis.result_json
+      analysis.result_json,
+      run.credit_cost
     FROM user_ai_analysis_runs AS run
     JOIN ai_analyses AS analysis ON analysis.id = run.analysis_id
     LEFT JOIN (
@@ -503,10 +557,9 @@ export async function readHistoryPage(
       GROUP BY symbol
     ) AS universe ON universe.symbol = run.symbol
     WHERE run.user_id = ?
-      AND run.status = 'completed'
-      AND analysis.status = 'completed'
+      AND run.status IN ('queued', 'running', 'completed', 'failed')
       ${cursorPredicate}
-    ORDER BY run.acquired_at DESC, run.id DESC
+    ORDER BY run.requested_at DESC, run.id DESC
     LIMIT ?
   `);
   const bound = cursor
@@ -518,9 +571,16 @@ export async function readHistoryPage(
     runId: row.run_id,
     symbol: row.symbol,
     company: row.company,
-    acquiredAt: row.acquired_at,
+    requestedAt: row.requested_at,
+    startedAt: row.started_at,
+    status: row.status,
+    progressStage: row.progress_stage,
+    progressStep: Number(row.progress_step),
+    progressTotal: aiAnalysisProgressTotal,
+    progressUpdatedAt: row.progress_updated_at,
     completedAt: row.completed_at,
     resultJson: row.result_json,
+    reused: Number(row.credit_cost) === 0,
   })), hasMore: rows.length > boundedLimit };
 }
 

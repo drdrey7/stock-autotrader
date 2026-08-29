@@ -32,9 +32,16 @@ const runId = "11111111-1111-4111-8111-111111111111";
 const baseRun = {
   schemaVersion: 1 as const,
   runId,
+  analysisId: "33333333-3333-4333-8333-333333333333",
   symbol: "AAPL",
   company: "Apple Inc.",
   requestedAt: "2026-08-20T14:00:00.000Z",
+  startedAt: null,
+  progressStage: null,
+  progressStep: 0,
+  progressTotal: 12 as const,
+  progressUpdatedAt: null,
+  reused: false,
   creditsRemaining: 1,
 };
 
@@ -158,12 +165,12 @@ describe("AI Analysis page", () => {
     apiMocks.getRun.mockReturnValue(new Promise(() => undefined));
     renderPage("/ai-analysis?symbol=AAPL");
 
-    fireEvent.click(await screen.findByRole("button", { name: /Run fresh analysis · 1 credit/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open analysis" }));
 
     expect(await screen.findByRole("heading", { name: "Analyzing AAPL" })).toBeInTheDocument();
     expect(screen.queryByText("Opening your analysis…")).not.toBeInTheDocument();
     expect(screen.getByText("Market & technical research")).toBeInTheDocument();
-    expect(document.body).not.toHaveTextContent(/queue|worker|poll|LangGraph|provider payload/i);
+    expect(screen.getByText(/queued and will continue in the background/i)).toBeInTheDocument();
     expect(apiMocks.start).toHaveBeenCalledWith(
       "AAPL",
       "99999999-9999-4999-8999-999999999999",

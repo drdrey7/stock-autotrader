@@ -14,6 +14,7 @@ def base_env() -> dict[str, str]:
         "CLOUDFLARE_D1_DATABASE_ID": "database-id",
         "CLOUDFLARE_AI_QUEUE_ID": "queue-id",
         "GOOGLE_API_KEY": "google-super-secret",
+        "TRADINGAGENTS_LLM_PROVIDER": "google",
         "AI_ANALYSIS_STATE_DIR": tempfile.gettempdir(),
     }
 
@@ -24,8 +25,31 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(value.primary_provider, "google")
         self.assertEqual(value.quick_model, "gemini-3.1-flash-lite")
         self.assertEqual(value.deep_model, "gemini-3.5-flash")
-        self.assertEqual(value.queue_visibility_timeout_ms, 300_000)
+        self.assertEqual(value.queue_visibility_timeout_ms, 360_000)
         self.assertFalse(value.openai_fallback_enabled)
+
+    def test_openrouter_defaults_require_its_key_and_use_paid_models(self) -> None:
+        environ = base_env() | {
+            "TRADINGAGENTS_LLM_PROVIDER": "openrouter",
+            "OPENROUTER_API_KEY": "router-secret",
+        }
+        value = from_env(environ)
+        self.assertEqual(value.primary_provider, "openrouter")
+        self.assertEqual(value.quick_model, "openai/gpt-5.4-mini")
+        self.assertEqual(value.deep_model, "openai/gpt-5.5")
+        self.assertEqual(value.llm_max_retries, 1)
+        self.assertEqual(value.engine_timeout_seconds, 300)
+        with self.assertRaisesRegex(ConfigError, "OPENROUTER_API_KEY"):
+            from_env(environ | {"OPENROUTER_API_KEY": ""})
+
+    def test_openrouter_is_the_implicit_default_when_key_is_available(self) -> None:
+        environ = base_env()
+        environ.pop("TRADINGAGENTS_LLM_PROVIDER")
+        environ["OPENROUTER_API_KEY"] = "router-secret"
+        value = from_env(environ)
+        self.assertEqual(value.primary_provider, "openrouter")
+        self.assertEqual(value.quick_model, "openai/gpt-5.4-mini")
+        self.assertEqual(value.deep_model, "openai/gpt-5.5")
 
     def test_openai_primary_requires_only_openai_key_and_gets_openai_defaults(self) -> None:
         environ = base_env()
@@ -54,12 +78,14 @@ class ConfigTests(unittest.TestCase):
         environ["OPENAI_COMPATIBLE_API_KEY"] = "compatible-secret"
         with self.assertRaisesRegex(ConfigError, "TRADINGAGENTS_LLM_BACKEND_URL"):
             from_env(environ)
-        environ["TRADINGAGENTS_LLM_BACKEND_URL"] = "https://opencode.ai/zen/go/v1"
+        environ["TRADINGAGENTS_LLM_BACKEND_URL"] = "https://gateway.example/v1"
         value = from_env(environ)
         self.assertEqual(value.primary_provider, "openai_compatible")
-        self.assertEqual(value.llm_backend_url, "https://opencode.ai/zen/go/v1")
+        self.assertEqual(value.llm_backend_url, "https://gateway.example/v1")
         self.assertEqual(value.quick_model, "deepseek-v4-flash")
         self.assertEqual(value.deep_model, "deepseek-v4-flash")
+        with self.assertRaisesRegex(ConfigError, "OpenCode Go"):
+            from_env(environ | {"TRADINGAGENTS_LLM_BACKEND_URL": "https://opencode.ai/zen/go/v1"})
 
     def test_fallback_is_opt_in_bounded_and_requires_key(self) -> None:
         environ = base_env() | {"AI_ANALYSIS_OPENAI_FALLBACK_ENABLED": "true"}
@@ -73,13 +99,15 @@ class ConfigTests(unittest.TestCase):
 
     def test_repr_redacts_every_secret(self) -> None:
         environ = base_env() | {
+            "TRADINGAGENTS_LLM_PROVIDER": "google",
             "OPENAI_API_KEY": "openai-super-secret",
             "OPENAI_COMPATIBLE_API_KEY": "compatible-super-secret",
+            "OPENROUTER_API_KEY": "router-super-secret",
         }
         rendered = repr(from_env(environ))
         for secret in (
             "d1-super-secret", "queue-super-secret", "google-super-secret",
-            "openai-super-secret", "compatible-super-secret",
+            "openai-super-secret", "compatible-super-secret", "router-super-secret",
         ):
             self.assertNotIn(secret, rendered)
 
@@ -93,7 +121,7 @@ class ConfigTests(unittest.TestCase):
             })
 
     def test_empty_model_variables_fall_back_to_defaults(self) -> None:
-        environ = base_env()
+        environ = base_env() | {"TRADINGAGENTS_LLM_PROVIDER": "google"}
         environ["TRADINGAGENTS_QUICK_THINK_LLM"] = ""
         environ["AI_ANALYSIS_OPENAI_QUICK_MODEL"] = ""
         value = from_env(environ)

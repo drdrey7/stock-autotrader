@@ -96,6 +96,34 @@ class AnalysisRunner:
         self.stop_event = stop_event or threading.Event()
         self._now = now
         self._rand = rand
+        self._progress_context: tuple[str, str, str] | None = None
+        set_progress_callback = getattr(self.engine, "set_progress_callback", None)
+        if callable(set_progress_callback):
+            set_progress_callback(self._persist_progress)
+
+    def _persist_progress(self, stage: str, step: int, total: int) -> None:
+        """Best-effort persistence for a real TradingAgents node transition."""
+        context = self._progress_context
+        if context is None:
+            return
+        analysis_id, message_id, execution_token = context
+        try:
+            self.d1.progress(
+                analysis_id,
+                message_id,
+                execution_token,
+                stage,
+                step,
+                total,
+                iso_utc(self._now()),
+            )
+        except (HttpError, D1ProtocolError):
+            log_event(
+                "analysis_progress_failed",
+                level=logging.WARNING,
+                analysis_id=analysis_id,
+                code="d1_unavailable",
+            )
 
     def _queue_retry(self, message: QueueMessage) -> None:
         try:
@@ -191,6 +219,7 @@ class AnalysisRunner:
             self._now,
         )
         heartbeat.start()
+        self._progress_context = (claimed.id, message.id, execution_token)
         failure: tuple[str, str, bool] | None = None
         result: dict[str, Any] | None = None
         try:
@@ -227,7 +256,10 @@ class AnalysisRunner:
         except EngineFailure as exc:
             failure = (exc.code, exc.safe_message, exc.retryable)
         except ResultValidationError:
-            failure = ("result_invalid", "Analysis engine returned an invalid result.", True)
+            # This output cannot satisfy the success gate. Retrying the full
+            # paid graph would multiply spend before the reserved credit is
+            # refunded, so malformed output is definitive.
+            failure = ("result_invalid", "Analysis engine returned an invalid result.", False)
         except (CheckpointError, OSError):
             failure = ("checkpoint_failed", "Analysis result could not be checkpointed.", True)
         except Exception as exc:
@@ -241,6 +273,7 @@ class AnalysisRunner:
             failure = ("runner_error", "Analysis execution failed.", True)
         finally:
             heartbeat.stop()
+            self._progress_context = None
 
         if heartbeat.lost.is_set():
             log_event("analysis_abandoned_after_lease_loss", level=logging.WARNING, analysis_id=claimed.id)

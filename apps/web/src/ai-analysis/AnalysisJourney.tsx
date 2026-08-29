@@ -1,19 +1,18 @@
-import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { Check, Circle, LoaderCircle } from "lucide-react";
 import {
   aiAnalysisWorkflowStages,
   type AiAnalysisRunStatus,
+  type AiAnalysisProgressStage,
 } from "@stock-autotrader/contracts";
 
 interface AnalysisJourneyProps {
   status: AiAnalysisRunStatus;
   symbol: string;
-  onComplete: () => void;
+  progressStage: AiAnalysisProgressStage | null;
+  progressStep: number;
+  progressTotal: number;
 }
-
-const STAGE_DURATION_MS = 1_150;
-const FINAL_PAUSE_MS = 650;
 
 function journeyMessage(status: AiAnalysisRunStatus, label: string): string {
   if (status === "queued") return `Preparing ${label.toLocaleLowerCase()}`;
@@ -22,45 +21,15 @@ function journeyMessage(status: AiAnalysisRunStatus, label: string): string {
 }
 
 /**
- * Individual presentation of the pinned TradingAgents workflow. The sequence
- * may finish before the real analysis does, but the final report never appears
- * until the backend has returned a completed, schema-validated result.
+ * Presentation of real pinned TradingAgents node transitions. The server is
+ * authoritative; this component never advances progress on a timer.
  */
-export function AnalysisJourney({ status, symbol, onComplete }: AnalysisJourneyProps) {
+export function AnalysisJourney({ status, symbol, progressStage, progressStep, progressTotal }: AnalysisJourneyProps) {
   const reducedMotion = useReducedMotion();
-  const [activeIndex, setActiveIndex] = useState(0);
-  const completionSentRef = useRef(false);
-  const finalIndex = aiAnalysisWorkflowStages.length - 1;
-
-  useEffect(() => {
-    completionSentRef.current = false;
-    setActiveIndex(0);
-  }, [symbol]);
-
-  useEffect(() => {
-    if (status === "failed") return;
-    if (reducedMotion) {
-      if (status === "completed" && !completionSentRef.current) {
-        completionSentRef.current = true;
-        onComplete();
-      }
-      return;
-    }
-
-    if (activeIndex < finalIndex) {
-      const timer = window.setTimeout(() => setActiveIndex((index) => Math.min(index + 1, finalIndex)), STAGE_DURATION_MS);
-      return () => window.clearTimeout(timer);
-    }
-    if (status === "completed" && !completionSentRef.current) {
-      const timer = window.setTimeout(() => {
-        completionSentRef.current = true;
-        onComplete();
-      }, FINAL_PAUSE_MS);
-      return () => window.clearTimeout(timer);
-    }
-  }, [activeIndex, finalIndex, onComplete, reducedMotion, status]);
-
-  const activeStage = aiAnalysisWorkflowStages[activeIndex];
+  const activeIndex = progressStage === null
+    ? Math.max(0, Math.min(progressStep - 1, aiAnalysisWorkflowStages.length - 1))
+    : Math.max(0, aiAnalysisWorkflowStages.findIndex((stage) => stage.key === progressStage));
+  const activeStage = progressStep > 0 ? aiAnalysisWorkflowStages[activeIndex] : null;
 
   return (
     <section className="ai-journey-card" aria-labelledby="ai-journey-title" aria-busy={status !== "completed"}>
@@ -83,7 +52,7 @@ export function AnalysisJourney({ status, symbol, onComplete }: AnalysisJourneyP
 
       <ol className="ai-stage-list">
         {aiAnalysisWorkflowStages.map((stage, index) => {
-          const stageState = index < activeIndex ? "complete" : index === activeIndex ? "active" : "pending";
+          const stageState = progressStep > index + 1 ? "complete" : index === activeIndex && progressStep > 0 ? "active" : "pending";
           return (
             <motion.li
               key={stage.key}
@@ -116,12 +85,11 @@ export function AnalysisJourney({ status, symbol, onComplete }: AnalysisJourneyP
           animate={{ opacity: 1 }}
           exit={reducedMotion ? undefined : { opacity: 0 }}
         >
-          {status === "completed" && activeIndex === finalIndex
-            ? "The analysis is complete. Preparing your report…"
-            : "Your report will appear only after the analysis is complete."}
+          {status === "queued" && progressStep === 0
+            ? "Your analysis is queued and will continue in the background."
+            : `Stage ${Math.min(progressStep, progressTotal)} of ${progressTotal}. Your report will appear when complete.`}
         </motion.p>
       </AnimatePresence>
     </section>
   );
 }
-

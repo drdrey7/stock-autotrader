@@ -24,9 +24,17 @@ function recommendationTone(recommendation: AiAnalysisRecommendation): string {
   return "neutral";
 }
 
-function formatCompletedAt(value: string): string {
+function formatDate(value: string | null): string {
+  if (!value) return "Not completed";
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "Date unavailable" : historyDateFormatter.format(date);
+}
+
+function statusLabel(item: AiAnalysisHistoryItem): string {
+  if (item.status === "running") return item.progressStage ? `Running · ${item.progressStage}` : "Running";
+  if (item.status === "queued") return "Queued";
+  if (item.status === "failed") return "Failed";
+  return item.reused ? "Completed · reused" : "Completed";
 }
 
 interface HistoryState {
@@ -43,7 +51,7 @@ const initialHistoryState: HistoryState = {
   error: false,
 };
 
-/** Account-owned credits and immutable links to each completed analysis run. */
+/** Account-owned credits and durable links to every analysis run. */
 export function AiAnalysisAccount() {
   const [viewer, setViewer] = useState<AiAnalysisViewerResponse | null>(null);
   const [viewerLoading, setViewerLoading] = useState(true);
@@ -131,7 +139,7 @@ export function AiAnalysisAccount() {
         <div>
           <p className="investor-hub-kicker">AI research</p>
           <h2 id="investor-ai-title">Analysis credits & reports</h2>
-          <p>Open any completed report again without using another credit.</p>
+          <p>Running and completed analyses remain available here after you leave the page.</p>
         </div>
         <Link className="investor-hub-primary-link" to="/ai-analysis">
           New analysis <ArrowRight size={15} aria-hidden="true" />
@@ -167,11 +175,11 @@ export function AiAnalysisAccount() {
           <button className="investor-hub-secondary-button" type="button" onClick={reload}>Try again</button>
         </div>
       ) : history.items.length === 0 ? (
-        <div className="investor-ai-history-state investor-ai-empty">
+          <div className="investor-ai-history-state investor-ai-empty">
           <FileText size={24} aria-hidden="true" />
           <div>
             <h3>No completed reports yet</h3>
-            <p>Your AI Analysis reports will appear here.</p>
+            <p>Your AI Analysis runs will appear here.</p>
           </div>
         </div>
       ) : (
@@ -179,14 +187,14 @@ export function AiAnalysisAccount() {
           <ol className="investor-ai-history-list">
             {history.items.map((item) => (
               <li key={item.runId}>
-                <Link to={`/ai-analysis/runs/${encodeURIComponent(item.runId)}`} aria-label={`Open ${item.symbol} ${item.recommendation} report from ${formatCompletedAt(item.completedAt)}`}>
+                <Link to={`/ai-analysis/runs/${encodeURIComponent(item.runId)}`} aria-label={`Open ${item.symbol} ${item.recommendation ?? "analysis"} report from ${formatDate(item.completedAt ?? item.requestedAt)}`}>
                   <span className="investor-ai-history-symbol">
                     <strong>{item.symbol}</strong>
                     <span>{item.company}</span>
                   </span>
-                  <time dateTime={item.completedAt}>{formatCompletedAt(item.completedAt)}</time>
-                  <span className={`investor-ai-recommendation is-${recommendationTone(item.recommendation)}`}>
-                    {item.recommendation}
+                  <time dateTime={item.completedAt ?? item.requestedAt}>{formatDate(item.completedAt ?? item.requestedAt)}</time>
+                  <span className={item.recommendation ? `investor-ai-recommendation is-${recommendationTone(item.recommendation)}` : "investor-ai-history-state-label"}>
+                    {item.recommendation ?? statusLabel(item)}
                   </span>
                   <ArrowRight className="investor-ai-history-arrow" size={16} aria-hidden="true" />
                 </Link>

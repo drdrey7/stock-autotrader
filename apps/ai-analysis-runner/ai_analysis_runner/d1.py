@@ -13,7 +13,8 @@ from .models import Analysis
 D1_ENDPOINT = "https://api.cloudflare.com/client/v4/accounts/{account_id}/d1/database/{database_id}/query"
 ANALYSIS_COLUMNS = (
     "id", "symbol", "status", "analysis_date", "attempt_count", "execution_token",
-    "execution_message_id", "heartbeat_at",
+    "execution_message_id", "heartbeat_at", "progress_stage", "progress_step",
+    "progress_total", "progress_updated_at",
 )
 
 # Documented transient Cloudflare D1 conditions (see D1 retry documentation).
@@ -89,8 +90,16 @@ class D1Client:
         attempt_count = row.get("attempt_count")
         if isinstance(attempt_count, bool) or not isinstance(attempt_count, int) or attempt_count < 0:
             raise D1ProtocolError("d1_analysis_invalid")
-        optional = ("execution_token", "execution_message_id", "heartbeat_at")
+        optional = ("execution_token", "execution_message_id", "heartbeat_at", "progress_stage", "progress_updated_at")
         if any(row.get(key) is not None and not isinstance(row.get(key), str) for key in optional):
+            raise D1ProtocolError("d1_analysis_invalid")
+        progress_step = row.get("progress_step")
+        progress_total = row.get("progress_total")
+        if (
+            isinstance(progress_step, bool) or not isinstance(progress_step, int) or progress_step < 0
+            or isinstance(progress_total, bool) or not isinstance(progress_total, int) or progress_total < 1
+            or progress_step > progress_total
+        ):
             raise D1ProtocolError("d1_analysis_invalid")
         return Analysis(
             id=row["id"],
@@ -101,6 +110,10 @@ class D1Client:
             execution_token=row.get("execution_token"),
             execution_message_id=row.get("execution_message_id"),
             heartbeat_at=row.get("heartbeat_at"),
+            progress_stage=row.get("progress_stage"),
+            progress_step=progress_step,
+            progress_total=progress_total,
+            progress_updated_at=row.get("progress_updated_at"),
         )
 
     def get_analysis(self, analysis_id: str) -> Analysis | None:
@@ -149,9 +162,38 @@ class D1Client:
             SET heartbeat_at = ?4, updated_at = ?4
             WHERE id = ?1 AND status = 'running'
               AND execution_message_id = ?2 AND execution_token = ?3
+              AND json_valid(?7)
+              AND typeof(json_extract(?7, '$.reports.portfolioManager')) = 'text'
+              AND length(trim(json_extract(?7, '$.reports.portfolioManager'))) > 0
             RETURNING id
             """.strip(),
             [analysis_id, message_id, execution_token, now],
+            max_attempts=1,
+        )
+        return bool(rows)
+
+    def progress(
+        self,
+        analysis_id: str,
+        message_id: str,
+        execution_token: str,
+        stage: str,
+        step: int,
+        total: int,
+        now: str,
+    ) -> bool:
+        """Persist one owned, monotonic graph-stage transition."""
+        rows = self._query(
+            """
+            UPDATE ai_analyses
+            SET progress_stage = ?4, progress_step = ?5, progress_total = ?6,
+                progress_updated_at = ?7, updated_at = ?7
+            WHERE id = ?1 AND status = 'running'
+              AND execution_message_id = ?2 AND execution_token = ?3
+              AND progress_step < ?5
+            RETURNING id
+            """.strip(),
+            [analysis_id, message_id, execution_token, stage, step, total, now],
             max_attempts=1,
         )
         return bool(rows)
