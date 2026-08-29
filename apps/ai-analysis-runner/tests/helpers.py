@@ -18,6 +18,7 @@ def settings(state_dir: Path, **overrides: Any) -> Settings:
         cloudflare_ai_queue_id="queue-id",
         google_api_key="google-secret",
         openai_api_key="",
+        openrouter_api_key="",
         primary_provider="google",
         llm_backend_url=None,
         quick_model="gemini-3.1-flash-lite",
@@ -38,7 +39,8 @@ def settings(state_dir: Path, **overrides: Any) -> Settings:
         empty_poll_max_seconds=10,
         result_max_bytes=1_500_000,
         valid_days=5,
-        llm_max_retries=2,
+        llm_max_retries=1,
+        engine_timeout_seconds=300,
     )
     return replace(value, **overrides)
 

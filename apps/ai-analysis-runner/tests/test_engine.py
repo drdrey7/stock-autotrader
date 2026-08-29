@@ -93,6 +93,28 @@ class EngineTests(unittest.TestCase):
             self.assertEqual(config["llm_provider"], "openai_compatible")
             self.assertEqual(config["backend_url"], "https://opencode.ai/zen/go/v1")
 
+    def test_openrouter_uses_paid_models_and_usage_callback(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            value = settings(
+                Path(directory),
+                primary_provider="openrouter",
+                llm_backend_url=None,
+                quick_model="openai/gpt-5.4-mini",
+                deep_model="openai/gpt-5.5",
+            )
+            result = TradingAgentsEngine(value, RecordingGraph).run(str(uuid.uuid4()), "MSFT", "2026-08-24")
+            config = RecordingGraph.calls[0]["config"]
+            self.assertEqual(config["llm_provider"], "openrouter")
+            self.assertEqual(config["quick_think_llm"], "openai/gpt-5.4-mini")
+            self.assertEqual(config["deep_think_llm"], "openai/gpt-5.5")
+            self.assertIsNone(config["backend_url"])
+            self.assertEqual(result.provider, "openrouter")
+            self.assertEqual(len(RecordingGraph.calls[0]["callbacks"]), 1)
+
+    def test_engine_timeout_is_non_retryable(self) -> None:
+        failure = EngineFailure("engine_timeout", "Analysis exceeded its execution time limit.", retryable=False)
+        self.assertFalse(failure.retryable)
+
     def test_opencode_go_usage_limit_is_definitive_and_safe(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             value = settings(

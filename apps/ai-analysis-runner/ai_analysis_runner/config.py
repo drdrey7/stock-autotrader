@@ -89,6 +89,7 @@ class Settings:
     cloudflare_ai_queue_id: str
     google_api_key: str
     openai_api_key: str
+    openrouter_api_key: str
     primary_provider: str
     llm_backend_url: str | None
     quick_model: str
@@ -110,12 +111,13 @@ class Settings:
     result_max_bytes: int
     valid_days: int
     llm_max_retries: int
+    engine_timeout_seconds: int
 
     def __repr__(self) -> str:
         return (
             "Settings(cloudflare_api_token='<redacted>', "
             "cloudflare_queues_api_token='<redacted>', google_api_key='<redacted>', "
-            "openai_api_key='<redacted>', "
+            "openai_api_key='<redacted>', openrouter_api_key='<redacted>', "
             f"cloudflare_account_id={self.cloudflare_account_id!r}, "
             f"cloudflare_d1_database_id={self.cloudflare_d1_database_id!r}, "
             f"cloudflare_ai_queue_id={self.cloudflare_ai_queue_id!r}, "
@@ -127,23 +129,29 @@ def from_env(environ: dict[str, str] | None = None) -> Settings:
     """Build settings without ever putting secret values in an error."""
 
     values = dict(os.environ if environ is None else environ)
-    primary_provider = values.get("TRADINGAGENTS_LLM_PROVIDER", "google").strip().lower()
-    if primary_provider not in {"google", "openai", "openai_compatible"}:
-        raise ConfigError("TRADINGAGENTS_LLM_PROVIDER must be google, openai, or openai_compatible")
+    primary_provider = values.get("TRADINGAGENTS_LLM_PROVIDER", "openrouter").strip().lower()
+    if primary_provider not in {"google", "openai", "openrouter", "openai_compatible"}:
+        raise ConfigError("TRADINGAGENTS_LLM_PROVIDER must be google, openai, openrouter, or openai_compatible")
 
     google_api_key = values.get("GOOGLE_API_KEY", "").strip()
     openai_api_key = values.get("OPENAI_API_KEY", "").strip()
+    openrouter_api_key = values.get("OPENROUTER_API_KEY", "").strip()
     if primary_provider == "google" and not google_api_key:
         raise ConfigError("GOOGLE_API_KEY is required for the Google provider")
     if primary_provider == "openai" and not openai_api_key:
         raise ConfigError("OPENAI_API_KEY is required for the OpenAI provider")
+    if primary_provider == "openrouter" and not openrouter_api_key:
+        raise ConfigError("OPENROUTER_API_KEY is required for the OpenRouter provider")
     if primary_provider == "openai_compatible" and not values.get("OPENAI_COMPATIBLE_API_KEY", "").strip():
         raise ConfigError("OPENAI_COMPATIBLE_API_KEY is required for the OpenAI-compatible provider")
     llm_backend_url = (
         _https_url("TRADINGAGENTS_LLM_BACKEND_URL", values)
         if primary_provider == "openai_compatible"
+        or (primary_provider == "openrouter" and values.get("TRADINGAGENTS_LLM_BACKEND_URL", "").strip())
         else None
     )
+    if llm_backend_url and urlparse(llm_backend_url).hostname == "opencode.ai":
+        raise ConfigError("OpenCode Go is not supported for TradingAgents AI Analysis")
     fallback = _boolean("AI_ANALYSIS_OPENAI_FALLBACK_ENABLED", False, values)
     if fallback and primary_provider != "google":
         raise ConfigError("the OpenAI fallback is only valid with the Google primary provider")
@@ -153,11 +161,13 @@ def from_env(environ: dict[str, str] | None = None) -> Settings:
     quick_defaults = {
         "google": "gemini-3.1-flash-lite",
         "openai": "gpt-5.4-mini",
+        "openrouter": "openai/gpt-5.4-mini",
         "openai_compatible": "deepseek-v4-flash",
     }
     deep_defaults = {
         "google": "gemini-3.5-flash",
         "openai": "gpt-5.5",
+        "openrouter": "openai/gpt-5.5",
         "openai_compatible": "deepseek-v4-flash",
     }
 
@@ -183,6 +193,7 @@ def from_env(environ: dict[str, str] | None = None) -> Settings:
         cloudflare_ai_queue_id=_identifier("CLOUDFLARE_AI_QUEUE_ID", values),
         google_api_key=google_api_key,
         openai_api_key=openai_api_key,
+        openrouter_api_key=openrouter_api_key,
         primary_provider=primary_provider,
         llm_backend_url=llm_backend_url,
         quick_model=_model("TRADINGAGENTS_QUICK_THINK_LLM", quick_defaults[primary_provider], values),
@@ -203,5 +214,6 @@ def from_env(environ: dict[str, str] | None = None) -> Settings:
         empty_poll_max_seconds=empty_max,
         result_max_bytes=_integer("AI_ANALYSIS_RESULT_MAX_BYTES", 1_500_000, values, minimum=1_000, maximum=1_900_000),
         valid_days=_integer("AI_ANALYSIS_VALID_DAYS", 5, values, minimum=1, maximum=30),
-        llm_max_retries=_integer("TRADINGAGENTS_LLM_MAX_RETRIES", 2, values, minimum=0, maximum=8),
+        llm_max_retries=_integer("TRADINGAGENTS_LLM_MAX_RETRIES", 1, values, minimum=0, maximum=8),
+        engine_timeout_seconds=_integer("AI_ANALYSIS_ENGINE_TIMEOUT_SECONDS", 300, values, minimum=60, maximum=900),
     )

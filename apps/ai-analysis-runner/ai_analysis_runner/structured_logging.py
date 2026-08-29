@@ -34,6 +34,7 @@ _ALLOWED_FIELDS = frozenset({
     "heartbeat_age_seconds", "stale", "reused", "checkpoint",
     "delivery_attempt", "published_at_ms", "duration_ms", "quick_model",
     "deep_model",
+    "llm_calls", "input_tokens", "output_tokens", "cached_tokens", "reasoning_tokens", "cost_usd",
 })
 
 

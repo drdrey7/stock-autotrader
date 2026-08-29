@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import copy
+import signal
+import threading
+import time
 import uuid
 from collections.abc import Callable
 from typing import Any
@@ -10,6 +13,7 @@ from typing import Any
 from .config import Settings
 from .models import EngineOutput
 from .private import ensure_private_directory
+from .structured_logging import log_event
 
 
 class EngineFailure(RuntimeError):
@@ -34,7 +38,75 @@ def _execution_failure(exc: Exception) -> EngineFailure:
                 "Analysis provider usage limit has been reached.",
                 retryable=False,
             )
+    if isinstance(exc, TimeoutError):
+        return EngineFailure("engine_timeout", "Analysis exceeded its execution time limit.", retryable=False)
     return EngineFailure("engine_execution_failed", "Analysis engine execution failed.", retryable=True)
+
+
+class _UsageCallback:
+    """Collect numeric usage metadata without retaining prompts or responses."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.input_tokens = 0
+        self.output_tokens = 0
+        self.cached_tokens = 0
+        self.reasoning_tokens = 0
+        self.cost_usd = 0.0
+
+    @staticmethod
+    def _number(value: Any) -> int:
+        return value if isinstance(value, int) and value >= 0 else 0
+
+    def on_llm_end(self, response: Any, **_kwargs: Any) -> None:
+        self.calls += 1
+        usage: dict[str, Any] = {}
+        cost: int | float | None = None
+        llm_output = getattr(response, "llm_output", None)
+        if isinstance(llm_output, dict) and isinstance(llm_output.get("token_usage"), dict):
+            usage.update(llm_output["token_usage"])
+        if isinstance(llm_output, dict) and isinstance(llm_output.get("cost"), (int, float)):
+            cost = llm_output["cost"]
+        for generation_list in getattr(response, "generations", []) or []:
+            for generation in generation_list or []:
+                metadata = getattr(getattr(generation, "message", None), "response_metadata", None)
+                if isinstance(metadata, dict):
+                    candidate = metadata.get("token_usage") or metadata.get("usage")
+                    if isinstance(candidate, dict):
+                        usage.update(candidate)
+                    metadata_cost = metadata.get("cost") or metadata.get("cost_usd")
+                    if cost is None and isinstance(metadata_cost, (int, float)):
+                        cost = metadata_cost
+        self.input_tokens += self._number(usage.get("prompt_tokens", usage.get("input_tokens")))
+        self.output_tokens += self._number(usage.get("completion_tokens", usage.get("output_tokens")))
+        self.cached_tokens += self._number(usage.get("cached_tokens", usage.get("cache_read_input_tokens")))
+        self.reasoning_tokens += self._number(usage.get("reasoning_tokens"))
+        if cost is None:
+            usage_cost = usage.get("cost") or usage.get("cost_usd")
+            if isinstance(usage_cost, (int, float)):
+                cost = usage_cost
+        if isinstance(cost, (int, float)) and cost >= 0:
+            self.cost_usd += float(cost)
+
+
+class _EngineDeadline:
+    def __init__(self, seconds: int) -> None:
+        self.seconds = seconds
+        self.previous_handler: Any = None
+
+    def __enter__(self) -> None:
+        if threading.current_thread() is threading.main_thread():
+            self.previous_handler = signal.signal(signal.SIGALRM, self._raise)
+            signal.setitimer(signal.ITIMER_REAL, self.seconds)
+
+    def __exit__(self, *_args: object) -> None:
+        if self.previous_handler is not None:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, self.previous_handler)
+
+    @staticmethod
+    def _raise(_signum: int, _frame: Any) -> None:
+        raise TimeoutError("analysis execution deadline exceeded")
 
 
 class TradingAgentsEngine:
@@ -94,18 +166,36 @@ class TradingAgentsEngine:
             "max_risk_discuss_rounds": 1,
             "llm_max_retries": self._settings.llm_max_retries,
         })
+        usage = _UsageCallback()
+        started = time.monotonic()
         try:
-            graph = graph_factory(
-                selected_analysts=("market", "social", "news", "fundamentals"),
-                debug=False,
-                config=config,
-                callbacks=None,
-            )
-            final_state, decision = graph.propagate(symbol, analysis_date, asset_type="stock")
+            with _EngineDeadline(self._settings.engine_timeout_seconds):
+                graph = graph_factory(
+                    selected_analysts=("market", "social", "news", "fundamentals"),
+                    debug=False,
+                    config=config,
+                    callbacks=[usage],
+                )
+                final_state, decision = graph.propagate(symbol, analysis_date, asset_type="stock")
         except EngineFailure:
             raise
         except Exception as exc:
             raise _execution_failure(exc) from exc
+        finally:
+            log_event(
+                "analysis_engine_metrics",
+                analysis_id=analysis_id,
+                provider=provider,
+                quick_model=quick_model,
+                deep_model=deep_model,
+                duration_ms=round((time.monotonic() - started) * 1000),
+                llm_calls=usage.calls,
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
+                cached_tokens=usage.cached_tokens,
+                reasoning_tokens=usage.reasoning_tokens,
+                cost_usd=round(usage.cost_usd, 8),
+            )
         if not isinstance(final_state, dict) or not isinstance(decision, str):
             raise EngineFailure("engine_output_invalid", "Analysis engine returned an invalid result.", retryable=True)
         return EngineOutput(final_state, decision, provider, quick_model, deep_model)
