@@ -1,5 +1,6 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 const execFile = promisify(execFileCallback);
@@ -47,7 +48,7 @@ async function fetchProductionStatus(workerUrl) {
 }
 
 async function runDispatcherContract() {
-  await execFile("npx", ["--no-install", "vitest", "run", "worker/cron-dispatcher.test.ts"], {
+  await execFile("npm", ["exec", "--", "vitest", "run", "worker/cron-dispatcher.test.ts"], {
     cwd: process.cwd(),
     env: process.env,
     maxBuffer: 2 * 1024 * 1024,
@@ -108,7 +109,7 @@ async function main() {
 }
 
 const isDirectRun = process.argv[1]
-  ? import.meta.url === new URL(`file://${process.argv[1]}`).href
+  ? import.meta.url === pathToFileURL(process.argv[1]).href
   : false;
 
 if (isDirectRun) {
