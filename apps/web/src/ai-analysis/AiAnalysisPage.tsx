@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Coins, RotateCcw, Sparkles } from "lucide-react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import type { AiAnalysisRunResponse } from "@stock-autotrader/contracts";
 import { authClient } from "../lib/auth-client";
 import { AiAnalysisApiError, startAiAnalysis } from "./api";
 import { AnalysisJourney } from "./AnalysisJourney";
@@ -16,18 +17,6 @@ function creditsLabel(credits: number): string {
 
 function loginState(returnTo: string): { returnTo: string } {
   return { returnTo };
-}
-
-function replayContext(state: unknown): { requested: boolean; symbol: string | null } {
-  const requested = typeof state === "object" && state !== null
-    && "replayJourney" in state
-    && (state as { replayJourney?: unknown }).replayJourney === true;
-  if (!requested || !("symbol" in (state as object))) return { requested, symbol: null };
-  const symbol = (state as { symbol?: unknown }).symbol;
-  return {
-    requested,
-    symbol: typeof symbol === "string" && /^[A-Z][A-Z0-9-]{0,11}$/.test(symbol) ? symbol : null,
-  };
 }
 
 function startErrorMessage(error: AiAnalysisApiError): string {
@@ -59,31 +48,20 @@ function RunPage({
   viewer: ReturnType<typeof useAiAnalysisViewer>;
 }) {
   const location = useLocation();
-  const navigate = useNavigate();
-  const replay = useMemo(() => replayContext(location.state), [location.state]);
-  const [journeyStarted, setJourneyStarted] = useState(replay.requested);
-  const [journeyComplete, setJourneyComplete] = useState(false);
   const { markOwned, setCreditsRemaining } = viewer;
-  const { run, loading, error, connectionInterrupted, retry } = useAiAnalysisRun(
+  const { run: serverRun, loading, error, connectionInterrupted, retry } = useAiAnalysisRun(
     runId,
     authenticated && !sessionPending,
   );
+  const initialRun = typeof location.state === "object" && location.state !== null
+    ? (location.state as { initialRun?: AiAnalysisRunResponse }).initialRun ?? null
+    : null;
+  const visibleRun = serverRun ?? initialRun;
 
   useEffect(() => {
-    setJourneyStarted(replay.requested);
-    setJourneyComplete(false);
-  }, [replay.requested, runId]);
-
-  useEffect(() => {
-    if (run?.status === "queued" || run?.status === "running") setJourneyStarted(true);
-    if (run) setCreditsRemaining(run.creditsRemaining);
-    if (run?.status === "completed") markOwned(run.symbol);
-  }, [markOwned, run, setCreditsRemaining]);
-
-  const finishJourney = useCallback(() => {
-    setJourneyComplete(true);
-    navigate(location.pathname, { replace: true, state: null });
-  }, [location.pathname, navigate]);
+    if (visibleRun) setCreditsRemaining(visibleRun.creditsRemaining);
+    if (visibleRun?.status === "completed") markOwned(visibleRun.symbol);
+  }, [markOwned, setCreditsRemaining, visibleRun]);
 
   if (sessionPending) {
     return <div className="ai-status-card" role="status">Checking your account…</div>;
@@ -104,14 +82,11 @@ function RunPage({
     );
   }
 
-  if (loading && !run) {
-    if (replay.requested && replay.symbol) {
-      return <AnalysisJourney status="queued" symbol={replay.symbol} onComplete={finishJourney} />;
-    }
+  if (loading && !visibleRun) {
     return <div className="ai-status-card" role="status" aria-live="polite">Opening your analysis…</div>;
   }
 
-  if (error && !run) {
+  if (error && !visibleRun) {
     const notFound = error.status === 404;
     return (
       <div className="ai-status-card" role="alert">
@@ -122,7 +97,9 @@ function RunPage({
     );
   }
 
-  if (!run) return null;
+  if (!visibleRun) return null;
+
+  const run = visibleRun;
 
   if (run.status === "failed") {
     return (
@@ -137,8 +114,7 @@ function RunPage({
   }
 
   const showJourney = run.status === "queued"
-    || run.status === "running"
-    || (run.status === "completed" && journeyStarted && !journeyComplete);
+    || run.status === "running";
 
   if (showJourney) {
     return (
@@ -146,7 +122,14 @@ function RunPage({
         {connectionInterrupted ? (
           <p className="ai-connection-note" role="status">Connection interrupted. We’ll keep trying.</p>
         ) : null}
-        <AnalysisJourney key={run.runId} status={run.status} symbol={run.symbol} onComplete={finishJourney} />
+        <AnalysisJourney
+          key={run.runId}
+          status={run.status}
+          symbol={run.symbol}
+          progressStage={run.progressStage}
+          progressStep={run.progressStep}
+          progressTotal={run.progressTotal}
+        />
       </>
     );
   }
@@ -211,7 +194,7 @@ function SelectionPage({
       clearPendingAnalysisKey(key);
       viewer.setCreditsRemaining(run.creditsRemaining);
       navigate(`/ai-analysis/runs/${encodeURIComponent(run.runId)}`, {
-        state: { replayJourney: true, symbol: selected.symbol },
+        state: { initialRun: run },
       });
     } catch (reason) {
       if (controller.signal.aborted) return;
@@ -278,8 +261,8 @@ function SelectionPage({
             <div>
               <span className="ai-selection-step" aria-hidden="true">2</span>
               <div>
-                <strong>{alreadyOwned ? `Run a fresh ${selected.symbol} analysis` : `Analyze ${selected.symbol}`}</strong>
-                <p>{alreadyOwned ? "You already have a report for this stock. A fresh analysis costs 1 credit." : "Running an analysis costs 1 credit."}</p>
+                <strong>{alreadyOwned ? `${selected.symbol} analysis available` : `Analyze ${selected.symbol}`}</strong>
+                <p>{alreadyOwned ? "Your valid report will be reopened without using another credit." : "Running an analysis costs 1 credit."}</p>
               </div>
             </div>
 
@@ -303,7 +286,7 @@ function SelectionPage({
                 {starting
                   ? "Starting analysis…"
                   : hasCredit
-                    ? `${alreadyOwned ? "Run fresh analysis" : "Run Analysis"} · 1 credit`
+                  ? `${alreadyOwned ? "Open analysis" : "Run Analysis · 1 credit"}`
                     : "No credits available"}
               </button>
             )}

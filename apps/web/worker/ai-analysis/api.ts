@@ -116,9 +116,16 @@ function runResponse(run: StoredRunView): AiAnalysisRunResponse {
   const base = {
     schemaVersion: 1 as const,
     runId: run.runId,
+    analysisId: run.analysisId,
     symbol: run.symbol,
     company: run.company,
     requestedAt: run.requestedAt,
+    startedAt: run.startedAt,
+    progressStage: run.progressStage,
+    progressStep: run.progressStep,
+    progressTotal: run.progressTotal,
+    progressUpdatedAt: run.progressUpdatedAt,
+    reused: run.reused,
     creditsRemaining: run.creditsRemaining,
   };
   if (run.analysisStatus === "completed") {
@@ -443,17 +450,28 @@ async function handleHistory(
     }
     const page = await readHistoryPage(env.DB, user.id, cursor, limit);
     // History is a list: degrade per row instead of failing closed for the whole
-    // page. Omit an unreadable stored result so the remaining reports and the
-    // cursor stay usable, and the user can still page past the bad row.
+    // page. Completed rows with an unreadable result are omitted; active and
+    // failed rows remain useful without a result payload.
     const items: AiAnalysisHistoryResponse["items"] = [];
     for (const row of page.rows) {
       try {
+        const result = row.status === "completed"
+          ? parseResultJson(row.resultJson, row.symbol)
+          : null;
         items.push({
           runId: row.runId,
           symbol: row.symbol,
           company: row.company,
-          recommendation: parseResultJson(row.resultJson, row.symbol).recommendation,
+          status: row.status,
+          requestedAt: row.requestedAt,
+          startedAt: row.startedAt,
           completedAt: row.completedAt,
+          progressStage: row.progressStage as AiAnalysisHistoryResponse["items"][number]["progressStage"],
+          progressStep: row.progressStep,
+          progressTotal: row.progressTotal,
+          progressUpdatedAt: row.progressUpdatedAt,
+          recommendation: result?.recommendation ?? null,
+          reused: row.reused,
         });
       } catch {
         // Unreadable stored result — skip this row only.
@@ -464,7 +482,7 @@ async function handleHistory(
       schemaVersion: 1,
       items,
       nextCursor: page.hasMore && last
-        ? encodeCursor({ acquiredAt: last.acquiredAt, runId: last.runId })
+        ? encodeCursor({ acquiredAt: last.requestedAt, runId: last.runId })
         : null,
     });
     return privateJson(response, 200, request.method === "HEAD");

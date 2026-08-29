@@ -25,7 +25,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(value.primary_provider, "google")
         self.assertEqual(value.quick_model, "gemini-3.1-flash-lite")
         self.assertEqual(value.deep_model, "gemini-3.5-flash")
-        self.assertEqual(value.queue_visibility_timeout_ms, 300_000)
+        self.assertEqual(value.queue_visibility_timeout_ms, 360_000)
         self.assertFalse(value.openai_fallback_enabled)
 
     def test_openrouter_defaults_require_its_key_and_use_paid_models(self) -> None:

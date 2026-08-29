@@ -40,6 +40,10 @@ def analysis_row(status: str = "running") -> dict[str, Any]:
         "execution_token": "token",
         "execution_message_id": "message",
         "heartbeat_at": "2026-08-23T12:00:00.000Z",
+        "progress_stage": None,
+        "progress_step": 0,
+        "progress_total": 12,
+        "progress_updated_at": None,
     }
 
 
@@ -78,6 +82,18 @@ class D1ClientTests(unittest.TestCase):
                 RESULT_SCHEMA_VERSION, "{}", "2026-08-23T12:00:00.000Z", "2026-08-28T12:00:00.000Z",
             ],
         )
+
+    def test_progress_is_execution_owned_and_monotonic(self) -> None:
+        opener = D1Opener([{"id": analysis_row()["id"]}])
+        updated = self.client(opener).progress(
+            analysis_row()["id"], "message", "token", "research-debate", 5, 12,
+            "2026-08-23T12:03:00.000Z",
+        )
+        self.assertTrue(updated)
+        request = opener.requests[0]
+        self.assertIn("progress_step < ?5", request["sql"])
+        self.assertIn("execution_message_id = ?2 AND execution_token = ?3", request["sql"])
+        self.assertEqual(request["params"][3:6], ["research-debate", 5, 12])
 
     def test_definitive_failure_preserves_not_null_result_schema_for_refund_trigger(self) -> None:
         opener = D1Opener([{"id": analysis_row()["id"]}])

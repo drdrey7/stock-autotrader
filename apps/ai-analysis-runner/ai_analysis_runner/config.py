@@ -172,7 +172,7 @@ def from_env(environ: dict[str, str] | None = None) -> Settings:
     }
 
     heartbeat = _integer("AI_ANALYSIS_HEARTBEAT_INTERVAL_SECONDS", 60, values, minimum=10, maximum=600)
-    stale = _integer("AI_ANALYSIS_STALE_LEASE_SECONDS", 300, values, minimum=30, maximum=86_400)
+    stale = _integer("AI_ANALYSIS_STALE_LEASE_SECONDS", 420, values, minimum=30, maximum=86_400)
     if stale <= heartbeat * 2:
         raise ConfigError("AI_ANALYSIS_STALE_LEASE_SECONDS must exceed two heartbeat intervals")
 
@@ -202,7 +202,7 @@ def from_env(environ: dict[str, str] | None = None) -> Settings:
         openai_quick_model=_model("AI_ANALYSIS_OPENAI_QUICK_MODEL", "gpt-5.4-mini", values),
         openai_deep_model=_model("AI_ANALYSIS_OPENAI_DEEP_MODEL", "gpt-5.5", values),
         state_dir=state_dir,
-        queue_visibility_timeout_ms=_integer("AI_ANALYSIS_QUEUE_VISIBILITY_TIMEOUT_MS", 300_000, values, minimum=60_000, maximum=43_200_000),
+        queue_visibility_timeout_ms=_integer("AI_ANALYSIS_QUEUE_VISIBILITY_TIMEOUT_MS", 360_000, values, minimum=60_000, maximum=43_200_000),
         queue_request_timeout_seconds=_number("AI_ANALYSIS_QUEUE_REQUEST_TIMEOUT_SECONDS", 30, values, minimum=1, maximum=120),
         d1_request_timeout_seconds=_number("AI_ANALYSIS_D1_REQUEST_TIMEOUT_SECONDS", 30, values, minimum=1, maximum=120),
         http_max_attempts=_integer("AI_ANALYSIS_HTTP_MAX_ATTEMPTS", 3, values, minimum=1, maximum=8),

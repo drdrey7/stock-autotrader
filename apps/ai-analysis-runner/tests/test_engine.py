@@ -6,7 +6,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from ai_analysis_runner.engine import EngineFailure, TradingAgentsEngine
+from ai_analysis_runner.engine import EngineFailure, TradingAgentsEngine, _UsageCallback
 
 from tests.helpers import final_state, settings
 
@@ -110,6 +110,41 @@ class EngineTests(unittest.TestCase):
             self.assertIsNone(config["backend_url"])
             self.assertEqual(result.provider, "openrouter")
             self.assertEqual(len(RecordingGraph.calls[0]["callbacks"]), 1)
+
+    def test_usage_callback_handles_pinned_dispatcher_and_nested_openrouter_usage(self) -> None:
+        try:
+            from langchain_core.callbacks import CallbackManager
+            from langchain_core.messages import AIMessage
+            from langchain_core.outputs import ChatGeneration, LLMResult
+        except ImportError as error:
+            self.skipTest(f"langchain-core not installed: {error}")
+
+        progress: list[tuple[str, int, int]] = []
+        callback = _UsageCallback()
+        callback.set_progress_callback(lambda stage, step, total: progress.append((stage, step, total)))
+        manager = CallbackManager([callback])
+        manager.on_chain_start({"name": "Bull Researcher"}, {})
+        manager.on_llm_end(LLMResult(generations=[[ChatGeneration(message=AIMessage(
+            content="valid result",
+            response_metadata={"usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 40,
+                "prompt_tokens_details": {"cached_tokens": 25},
+                "completion_tokens_details": {"reasoning_tokens": 10},
+            }},
+        ))]]))
+        self.assertEqual(progress, [("bull", 5, 12)])
+        self.assertEqual(callback.calls, 1)
+        self.assertEqual(callback.input_tokens, 100)
+        self.assertEqual(callback.output_tokens, 40)
+        self.assertEqual(callback.cached_tokens, 25)
+        self.assertEqual(callback.reasoning_tokens, 10)
+
+    def test_progress_telemetry_exception_cannot_break_callback(self) -> None:
+        callback = _UsageCallback()
+        callback.set_progress_callback(lambda *_args: (_ for _ in ()).throw(RuntimeError("telemetry")))
+        callback.on_chain_start({"name": "Market Analyst"}, {})
+        self.assertEqual(callback._last_progress_step, 1)
 
     def test_engine_timeout_is_non_retryable(self) -> None:
         failure = EngineFailure("engine_timeout", "Analysis exceeded its execution time limit.", retryable=False)

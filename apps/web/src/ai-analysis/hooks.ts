@@ -103,6 +103,7 @@ export interface RunPollingState {
 }
 
 const ACTIVE_REFRESH_MS = 1_800;
+const HIDDEN_REFRESH_MS = 15_000;
 const RETRY_REFRESH_MS = 3_500;
 
 export function useAiAnalysisRun(runId: string | undefined, enabled: boolean): RunPollingState {
@@ -150,7 +151,9 @@ export function useAiAnalysisRun(runId: string | undefined, enabled: boolean): R
         setLoading(false);
         setError(null);
         setConnectionInterrupted(false);
-        if (next.status === "queued" || next.status === "running") schedule(ACTIVE_REFRESH_MS, load);
+        if (next.status === "queued" || next.status === "running") {
+          schedule(document.visibilityState === "visible" ? ACTIVE_REFRESH_MS : HIDDEN_REFRESH_MS, load);
+        }
       } catch (reason) {
         if (disposed || controller.signal.aborted || sequence !== requestSequence) return;
         const apiError = reason instanceof AiAnalysisApiError
@@ -168,9 +171,10 @@ export function useAiAnalysisRun(runId: string | undefined, enabled: boolean): R
     };
 
     const onVisibilityChange = () => {
-      if (document.visibilityState !== "visible") return;
-      clearTimer();
-      void load();
+      if (document.visibilityState === "visible") {
+        clearTimer();
+        void load();
+      }
     };
 
     void load();
@@ -186,4 +190,3 @@ export function useAiAnalysisRun(runId: string | undefined, enabled: boolean): R
 
   return { run, loading, error, connectionInterrupted, retry };
 }
-

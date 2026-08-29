@@ -22,8 +22,8 @@ beforeEach(() => {
   apiMocks.getHistory.mockResolvedValue({
     schemaVersion: 1,
     items: [
-      { runId: firstRun, symbol: "AAPL", company: "Apple Inc.", recommendation: "BUY", completedAt: "2026-08-20T15:00:00.000Z" },
-      { runId: secondRun, symbol: "AAPL", company: "Apple Inc.", recommendation: "HOLD", completedAt: "2026-08-18T15:00:00.000Z" },
+      { runId: firstRun, symbol: "AAPL", company: "Apple Inc.", status: "completed", requestedAt: "2026-08-20T14:00:00.000Z", startedAt: "2026-08-20T14:01:00.000Z", recommendation: "BUY", completedAt: "2026-08-20T15:00:00.000Z", progressStage: "portfolio", progressStep: 12, progressTotal: 12, progressUpdatedAt: "2026-08-20T15:00:00.000Z", reused: false },
+      { runId: secondRun, symbol: "AAPL", company: "Apple Inc.", status: "completed", requestedAt: "2026-08-18T14:00:00.000Z", startedAt: "2026-08-18T14:01:00.000Z", recommendation: "HOLD", completedAt: "2026-08-18T15:00:00.000Z", progressStage: "portfolio", progressStep: 12, progressTotal: 12, progressUpdatedAt: "2026-08-18T15:00:00.000Z", reused: false },
     ],
     nextCursor: null,
   });
@@ -51,12 +51,12 @@ describe("Investor Hub AI Analysis account section", () => {
     apiMocks.getHistory
       .mockResolvedValueOnce({
         schemaVersion: 1,
-        items: [{ runId: firstRun, symbol: "AAPL", company: "Apple Inc.", recommendation: "BUY", completedAt: "2026-08-20T15:00:00.000Z" }],
+        items: [{ runId: firstRun, symbol: "AAPL", company: "Apple Inc.", status: "completed", requestedAt: "2026-08-20T14:00:00.000Z", startedAt: "2026-08-20T14:01:00.000Z", recommendation: "BUY", completedAt: "2026-08-20T15:00:00.000Z", progressStage: "portfolio", progressStep: 12, progressTotal: 12, progressUpdatedAt: "2026-08-20T15:00:00.000Z", reused: false }],
         nextCursor: "next-page",
       })
       .mockResolvedValueOnce({
         schemaVersion: 1,
-        items: [{ runId: secondRun, symbol: "AAPL", company: "Apple Inc.", recommendation: "SELL", completedAt: "2026-08-18T15:00:00.000Z" }],
+        items: [{ runId: secondRun, symbol: "AAPL", company: "Apple Inc.", status: "completed", requestedAt: "2026-08-18T14:00:00.000Z", startedAt: "2026-08-18T14:01:00.000Z", recommendation: "SELL", completedAt: "2026-08-18T15:00:00.000Z", progressStage: "portfolio", progressStep: 12, progressTotal: 12, progressUpdatedAt: "2026-08-18T15:00:00.000Z", reused: false }],
         nextCursor: null,
       });
 

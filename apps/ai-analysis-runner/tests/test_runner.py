@@ -59,6 +59,7 @@ class FakeD1:
         self.fail_calls = 0
         self.requeue_calls = 0
         self.complete_error = False
+        self.complete_error_after_commit = False
         self.heartbeat_ok = True
         self.completed_result_json: str | None = None
         self.leaseLost = threading.Event()
@@ -94,6 +95,8 @@ class FakeD1:
             return False
         self.completed_result_json = result_json
         self.analysis = replace(self.analysis, status="completed")
+        if self.complete_error_after_commit:
+            raise HttpError("d1_request_failed", retryable=True)
         return True
 
     def fail(self, _id: str, _message: str, token: str, _now: str, _code: str, _safe: str) -> bool:
@@ -112,21 +115,22 @@ class FakeD1:
 
 
 class FakeEngine:
-    def __init__(self, failure: EngineFailure | None = None) -> None:
+    def __init__(self, failure: EngineFailure | None = None, result: Any | None = None) -> None:
         self.failure = failure
+        self.result = result
         self.calls = 0
 
     def run(self, *_args: str) -> Any:
         self.calls += 1
         if self.failure:
             raise self.failure
-        return output()
+        return self.result or output()
 
 
 def analysis(status: str = "queued", attempt: int = 0) -> Analysis:
     return Analysis(
         str(uuid.uuid4()), "AAPL", status, "2026-08-21", attempt,
-        None if status == "queued" else "stale", None, None,
+        None if status == "queued" else "stale", None, None, None, 0, 12, None,
     )
 
 
@@ -156,6 +160,27 @@ class RunnerTests(unittest.TestCase):
             self.assertFalse((Path(directory) / "pending-results" / f"{current.id}.json").exists())
             assert d1.completed_result_json is not None
             self.assertEqual(json.loads(d1.completed_result_json)["symbol"], "AAPL")
+
+    def test_missing_portfolio_decision_fails_and_refunds_once(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            invalid = output()
+            invalid.final_state.pop("final_trade_decision")
+            current = analysis()
+            runner, queue, d1 = self.build(directory, current, FakeEngine(result=invalid))
+            runner.process_message(message(current))
+            self.assertEqual(d1.fail_calls, 1)
+            self.assertEqual(d1.analysis.status, "failed")
+            self.assertEqual(queue.acked, ["message-1"])
+
+    def test_ambiguous_completion_that_committed_does_not_refund(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            current = analysis()
+            runner, queue, d1 = self.build(directory, current, FakeEngine())
+            d1.complete_error_after_commit = True
+            runner.process_message(message(current))
+            self.assertEqual(d1.analysis.status, "completed")
+            self.assertEqual(d1.fail_calls, 0)
+            self.assertEqual(queue.acked, ["message-1"])
 
     def test_lost_d1_lease_explicitly_retries_queue_message(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

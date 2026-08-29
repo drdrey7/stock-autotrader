@@ -7,8 +7,9 @@ import { CORE_UNIVERSE } from "@stock-autotrader/contracts";
 import { handleAiAnalysisApi } from "./api";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const migrationPath = resolve(__dirname, "../../migrations/0029_ai_analysis.sql");
-const migrationSql = readFileSync(migrationPath, "utf8");
+const migrationSql = ["0029_ai_analysis.sql", "0034_ai_analysis_progress.sql"]
+  .map((name) => readFileSync(resolve(__dirname, "../../migrations", name), "utf8"))
+  .join("\n");
 const ENGINE_VERSION = "v0.3.1+01477f9afb7a47b849ed4c9259d3a9a4738d9fda";
 const COMMIT = "01477f9afb7a47b849ed4c9259d3a9a4738d9fda";
 const BASE_NOW = new Date("2026-08-23T12:00:00.000Z");
@@ -607,7 +608,7 @@ describe("AI Analysis Worker API", () => {
       .toMatchObject({ credits_remaining: 1, credits_used: 0 });
   });
 
-  it("implements Case A newer canonical reuse, Case B fresh same-user work, and Case C global sharing", async () => {
+  it("reuses a valid canonical for the same user and other users without charging", async () => {
     const db = setupDatabase(["case-user", "other-user"]);
     const queue = new FakeQueue();
     setCredits(db, "case-user", 3);
@@ -623,18 +624,18 @@ describe("AI Analysis Worker API", () => {
     expect(queue.messages).toHaveLength(0);
 
     const caseB = await postRun(db, queue, "case-user", "MSFT", crypto.randomUUID());
-    expect(caseB.status).toBe(202);
+    expect(caseB.status).toBe(201);
     const caseBBody = await responseJson(caseB);
     const freshId = db.sqlite.prepare("SELECT analysis_id FROM user_ai_analysis_runs WHERE id = ?").get(caseBBody.runId).analysis_id;
-    expect(freshId).not.toBe(newer);
-    expect(queue.messages).toHaveLength(1);
-    transitionToCompleted(db, freshId, "2026-08-23T12:05:00.000Z");
+    expect(freshId).toBe(newer);
+    expect(caseBBody.reused).toBe(true);
+    expect(queue.messages).toHaveLength(0);
 
     const caseC = await postRun(db, queue, "other-user", "MSFT", crypto.randomUUID(), new Date("2026-08-24T12:00:00.000Z"));
     expect(caseC.status).toBe(201);
     const caseCBody = await responseJson(caseC);
-    expect(db.sqlite.prepare("SELECT analysis_id FROM user_ai_analysis_runs WHERE id = ?").get(caseCBody.runId).analysis_id).toBe(freshId);
-    expect(queue.messages).toHaveLength(1);
+    expect(db.sqlite.prepare("SELECT analysis_id FROM user_ai_analysis_runs WHERE id = ?").get(caseCBody.runId).analysis_id).toBe(newer);
+    expect(queue.messages).toHaveLength(0);
   });
 
   it("does not reuse a canonical at the exact five-day expiry boundary", async () => {

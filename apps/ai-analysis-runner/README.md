@@ -6,7 +6,7 @@ It does not run TradingAgents' CLI, accept arbitrary tickers/prompts, expose Lan
 
 ## Runtime flow
 
-1. Pull one Queue message with a five-minute visibility lease. Longer engine
+1. Pull one Queue message with a six-minute visibility lease. Longer engine
    runs remain single-execution because the D1 heartbeat/CAS lease is the
    authority; an expired Queue delivery can only be retried or terminally
    acknowledged by another consumer.
@@ -47,7 +47,7 @@ The primary provider is configurable as `openrouter` (default), `google`,
 | OpenAI | `gpt-5.4-mini` | `gpt-5.5` |
 | Generic OpenAI-compatible | `deepseek-v4-flash` | `deepseek-v4-flash` |
 
-The OpenAI fallback is disabled by default, valid only with a Google primary, and attempted at most once after a retryable Google failure. This bounds both cost and provider switching. TradingAgents' own per-request SDK retry budget is separately bounded by `TRADINGAGENTS_LLM_MAX_RETRIES` (default one retry). The graph also has a five-minute engine deadline; timed-out work is failed without multiplying the provider call through the runner retry queue.
+The OpenAI fallback is disabled by default, valid only with a Google primary, and attempted at most once after a retryable Google failure. This bounds both cost and provider switching. TradingAgents' own per-request SDK retry budget is separately bounded by `TRADINGAGENTS_LLM_MAX_RETRIES` (default one retry). The graph also has a five-minute engine deadline; timed-out work is failed without multiplying the provider call through the runner retry queue. Normalization, schema, and result-size failures are definitive and refund the reserved credit immediately; transient provider failures remain bounded by the runner attempt budget and can recover from a validated normalized checkpoint.
 
 ## Local verification
 
