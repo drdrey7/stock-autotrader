@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 
 const execFile = promisify(execFileCallback);
 const DEFAULT_WORKER_URL = "https://stock-autotrader-web.barroso-labs.workers.dev";
+const HEALTH_FETCH_TIMEOUT_MS = 10_000;
 const STATE_SEVERITY = new Map([
   ["Live", 0],
   ["Cached", 1],
@@ -119,6 +120,7 @@ async function fetchJson(url) {
     const response = await fetch(url, {
       headers: { accept: "application/json", "cache-control": "no-cache" },
       cache: "no-store",
+      signal: AbortSignal.timeout(HEALTH_FETCH_TIMEOUT_MS),
     });
     let body = null;
     try {
