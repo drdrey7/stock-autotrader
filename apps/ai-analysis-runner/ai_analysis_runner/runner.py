@@ -15,6 +15,7 @@ from .checkpoint import CheckpointError, ResultCheckpointStore
 from .config import Settings
 from .d1 import D1Client, D1ProtocolError
 from .engine import EngineFailure, TradingAgentsEngine
+from .earnings_context import format_latest_earnings
 from .http import HttpError
 from .models import Analysis, QueueMessage
 from .normalize import ResultValidationError, normalize_result, serialize_result, validate_result
@@ -241,7 +242,19 @@ class AnalysisRunner:
                     deep_model=self.settings.deep_model,
                 )
                 try:
-                    output = self.engine.run(claimed.id, claimed.symbol, claimed.analysis_date)
+                    earnings_context = ""
+                    try:
+                        earnings_context = format_latest_earnings(
+                            self.d1.get_latest_reported_earnings(claimed.symbol), claimed.symbol,
+                        )
+                    except Exception as exc:
+                        log_event(
+                            "analysis_earnings_context_unavailable",
+                            level=logging.WARNING,
+                            analysis_id=claimed.id,
+                            code=type(exc).__name__,
+                        )
+                    output = self.engine.run(claimed.id, claimed.symbol, claimed.analysis_date, earnings_context)
                 finally:
                     log_event(
                         "analysis_engine_finished",
