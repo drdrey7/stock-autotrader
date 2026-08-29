@@ -18,7 +18,7 @@ document.querySelectorAll("[data-theme-choice]").forEach((button) => {
     applyTheme(choice);
   });
 });
-applyTheme(localStorage.getItem(themeKey) || "system");
+applyTheme(localStorage.getItem(themeKey) || "dark");
 
 const menuToggle = document.querySelector("[data-menu-toggle]");
 const mobileMenu = document.querySelector("[data-mobile-menu]");

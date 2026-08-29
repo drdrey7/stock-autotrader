@@ -1,49 +1,27 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
+import Icon from "../components/Icon.astro";
 ---
 <BaseLayout title="AI Web — AI analysis. Better decisions." description="Multi-agent AI stock analysis with bull, bear, fundamental, news and risk research in one focused workspace.">
-  <div class="mobile-sponsor sponsor-slot sponsor-slot--mobile" aria-label="Sponsor">Sponsor</div>
+  <div class="landing-atmosphere" aria-hidden="true"><div class="nebula nebula--left"></div><div class="nebula nebula--right"></div><div class="nebula-ribbon"></div><div class="hero-planet"><div class="planet-aura"></div><div class="planet-surface"></div></div></div>
+  <aside class="mobile-sponsor sponsor-slot sponsor-slot--mobile"><small>Sponsor</small><span>Your ad here</span></aside>
   <div class="landing-frame">
-    <aside class="sponsor-slot sponsor-slot--side sponsor-slot--left" aria-label="Advertisement">Advertisement</aside>
+    <aside class="sponsor-slot sponsor-slot--side sponsor-slot--left"><small>Sponsor</small><span>Your ad<br/>here</span></aside>
     <div class="landing-content">
       <section class="hero" aria-labelledby="hero-title">
         <div class="hero-copy reveal">
-          <p class="eyebrow"><span class="eyebrow-dot"></span> Multi-agent research, made readable</p>
+          <p class="eyebrow"><Icon name="spark" size={12} /> Powered by 7 AI agents</p>
           <h1 id="hero-title">AI analysis.<br /><em>Better decisions.</em></h1>
-          <p class="hero-lede">Multi-agent AI stock analysis that studies a stock from multiple angles, then brings the evidence together into one considered conclusion.</p>
-          <form class="analyze-form" data-analyze-form>
-            <label for="hero-symbol">What should we research?</label>
-            <div class="analyze-controls">
-              <div class="ticker-control"><span aria-hidden="true">⌕</span><input id="hero-symbol" name="symbol" type="text" maxlength="8" autocomplete="off" placeholder="Enter a ticker, e.g. NVDA" /><span class="ticker-hint">US</span></div>
-              <button class="button button--primary" type="submit">Analyze stock <span aria-hidden="true">↗</span></button>
-            </div>
-            <p class="form-message" data-form-message aria-live="polite"></p>
-          </form>
-          <div class="popular-tickers" aria-label="Popular tickers"><span>Try</span><button type="button" data-ticker="AAPL">AAPL</button><button type="button" data-ticker="NVDA">NVDA</button><button type="button" data-ticker="MSFT">MSFT</button><button type="button" data-ticker="AMZN">AMZN</button></div>
-        </div>
-        <div class="hero-orbit" aria-hidden="true"><div class="orbit-glow"></div><div class="orbit-ring orbit-ring--one"></div><div class="orbit-ring orbit-ring--two"></div><div class="planet"><span></span></div><div class="signal signal--one"></div><div class="signal signal--two"></div></div>
-      </section>
-      <section class="capability-strip" aria-label="AI Web capabilities">
-        <div><strong>7</strong><span>research perspectives</span></div><div><strong>Bull + bear</strong><span>balanced debate</span></div><div><strong>One view</strong><span>portfolio-manager style conclusion</span></div>
-      </section>
-      <section class="section intro-section" id="how-it-works" aria-labelledby="how-title">
-        <div class="section-heading"><p class="eyebrow">A fuller picture</p><h2 id="how-title">Research is stronger<br /><span>when it disagrees.</span></h2></div>
-        <div class="section-body"><p>AI Web coordinates focused research roles so you can see the market context, fundamentals, news, sentiment and risks that shape a stock’s story.</p><a class="text-link" href="/auth">Explore the workspace <span aria-hidden="true">→</span></a></div>
-      </section>
-      <section class="team-section" id="research-team" aria-labelledby="team-title">
-        <div class="section-heading"><p class="eyebrow">The research team</p><h2 id="team-title">Many angles.<br /><span>One clear brief.</span></h2></div>
-        <div class="team-grid">
-          <article class="feature-card"><span class="card-index">01</span><div class="card-icon">⌁</div><h3>Market context</h3><p>Understand the environment around the company, from broader trends to market conditions.</p></article>
-          <article class="feature-card feature-card--accent"><span class="card-index">02</span><div class="card-icon">◫</div><h3>Fundamentals</h3><p>Examine business quality, financial performance and the evidence behind the numbers.</p></article>
-          <article class="feature-card"><span class="card-index">03</span><div class="card-icon">◌</div><h3>News & sentiment</h3><p>Surface relevant narratives and signals without confusing attention for conviction.</p></article>
-          <article class="feature-card"><span class="card-index">04</span><div class="card-icon">◇</div><h3>Risk & debate</h3><p>Make room for the bear case, uncertainty and the questions worth asking next.</p></article>
+          <p class="hero-lede">Seven focused perspectives investigate a stock, challenge the thesis and bring the evidence together in one clear brief.</p>
+          <form class="analyze-form" data-analyze-form><label for="hero-symbol">Start a research brief</label><div class="analyze-controls"><div class="ticker-control"><Icon name="market" size={18} /><input id="hero-symbol" name="symbol" type="text" maxlength="8" autocomplete="off" placeholder="Enter ticker symbol…" /><span class="ticker-hint">US</span></div><button class="button button--primary" type="submit">Analyze stock <Icon name="arrow" size={16} /></button></div><p class="form-message" data-form-message aria-live="polite"></p></form>
+          <div class="popular-tickers" aria-label="Popular tickers"><span>Popular:</span><button type="button" data-ticker="NVDA">NVDA</button><button type="button" data-ticker="AAPL">AAPL</button><button type="button" data-ticker="MSFT">MSFT</button><button type="button" data-ticker="AMZN">AMZN</button></div>
         </div>
       </section>
-      <section class="workflow-section" aria-labelledby="workflow-title">
-        <div class="workflow-panel"><div><p class="eyebrow">How it works</p><h2 id="workflow-title">From ticker<br /><span>to perspective.</span></h2></div><ol class="workflow-list"><li><span>01</span><div><strong>Choose a stock</strong><p>Start with a ticker from the supported research universe.</p></div></li><li><span>02</span><div><strong>Let the team investigate</strong><p>Focused perspectives gather the context behind the company.</p></div></li><li><span>03</span><div><strong>Read the brief</strong><p>Get the evidence, tensions and conclusion in one place.</p></div></li></ol></div>
-      </section>
-      <section class="closing-cta" aria-labelledby="closing-title"><p class="eyebrow">Start with a question</p><h2 id="closing-title">Make room for<br /><em>better research.</em></h2><a class="button button--primary" href="/auth">Open your workspace <span aria-hidden="true">↗</span></a></section>
+      <section class="capability-strip" aria-label="AI Web capabilities"><div><Icon name="spark" size={18} /><strong>7 AI agents</strong><span>Independent research roles</span></div><div><Icon name="debate" size={18} /><strong>Bull + bear debate</strong><span>Space for conviction and risk</span></div><div><Icon name="news" size={18} /><strong>One concise brief</strong><span>Evidence in one place</span></div></section>
+      <section class="section intro-section" id="how-it-works" aria-labelledby="how-title"><div class="section-heading"><p class="eyebrow">A fuller picture</p><h2 id="how-title">Research is stronger<br /><span>when it disagrees.</span></h2></div><div class="section-body"><p>AI Web coordinates focused research roles so you can see the market context, fundamentals, news, sentiment and risks that shape a stock’s story.</p><a class="text-link" href="/auth">Explore the workspace <Icon name="arrow" size={15} /></a></div></section>
+      <section class="team-section" id="research-team" aria-labelledby="team-title"><div class="section-heading"><p class="eyebrow">The research team</p><h2 id="team-title">Many angles.<br /><span>One clear brief.</span></h2></div><div class="team-grid"><article class="feature-card"><Icon name="market" size={23} /><h3>Market context</h3><p>Broader trends and the price action around the company.</p></article><article class="feature-card feature-card--accent"><Icon name="fundamentals" size={23} /><h3>Fundamentals</h3><p>Business quality, financial performance and valuation context.</p></article><article class="feature-card"><Icon name="news" size={23} /><h3>News & sentiment</h3><p>The narratives and signals moving the conversation.</p></article><article class="feature-card"><Icon name="debate" size={23} /><h3>Risk & debate</h3><p>The bear case and the questions worth asking next.</p></article></div></section>
+      <section class="closing-cta" aria-labelledby="closing-title"><p class="eyebrow">Start with a question</p><h2 id="closing-title">Make room for<br /><em>better research.</em></h2><a class="button button--primary" href="/auth">Open your workspace <Icon name="arrow" size={16} /></a></section>
     </div>
-    <aside class="sponsor-slot sponsor-slot--side sponsor-slot--right" aria-label="Advertisement">Advertisement</aside>
+    <aside class="sponsor-slot sponsor-slot--side sponsor-slot--right"><small>Sponsor</small><span>Your ad<br/>here</span></aside>
   </div>
 </BaseLayout>
