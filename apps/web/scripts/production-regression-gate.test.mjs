@@ -227,4 +227,14 @@ describe("evaluateRegression", () => {
     expect(result.ok).toBe(false);
     expect(result.reasons).toContain("Core Universe invariant failed (49/50)");
   });
+
+  it("fails closed when a Core-scoped change has no bootstrap report", () => {
+    const before = snapshot();
+    const after = snapshot();
+    const scope = classifyChangedPaths(["apps/web/migrations/0030_example.sql"]);
+
+    const result = evaluateRegression({ before, after, scope, bootstrap: null });
+    expect(result.ok).toBe(false);
+    expect(result.reasons).toContain("Core Universe invariant failed (unknown/unknown)");
+  });
 });
