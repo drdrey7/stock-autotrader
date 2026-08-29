@@ -1,0 +1,72 @@
+---
+import "../styles/global.css";
+
+const { title = "AI Web — Multi-agent stock analysis", description = "A clear, multi-agent research workspace for understanding public companies.", eyebrow = "AI Web" } = Astro.props;
+const path = Astro.url.pathname;
+const isApp = path.startsWith("/app");
+if (isApp || path.startsWith("/auth")) {
+  Astro.response.headers.set("cache-control", "no-store");
+  Astro.response.headers.set("vary", "Cookie");
+}
+---
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="description" content={description} />
+    <meta name="theme-color" content="#07121e" />
+    <title>{title}</title>
+    <script is:inline>
+      (() => {
+        const saved = localStorage.getItem("ai-web-theme");
+        const theme = saved === "light" || saved === "dark" ? saved : (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+        document.documentElement.dataset.theme = theme;
+      })();
+    </script>
+  </head>
+  <body class:list={{ "is-app-page": isApp }}>
+    <div class="ambient ambient--one" aria-hidden="true"></div>
+    <div class="ambient ambient--two" aria-hidden="true"></div>
+    <div class="starfield" aria-hidden="true"></div>
+    <header class="site-header">
+      <a class="brand" href="/" aria-label="AI Web home">
+        <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span>
+        <span>{eyebrow}</span>
+      </a>
+      <nav class="desktop-nav" aria-label="Primary navigation">
+        <a href="/#how-it-works">How it works</a>
+        <a href="/pricing">Pricing</a>
+        <a href="/#research-team">Research team</a>
+      </nav>
+      <div class="header-actions">
+        <div class="theme-picker" aria-label="Theme">
+          <button type="button" data-theme-choice="system" aria-label="Use system theme" title="System theme">◐</button>
+          <button type="button" data-theme-choice="light" aria-label="Use light theme" title="Light theme">☼</button>
+          <button type="button" data-theme-choice="dark" aria-label="Use dark theme" title="Dark theme">☾</button>
+        </div>
+        <a class="account-link" href={isApp ? "/auth" : "/app"} aria-label="Open account or workspace" data-account-link>
+          <span class="account-avatar" aria-hidden="true">◎</span>
+          <span class="account-label" data-auth-state>Sign in</span>
+        </a>
+        <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="mobile-menu" data-menu-toggle>
+          <span class="sr-only">Open menu</span><span></span><span></span>
+        </button>
+      </div>
+    </header>
+    <div class="mobile-menu" id="mobile-menu" data-mobile-menu hidden>
+      <a href="/#how-it-works">How it works</a>
+      <a href="/pricing">Pricing</a>
+      <a href="/#research-team">Research team</a>
+      <a href="/app">Workspace</a>
+    </div>
+    <main><slot /></main>
+    <footer class="site-footer">
+      <div class="footer-brand"><span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span><span>AI Web</span></div>
+      <p>Research tools for clearer market thinking.</p>
+      <div class="footer-links"><a href="/pricing">Pricing</a><a href="/auth">Account</a><a href="/">Home</a></div>
+      <small>General market research for informational and educational purposes. Not investment advice.</small>
+    </footer>
+    <script src="../scripts/site.js"></script>
+  </body>
+</html>

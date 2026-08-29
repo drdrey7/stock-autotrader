@@ -35,17 +35,11 @@ export function SidebarNavigation({ onNavigate, variant = "desktop" }: SidebarNa
             if (item.mobileOnly && variant !== "mobile") return null;
             const active = isNavItemActive(item, pathname);
             const Icon = item.icon;
-            return (
-              <Link
-                key={item.to}
-                className={`shell-nav-link${active ? " is-active" : ""}`}
-                to={item.to}
-                aria-current={active ? "page" : undefined}
-                onClick={onNavigate}
-              >
-                <Icon size={17} aria-hidden="true" />
-                <span>{item.label}</span>
-              </Link>
+            const content = <><Icon size={17} aria-hidden="true" /><span>{item.label}</span></>;
+            return item.external ? (
+              <a key={item.to} className="shell-nav-link" href={item.to} onClick={onNavigate}>{content}</a>
+            ) : (
+              <Link key={item.to} className={`shell-nav-link${active ? " is-active" : ""}`} to={item.to} aria-current={active ? "page" : undefined} onClick={onNavigate}>{content}</Link>
             );
           })}
         </div>

@@ -89,17 +89,79 @@ jobs:
             --config wrangler.preview.jsonc \
             --preview-alias "$PREVIEW_ALIAS" \
             --message "PR #${PR_NUMBER} ${SOURCE_HEAD_SHA}"
+      - name: Download AI Web frontend artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ai-web-preview-pr-${{ env.PR_NUMBER }}
+          path: ${{ runner.temp }}/ai-web-preview-assets
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+      - name: Validate and stage AI Web assets
+        run: |
+          set -euo pipefail
+          ASSET_DIR="$RUNNER_TEMP/ai-web-preview-assets"
+          test -f "$ASSET_DIR/server/entry.mjs" || { echo "AI Web preview artifact has no server/entry.mjs" >&2; exit 1; }
+          test -f "$ASSET_DIR/client/_headers" || { echo "AI Web preview artifact has no client/_headers" >&2; exit 1; }
+          if find "$ASSET_DIR" -type l -print -quit | grep -q .; then
+            echo "AI Web preview artifact must not contain symlinks" >&2
+            exit 1
+          fi
+          rm -rf apps/ai-web/dist
+          mkdir -p apps/ai-web/dist
+          cp -R "$ASSET_DIR/." apps/ai-web/dist/
+          # This workflow intentionally checks out main because it receives
+          # Cloudflare credentials. Recreate the small, trusted deployment
+          # manifest here; the PR-controlled artifact contributes only the
+          # already-built server and client assets above.
+          cat > apps/ai-web/wrangler.preview.jsonc <<'EOF'
+          {
+            "$schema": "https://unpkg.com/wrangler@4.125.0/config-schema.json",
+            "name": "ai-web-preview",
+            "main": "./dist/server/entry.mjs",
+            "compatibility_date": "2026-08-29",
+            "compatibility_flags": ["nodejs_compat"],
+            "workers_dev": true,
+            "preview_urls": true,
+            "services": [{ "binding": "AI_BACKEND", "service": "stock-autotrader-web" }],
+            "assets": {
+              "directory": "./dist/client",
+              "binding": "ASSETS",
+              "not_found_handling": "none",
+              "run_worker_first": ["/api/*"]
+            },
+            "observability": { "enabled": true, "head_sampling_rate": 1 }
+          }
+          EOF
+      - name: Publish isolated AI Web Cloudflare preview from trusted code
+        working-directory: apps/ai-web
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PREVIEW_API_TOKEN || secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PREVIEW_ALIAS: pr-${{ env.PR_NUMBER }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ] || [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
+            echo "::error::A Cloudflare API token and CLOUDFLARE_ACCOUNT_ID are required"
+            exit 1
+          fi
+          npx wrangler versions upload \
+            --config wrangler.preview.jsonc \
+            --preview-alias "$PREVIEW_ALIAS" \
+            --message "AI Web PR #${PR_NUMBER} ${SOURCE_HEAD_SHA}"
       - name: Publish preview URL to PR
         env:
           GH_TOKEN: ${{ github.token }}
           PREVIEW_URL: https://pr-${{ env.PR_NUMBER }}-stock-autotrader-preview.barroso-labs.workers.dev
+          AI_WEB_PREVIEW_URL: https://pr-${{ env.PR_NUMBER }}-ai-web-preview.barroso-labs.workers.dev
         run: |
           set -euo pipefail
           MARKER='<!-- cloudflare-pr-preview -->'
-          BODY=$(printf '%s\n\n%s\n\n%s' \
+          BODY=$(printf '%s\n\n%s\n\n%s\n\n%s' \
             "$MARKER" \
             "Cloudflare preview: ${PREVIEW_URL}" \
-            "Stock Detail test: ${PREVIEW_URL}/stocks/MSFT")
+            "Stock Detail test: ${PREVIEW_URL}/stocks/MSFT" \
+            "AI Web preview: ${AI_WEB_PREVIEW_URL}")
           COMMENT_ID=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
             --jq ".[] | select(.body | contains(\"${MARKER}\")) | .id" | head -n1)
           if [ -n "$COMMENT_ID" ]; then
@@ -112,3 +174,4 @@ jobs:
           echo "$PREVIEW_URL" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Stock Detail test: $PREVIEW_URL/stocks/MSFT" >> "$GITHUB_STEP_SUMMARY"
+          echo "AI Web preview: $AI_WEB_PREVIEW_URL" >> "$GITHUB_STEP_SUMMARY"
