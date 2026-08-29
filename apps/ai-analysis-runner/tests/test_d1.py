@@ -64,6 +64,22 @@ class D1ClientTests(unittest.TestCase):
         self.assertIn("heartbeat_at <= ?5", sql)
         self.assertIn("execution_message_id = ?2", sql)
 
+    def test_latest_reported_earnings_is_one_read_and_excludes_scheduled_events(self) -> None:
+        row = {
+            "symbol": "NVDA", "status": "reported", "reported": 1,
+            "reported_at": "2026-08-26", "fiscal_year": 2027,
+            "fiscal_quarter": 2, "fiscal_period": "Q2",
+            "fiscal_period_end": "2026-07-26",
+        }
+        opener = D1Opener([row])
+        result = self.client(opener).get_latest_reported_earnings("NVDA")
+        self.assertEqual(result, row)
+        self.assertEqual(len(opener.requests), 1)
+        request = opener.requests[0]
+        self.assertIn("status = 'reported' AND reported = 1", request["sql"])
+        self.assertIn("ORDER BY COALESCE(reported_at, scheduled_date) DESC", request["sql"])
+        self.assertEqual(request["params"], ["NVDA"])
+
     def test_complete_uses_execution_token_and_exact_immutable_engine_version(self) -> None:
         opener = D1Opener([{"id": analysis_row()["id"]}])
         updated = self.client(opener).complete(

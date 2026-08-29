@@ -63,9 +63,18 @@ class FakeD1:
         self.heartbeat_ok = True
         self.completed_result_json: str | None = None
         self.leaseLost = threading.Event()
+        self.earnings_error: Exception | None = None
+        self.earnings_result: dict[str, Any] | None = None
+        self.earnings_calls = 0
 
     def get_analysis(self, _analysis_id: str) -> Analysis:
         return self.analysis
+
+    def get_latest_reported_earnings(self, _symbol: str) -> dict[str, Any] | None:
+        self.earnings_calls += 1
+        if self.earnings_error:
+            raise self.earnings_error
+        return self.earnings_result
 
     def claim(self, _analysis_id: str, message_id: str, token: str, _now: str, _stale: str) -> Analysis | None:
         if self.analysis.status not in {"queued", "running"}:
@@ -119,9 +128,11 @@ class FakeEngine:
         self.failure = failure
         self.result = result
         self.calls = 0
+        self.args: tuple[Any, ...] | None = None
 
     def run(self, *_args: str) -> Any:
         self.calls += 1
+        self.args = _args
         if self.failure:
             raise self.failure
         return self.result or output()
@@ -160,6 +171,32 @@ class RunnerTests(unittest.TestCase):
             self.assertFalse((Path(directory) / "pending-results" / f"{current.id}.json").exists())
             assert d1.completed_result_json is not None
             self.assertEqual(json.loads(d1.completed_result_json)["symbol"], "AAPL")
+
+    def test_earnings_read_failure_is_fail_open_and_read_once(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            current = analysis()
+            engine = FakeEngine()
+            runner, _queue, d1 = self.build(directory, current, engine)
+            d1.earnings_error = RuntimeError("D1 unavailable")
+            runner.process_message(message(current))
+            self.assertEqual(d1.earnings_calls, 1)
+            self.assertEqual(engine.calls, 1)
+            self.assertEqual(len(engine.args or ()), 4)
+            self.assertEqual(engine.args[3], "")
+
+    def test_latest_earnings_context_is_passed_to_one_engine_run(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            current = analysis()
+            engine = FakeEngine()
+            runner, _queue, d1 = self.build(directory, current, engine)
+            d1.earnings_result = {
+                "status": "reported", "reported": 1, "reported_at": "2026-08-26",
+                "fiscal_year": 2027, "fiscal_quarter": 2,
+            }
+            runner.process_message(message(current))
+            self.assertEqual(d1.earnings_calls, 1)
+            self.assertIn("AUTHORITATIVE LATEST EARNINGS", engine.args[3])
+            self.assertIn("latest known reported earnings event", engine.args[3])
 
     def test_missing_portfolio_decision_fails_and_refunds_once(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

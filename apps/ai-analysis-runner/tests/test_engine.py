@@ -6,7 +6,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from ai_analysis_runner.engine import EngineFailure, TradingAgentsEngine, _UsageCallback
+from ai_analysis_runner.engine import EngineFailure, TradingAgentsEngine, _context_graph_factory, _UsageCallback
 
 from tests.helpers import final_state, settings
 
@@ -57,6 +57,19 @@ class EngineTests(unittest.TestCase):
             self.assertIn(f"jobs/{analysis_id}/google/results", config["results_dir"])
             self.assertIn(f"jobs/{analysis_id}/google/memory/trading_memory.md", config["memory_log_path"])
             self.assertEqual(result.provider, "google")
+
+    def test_earnings_adapter_preserves_existing_identity_context(self) -> None:
+        class Graph:
+            def __init__(self, **_kwargs: Any) -> None:
+                pass
+
+            def resolve_instrument_context(self, ticker: str, asset_type: str = "stock") -> str:
+                return f"identity:{ticker}:{asset_type}"
+
+        adapted = _context_graph_factory(Graph, "AUTHORITATIVE LATEST EARNINGS\nReported: 2026-08-26")
+        context = adapted().resolve_instrument_context("NVDA")
+        self.assertIn("identity:NVDA:stock", context)
+        self.assertIn("AUTHORITATIVE LATEST EARNINGS", context)
 
     def test_every_state_directory_level_is_private(self) -> None:
         import stat

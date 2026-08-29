@@ -123,6 +123,27 @@ class D1Client:
         )
         return self._analysis(rows[0]) if rows else None
 
+    def get_latest_reported_earnings(self, symbol: str) -> dict[str, Any] | None:
+        """Read one latest reported event; this query never mutates D1."""
+        rows = self._query(
+            """
+            SELECT symbol, status, reported, reported_at, scheduled_date,
+                   fiscal_year, fiscal_quarter, fiscal_period, fiscal_period_end,
+                   eps_actual_gaap, eps_actual_gaap_source,
+                   eps_actual_adjusted, eps_actual_adjusted_source,
+                   revenue_actual_official, revenue_actual_source,
+                   data_quality_status, official_report_url, sec_filing_url,
+                   sec_accession
+            FROM earnings_events
+            WHERE symbol = ?1 AND status = 'reported' AND reported = 1
+            ORDER BY COALESCE(reported_at, scheduled_date) DESC,
+                     fiscal_period_end DESC, updated_at DESC
+            LIMIT 1
+            """.strip(),
+            [symbol],
+        )
+        return rows[0] if rows else None
+
     def claim(
         self,
         analysis_id: str,

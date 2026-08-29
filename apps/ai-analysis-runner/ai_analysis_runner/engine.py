@@ -27,6 +27,22 @@ from .private import ensure_private_directory
 from .structured_logging import log_event
 
 
+def _context_graph_factory(graph_factory: Callable[..., Any], earnings_context: str) -> Callable[..., Any]:
+    """Adapt the pinned graph's supported identity hook without patching it."""
+    if not earnings_context or not isinstance(graph_factory, type):
+        return graph_factory
+    resolve = getattr(graph_factory, "resolve_instrument_context", None)
+    if not callable(resolve):
+        return graph_factory
+
+    class EarningsContextGraph(graph_factory):  # type: ignore[misc, valid-type]
+        def resolve_instrument_context(self, ticker: str, asset_type: str = "stock") -> str:
+            identity_context = super().resolve_instrument_context(ticker, asset_type)
+            return f"{identity_context}\n\n{earnings_context}"
+
+    return EarningsContextGraph
+
+
 class EngineFailure(RuntimeError):
     def __init__(self, code: str, safe_message: str, *, retryable: bool) -> None:
         super().__init__(code)
@@ -216,8 +232,10 @@ class TradingAgentsEngine:
         provider: str,
         quick_model: str,
         deep_model: str,
+        earnings_context: str = "",
     ) -> EngineOutput:
         graph_factory, config = self._load()
+        graph_factory = _context_graph_factory(graph_factory, earnings_context)
         job_root = self._settings.state_dir / "jobs" / self._analysis_id(analysis_id) / provider
         cache_dir = job_root / "cache"
         results_dir = job_root / "results"
@@ -286,7 +304,7 @@ class TradingAgentsEngine:
             raise EngineFailure("engine_output_invalid", "Analysis engine returned an invalid result.", retryable=False)
         return EngineOutput(final_state, decision, provider, quick_model, deep_model)
 
-    def run(self, analysis_id: str, symbol: str, analysis_date: str) -> EngineOutput:
+    def run(self, analysis_id: str, symbol: str, analysis_date: str, earnings_context: str = "") -> EngineOutput:
         try:
             return self._run_provider(
                 analysis_id,
@@ -295,6 +313,7 @@ class TradingAgentsEngine:
                 self._settings.primary_provider,
                 self._settings.quick_model,
                 self._settings.deep_model,
+                earnings_context,
             )
         except EngineFailure as primary_error:
             if not (
@@ -311,6 +330,7 @@ class TradingAgentsEngine:
                     "openai",
                     self._settings.openai_quick_model,
                     self._settings.openai_deep_model,
+                    earnings_context,
                 )
             except EngineFailure as fallback_error:
                 raise EngineFailure(
