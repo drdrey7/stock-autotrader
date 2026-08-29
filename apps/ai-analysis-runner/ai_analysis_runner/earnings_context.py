@@ -61,9 +61,13 @@ def format_latest_earnings(row: Mapping[str, Any] | None, symbol: str) -> str:
         "AUTHORITATIVE LATEST EARNINGS",
         f"Symbol: {symbol}",
     ]
-    reported = _value(row, "reported_at") or _value(row, "scheduled_date")
-    if reported:
-        lines.append(f"Reported: {reported}")
+    reported_at = _value(row, "reported_at")
+    if reported_at:
+        lines.append(f"Reported: {reported_at}")
+    else:
+        event_date = _value(row, "scheduled_date")
+        if event_date:
+            lines.append(f"Earnings event date: {event_date}")
     fiscal_year = _value(row, "fiscal_year")
     fiscal_quarter = _value(row, "fiscal_quarter")
     fiscal_period = _value(row, "fiscal_period")

@@ -36,6 +36,14 @@ class EarningsContextTests(unittest.TestCase):
         self.assertIn("Fiscal period: FY2027 Q2", context)
         self.assertNotIn("revenue", context.lower())
 
+    def test_scheduled_date_is_not_labelled_as_report_timestamp(self) -> None:
+        context = format_latest_earnings({
+            "status": "reported", "reported": 1, "scheduled_date": "2026-08-26",
+            "fiscal_year": 2027, "fiscal_quarter": 2,
+        }, "NVDA")
+        self.assertIn("Earnings event date: 2026-08-26", context)
+        self.assertNotIn("Reported: 2026-08-26", context)
+
     def test_no_reported_event_returns_empty_context(self) -> None:
         self.assertEqual(format_latest_earnings(latest_reported_row([
             {"status": "scheduled", "reported": 0},
@@ -43,11 +51,12 @@ class EarningsContextTests(unittest.TestCase):
 
     def test_nvda_context_explicitly_prevents_stale_no_event_claim(self) -> None:
         context = format_latest_earnings({
-            "status": "reported", "reported": 1, "reported_at": "2026-08-26",
+            "status": "reported", "reported": 1, "scheduled_date": "2026-08-26",
             "fiscal_year": 2027, "fiscal_quarter": 2,
         }, "NVDA")
         self.assertIn("latest known reported earnings event", context)
         self.assertIn("FY2027 Q2", context)
+        self.assertIn("Earnings event date: 2026-08-26", context)
 
     def test_context_stays_compact(self) -> None:
         context = format_latest_earnings({
