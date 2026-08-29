@@ -14,8 +14,8 @@ from typing import Any
 from .checkpoint import CheckpointError, ResultCheckpointStore
 from .config import Settings
 from .d1 import D1Client, D1ProtocolError
-from .engine import EngineFailure, TradingAgentsEngine
 from .earnings_context import format_latest_earnings
+from .engine import EngineFailure, TradingAgentsEngine
 from .http import HttpError
 from .models import Analysis, QueueMessage
 from .normalize import ResultValidationError, normalize_result, serialize_result, validate_result

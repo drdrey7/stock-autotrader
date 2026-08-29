@@ -6,7 +6,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from ai_analysis_runner.engine import EngineFailure, TradingAgentsEngine, _UsageCallback, _context_graph_factory
+from ai_analysis_runner.engine import EngineFailure, TradingAgentsEngine, _context_graph_factory, _UsageCallback
 
 from tests.helpers import final_state, settings
 
