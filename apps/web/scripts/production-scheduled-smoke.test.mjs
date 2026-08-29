@@ -33,10 +33,16 @@ describe("scheduledSmokePlan", () => {
 });
 
 describe("marketSmokeScheduledTime", () => {
-  it("uses the canonical latest Market Context source timestamp", () => {
+  it("anchors the latest summer session date to 10:00 New York time", () => {
     expect(marketSmokeScheduledTime({
-      market: { latestSourceTimestamp: "2026-08-28T19:45:00.000Z" },
-    })).toBe("2026-08-28T19:45:00.000Z");
+      market: { latestSourceTimestamp: "2026-08-28T20:00:00.000Z" },
+    })).toBe("2026-08-28T14:00:00.000Z");
+  });
+
+  it("is DST-safe for a winter session", () => {
+    expect(marketSmokeScheduledTime({
+      market: { latestSourceTimestamp: "2026-01-12T21:00:00.000Z" },
+    })).toBe("2026-01-12T15:00:00.000Z");
   });
 
   it("fails closed for missing or invalid source timestamps", () => {
