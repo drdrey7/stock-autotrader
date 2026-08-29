@@ -42,6 +42,15 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "OPENROUTER_API_KEY"):
             from_env(environ | {"OPENROUTER_API_KEY": ""})
 
+    def test_openrouter_is_the_implicit_default_when_key_is_available(self) -> None:
+        environ = base_env()
+        environ.pop("TRADINGAGENTS_LLM_PROVIDER")
+        environ["OPENROUTER_API_KEY"] = "router-secret"
+        value = from_env(environ)
+        self.assertEqual(value.primary_provider, "openrouter")
+        self.assertEqual(value.quick_model, "openai/gpt-5.4-mini")
+        self.assertEqual(value.deep_model, "openai/gpt-5.5")
+
     def test_openai_primary_requires_only_openai_key_and_gets_openai_defaults(self) -> None:
         environ = base_env()
         environ.pop("GOOGLE_API_KEY")
