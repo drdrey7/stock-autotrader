@@ -59,6 +59,15 @@ class EarningsContextTests(unittest.TestCase):
         }, "NVDA")
         self.assertLessEqual(len(context), 2000)
 
+    def test_oversized_d1_text_is_bounded(self) -> None:
+        context = format_latest_earnings({
+            "status": "reported", "reported": 1, "reported_at": "2026-08-26",
+            "fiscal_year": 2027, "fiscal_quarter": 2,
+            "data_quality_status": "x" * 10000,
+            "eps_actual_adjusted_source": "provider" + ("-detail" * 10000),
+        }, "NVDA")
+        self.assertLessEqual(len(context), 2000)
+
 
 if __name__ == "__main__":
     unittest.main()

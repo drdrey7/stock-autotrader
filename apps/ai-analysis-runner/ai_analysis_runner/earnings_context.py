@@ -8,7 +8,9 @@ from typing import Any
 
 def _value(row: Mapping[str, Any], key: str) -> Any:
     value = row.get(key)
-    return value if value not in (None, "") else None
+    if value in (None, ""):
+        return None
+    return value[:240] if isinstance(value, str) else value
 
 
 def _money(value: Any) -> str | None:
@@ -106,4 +108,4 @@ def format_latest_earnings(row: Mapping[str, Any] | None, symbol: str) -> str:
         "- Prefer these explicitly labelled facts over older supplementary snapshots.",
         "- Do not mix figures from different fiscal periods or accounting bases.",
     ])
-    return "\n".join(lines)
+    return "\n".join(lines)[:2000]
