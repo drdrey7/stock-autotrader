@@ -275,11 +275,36 @@ async function readActiveRunForSymbol(
   return row ? toStoredRun(row) : null;
 }
 
+async function readReusableRunForSymbol(
+  db: D1Database,
+  userId: string,
+  symbol: string,
+  now: string,
+): Promise<StoredRunView | null> {
+  const row = await db.prepare(`${RUN_VIEW_SQL}
+    WHERE run.user_id = ?
+      AND run.symbol = ?
+      AND analysis.status = 'completed'
+      AND analysis.valid_until > ?
+      AND analysis.completed_at = (
+        SELECT MAX(candidate.completed_at)
+        FROM ai_analyses AS candidate
+        WHERE candidate.symbol = analysis.symbol
+          AND candidate.status = 'completed'
+          AND candidate.valid_until > ?
+      )
+    ORDER BY analysis.completed_at DESC, run.id DESC
+    LIMIT 1
+  `).bind(userId, symbol, now, now).first<StoredRunDbRow>();
+  return row ? toStoredRun(row) : null;
+}
+
 async function existingAcquisition(
   db: D1Database,
   userId: string,
   symbol: string,
   idempotencyKey: string,
+  now = new Date(),
 ): Promise<Acquisition | null> {
   const byKey = await readRunByIdempotency(db, userId, idempotencyKey);
   if (byKey) {
@@ -288,7 +313,9 @@ async function existingAcquisition(
   }
 
   const active = await readActiveRunForSymbol(db, userId, symbol);
-  return active ? { run: active, createdRun: false, createdCanonical: false } : null;
+  if (active) return { run: active, createdRun: false, createdCanonical: false };
+  const reusable = await readReusableRunForSymbol(db, userId, symbol, now.toISOString());
+  return reusable ? { run: reusable, createdRun: false, createdCanonical: false } : null;
 }
 
 function messageOf(error: unknown): string {
@@ -316,7 +343,7 @@ export async function acquireAnalysis(
   },
   retryBudget = 1,
 ): Promise<Acquisition> {
-  const preexisting = await existingAcquisition(db, input.userId, input.symbol, input.idempotencyKey);
+  const preexisting = await existingAcquisition(db, input.userId, input.symbol, input.idempotencyKey, input.now);
   if (preexisting) return preexisting;
 
   const now = input.now.toISOString();
@@ -434,7 +461,7 @@ export async function acquireAnalysis(
     // The race winner may have consumed the last credit before this request's
     // BEFORE trigger ran. Resolve logical idempotency before classifying the
     // trigger error as insufficient balance.
-    const raced = await existingAcquisition(db, input.userId, input.symbol, input.idempotencyKey);
+    const raced = await existingAcquisition(db, input.userId, input.symbol, input.idempotencyKey, input.now);
     if (raced) return raced;
 
     const message = messageOf(error);
