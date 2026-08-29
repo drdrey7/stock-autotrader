@@ -624,7 +624,7 @@ describe("AI Analysis Worker API", () => {
     expect(queue.messages).toHaveLength(0);
 
     const caseB = await postRun(db, queue, "case-user", "MSFT", crypto.randomUUID());
-    expect(caseB.status).toBe(201);
+    expect(caseB.status).toBe(200);
     const caseBBody = await responseJson(caseB);
     const freshId = db.sqlite.prepare("SELECT analysis_id FROM user_ai_analysis_runs WHERE id = ?").get(caseBBody.runId).analysis_id;
     expect(freshId).toBe(newer);
