@@ -12,6 +12,11 @@ STATE_DIR=${STATE_DIR:-/var/lib/ai-analysis-runner}
 UNIT_SOURCE="$APP/deploy/ai-analysis-runner.service"
 UNIT_TARGET="$SYSTEMD_DIR/$SERVICE"
 
+# Keep provider validation shared with the standalone regression harness. This
+# file only defines validation helpers and has no installation side effects.
+# shellcheck source=validate-ai-analysis-provider.sh
+source "$(dirname "${BASH_SOURCE[0]}")/validate-ai-analysis-provider.sh"
+
 [ "$(id -u)" -eq 0 ] || { echo "ERROR: run as root" >&2; exit 1; }
 for command in flock git install python3 stat systemctl systemd-analyze; do
   command -v "$command" >/dev/null || { echo "ERROR: missing command: $command" >&2; exit 1; }
@@ -40,11 +45,6 @@ check_env_file() {
   (( (8#$mode & 0077) == 0 )) || { echo "ERROR: $file must not be group/world accessible (got $mode)" >&2; exit 1; }
 }
 
-require_env_key() {
-  local file=$1 key=$2
-  grep -Eq "^${key}=[^[:space:]].*" "$file" || { echo "ERROR: $key is missing from $file" >&2; exit 1; }
-}
-
 check_env_file "$CONF_DIR/cloudflare.env"
 check_env_file "$CONF_DIR/ai-analysis.env"
 for key in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_D1_DATABASE_ID; do
@@ -53,16 +53,7 @@ done
 for key in CLOUDFLARE_QUEUES_API_TOKEN CLOUDFLARE_AI_QUEUE_ID TRADINGAGENTS_LLM_PROVIDER; do
   require_env_key "$CONF_DIR/ai-analysis.env" "$key"
 done
-provider=$(sed -n 's/^TRADINGAGENTS_LLM_PROVIDER=//p' "$CONF_DIR/ai-analysis.env" | tail -n 1)
-case "$provider" in
-  google) require_env_key "$CONF_DIR/ai-analysis.env" GOOGLE_API_KEY ;;
-  openai) require_env_key "$CONF_DIR/ai-analysis.env" OPENAI_API_KEY ;;
-  openai_compatible)
-    require_env_key "$CONF_DIR/ai-analysis.env" OPENAI_COMPATIBLE_API_KEY
-    require_env_key "$CONF_DIR/ai-analysis.env" TRADINGAGENTS_LLM_BACKEND_URL
-    ;;
-  *) echo "ERROR: unsupported TRADINGAGENTS_LLM_PROVIDER" >&2; exit 1 ;;
-esac
+validate_provider_env "$CONF_DIR/ai-analysis.env"
 
 new_venv=$(mktemp -d "${VENV_DIR}.new.XXXXXX")
 rollback_venv=""
