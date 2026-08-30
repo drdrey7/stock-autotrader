@@ -175,74 +175,83 @@ export function LandingPage() {
             </div>
           </motion.div>
         </section>
-        <section className="editorial-workflow" id="how-it-works">
+        <section className="editorial-research-system" id="how-it-works">
           <div className="editorial-section-head">
-            <span>01 / The workflow</span>
+            <span>How the brief is built</span>
             <h2>
               From one ticker
               <br />
               <em>to one clear brief.</em>
             </h2>
             <p>
-              Every stage has a job. Scroll through the sequence and see how the
-              evidence moves.
+              Five stages move the evidence forward. Seven specialists work on
+              the same company, challenge one another and hand one synthesis to
+              you.
             </p>
           </div>
-          <div className="workflow-line">
-            {workflow.map(([Icon, label], i) => (
-              <motion.div
-                className="workflow-step"
-                key={label}
-                whileInView={{ opacity: 1, y: 0 }}
-                initial={{ opacity: 0, y: 20 }}
-                viewport={{ once: true, margin: "-60px" }}
-                transition={{ delay: i * 0.08 }}
-              >
-                <span>{String(i + 1).padStart(2, "0")}</span>
-                <Icon />
-                <b>{label}</b>
-                <small>
-                  {i === 0
-                    ? "Enter a ticker to begin."
-                    : i === 1
+          <div className="research-system-grid">
+            <div className="workflow-line" aria-label="Research workflow">
+              {workflow.map(([Icon, label], i) => (
+                <motion.div
+                  className="workflow-step"
+                  key={label}
+                  whileInView={{ opacity: 1, x: 0 }}
+                  initial={{ opacity: 0, x: -18 }}
+                  viewport={{ once: true, margin: "-70px" }}
+                  transition={{ delay: i * 0.09 }}
+                >
+                  <span>{String(i + 1).padStart(2, "0")}</span>
+                  <Icon />
+                  <div>
+                    <b>{label}</b>
+                    <small>
+                      {i === 0
+                        ? "Enter a ticker to begin."
+                        : i === 1
                           ? "Specialists investigate the company."
                           : i === 2
-                        ? "Opposing views test the thesis."
-                        : i === 3
-                          ? "Uncertainty stays visible."
-                          : "A brief you can actually read."}
-                </small>
-                {i < 4 && <ChevronRight className="workflow-arrow" />}
-              </motion.div>
-            ))}
-          </div>
-        </section>
-        <section className="editorial-agents" id="agents">
-          <div className="editorial-section-head">
-            <span>02 / The research team</span>
-            <h2>
-              Seven angles.
-              <br />
-              <em>One conversation.</em>
-            </h2>
-          </div>
-          <div className="agent-list">
-            {agents.map(([number, name, description], i) => (
-              <motion.article
-                key={name}
-                whileInView={{ opacity: 1, x: 0 }}
-                initial={{ opacity: 0, x: 24 }}
-                viewport={{ once: true, margin: "-40px" }}
-                transition={{ delay: i * 0.05 }}
-              >
-                <span>{number}</span>
-                <div>
-                  <h3>{name}</h3>
-                  <p>{description}</p>
-                </div>
-                <ArrowUpRight size={16} />
-              </motion.article>
-            ))}
+                            ? "Opposing views test the thesis."
+                            : i === 3
+                              ? "Uncertainty stays visible."
+                              : "One structured brief is assembled."}
+                    </small>
+                  </div>
+                  {i < 4 && <ChevronRight className="workflow-arrow" />}
+                </motion.div>
+              ))}
+            </div>
+            <div className="agent-network" id="agents">
+              <div className="agent-network-head">
+                <span>Seven-agent research team</span>
+                <b>One shared evidence room</b>
+              </div>
+              <div className="agent-network-spine" aria-hidden="true">
+                <i />
+              </div>
+              <div className="agent-network-list">
+                {agents.map(([number, name, description], i) => (
+                  <motion.article
+                    key={name}
+                    whileInView={{ opacity: 1, x: 0 }}
+                    initial={{ opacity: 0, x: i % 2 ? 18 : -18 }}
+                    viewport={{ once: true, margin: "-45px" }}
+                    transition={{ delay: i * 0.07 }}
+                  >
+                    <span>{number}</span>
+                    <div>
+                      <h3>{name}</h3>
+                      <p>{description}</p>
+                    </div>
+                    <i aria-hidden="true" />
+                  </motion.article>
+                ))}
+              </div>
+              <div className="agent-network-output">
+                <FileText size={18} />
+                <span>Portfolio-manager synthesis</span>
+                <b>One readable report</b>
+              </div>
+            </div>
           </div>
         </section>
         <section className="editorial-debate">
