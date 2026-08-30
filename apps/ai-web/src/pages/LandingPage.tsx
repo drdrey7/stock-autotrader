@@ -1,18 +1,16 @@
 import { CSSProperties, FormEvent, useEffect, useState } from "react";
 import {
   ArrowUpRight,
-  Check,
-  CircleAlert,
   FileText,
   Network,
   Search,
-  Shield,
 } from "lucide-react";
 import { motion } from "motion/react";
 import { Link } from "react-router-dom";
 import { Shell } from "../components/layout/Shell";
-import { Atmosphere } from "../components/visual/Atmosphere";
+import { ResearchCoverage } from "../components/research/ResearchCoverage";
 import { SponsorRail } from "../components/sponsors/SponsorRail";
+import { Atmosphere } from "../components/visual/Atmosphere";
 
 const agents = [
   ["01", "Market context", "Macro, industry and competitive signals."],
@@ -294,69 +292,9 @@ export function LandingPage() {
             </div>
           </div>
         </section>
-        <section className="editorial-debate">
-          <div className="editorial-section-head">
-            <span>03 / The debate</span>
-            <h2>
-              Good research
-              <br />
-              <em>argues with itself.</em>
-            </h2>
-            <p>
-              Bull and Bear researchers work from the same evidence, then make
-              the disagreement explicit for Risk to review.
-            </p>
-          </div>
-          <div className="debate-panels">
-            <article className="debate-panel bull">
-              <span>Bull research</span>
-              <h3>What could go right?</h3>
-              <ul>
-                <li>
-                  <Check />
-                  Demand and catalysts
-                </li>
-                <li>
-                  <Check />
-                  Execution and margins
-                </li>
-                <li>
-                  <Check />
-                  Evidence that supports upside
-                </li>
-              </ul>
-            </article>
-            <div className="debate-vs">
-              VS
-              <div>
-                <Shield size={18} />
-                <span>
-                  Risk
-                  <br />
-                  review
-                </span>
-              </div>
-            </div>
-            <article className="debate-panel bear">
-              <span>Bear research</span>
-              <h3>What are we missing?</h3>
-              <ul>
-                <li>
-                  <CircleAlert />
-                  Valuation and expectations
-                </li>
-                <li>
-                  <CircleAlert />
-                  Competition and fragility
-                </li>
-                <li>
-                  <CircleAlert />
-                  Evidence that changes the view
-                </li>
-              </ul>
-            </article>
-          </div>
-        </section>
+
+        <ResearchCoverage />
+
         <section className="editorial-report" id="reports">
           <div className="editorial-section-head">
             <span>04 / The output</span>
@@ -422,7 +360,7 @@ export function LandingPage() {
           </div>
           <div className="credit-list">
             <article>
-          <Network />
+              <Network />
               <div>
                 <b>Invite a friend</b>
                 <p>
