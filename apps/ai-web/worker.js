@@ -40,7 +40,6 @@ async function proxyApi(request, env) {
   const target = new URL(url.pathname + url.search, backendOrigin);
   const headers = new Headers(request.headers);
   headers.set("origin", backendOrigin);
-  headers.set("host", new URL(backendOrigin).host);
   const referer = headers.get("referer");
   if (referer) headers.set("referer", new URL(url.pathname + url.search, backendOrigin).toString());
   headers.delete("cf-connecting-ip");
