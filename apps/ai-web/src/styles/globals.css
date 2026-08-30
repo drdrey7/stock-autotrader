@@ -35,6 +35,18 @@ a:focus-visible,button:focus-visible,input:focus-visible{outline:2px solid var(-
 /* Keep the marquee clipped while the market layer floats below the header. */
 @media(max-width:800px){.market-constellation{position:fixed;top:113px;left:0;width:100vw;transform:none;z-index:14}.market-constellation-track{overflow:hidden;padding:0 18px}}
 
+/* Cinematic hero: the Earth is the anchor; the real brand marks travel on separate editorial orbits. */
+.orbit-system{position:absolute;z-index:1;top:144px;left:50%;width:min(780px,72vw);height:430px;transform:translateX(-50%);perspective:900px;pointer-events:none;opacity:.96}
+.orbit-ring{position:absolute;left:50%;top:50%;width:100%;height:48%;border:1px solid rgba(111,229,235,.17);border-radius:50%;transform:translate(-50%,-50%) rotateX(66deg);box-shadow:0 0 32px rgba(25,179,196,.08);}
+.orbit-ring-b{width:78%;height:42%;transform:translate(-50%,-50%) rotateX(66deg) rotate(21deg);border-color:rgba(84,168,224,.16)}.orbit-ring-c{width:57%;height:35%;transform:translate(-50%,-50%) rotateX(66deg) rotate(-18deg);border-color:rgba(111,229,235,.11)}
+.orbit-logo{position:absolute;left:50%;top:50%;display:grid;place-items:center;width:48px;height:48px;border:1px solid rgba(159,229,237,.38);border-radius:50%;background:rgba(4,14,21,.82);box-shadow:0 0 24px rgba(63,214,221,.2),inset 0 0 14px rgba(105,226,237,.08);animation:logo-orbit 24s linear infinite;transform-origin:0 0}
+.orbit-logo img{width:23px;height:23px;object-fit:contain;filter:drop-shadow(0 0 7px rgba(115,234,240,.38))}.orbit-logo-1{--orbit-radius:300px;animation-duration:27s;animation-delay:-8s}.orbit-logo-2{--orbit-radius:255px;animation-duration:22s;animation-delay:-15s}.orbit-logo-3{--orbit-radius:210px;animation-duration:19s;animation-delay:-4s}.orbit-logo-4{--orbit-radius:330px;animation-duration:31s;animation-delay:-21s}.orbit-logo-5{--orbit-radius:275px;animation-duration:25s;animation-delay:-11s}
+@keyframes logo-orbit{from{transform:rotate(0deg) translateX(var(--orbit-radius)) rotate(0deg) scale(.82)}50%{scale:1}to{transform:rotate(360deg) translateX(var(--orbit-radius)) rotate(-360deg) scale(.82)}}
+.earth-asset{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border-radius:50%;filter:saturate(.82) contrast(1.08) brightness(.78);mix-blend-mode:screen;opacity:.82}.planet{z-index:2;background:#02070c}.planet .planet-rim{z-index:3}
+.hero-section:after{display:none}
+@media(max-width:800px){.orbit-system{top:188px;width:125vw;height:270px;opacity:.9}.orbit-ring{height:38%}.orbit-logo{width:36px;height:36px}.orbit-logo img{width:18px;height:18px}.orbit-logo-1{--orbit-radius:145px}.orbit-logo-2{--orbit-radius:120px}.orbit-logo-3{--orbit-radius:100px}.orbit-logo-4{--orbit-radius:160px}.orbit-logo-5{--orbit-radius:135px}.earth-asset{opacity:.7}.hero-section:after{display:none}}
+@media(prefers-reduced-motion:reduce){.orbit-logo{animation:none!important}}
+
 /* Final composition pass: the sponsor layer is present, but never competes with the story. */
 .sponsor-rail-column{width:104px;top:108px;bottom:92px;gap:14px}.sponsor-slot{min-height:142px;padding:14px 12px;border-radius:2px;background:linear-gradient(155deg,rgba(12,37,47,.96),rgba(4,14,22,.98));box-shadow:0 12px 32px rgba(0,0,0,.28);backdrop-filter:blur(10px)}.sponsor-slot strong{font-size:14px}.sponsor-slot small{font-size:8px}.sponsor-slot-top{font-size:8px}.sponsor-slot:after{content:'';position:absolute;inset:auto 0 0;height:1px;background:linear-gradient(90deg,transparent,var(--teal),transparent);opacity:.5}.sponsor-rail-left{left:14px}.sponsor-rail-right{right:14px}
 @media(min-width:1200px){.landing{padding-left:145px;padding-right:145px}.footer{margin-left:145px;margin-right:145px}}
