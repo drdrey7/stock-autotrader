@@ -54,9 +54,9 @@ a:focus-visible,button:focus-visible,input:focus-visible{outline:2px solid var(-
 .hero-section .orbit-system{z-index:3;top:104px;width:min(900px,78vw);height:510px;opacity:1}
 .hero-section .orbit-logo{width:58px;height:58px;background:rgba(3,12,19,.9);border-color:rgba(180,239,242,.58);box-shadow:0 0 28px rgba(51,224,224,.28),inset 0 0 18px rgba(102,229,237,.12)}
 .hero-section .orbit-logo img{width:29px;height:29px;filter:drop-shadow(0 0 8px rgba(185,244,244,.34))}
-.hero-section .planet{z-index:2;bottom:-38%;width:min(1550px,142vw);box-shadow:0 -7px 42px 8px rgba(91,239,255,.35),inset -70px -50px 130px #000}
+.hero-section .planet{z-index:2;bottom:-58%;width:min(1550px,142vw);box-shadow:0 -7px 42px 8px rgba(91,239,255,.35),inset -70px -50px 130px #000}
 .hero-section .earth-asset{filter:saturate(.95) contrast(1.12) brightness(.82);mix-blend-mode:normal;opacity:.92}
-@media(max-width:800px){.hero-section .orbit-system{top:156px;width:145vw;height:350px}.hero-section .orbit-logo{width:44px;height:44px}.hero-section .orbit-logo img{width:22px;height:22px}.hero-section .planet{bottom:-24%;width:180vw}.hero-section .earth-asset{opacity:.86}}
+@media(max-width:800px){.hero-section .orbit-system{top:156px;width:145vw;height:350px}.hero-section .orbit-logo{width:44px;height:44px}.hero-section .orbit-logo img{width:22px;height:22px}.hero-section .planet{bottom:-42%;width:180vw}.hero-section .earth-asset{opacity:.86}}
 
 /* Final composition pass: the sponsor layer is present, but never competes with the story. */
 .sponsor-rail-column{width:104px;top:108px;bottom:92px;gap:14px}.sponsor-slot{min-height:142px;padding:14px 12px;border-radius:2px;background:linear-gradient(155deg,rgba(12,37,47,.96),rgba(4,14,22,.98));box-shadow:0 12px 32px rgba(0,0,0,.28);backdrop-filter:blur(10px)}.sponsor-slot strong{font-size:14px}.sponsor-slot small{font-size:8px}.sponsor-slot-top{font-size:8px}.sponsor-slot:after{content:'';position:absolute;inset:auto 0 0;height:1px;background:linear-gradient(90deg,transparent,var(--teal),transparent);opacity:.5}.sponsor-rail-left{left:14px}.sponsor-rail-right{right:14px}
