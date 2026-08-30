@@ -184,8 +184,7 @@ a:focus-visible,button:focus-visible,input:focus-visible{outline:2px solid var(-
   .sponsor-arrow{display:none}
 }
 @media (max-width: 800px){
-  .sponsor-mobile-track>span[aria-hidden="true"]{display:block}
-  .sponsor-mobile-track>span[aria-hidden="true"] .sponsor-slot{display:grid}
-  .sponsor-mobile-track{width:max-content}
+  .sponsor-mobile-track{width:max-content;display:flex;gap:0}
+  .sponsor-mobile-group{display:flex;flex:none;gap:8px;padding-right:8px}
   .sponsor-slot-cta{display:none}
 }
