@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { AiAnalysisViewerResponse } from "@stock-autotrader/contracts";
 import { Shell } from "../components/layout/Shell";
-import { getAiAnalysisViewer } from "../lib/api/analysis";
+import { AiAnalysisApiError, getAiAnalysisViewer } from "../lib/api/analysis";
 import { getSession, signOut, type AuthSession } from "../lib/api/auth";
 
 export function AccountPage() {
@@ -23,8 +23,17 @@ export function AccountPage() {
         setSession(nextSession);
         setViewer(nextViewer);
       })
-      .catch(() => setError("Account information is temporarily unavailable."))
-      .finally(() => setLoading(false));
+      .catch((nextError) => {
+        if (controller.signal.aborted) return;
+        if (nextError instanceof AiAnalysisApiError && nextError.status === 401) {
+          navigate("/auth?next=/account", { replace: true });
+          return;
+        }
+        setError("Account information is temporarily unavailable.");
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
     return () => controller.abort();
   }, [navigate]);
 
