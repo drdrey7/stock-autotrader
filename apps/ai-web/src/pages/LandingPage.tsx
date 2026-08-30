@@ -6,9 +6,9 @@ import {
   ChevronRight,
   CircleAlert,
   FileText,
+  Network,
   Search,
   Shield,
-  Users,
 } from "lucide-react";
 import { motion } from "motion/react";
 import { Link } from "react-router-dom";
@@ -37,7 +37,7 @@ export function LandingPage() {
     setMessage("Credit checkout will connect to Stripe soon.");
   const workflow = [
     [Search, "Choose a stock"],
-    [Users, "Seven agents"],
+    [Network, "Seven agents"],
     [BarChart3, "Bull vs Bear"],
     [Shield, "Risk review"],
     [FileText, "Final report"],
@@ -373,7 +373,7 @@ export function LandingPage() {
           </div>
           <div className="credit-list">
             <article>
-              <Users />
+          <Network />
               <div>
                 <b>Invite a friend</b>
                 <p>
