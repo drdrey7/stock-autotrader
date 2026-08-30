@@ -1,9 +1,7 @@
-import { FormEvent, useState } from "react";
+import { CSSProperties, FormEvent, useEffect, useState } from "react";
 import {
   ArrowUpRight,
-  BarChart3,
   Check,
-  ChevronRight,
   CircleAlert,
   FileText,
   Network,
@@ -29,19 +27,48 @@ const agents = [
 export function LandingPage() {
   const [symbol, setSymbol] = useState("");
   const [message, setMessage] = useState("");
+  const [demoSymbol, setDemoSymbol] = useState("NVDA");
+  const [demoStage, setDemoStage] = useState(-1);
+  const demoIsRunning = demoStage >= 0 && demoStage < agents.length;
+
+  useEffect(() => {
+    if (!demoIsRunning) return;
+
+    const reduceMotion = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    const timer = window.setTimeout(
+      () => setDemoStage((stage) => Math.min(stage + 1, agents.length)),
+      reduceMotion ? 260 : 1050,
+    );
+
+    return () => window.clearTimeout(timer);
+  }, [demoIsRunning, demoStage]);
+
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    setMessage("Backend connection not configured yet.");
+    const ticker = symbol.trim() || "NVDA";
+    const reduceMotion = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+
+    setSymbol(ticker);
+    setDemoSymbol(ticker);
+    setDemoStage(0);
+    setMessage(
+      `Illustrative ${ticker} demo — no backend request has been sent.`,
+    );
+    window.setTimeout(
+      () =>
+        document.getElementById("agents")?.scrollIntoView({
+          behavior: reduceMotion ? "auto" : "smooth",
+          block: "center",
+        }),
+      80,
+    );
   };
   const credits = () =>
     setMessage("Credit checkout will connect to Stripe soon.");
-  const workflow = [
-    [Search, "Choose a stock"],
-    [Network, "Gather evidence"],
-    [BarChart3, "Challenge assumptions"],
-    [Shield, "Risk review"],
-    [FileText, "Final report"],
-  ] as const;
   return (
     <Shell>
       <SponsorRail />
@@ -88,8 +115,9 @@ export function LandingPage() {
                   maxLength={8}
                 />
               </div>
-              <button type="submit">
-                Analyse <ArrowUpRight size={16} />
+              <button type="submit" disabled={demoIsRunning}>
+                {demoIsRunning ? "Researching…" : "Run analysis demo"}{" "}
+                <ArrowUpRight size={16} />
               </button>
             </motion.form>
             <div className="editorial-shortcuts">
@@ -184,46 +212,47 @@ export function LandingPage() {
               <em>to one clear brief.</em>
             </h2>
             <p>
-              Five stages move the evidence forward. Seven specialists work on
-              the same company, challenge one another and hand one synthesis to
-              you.
+              Follow one company through seven specialists. Each hand-off adds
+              evidence, challenges the thesis and keeps uncertainty visible
+              before the final synthesis is assembled.
             </p>
           </div>
           <div className="research-system-grid">
-            <div className="workflow-line" aria-label="Research workflow">
-              {workflow.map(([Icon, label], i) => (
-                <motion.div
-                  className="workflow-step"
-                  key={label}
-                  whileInView={{ opacity: 1, x: 0 }}
-                  initial={{ opacity: 0, x: -18 }}
-                  viewport={{ once: true, margin: "-70px" }}
-                  transition={{ delay: i * 0.09 }}
-                >
-                  <span>{String(i + 1).padStart(2, "0")}</span>
-                  <Icon />
-                  <div>
-                    <b>{label}</b>
-                    <small>
-                      {i === 0
-                        ? "Enter a ticker to begin."
-                        : i === 1
-                          ? "Specialists investigate the company."
-                          : i === 2
-                            ? "Opposing views test the thesis."
-                            : i === 3
-                              ? "Uncertainty stays visible."
-                              : "One structured brief is assembled."}
-                    </small>
-                  </div>
-                  {i < 4 && <ChevronRight className="workflow-arrow" />}
-                </motion.div>
-              ))}
-            </div>
-            <div className="agent-network" id="agents">
+            <div
+              className={`agent-network${demoIsRunning ? " is-running" : ""}`}
+              id="agents"
+              style={
+                {
+                  "--agent-progress": `${
+                    demoStage < 0
+                      ? 0
+                      : Math.min(1, (demoStage + 1) / agents.length)
+                  }`,
+                } as CSSProperties
+              }
+            >
               <div className="agent-network-head">
                 <span>Seven-agent research team</span>
-                <b>One shared evidence room</b>
+                <div
+                  className="agent-network-status"
+                  role="status"
+                  aria-live="polite"
+                >
+                  <span>
+                    {demoStage < 0
+                      ? "Demo ready"
+                      : demoIsRunning
+                        ? `Researching ${demoSymbol}`
+                        : `${demoSymbol} demo complete`}
+                  </span>
+                  <b>
+                    {demoStage < 0
+                      ? "Run the demo above"
+                      : demoIsRunning
+                        ? (agents[demoStage]?.[1] ?? "Research in progress")
+                        : "Illustrative report assembled"}
+                  </b>
+                </div>
               </div>
               <div className="agent-network-spine" aria-hidden="true">
                 <i />
@@ -232,6 +261,9 @@ export function LandingPage() {
                 {agents.map(([number, name, description], i) => (
                   <motion.article
                     key={name}
+                    className={`${demoStage > i ? "is-complete" : ""}${
+                      demoStage === i ? " is-active" : ""
+                    }`}
                     whileInView={{ opacity: 1, x: 0 }}
                     initial={{ opacity: 0, x: i % 2 ? 18 : -18 }}
                     viewport={{ once: true, margin: "-45px" }}
@@ -246,10 +278,18 @@ export function LandingPage() {
                   </motion.article>
                 ))}
               </div>
-              <div className="agent-network-output">
+              <div
+                className={`agent-network-output${
+                  demoStage === agents.length ? " is-ready" : ""
+                }`}
+              >
                 <FileText size={18} />
                 <span>Portfolio-manager synthesis</span>
-                <b>One readable report</b>
+                <b>
+                  {demoStage === agents.length
+                    ? `${demoSymbol} illustrative report ready`
+                    : "One readable report"}
+                </b>
               </div>
             </div>
           </div>
