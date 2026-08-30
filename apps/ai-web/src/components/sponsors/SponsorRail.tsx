@@ -2,12 +2,12 @@ import { ArrowUpRight, Building2 } from "lucide-react";
 import { Link } from "react-router-dom";
 
 export const sponsorSlots = [
-  { id: "north", label: "Your company", detail: "Reach investors at the moment they research." },
-  { id: "signal", label: "Your company", detail: "A considered place for a considered brand." },
-  { id: "horizon", label: "Your company", detail: "Be part of the research room." },
-  { id: "atlas", label: "Your company", detail: "Introduce your product to curious investors." },
-  { id: "orbit", label: "Your company", detail: "A quiet, premium space for your message." },
-  { id: "index", label: "Your company", detail: "Put your name beside better research." },
+  { id: "north", label: "Your brand here", detail: "Reach investors while they research." },
+  { id: "signal", label: "Your brand here", detail: "Reach investors while they research." },
+  { id: "horizon", label: "Your brand here", detail: "Reach investors while they research." },
+  { id: "atlas", label: "Your brand here", detail: "Reach investors while they research." },
+  { id: "orbit", label: "Your brand here", detail: "Reach investors while they research." },
+  { id: "index", label: "Your brand here", detail: "Reach investors while they research." },
 ] as const;
 
 export function SponsorRail() {
