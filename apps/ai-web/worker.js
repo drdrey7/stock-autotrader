@@ -47,10 +47,12 @@ async function proxyApi(request, env) {
   headers.delete("cf-ray");
   headers.delete("x-forwarded-for");
 
+  const hasBody = request.method !== "GET" && request.method !== "HEAD";
+  const body = hasBody ? await request.arrayBuffer() : undefined;
   const upstreamRequest = new Request(target, {
     method: request.method,
     headers,
-    body: request.method === "GET" || request.method === "HEAD" ? undefined : request.body,
+    body,
     redirect: "manual",
   });
   const upstream = await env.AI_BACKEND.fetch(upstreamRequest);
