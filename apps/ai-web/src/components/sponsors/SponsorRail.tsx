@@ -19,12 +19,12 @@ export function SponsorRail() {
         {sponsorSlots.map(slot => <SponsorSlot key={slot.id} slot={slot} />)}
       </div>
       <div className="sponsor-mobile-group" aria-hidden="true">
-        {sponsorSlots.map(slot => <SponsorSlot key={`${slot.id}-loop`} slot={slot} />)}
+        {sponsorSlots.map(slot => <SponsorSlot key={`${slot.id}-loop`} slot={slot} decorative />)}
       </div>
     </div>
   </aside>;
 }
 
-function SponsorSlot({ slot }: { slot: (typeof sponsorSlots)[number] }) {
-  return <Link className="sponsor-slot" to={`/sponsor/${slot.id}`} aria-label={`Buy sponsor spot: ${slot.id}`}><span className="sponsor-slot-top"><Building2 size={13} /> Sponsor</span><strong>{slot.label}</strong><small>{slot.detail}</small><span className="sponsor-slot-cta">Buy this spot <ArrowUpRight size={12} /></span></Link>;
+function SponsorSlot({ slot, decorative = false }: { slot: (typeof sponsorSlots)[number]; decorative?: boolean }) {
+  return <Link className="sponsor-slot" to={`/sponsor/${slot.id}`} tabIndex={decorative ? -1 : undefined} aria-hidden={decorative || undefined} aria-label={decorative ? undefined : `Buy sponsor spot: ${slot.id}`}><span className="sponsor-slot-top"><Building2 size={13} /> Sponsor</span><strong>{slot.label}</strong><small>{slot.detail}</small><span className="sponsor-slot-cta">Buy this spot <ArrowUpRight size={12} /></span></Link>;
 }

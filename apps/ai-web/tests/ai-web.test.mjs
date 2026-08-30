@@ -28,8 +28,16 @@ test("AI Web rejects private APIs and cross-site writes", async () => {
     ASSETS: { fetch: async () => new Response("missing", { status: 404 }) },
   };
 
-  const privateResponse = await worker.fetch(new Request("https://ai.example/api/quotes"), env);
-  assert.equal(privateResponse.status, 404);
+  for (const path of [
+    "/api/quotes",
+    "/api/screener",
+    "/api/fundamentals",
+    "/api/intrinsic-value",
+    "/api/admin",
+  ]) {
+    const privateResponse = await worker.fetch(new Request(`https://ai.example${path}`), env);
+    assert.equal(privateResponse.status, 404, `${path} must stay private`);
+  }
 
   const csrfResponse = await worker.fetch(new Request("https://ai.example/api/ai-analysis/runs", {
     method: "POST",
@@ -56,10 +64,11 @@ test("AI Web rewrites approved API requests to the canonical backend origin", as
     ASSETS: { fetch: async () => new Response("missing", { status: 404 }) },
   };
 
-  const response = await worker.fetch(new Request("https://ai.example/api/ai-analysis/runs", {
+  const response = await worker.fetch(new Request("https://ai.example/api/ai-analysis/runs?source=workspace", {
     method: "POST",
     headers: {
       origin: "https://ai.example",
+      referer: "https://ai.example/app",
       cookie: "session=abc",
       "content-type": "application/json",
       "idempotency-key": "12345678-1234-4234-9234-123456789012",
@@ -72,8 +81,14 @@ test("AI Web rewrites approved API requests to the canonical backend origin", as
   assert.equal(response.headers.get("set-cookie"), "session=test; Path=/; HttpOnly");
   assert.ok(captured);
   assert.equal(new URL(captured.url).origin, env.AI_BACKEND_ORIGIN);
+  assert.equal(new URL(captured.url).pathname, "/api/ai-analysis/runs");
+  assert.equal(new URL(captured.url).search, "?source=workspace");
+  assert.equal(captured.method, "POST");
   assert.equal(captured.headers.get("origin"), env.AI_BACKEND_ORIGIN);
+  assert.equal(captured.headers.get("referer"), `${env.AI_BACKEND_ORIGIN}/api/ai-analysis/runs?source=workspace`);
   assert.equal(captured.headers.get("cookie"), "session=abc");
+  assert.equal(captured.headers.get("idempotency-key"), "12345678-1234-4234-9234-123456789012");
+  assert.deepEqual(await captured.json(), { symbol: "NVDA" });
 });
 
 test("AI Analysis client uses the canonical backend contracts", async () => {
@@ -84,6 +99,31 @@ test("AI Analysis client uses the canonical backend contracts", async () => {
   assert.match(analysis, /\/api\/ai-analysis\/runs/);
   assert.match(analysis, /idempotency-key/);
   assert.match(analysis, /\/api\/ai-analysis\/history/);
+});
+
+test("completed reports render every normalized backend section", async () => {
+  const report = await read("src/pages/ReportPage.tsx");
+  for (const field of [
+    "executiveSummary",
+    "investmentThesis",
+    "marketAndTechnical",
+    "fundamentals",
+    "news",
+    "sentiment",
+    "bullCase",
+    "bearCase",
+    "researchManager",
+    "traderPlan",
+    "risk.aggressive",
+    "risk.neutral",
+    "risk.conservative",
+    "portfolioManager",
+    "priceTarget",
+    "timeHorizon",
+  ]) {
+    assert.match(report, new RegExp(field.replace(".", "\\.")));
+  }
+  assert.match(report, /Final View/);
 });
 
 test("public copy contains no unsupported social proof", async () => {
@@ -104,4 +144,16 @@ test("landing explains what one analysis credit researches without overclaiming 
   assert.match(coverage, /Aggressive risk analysis/);
   assert.match(coverage, /Portfolio Manager synthesises the final view/);
   assert.match(coverage, /does not claim that every source is used in every analysis/);
+});
+
+test("disclosure and sponsor-marquee controls remain keyboard accessible", async () => {
+  const [coverage, sponsors, styles] = await Promise.all([
+    read("src/components/research/ResearchCoverage.tsx"),
+    read("src/components/sponsors/SponsorRail.tsx"),
+    read("src/styles/globals.css"),
+  ]);
+  assert.match(coverage, /<details/);
+  assert.match(coverage, /<summary>/);
+  assert.match(styles, /summary:focus-visible/);
+  assert.match(sponsors, /tabIndex=\{decorative \? -1 : undefined\}/);
 });

@@ -80,6 +80,8 @@ export function ReportPage() {
     ["Market & Technical", result.reports.marketAndTechnical],
     ["News", result.reports.news],
     ["Sentiment", result.reports.sentiment],
+    ["Research Manager", result.reports.researchManager],
+    ["Trader Plan", result.reports.traderPlan],
     ["Risk · Aggressive", result.reports.risk.aggressive],
     ["Risk · Neutral", result.reports.risk.neutral],
     ["Risk · Conservative", result.reports.risk.conservative],
@@ -91,6 +93,17 @@ export function ReportPage() {
     <h1>{result.recommendation}<br/><em>{result.priceTarget ? `Target ${result.priceTarget}` : "Structured research"}</em></h1>
     <p className="report-disclaimer">AI-generated research for informational purposes only. Not financial advice.{result.timeHorizon ? ` Time horizon: ${result.timeHorizon}` : ""}</p>
     {sections.map(([title, content], index) => <section className="report-block" key={title}><span>{String(index + 1).padStart(2, "0")}</span><div><h2>{title}</h2><ReportText>{content}</ReportText></div></section>)}
+    <section className="report-block report-final-view">
+      <span>{String(sections.length + 1).padStart(2, "0")}</span>
+      <div>
+        <h2>Final View</h2>
+        <dl>
+          <div><dt>Recommendation</dt><dd>{result.recommendation}</dd></div>
+          {result.priceTarget !== null && <div><dt>Price Target</dt><dd>{result.priceTarget}</dd></div>}
+          {result.timeHorizon !== null && <div><dt>Time Horizon</dt><dd>{result.timeHorizon}</dd></div>}
+        </dl>
+      </div>
+    </section>
     <Link className="text-link" to="/app">Back to workspace</Link>
   </main></Shell>;
 }
