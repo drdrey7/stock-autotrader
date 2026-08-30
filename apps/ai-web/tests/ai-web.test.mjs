@@ -91,3 +91,17 @@ test("public copy contains no unsupported social proof", async () => {
   assert.doesNotMatch(landing, /99\.9|50K|users|testimonials|average analysis time/i);
   assert.match(landing, /Multi-Agent AI Research/);
 });
+
+test("landing explains what one analysis credit researches without overclaiming provenance", async () => {
+  const coverage = await read("src/components/research/ResearchCoverage.tsx");
+  assert.match(coverage, /What one credit buys/);
+  assert.match(coverage, /Reddit investor discussions/);
+  assert.match(coverage, /StockTwits sentiment/);
+  assert.match(coverage, /Yahoo Finance news and market narrative/);
+  assert.match(coverage, /Income statement analysis/);
+  assert.match(coverage, /Balance sheet analysis/);
+  assert.match(coverage, /Cash-flow statement analysis/);
+  assert.match(coverage, /Aggressive risk analysis/);
+  assert.match(coverage, /Portfolio Manager synthesises the final view/);
+  assert.match(coverage, /does not claim that every source is used in every analysis/);
+});
