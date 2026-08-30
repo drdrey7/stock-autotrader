@@ -38,7 +38,7 @@ export function LandingPage() {
   const workflow = [
     [Search, "Choose a stock"],
     [Network, "Seven agents"],
-    [BarChart3, "Bull vs Bear"],
+    [BarChart3, "Evidence merge"],
     [Shield, "Risk review"],
     [FileText, "Final report"],
   ] as const;
@@ -207,7 +207,7 @@ export function LandingPage() {
                     : i === 1
                       ? "Specialists research every angle."
                       : i === 2
-                        ? "Opposing views test assumptions."
+                        ? "Signals are brought together."
                         : i === 3
                           ? "Uncertainty stays visible."
                           : "A brief you can actually read."}
