@@ -6,6 +6,15 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
   "preview_urls": true,
+  "vars": {
+    "AI_BACKEND_ORIGIN": "https://stock-autotrader-web.barroso-labs.workers.dev"
+  },
+  "services": [
+    {
+      "binding": "AI_BACKEND",
+      "service": "stock-autotrader-web"
+    }
+  ],
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
