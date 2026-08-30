@@ -70,10 +70,15 @@ const argValue = (name) => {
 
 async function main() {
   const marketContextOnly = process.argv.includes("--market-context");
+  const reportOnly = process.argv.includes("--report-only");
   const scheduledTime = argValue("--scheduled-time") ?? process.env.MARKET_CONTEXT_SCHEDULED_TIME ?? null;
+  const outputPath = argValue("--output");
   await prepareNonce();
   try {
     const body = await invoke(marketContextOnly ? "market-context" : "bootstrap", scheduledTime);
+    if (outputPath) {
+      await writeFile(outputPath, `${JSON.stringify(body, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+    }
     if (marketContextOnly) {
       const result = body?.result ?? {};
       const health = body?.health ?? {};
@@ -82,10 +87,11 @@ async function main() {
     }
     const core = body?.core;
     const calendar = body?.calendar;
-    if (!core?.initialized || core.activeCount !== core.expectedCount) {
+    const coreValid = core?.initialized === true && core.activeCount === core.expectedCount;
+    if (!coreValid && !reportOnly) {
       throw new Error(`Core bootstrap invariant failed (${core?.activeCount ?? "unknown"}/${core?.expectedCount ?? "unknown"})`);
     }
-    console.log(`Production bootstrap: Core ${core.activeCount}/${core.expectedCount} active, version=${core.universeVersion ?? "unknown"}; calendar=${calendar?.status ?? "unknown"}`);
+    console.log(`Production bootstrap: Core ${core?.activeCount ?? "unknown"}/${core?.expectedCount ?? "unknown"} active, version=${core?.universeVersion ?? "unknown"}; calendar=${calendar?.status ?? "unknown"}`);
   } finally {
     await rm(NONCE_FILE, { force: true });
   }
