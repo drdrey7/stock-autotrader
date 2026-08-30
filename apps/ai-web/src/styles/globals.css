@@ -113,3 +113,4 @@ a:focus-visible,button:focus-visible,input:focus-visible{outline:2px solid var(-
 .hero-section .orbit-logo{width:52px;height:52px}
 .hero-section .orbit-logo img{width:27px;height:27px}
 @media(max-width:800px){.hero-section .planet{bottom:-12%;width:150vw;height:390px;border-radius:50% 50% 0 0 / 32% 32% 0 0}.hero-section .earth-asset{object-position:center center}.hero-section .planet-rim{border-radius:50% 50% 0 0 / 32% 32% 0 0}.hero-section .orbit-system{top:176px;width:136vw;height:300px}.hero-section .orbit-logo{width:40px;height:40px}.hero-section .orbit-logo img{width:20px;height:20px}}
+.topbar.scrolled{background:rgba(3,10,16,.74);backdrop-filter:blur(16px);box-shadow:0 1px 0 rgba(116,230,231,.13)}
