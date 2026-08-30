@@ -37,8 +37,8 @@ export function LandingPage() {
     setMessage("Credit checkout will connect to Stripe soon.");
   const workflow = [
     [Search, "Choose a stock"],
-    [Network, "Seven agents"],
-    [BarChart3, "Evidence merge"],
+    [Network, "Gather evidence"],
+    [BarChart3, "Challenge assumptions"],
     [Shield, "Risk review"],
     [FileText, "Final report"],
   ] as const;
@@ -205,9 +205,9 @@ export function LandingPage() {
                   {i === 0
                     ? "Enter a ticker to begin."
                     : i === 1
-                      ? "Specialists research every angle."
-                      : i === 2
-                        ? "Signals are brought together."
+                          ? "Specialists investigate the company."
+                          : i === 2
+                        ? "Opposing views test the thesis."
                         : i === 3
                           ? "Uncertainty stays visible."
                           : "A brief you can actually read."}
