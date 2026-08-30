@@ -64,3 +64,10 @@ AI Analysis runner.
 The landing page does not fabricate reports, testimonials, counts, uptime,
 timing, returns or prices. Stripe, credit purchasing, final pricing and the
 production public domain remain separate launch work.
+
+## Merge gate
+
+Do not enable a production route from this branch until CI, Security and Deploy
+validation are green. The trusted preview publisher consumes only built static
+assets from a PR; Worker code and service bindings always come from the trusted
+default branch.
