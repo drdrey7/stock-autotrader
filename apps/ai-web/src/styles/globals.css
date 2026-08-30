@@ -32,6 +32,9 @@ a:focus-visible,button:focus-visible,input:focus-visible{outline:2px solid var(-
 @media(max-width:800px){.market-constellation{top:111px;width:calc(100vw - 38px);opacity:.6}.market-constellation-label{font-size:7px}.market-constellation-track{height:42px;margin-top:6px}.market-orbit{gap:4px}.market-orbit:nth-child(2),.market-orbit:nth-child(4){display:none}.market-symbol{font-size:9px}.market-symbol-label{display:none}.market-orbit-dot{width:5px;height:5px}.market-orbit svg{width:9px;height:9px}}
 @media(prefers-reduced-motion:reduce){.market-orbit,.market-constellation-label span{animation:none!important}}
 
+/* Keep the marquee clipped while the market layer floats below the header. */
+@media(max-width:800px){.market-constellation{position:fixed;top:113px;left:0;width:100vw;transform:none;z-index:14}.market-constellation-track{overflow:hidden;padding:0 18px}}
+
 /* Final composition pass: the sponsor layer is present, but never competes with the story. */
 .sponsor-rail-column{width:104px;top:108px;bottom:92px;gap:14px}.sponsor-slot{min-height:142px;padding:14px 12px;border-radius:2px;background:linear-gradient(155deg,rgba(12,37,47,.96),rgba(4,14,22,.98));box-shadow:0 12px 32px rgba(0,0,0,.28);backdrop-filter:blur(10px)}.sponsor-slot strong{font-size:14px}.sponsor-slot small{font-size:8px}.sponsor-slot-top{font-size:8px}.sponsor-slot:after{content:'';position:absolute;inset:auto 0 0;height:1px;background:linear-gradient(90deg,transparent,var(--teal),transparent);opacity:.5}.sponsor-rail-left{left:14px}.sponsor-rail-right{right:14px}
 @media(min-width:1200px){.landing{padding-left:145px;padding-right:145px}.footer{margin-left:145px;margin-right:145px}}
