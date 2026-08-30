@@ -17,11 +17,11 @@ import { SponsorRail } from "../components/sponsors/SponsorRail";
 const agents = [
   ["01", "Market context", "Macro, industry and competitive signals."],
   ["02", "Fundamentals", "Earnings quality, margins and capital."],
-  ["03", "News & sentiment", "What changed — and how investors reacted."],
-  ["04", "Bull case", "The strongest evidence for the upside."],
-  ["05", "Bear case", "The assumptions most likely to break."],
-  ["06", "Risk review", "Uncertainty, downside and open questions."],
-  ["07", "PM synthesis", "One structured brief, ready to read."],
+  ["03", "News research", "Company, industry and market-moving developments."],
+  ["04", "Sentiment context", "Positioning, narrative and investor reaction."],
+  ["05", "Bull case", "The strongest evidence for the upside."],
+  ["06", "Bear case", "The assumptions most likely to break."],
+  ["07", "Risk + PM synthesis", "Uncertainty reviewed; one brief assembled."],
 ] as const;
 
 export function LandingPage() {
@@ -309,7 +309,7 @@ export function LandingPage() {
           </div>
           <div className="debate-panels">
             <article className="debate-panel bull">
-              <span>04 / Bull case</span>
+              <span>Bull research</span>
               <h3>What could go right?</h3>
               <ul>
                 <li>
@@ -338,7 +338,7 @@ export function LandingPage() {
               </div>
             </div>
             <article className="debate-panel bear">
-              <span>05 / Bear case</span>
+              <span>Bear research</span>
               <h3>What are we missing?</h3>
               <ul>
                 <li>
