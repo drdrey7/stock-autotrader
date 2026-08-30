@@ -168,15 +168,26 @@ test("report polling retries transient failures and renders sanitized markdown",
 test("landing explains what one analysis credit researches without overclaiming provenance", async () => {
   const coverage = await read("src/components/research/ResearchCoverage.tsx");
   assert.match(coverage, /What one credit buys/);
-  assert.match(coverage, /Reddit investor discussions/);
-  assert.match(coverage, /StockTwits sentiment/);
-  assert.match(coverage, /Yahoo Finance news and market narrative/);
+  assert.match(coverage, /Twelve specialists/);
+  assert.match(coverage, /Market Analyst/);
+  assert.match(coverage, /Sentiment Analyst/);
+  assert.match(coverage, /News Analyst/);
+  assert.match(coverage, /Fundamentals Analyst/);
+  assert.match(coverage, /Bull Researcher/);
+  assert.match(coverage, /Bear Researcher/);
+  assert.match(coverage, /Research Manager/);
+  assert.match(coverage, /Portfolio Manager/);
+  assert.match(coverage, /Reddit discussion from r\/wallstreetbets/);
+  assert.match(coverage, /StockTwits messages/);
+  assert.match(coverage, /Yahoo Finance headlines/);
+  assert.match(coverage, /FRED macro series/);
   assert.match(coverage, /Income statement analysis/);
   assert.match(coverage, /Balance sheet analysis/);
   assert.match(coverage, /Cash-flow statement analysis/);
   assert.match(coverage, /Aggressive risk analysis/);
   assert.match(coverage, /Portfolio Manager synthesises the final view/);
   assert.match(coverage, /does not claim that every source is used in every analysis/);
+  assert.doesNotMatch(coverage, /TradingAgents|Tauric|LangGraph/i);
 });
 
 test("disclosure and sponsor-marquee controls remain keyboard accessible", async () => {

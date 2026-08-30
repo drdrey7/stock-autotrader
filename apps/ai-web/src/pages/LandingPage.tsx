@@ -12,13 +12,16 @@ import { SponsorRail } from "../components/sponsors/SponsorRail";
 import { Atmosphere } from "../components/visual/Atmosphere";
 
 const agents = [
-  ["01", "Market context", "Macro, industry and competitive signals."],
-  ["02", "Fundamentals", "Earnings quality, margins and capital."],
-  ["03", "News research", "Company, industry and market-moving developments."],
-  ["04", "Sentiment context", "Positioning, narrative and investor reaction."],
-  ["05", "Bull case", "The strongest evidence for the upside."],
-  ["06", "Bear case", "The assumptions most likely to break."],
-  ["07", "Risk + PM synthesis", "Uncertainty reviewed; one brief assembled."],
+  ["01", "Market Analyst", "Price, volume and technical structure."],
+  ["02", "Sentiment Analyst", "Yahoo, StockTwits and Reddit narrative."],
+  ["03", "News Analyst", "Company news, FRED macro and event odds."],
+  ["04", "Fundamentals Analyst", "Income, balance sheet and cash flow."],
+  ["05", "Bull Researcher", "Strongest evidence-backed upside case."],
+  ["06", "Bear Researcher", "Assumption stress-test and downside."],
+  ["07", "Research Manager", "Judges the debate and sets the plan."],
+  ["08", "Trader", "Turns research into a concrete proposal."],
+  ["09", "Risk council", "Aggressive, neutral and conservative lenses."],
+  ["10", "Portfolio Manager", "Final rating, thesis and optional target."],
 ] as const;
 
 export function LandingPage() {
@@ -93,7 +96,7 @@ export function LandingPage() {
               initial={{ opacity: 0, y: 18 }}
               animate={{ opacity: 1, y: 0, transition: { delay: 0.18 } }}
             >
-              Seven specialised agents investigate one company from different
+              Twelve specialised agents investigate one company from different
               angles, debate the thesis and deliver one clear research brief.
             </motion.p>
             <motion.form
@@ -229,7 +232,7 @@ export function LandingPage() {
               }
             >
               <div className="agent-network-head">
-                <span>Seven-agent research team</span>
+                <span>Twelve-specialist research desk</span>
                 <div
                   className="agent-network-status"
                   role="status"

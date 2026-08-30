@@ -10,70 +10,87 @@ import {
 } from "lucide-react";
 import "./research-coverage.css";
 
+/** Public product labels for the real multi-agent analysis graph. */
+const specialistRoles = [
+  { stage: "01", title: "Market Analyst", focus: "Price, volume and technical structure" },
+  { stage: "02", title: "Sentiment Analyst", focus: "Retail narrative and discussion tone" },
+  { stage: "03", title: "News Analyst", focus: "Company news, macro and event odds" },
+  { stage: "04", title: "Fundamentals Analyst", focus: "Statements, quality and capital" },
+  { stage: "05", title: "Bull Researcher", focus: "Strongest evidence-backed upside case" },
+  { stage: "06", title: "Bear Researcher", focus: "Assumption stress-test and downside" },
+  { stage: "07", title: "Research Manager", focus: "Judges the debate and sets the plan" },
+  { stage: "08", title: "Trader", focus: "Turns research into a concrete plan" },
+  { stage: "09", title: "Aggressive Risk", focus: "Higher-conviction risk lens" },
+  { stage: "10", title: "Neutral Risk", focus: "Balanced risk lens" },
+  { stage: "11", title: "Conservative Risk", focus: "Capital-preservation risk lens" },
+  { stage: "12", title: "Portfolio Manager", focus: "Final rating, thesis and target" },
+] as const;
+
 const researchLayers = [
   {
     icon: BarChart3,
     title: "Market & technical research",
-    summary: "Price history, market structure and technical context.",
+    summary: "OHLCV history, indicator selection and a verified market snapshot before any price claim.",
     details: [
-      "Historical price and volume data",
-      "Technical indicators and market structure",
-      "Broader market and industry context",
-    ],
-  },
-  {
-    icon: Landmark,
-    title: "Fundamentals & financial statements",
-    summary: "Company fundamentals across reported annual and quarterly data.",
-    details: [
-      "Income statement analysis",
-      "Balance sheet analysis",
-      "Cash-flow statement analysis",
-      "Earnings quality, margins and capital structure",
-    ],
-  },
-  {
-    icon: Newspaper,
-    title: "News & current developments",
-    summary: "Recent company, industry and macro developments relevant to the thesis.",
-    details: [
-      "Recent company news",
-      "Industry and market-moving developments",
-      "Macro-economic context",
-      "Insider activity when available to the research tools",
+      "Historical open / high / low / close / volume",
+      "Complementary indicators: SMA, EMA, MACD, RSI, Bollinger, ATR, VWMA",
+      "Verified market snapshot as the source of truth for exact levels",
+      "Trend, momentum, volatility and volume structure in one market brief",
     ],
   },
   {
     icon: MessageCircle,
     title: "Investor sentiment",
-    summary: "Public investor discussion and narrative signals where available.",
+    summary: "Three complementary narrative feeds — not a single social scrape.",
     details: [
-      "Reddit investor discussions",
-      "StockTwits sentiment",
-      "Yahoo Finance news and market narrative",
-      "Positioning and investor reaction signals",
+      "Yahoo Finance headlines for institutional framing",
+      "StockTwits messages with bullish / bearish tags",
+      "Reddit discussion from r/wallstreetbets, r/stocks and r/investing",
+      "Confidence notes when a source is thin or unavailable",
+    ],
+  },
+  {
+    icon: Newspaper,
+    title: "News & macro context",
+    summary: "Company news plus broader world state that can move the name.",
+    details: [
+      "Ticker-specific news over a recent window",
+      "Global / macroeconomic news",
+      "FRED macro series when relevant: CPI, unemployment, Fed funds, 10Y, yield curve",
+      "Prediction-market odds for forward-looking events when available",
+    ],
+  },
+  {
+    icon: Landmark,
+    title: "Fundamentals & financial statements",
+    summary: "Company profile and reported statements across annual and quarterly cuts.",
+    details: [
+      "Comprehensive fundamentals overview",
+      "Income statement analysis",
+      "Balance sheet analysis",
+      "Cash-flow statement analysis",
     ],
   },
   {
     icon: Scale,
     title: "Bull vs Bear research",
-    summary: "The same evidence is challenged from opposing investment viewpoints.",
+    summary: "The same evidence is argued from opposite sides, then judged.",
     details: [
-      "Bull researcher builds the strongest upside case",
-      "Bear researcher stress-tests assumptions and downside",
-      "Research Manager evaluates the disagreement",
-      "Trader stage converts the research into an actionable plan",
+      "Bull Researcher builds the strongest upside case from the four briefs",
+      "Bear Researcher attacks assumptions and downside paths",
+      "Research Manager evaluates the disagreement and writes the investment plan",
+      "Trader converts that plan into a concrete buy / hold / sell proposal",
     ],
   },
   {
     icon: ShieldCheck,
-    title: "Three-way risk review",
-    summary: "The proposed view is reviewed from aggressive, neutral and conservative risk perspectives.",
+    title: "Three-way risk review & final brief",
+    summary: "The proposed view is challenged from three risk temperaments before the final call.",
     details: [
       "Aggressive risk analysis",
       "Neutral risk analysis",
       "Conservative risk analysis",
-      "Portfolio Manager synthesises the final view",
+      "Portfolio Manager synthesises the final view: rating, thesis, optional target and horizon",
     ],
   },
 ] as const;
@@ -86,39 +103,56 @@ export function ResearchCoverage() {
         <h2 id="research-coverage-title">
           One ticker.
           <br />
-          <em>A full research process.</em>
+          <em>Twelve specialists.</em>
         </h2>
         <p>
-          One analysis credit activates the complete research workflow — not a
-          single AI answer. The system gathers evidence from multiple data
-          categories, challenges the thesis and assembles one structured report.
+          One analysis credit does not buy a chatbot paragraph. It runs a full
+          multi-agent research desk on a single company: four evidence lanes,
+          a bull–bear debate, a trade plan, a three-way risk review, and one
+          structured brief with a final rating.
         </p>
       </div>
 
       <div className="research-value-strip" aria-label="One credit research workflow">
         <div>
           <span>01</span>
-          <b>Research</b>
-          <small>Market · financials · news · sentiment</small>
+          <b>Evidence</b>
+          <small>Market · sentiment · news · fundamentals</small>
         </div>
         <i aria-hidden="true" />
         <div>
           <span>02</span>
-          <b>Challenge</b>
-          <small>Bull · Bear · Research Manager</small>
+          <b>Debate</b>
+          <small>Bull · Bear · Research Manager · Trader</small>
         </div>
         <i aria-hidden="true" />
         <div>
           <span>03</span>
-          <b>Review</b>
-          <small>3 risk perspectives · Portfolio Manager</small>
+          <b>Risk council</b>
+          <small>Aggressive · Neutral · Conservative</small>
         </div>
         <i aria-hidden="true" />
         <div>
           <span>04</span>
-          <b>Report</b>
-          <small>One structured research brief</small>
+          <b>Final brief</b>
+          <small>Rating · thesis · optional target</small>
         </div>
+      </div>
+
+      <div className="research-roster" aria-label="Specialist research roles">
+        <div className="research-roster-head">
+          <span>The desk</span>
+          <p>Each run sequences twelve specialist roles over the same ticker.</p>
+        </div>
+        <ol className="research-roster-grid">
+          {specialistRoles.map((role) => (
+            <li key={role.title}>
+              <span>{role.stage}</span>
+              <b>{role.title}</b>
+              <small>{role.focus}</small>
+            </li>
+          ))}
+        </ol>
       </div>
 
       <div className="research-accordion">
