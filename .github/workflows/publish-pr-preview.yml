@@ -110,15 +110,20 @@ jobs:
             echo "AI Web preview artifact contains unsupported filesystem entries" >&2
             exit 1
           fi
-          rm -rf apps/ai-web/dist
+          # workflow_run always executes from the default branch while holding
+          # Cloudflare credentials. Trusted Worker code + bindings come from
+          # .github/preview/ai-web on main. PR-controlled content contributes
+          # only the already-built static dist assets.
+          test -f .github/preview/ai-web/worker.js || { echo "Trusted AI Web worker missing" >&2; exit 1; }
+          test -f .github/preview/ai-web/wrangler.preview.jsonc || { echo "Trusted AI Web preview config missing" >&2; exit 1; }
+          grep -q 'AI_BACKEND' .github/preview/ai-web/wrangler.preview.jsonc
+          grep -q 'run_worker_first' .github/preview/ai-web/wrangler.preview.jsonc
+          grep -q 'cross_site_request_rejected' .github/preview/ai-web/worker.js
+          rm -rf apps/ai-web
           mkdir -p apps/ai-web/dist
           cp -R "$ASSET_DIR/." apps/ai-web/dist/
-          # The workflow runs trusted code from main. After AI Web lands on
-          # main, its checked-in worker.js and wrangler.preview.jsonc define
-          # the narrow service-bound proxy. PR-controlled content contributes
-          # only static dist assets and can never alter Worker code or bindings.
-          test -f apps/ai-web/worker.js || { echo "Trusted AI Web worker missing" >&2; exit 1; }
-          test -f apps/ai-web/wrangler.preview.jsonc || { echo "Trusted AI Web preview config missing" >&2; exit 1; }
+          cp .github/preview/ai-web/worker.js apps/ai-web/worker.js
+          cp .github/preview/ai-web/wrangler.preview.jsonc apps/ai-web/wrangler.preview.jsonc
       - name: Publish isolated AI Web Cloudflare preview from trusted code
         working-directory: apps/ai-web
         env:
