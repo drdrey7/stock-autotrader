@@ -117,3 +117,32 @@ a:focus-visible,button:focus-visible,input:focus-visible{outline:2px solid var(-
 /* Keep every brand mark inside one visible mobile orbit around the horizon. */
 @media(max-width:800px){.hero-section .orbit-system{top:470px;left:0;width:100vw;height:300px;transform:none}.hero-section .orbit-ring{left:50%;top:50%}.hero-section .orbit-logo-1{--orbit-radius:118px}.hero-section .orbit-logo-2{--orbit-radius:92px}.hero-section .orbit-logo-3{--orbit-radius:74px}.hero-section .orbit-logo-4{--orbit-radius:132px}.hero-section .orbit-logo-5{--orbit-radius:106px}}
 :root{font-family:'Bricolage Grotesque',system-ui,sans-serif}.network-svg .node-label{font-family:'Bricolage Grotesque',system-ui,sans-serif}.film-visual:before{display:none!important}
+
+/* Final mobile composition: compact editorial hero, with the constellation
+   kept around the photographic horizon instead of floating through the copy. */
+@media (max-width: 800px){
+  .hero-section{min-height:760px;padding:108px 18px 42px;place-items:start center}
+  .hero-inner{width:100%;max-width:520px;margin-top:18px}
+  .hero-inner h1{font-size:clamp(3rem,14vw,4.25rem);line-height:.9;letter-spacing:-.095em;margin:18px 0 18px}
+  .eyebrow{font-size:10px;letter-spacing:.14em}
+  .hero-sub{font-size:14px;line-height:1.55;max-width:420px}
+  .ticker-form{display:grid;grid-template-columns:1fr;gap:10px;margin-top:24px;max-width:none}
+  .ticker-input,.primary-button{height:56px;width:100%}
+  .primary-button{font-size:15px}
+  .popular{gap:14px;flex-wrap:wrap;margin-top:4px}
+  .hero-disclaimer{font-size:9px;line-height:1.5;margin:16px auto 0;max-width:300px}
+  .hero-scroll-cue{display:none}
+  .hero-section .orbit-system{top:492px;left:50%;width:112vw;height:210px;transform:translateX(-50%);opacity:.82}
+  .hero-section .orbit-ring{height:40%;border-color:rgba(111,229,235,.23)}
+  .hero-section .orbit-logo{width:34px;height:34px;background:rgba(3,12,19,.94);border-color:rgba(180,239,242,.72);box-shadow:0 0 20px rgba(51,224,224,.34)}
+  .hero-section .orbit-logo img{width:17px;height:17px}
+  .hero-section .orbit-logo-1{--orbit-radius:78px}
+  .hero-section .orbit-logo-2{--orbit-radius:62px}
+  .hero-section .orbit-logo-3{--orbit-radius:48px}
+  .hero-section .orbit-logo-4{--orbit-radius:92px}
+  .hero-section .orbit-logo-5{--orbit-radius:70px}
+  .hero-section .planet{bottom:-9%;width:158vw;height:310px}
+  .proof-rail{margin:-1px 18px 0;grid-template-columns:repeat(2,1fr)}
+  .proof-rail div{padding:17px 16px}
+  .proof-rail div:last-child{grid-column:1/-1;border-top:1px solid var(--line)}
+}
