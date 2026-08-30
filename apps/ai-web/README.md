@@ -1,8 +1,8 @@
 # AI Web
 
-`apps/ai-web` is the standalone public AI Analytics frontend. It is an Astro
-7 server-rendered application using the official Cloudflare adapter. The
-private Stock AutoTrader frontend remains in `apps/web`.
+`apps/ai-web` is the standalone public AI Analytics frontend. It uses React,
+TypeScript and Vite, with Motion and GSAP for interaction and scroll-driven
+motion. The private Stock AutoTrader frontend remains in `apps/web`.
 
 ## Local development
 
@@ -13,44 +13,54 @@ npm ci
 npm run dev -w @stock-autotrader/ai-web
 ```
 
-The public pages render locally without a backend binding. Auth and personal
-AI Analysis data intentionally show an unavailable state unless the app is run
-with a Cloudflare service binding.
+The marketing UI renders without a backend. Authenticated functionality needs
+the Cloudflare Worker envelope because the browser intentionally talks to the
+existing backend through same-origin `/api/*` routes.
 
 ## Preview deployment
 
 Build and inspect the isolated Worker envelope with:
 
 ```bash
-ASTRO_TELEMETRY_DISABLED=1 npm run build -w @stock-autotrader/ai-web
+npm run build -w @stock-autotrader/ai-web
 npx wrangler deploy --config apps/ai-web/wrangler.preview.jsonc --dry-run
 ```
 
 The preview config deploys a separate `ai-web-preview` Worker with one
-`AI_BACKEND` service binding to `stock-autotrader-web`. It has no D1, Queue,
-secret, cron, or production route binding. A trusted Cloudflare Workers Build
-or an approved preview deploy can run:
+`AI_BACKEND` service binding to `stock-autotrader-web`. It has no direct D1,
+Queue, cron, secret or production-route binding.
 
 ```bash
 npm run deploy:preview -w @stock-autotrader/ai-web
 ```
 
-The resulting workers.dev URL is the AI Web Preview URL. Set the existing
-Stock AutoTrader preview build variable `VITE_AI_WEB_URL` to that exact URL
-(the variable is optional; the private app safely falls back to its internal
-AI Analysis route when absent). This keeps the two previews independently
-deployable while allowing the Stock AutoTrader AI Analytics navigation to link
-to AI Web.
+Set the private Stock AutoTrader build variable `VITE_AI_WEB_URL` to the AI Web
+URL when the private navigation should open this product.
 
 ## API boundary
 
-The Astro Worker proxies only `/api/auth/*` and `/api/ai-analysis/*` to the
-existing Worker service binding. All other `/api/*` paths return `404`. The
-proxy forwards the host-only browser session cookie to the existing Better
-Auth implementation and applies `no-store` to personalized responses. It does
-not bind D1 or the Queue and does not expose Stock AutoTrader quotes,
-fundamentals, screener, market context, ingest, admin, or operational APIs.
+The AI Web Worker proxies only:
 
-The landing page and pricing page do not fabricate reports, testimonials,
-counts, uptime, timing, returns, or prices. Analysis execution and purchases
-are intentionally deferred.
+- `/api/auth/*`
+- `/api/ai-analysis/*`
+
+All other `/api/*` paths return `404`. Browser writes are checked for a matching
+same-origin `Origin` before the Worker rewrites the service-bound request to the
+existing backend's canonical origin. This preserves the existing Better Auth
+and AI Analysis CSRF model without exposing private Stock AutoTrader APIs.
+
+The frontend uses the canonical AI Analysis contracts from
+`@stock-autotrader/contracts` and the existing endpoints for catalog, viewer,
+runs and history. Run creation includes an idempotency key. Report pages poll
+the existing run endpoint until the run completes or fails.
+
+## Existing backend reused
+
+No second backend is created. The request path remains:
+
+AI Web → service-bound Stock AutoTrader Worker → Better Auth / D1 / Queue → VPS
+AI Analysis runner.
+
+The landing page does not fabricate reports, testimonials, counts, uptime,
+timing, returns or prices. Stripe, credit purchasing, final pricing and the
+production public domain remain separate launch work.
