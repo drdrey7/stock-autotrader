@@ -1,5 +1,6 @@
 import { ArrowUpRight, Building2 } from "lucide-react";
 import { Link } from "react-router-dom";
+import { MarketConstellation } from "../visual/MarketConstellation";
 
 export const sponsorSlots = [
   { id: "north", label: "Your brand here", detail: "Reach investors while they research." },
@@ -12,6 +13,7 @@ export const sponsorSlots = [
 
 export function SponsorRail() {
   return <aside className="sponsor-rail" aria-label="Sponsor placements">
+    <MarketConstellation />
     <div className="sponsor-rail-column sponsor-rail-left">{sponsorSlots.slice(0, 3).map(slot => <SponsorSlot key={slot.id} slot={slot} />)}</div>
     <div className="sponsor-rail-column sponsor-rail-right">{sponsorSlots.slice(3).map(slot => <SponsorSlot key={slot.id} slot={slot} />)}</div>
     <div className="sponsor-mobile-track">{sponsorSlots.map(slot => <SponsorSlot key={slot.id} slot={slot} />)}</div>
