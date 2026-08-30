@@ -136,6 +136,10 @@ jobs:
             --preview-alias "$PREVIEW_ALIAS" \
             --message "AI Web PR #${PR_NUMBER} ${SOURCE_HEAD_SHA}"
       - name: Publish preview URL to PR
+        # The preview is already deployed at this point. Repository-level token
+        # policy can deny issue comments, so keep the URL notification useful
+        # but do not turn a successful, validated deployment into a failed run.
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           PREVIEW_URL: https://pr-${{ env.PR_NUMBER }}-stock-autotrader-preview.barroso-labs.workers.dev
