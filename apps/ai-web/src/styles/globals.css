@@ -146,3 +146,13 @@ a:focus-visible,button:focus-visible,input:focus-visible{outline:2px solid var(-
   .proof-rail div{padding:17px 16px}
   .proof-rail div:last-child{grid-column:1/-1;border-top:1px solid var(--line)}
 }
+
+/* Keep the photographic horizon below the copy on wide screens. */
+@media (min-width: 801px){
+  .hero-section .planet{bottom:-67%;z-index:1}
+  .hero-section .orbit-system{z-index:3}
+}
+@media (max-width: 800px){
+  .hero-section .planet{bottom:-15%;z-index:1}
+  .hero-section .orbit-system{z-index:3}
+}
