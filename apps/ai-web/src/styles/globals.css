@@ -155,4 +155,8 @@ a:focus-visible,button:focus-visible,input:focus-visible{outline:2px solid var(-
 @media (max-width: 800px){
   .hero-section .planet{bottom:-15%;z-index:1}
   .hero-section .orbit-system{z-index:3}
+  .hero-section .earth-asset{transform:scale(1.22) translateY(-7%);transform-origin:center 72%}
+}
+@media (min-width: 801px){
+  .hero-section .earth-asset{transform:scale(1.34) translateY(-9%);transform-origin:center 72%}
 }
