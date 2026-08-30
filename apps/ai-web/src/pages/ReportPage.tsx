@@ -66,6 +66,10 @@ export function ReportPage() {
 
   if (run.status === "failed") return <Shell><main className="report-page page"><div className="section-kicker">{run.symbol} / Analysis failed</div><h1>The run did not <em>complete.</em></h1><p className="report-disclaimer">{run.creditRefunded ? "The analysis credit was refunded." : "The run failed before a result was available."}</p><Link className="text-link" to="/app">Back to workspace</Link></main></Shell>;
 
+  if (run.status !== "completed" || !run.result) {
+    return <Shell><main className="report-page page"><div className="section-kicker">Analysis / Invalid state</div><h1>Report <em>unavailable.</em></h1><p className="report-disclaimer">The backend returned an unexpected analysis state.</p><Link className="text-link" to="/app">Back to workspace</Link></main></Shell>;
+  }
+
   const result = run.result;
   const sections = [
     ["Executive Summary", result.executiveSummary],
