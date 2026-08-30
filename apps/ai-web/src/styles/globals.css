@@ -101,3 +101,15 @@ a:focus-visible,button:focus-visible,input:focus-visible{outline:2px solid var(-
 .hero-section .planet{z-index:2;bottom:-38%;width:min(1550px,142vw);box-shadow:0 -7px 42px 8px rgba(91,239,255,.35),inset -70px -50px 130px #000}
 .hero-section .earth-asset{filter:saturate(.95) contrast(1.12) brightness(.82);mix-blend-mode:normal;opacity:.92}
 @media(max-width:800px){.hero-section .orbit-system{top:156px;width:145vw;height:350px}.hero-section .orbit-logo{width:44px;height:44px}.hero-section .orbit-logo img{width:22px;height:22px}.hero-section .planet{bottom:-24%;width:180vw}.hero-section .earth-asset{opacity:.86}}
+
+/* Final cinematic framing: use the Earth horizon as a photographic stage, not a flat arc. */
+.market-constellation{display:none!important}
+.hero-section .planet{left:50%;bottom:-20%;width:min(1280px,118vw);height:min(720px,66vw);aspect-ratio:auto;border-radius:50% 50% 0 0 / 44% 44% 0 0;overflow:hidden;background:#02070c;box-shadow:0 -10px 42px 7px rgba(91,239,255,.34),0 -28px 110px rgba(31,138,173,.22),inset 0 -110px 130px #000}
+.hero-section .earth-asset{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center center;border-radius:inherit;filter:saturate(.98) contrast(1.1) brightness(.8);opacity:.95}
+.hero-section .planet:before{z-index:2;opacity:.35;background:linear-gradient(180deg,transparent 48%,rgba(0,0,0,.55) 100%),radial-gradient(ellipse at 50% 30%,transparent 35%,rgba(0,0,0,.3) 100%)}
+.hero-section .planet:after{z-index:2;inset:0;background:linear-gradient(108deg,transparent 20%,rgba(103,239,236,.12) 47%,transparent 70%);filter:blur(22px);pointer-events:none}
+.hero-section .planet-rim{z-index:4;inset:-1px;border-radius:50% 50% 0 0 / 44% 44% 0 0;box-shadow:0 -2px 0 1px rgba(216,255,255,.9),0 -9px 28px 7px rgba(53,229,250,.64),0 -22px 80px 18px rgba(8,117,143,.32)}
+.hero-section .orbit-system{top:158px;width:min(820px,72vw);height:390px;z-index:3}
+.hero-section .orbit-logo{width:52px;height:52px}
+.hero-section .orbit-logo img{width:27px;height:27px}
+@media(max-width:800px){.hero-section .planet{bottom:-12%;width:150vw;height:390px;border-radius:50% 50% 0 0 / 32% 32% 0 0}.hero-section .earth-asset{object-position:center center}.hero-section .planet-rim{border-radius:50% 50% 0 0 / 32% 32% 0 0}.hero-section .orbit-system{top:176px;width:136vw;height:300px}.hero-section .orbit-logo{width:40px;height:40px}.hero-section .orbit-logo img{width:20px;height:20px}}
