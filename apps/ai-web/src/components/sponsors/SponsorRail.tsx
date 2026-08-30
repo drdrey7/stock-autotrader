@@ -14,10 +14,13 @@ export function SponsorRail() {
   return <aside className="sponsor-rail" aria-label="Sponsor placements">
     <div className="sponsor-rail-column sponsor-rail-left">{sponsorSlots.slice(0, 3).map(slot => <SponsorSlot key={slot.id} slot={slot} />)}</div>
     <div className="sponsor-rail-column sponsor-rail-right">{sponsorSlots.slice(3).map(slot => <SponsorSlot key={slot.id} slot={slot} />)}</div>
-    <div className="sponsor-mobile-track">
-      {sponsorSlots.map(slot => <SponsorSlot key={slot.id} slot={slot} />)}
-      <span className="sr-only" aria-hidden="true">Sponsor placements</span>
-      {sponsorSlots.map(slot => <span aria-hidden="true" key={`${slot.id}-loop`}><SponsorSlot slot={slot} /></span>)}
+    <div className="sponsor-mobile-track" aria-label="Sponsor placements scrolling">
+      <div className="sponsor-mobile-group">
+        {sponsorSlots.map(slot => <SponsorSlot key={slot.id} slot={slot} />)}
+      </div>
+      <div className="sponsor-mobile-group" aria-hidden="true">
+        {sponsorSlots.map(slot => <SponsorSlot key={`${slot.id}-loop`} slot={slot} />)}
+      </div>
     </div>
   </aside>;
 }
