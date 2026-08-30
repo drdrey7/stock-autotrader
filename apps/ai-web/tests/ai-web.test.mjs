@@ -37,6 +37,7 @@ test("AI Web rejects private APIs and cross-site writes", async () => {
     body: JSON.stringify({ symbol: "NVDA" }),
   }), env);
   assert.equal(csrfResponse.status, 403);
+  assert.equal(csrfResponse.headers.get("cache-control"), "no-store");
   assert.equal(calls, 0);
 });
 
@@ -68,6 +69,7 @@ test("AI Web rewrites approved API requests to the canonical backend origin", as
 
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.equal(response.headers.get("set-cookie"), "session=test; Path=/; HttpOnly");
   assert.ok(captured);
   assert.equal(new URL(captured.url).origin, env.AI_BACKEND_ORIGIN);
   assert.equal(captured.headers.get("origin"), env.AI_BACKEND_ORIGIN);
