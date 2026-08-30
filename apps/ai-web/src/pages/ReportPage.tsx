@@ -2,21 +2,33 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import type { AiAnalysisRunResponse } from "@stock-autotrader/contracts";
 import { Shell } from "../components/layout/Shell";
+import { SafeMarkdown } from "../components/report/SafeMarkdown";
 import { AiAnalysisApiError, getAiAnalysisRun } from "../lib/api/analysis";
 
 const POLL_MS = 3_000;
+const RETRY_POLL_MS = 3_500;
 
 function reportError(error: unknown): string {
   if (error instanceof AiAnalysisApiError) {
     if (error.status === 404) return "This analysis could not be found.";
+    if (error.status === 403) return "You do not have access to this analysis.";
     if (error.status === 503) return "The analysis service is temporarily unavailable. This page will not fabricate a result.";
     return error.code.replaceAll("_", " ");
   }
   return "Could not load this analysis.";
 }
 
-function ReportText({ children }: { children: string | null | undefined }) {
-  return <p style={{ whiteSpace: "pre-wrap" }}>{children || "No content was returned for this section."}</p>;
+function isTerminalPollError(error: unknown): boolean {
+  return error instanceof AiAnalysisApiError
+    && (error.status === 401 || error.status === 403 || error.status === 404);
+}
+
+function ReportBody({ children }: { children: string | null | undefined }) {
+  const content = children?.trim();
+  if (!content) {
+    return <p className="muted">No content was returned for this section.</p>;
+  }
+  return <SafeMarkdown>{content}</SafeMarkdown>;
 }
 
 export function ReportPage() {
@@ -24,6 +36,7 @@ export function ReportPage() {
   const navigate = useNavigate();
   const [run, setRun] = useState<AiAnalysisRunResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [connectionInterrupted, setConnectionInterrupted] = useState(false);
 
   useEffect(() => {
     if (!id) { setError("Missing analysis id."); return; }
@@ -37,6 +50,7 @@ export function ReportPage() {
         if (cancelled) return;
         setRun(next);
         setError(null);
+        setConnectionInterrupted(false);
         if (next.status === "queued" || next.status === "running") timer = setTimeout(load, POLL_MS);
       } catch (nextError) {
         if (cancelled || controller.signal.aborted) return;
@@ -44,7 +58,16 @@ export function ReportPage() {
           navigate(`/auth?next=${encodeURIComponent(`/report/${id}`)}`, { replace: true });
           return;
         }
-        setError(reportError(nextError));
+        if (isTerminalPollError(nextError)) {
+          setError(reportError(nextError));
+          setConnectionInterrupted(false);
+          return;
+        }
+        // Keep the last known run visible and continue polling after transient
+        // network/timeout/5xx failures so a paid analysis can still complete.
+        setError(null);
+        setConnectionInterrupted(true);
+        timer = setTimeout(load, RETRY_POLL_MS);
       }
     };
 
@@ -56,12 +79,12 @@ export function ReportPage() {
     };
   }, [id, navigate]);
 
-  if (error) return <Shell><main className="report-page page"><div className="section-kicker">Analysis / Error</div><h1>Report <em>unavailable.</em></h1><p className="report-disclaimer" role="alert">{error}</p><Link className="text-link" to="/app">Back to workspace</Link></main></Shell>;
-  if (!run) return <Shell><main className="report-page page"><div className="section-kicker">Analysis / Loading</div><h1>Loading <em>research.</em></h1><p className="report-disclaimer">Fetching the current analysis state…</p></main></Shell>;
+  if (error && !run) return <Shell><main className="report-page page"><div className="section-kicker">Analysis / Error</div><h1>Report <em>unavailable.</em></h1><p className="report-disclaimer" role="alert">{error}</p><Link className="text-link" to="/app">Back to workspace</Link></main></Shell>;
+  if (!run) return <Shell><main className="report-page page"><div className="section-kicker">Analysis / Loading</div><h1>Loading <em>research.</em></h1><p className="report-disclaimer">{connectionInterrupted ? "Connection interrupted. Retrying…" : "Fetching the current analysis state…"}</p></main></Shell>;
 
   if (run.status === "queued" || run.status === "running") {
     const pct = Math.round((run.progressStep / Math.max(run.progressTotal, 1)) * 100);
-    return <Shell><main className="report-page page"><div className="section-kicker">{run.symbol} / {run.company}</div><h1>Agents are <em>researching.</em></h1><p className="report-disclaimer">{run.status === "queued" ? "Queued for analysis" : run.progressStage ? `Current stage: ${run.progressStage.replaceAll("-", " ")}` : "Analysis in progress"} · {run.progressStep}/{run.progressTotal} · {pct}%</p><div className="settings-list"><div><span>Status</span><b>{run.status}</b></div><div><span>Credits remaining</span><b>{run.creditsRemaining}</b></div><div><span>Run ID</span><b>{run.runId.slice(0, 8)}…</b></div></div><p className="muted">This page updates automatically.</p></main></Shell>;
+    return <Shell><main className="report-page page"><div className="section-kicker">{run.symbol} / {run.company}</div><h1>Agents are <em>researching.</em></h1><p className="report-disclaimer">{run.status === "queued" ? "Queued for analysis" : run.progressStage ? `Current stage: ${run.progressStage.replaceAll("-", " ")}` : "Analysis in progress"} · {run.progressStep}/{run.progressTotal} · {pct}%</p><div className="settings-list"><div><span>Status</span><b>{run.status}</b></div><div><span>Credits remaining</span><b>{run.creditsRemaining}</b></div><div><span>Run ID</span><b>{run.runId.slice(0, 8)}…</b></div></div>{connectionInterrupted ? <p className="muted" role="status">Connection interrupted. Retrying…</p> : <p className="muted">This page updates automatically.</p>}</main></Shell>;
   }
 
   if (run.status === "failed") return <Shell><main className="report-page page"><div className="section-kicker">{run.symbol} / Analysis failed</div><h1>The run did not <em>complete.</em></h1><p className="report-disclaimer">{run.creditRefunded ? "The analysis credit was refunded." : "The run failed before a result was available."}</p><Link className="text-link" to="/app">Back to workspace</Link></main></Shell>;
@@ -92,7 +115,7 @@ export function ReportPage() {
     <div className="section-kicker">{run.symbol} / {run.company} / {result.analysisDate}</div>
     <h1>{result.recommendation}<br/><em>{result.priceTarget ? `Target ${result.priceTarget}` : "Structured research"}</em></h1>
     <p className="report-disclaimer">AI-generated research for informational purposes only. Not financial advice.{result.timeHorizon ? ` Time horizon: ${result.timeHorizon}` : ""}</p>
-    {sections.map(([title, content], index) => <section className="report-block" key={title}><span>{String(index + 1).padStart(2, "0")}</span><div><h2>{title}</h2><ReportText>{content}</ReportText></div></section>)}
+    {sections.map(([title, content], index) => <section className="report-block" key={title}><span>{String(index + 1).padStart(2, "0")}</span><div><h2>{title}</h2><ReportBody>{content}</ReportBody></div></section>)}
     <section className="report-block report-final-view">
       <span>{String(sections.length + 1).padStart(2, "0")}</span>
       <div>

@@ -263,3 +263,18 @@ a:focus-visible,button:focus-visible,input:focus-visible,summary:focus-visible{o
 .report-final-view dt{color:var(--muted);font:10px 'DM Mono',monospace;letter-spacing:.08em;text-transform:uppercase}
 .report-final-view dd{margin:0;color:var(--ink);font-weight:700}
 @media(max-width:430px){.report-final-view dl>div{grid-template-columns:1fr;gap:5px}}
+
+.ai-markdown{margin-top:8px;color:var(--ink);font-size:15px;line-height:1.75;overflow-wrap:anywhere}
+.ai-markdown>:first-child{margin-top:0}
+.ai-markdown>:last-child{margin-bottom:0}
+.ai-markdown h1,.ai-markdown h2,.ai-markdown h3,.ai-markdown h4{margin:1.2em 0 .45em;line-height:1.25;font-family:Manrope,Georgia,serif}
+.ai-markdown a{color:var(--teal);text-underline-offset:2px}
+.ai-markdown blockquote{margin:16px 0;padding:2px 0 2px 14px;border-left:3px solid var(--teal);color:var(--muted)}
+.ai-markdown code{padding:2px 5px;border-radius:5px;background:rgba(255,255,255,.04);font-size:.9em}
+.ai-markdown pre{max-width:100%;padding:14px;overflow:auto;border-radius:10px;background:rgba(255,255,255,.04)}
+.ai-markdown pre code{padding:0}
+.ai-markdown ul,.ai-markdown ol{margin:12px 0;padding-left:1.35em}
+.ai-report-table-scroll{max-width:100%;margin:16px 0;overflow-x:auto;border:1px solid var(--line);border-radius:10px}
+.ai-report-table-scroll table{width:100%;min-width:480px;border-collapse:collapse}
+.ai-report-table-scroll th,.ai-report-table-scroll td{padding:10px 12px;border-bottom:1px solid var(--line);text-align:left}
+.ai-report-table-scroll th{background:rgba(255,255,255,.03);font-weight:700}

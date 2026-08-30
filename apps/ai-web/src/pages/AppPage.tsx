@@ -3,6 +3,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import type { AiAnalysisCatalogResponse, AiAnalysisHistoryResponse, AiAnalysisViewerResponse } from "@stock-autotrader/contracts";
 import { Shell } from "../components/layout/Shell";
+import { clearPendingAnalysisKey, pendingAnalysisKey } from "../lib/analysis/idempotency";
 import {
   AiAnalysisApiError,
   getAiAnalysisCatalog,
@@ -68,14 +69,30 @@ export function AppPage() {
     }
     setSubmitting(true);
     setMessage(null);
+    const key = pendingAnalysisKey(normalizedSymbol);
     try {
-      const run = await startAiAnalysis(normalizedSymbol, crypto.randomUUID());
+      const run = await startAiAnalysis(normalizedSymbol, key);
+      clearPendingAnalysisKey(key);
       setViewer((current) => current ? { ...current, creditsRemaining: run.creditsRemaining } : current);
       navigate(`/report/${run.runId}`);
     } catch (error) {
       if (error instanceof AiAnalysisApiError && error.status === 401) {
+        clearPendingAnalysisKey(key);
         navigate("/auth?next=/app");
         return;
+      }
+      // Clear the pending key only for definitive 4xx client errors (except 409).
+      // Keep it for network/timeout (null status), 5xx, 409, and unexpected 2xx
+      // parse failures so a retry reuses the same idempotency key instead of
+      // minting a second, credit-consuming acquisition.
+      if (
+        error instanceof AiAnalysisApiError
+        && error.status !== null
+        && error.status >= 400
+        && error.status < 500
+        && error.status !== 409
+      ) {
+        clearPendingAnalysisKey(key);
       }
       setMessage(messageFor(error));
     } finally {

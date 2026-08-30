@@ -2,7 +2,6 @@ import { CSSProperties, FormEvent, useEffect, useState } from "react";
 import {
   ArrowUpRight,
   FileText,
-  Network,
   Search,
 } from "lucide-react";
 import { motion } from "motion/react";
@@ -354,24 +353,11 @@ export function LandingPage() {
               <em>you need it.</em>
             </h2>
             <p>
-              No subscription decision yet. Choose credits, or invite someone
-              into the research room.
+              No subscription decision yet. Buy analysis credits when pricing
+              is ready — referral rewards are not available in this release.
             </p>
           </div>
           <div className="credit-list">
-            <article>
-              <Network />
-              <div>
-                <b>Invite a friend</b>
-                <p>
-                  When they register and complete their first analysis, you
-                  receive one analysis credit.
-                </p>
-              </div>
-              <Link to="/account">
-                Invite <ArrowUpRight size={15} />
-              </Link>
-            </article>
             <article>
               <b className="credit-number">5</b>
               <div>

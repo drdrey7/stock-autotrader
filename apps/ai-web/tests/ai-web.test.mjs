@@ -13,6 +13,8 @@ test("AI Web keeps its deployable app and narrow backend boundary", async () => 
   assert.match(config, /"directory": "\.\/dist"/);
   assert.match(config, /"binding": "AI_BACKEND"/);
   assert.match(config, /"service": "stock-autotrader-web"/);
+  assert.match(config, /"run_worker_first"/);
+  assert.match(config, /"\/api\/\*"/);
   assert.doesNotMatch(config, /d1_databases|queues|secrets|FINNHUB|INGEST_SECRET/i);
   assert.match(source, /\/api\/auth\//);
   assert.match(source, /\/api\/ai-analysis\//);
@@ -129,7 +131,38 @@ test("completed reports render every normalized backend section", async () => {
 test("public copy contains no unsupported social proof", async () => {
   const landing = await read("src/pages/LandingPage.tsx");
   assert.doesNotMatch(landing, /99\.9|50K|users|testimonials|average analysis time/i);
+  assert.doesNotMatch(landing, /Invite a friend|receive one analysis credit/i);
+  assert.match(landing, /referral rewards are not available/i);
   assert.match(landing, /Multi-Agent AI Research/);
+});
+
+test("workspace reuses pending analysis idempotency keys", async () => {
+  const [appPage, idempotency] = await Promise.all([
+    read("src/pages/AppPage.tsx"),
+    read("src/lib/analysis/idempotency.ts"),
+  ]);
+  assert.match(appPage, /pendingAnalysisKey\(/);
+  assert.match(appPage, /clearPendingAnalysisKey\(/);
+  assert.match(appPage, /error\.status >= 400/);
+  assert.match(appPage, /error\.status < 500/);
+  assert.match(appPage, /error\.status !== 409/);
+  assert.match(idempotency, /ai-web-analysis-pending-v1/);
+  assert.match(idempotency, /MAX_PENDING_AGE_MS/);
+});
+
+test("report polling retries transient failures and renders sanitized markdown", async () => {
+  const [report, markdown] = await Promise.all([
+    read("src/pages/ReportPage.tsx"),
+    read("src/components/report/SafeMarkdown.tsx"),
+  ]);
+  assert.match(report, /RETRY_POLL_MS/);
+  assert.match(report, /connectionInterrupted/);
+  assert.match(report, /isTerminalPollError/);
+  assert.match(report, /SafeMarkdown/);
+  assert.doesNotMatch(report, /ReportText/);
+  assert.match(markdown, /react-markdown/);
+  assert.match(markdown, /skipHtml/);
+  assert.match(markdown, /safeMarkdownUrl/);
 });
 
 test("landing explains what one analysis credit researches without overclaiming provenance", async () => {
