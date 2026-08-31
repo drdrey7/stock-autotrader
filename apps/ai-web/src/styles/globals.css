@@ -277,9 +277,8 @@ a:focus-visible,button:focus-visible,input:focus-visible,summary:focus-visible{o
 .report-section-title{font-family:Georgia,'Times New Roman',serif;font-weight:400;font-size:24px;letter-spacing:-.02em;color:var(--ink);flex:1;min-width:0}
 .report-section-caret{margin-left:auto;width:26px;height:26px;flex:none;border:1px solid var(--line);border-radius:50%;display:grid;place-items:center;font:600 12px 'DM Mono',monospace;color:var(--teal);transition:transform .2s}
 .report-section-caret:after{content:'+'}
-.report-section[open] .report-section-caret{transform:rotate(45deg)}
+.report-section[open] .report-section-caret:after{content:'−'}
 .report-section-body{padding:26px 0 6px;min-width:0;overflow-wrap:anywhere}
-.report-section[open] .report-section-caret:after{content:'×'}
 /* Leader line before section title to keep the numbered look. */
 .report-section-summary .report-marker{width:34px;flex:none;text-align:left;font:11px 'DM Mono',monospace;color:var(--teal);letter-spacing:.08em}
 
