@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import type { AiAnalysisRunResponse, AiAnalysisResultV1 } from "@stock-autotrader/contracts";
 import { Shell } from "../components/layout/Shell";
@@ -31,6 +31,34 @@ function ReportBody({ children }: { children: string | null | undefined }) {
   return <SafeMarkdown>{content}</SafeMarkdown>;
 }
 
+/**
+ * Collapsible report section. Long sections collapse so the report reads as a
+ * scannable hierarchy; the reader expands only what they need. Executive
+ * Summary and Final View pass `defaultOpen` so the verdict is always visible.
+ */
+function CollapsibleSection({
+  id,
+  title,
+  defaultOpen = false,
+  children,
+}: {
+  id: string;
+  title: string;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <details className="report-block report-section" open={defaultOpen}>
+      <summary className="report-section-summary">
+        <span className="report-marker">{id}</span>
+        <span className="report-section-title">{title}</span>
+        <span className="report-section-caret" aria-hidden="true" />
+      </summary>
+      <div className="report-section-body">{children}</div>
+    </details>
+  );
+}
+
 function RecommendationBadge({ value }: { value: AiAnalysisResultV1["recommendation"] }) {
   const tone = value.toLowerCase().includes("buy") || value === "OVERWEIGHT"
     ? "positive"
@@ -38,62 +66,6 @@ function RecommendationBadge({ value }: { value: AiAnalysisResultV1["recommendat
       ? "negative"
       : "neutral";
   return <span className={`rec-badge rec-badge-${tone}`}>{value}</span>;
-}
-
-/** 06 — Bull vs Bear shown as two opposing panels side-by-side on desktop. */
-function DebateSection({ bull, bear }: { bull: string | null; bear: string | null }) {
-  return (
-    <section className="report-block" aria-label="Bull vs Bear">
-      <span className="report-marker">06</span>
-      <div>
-        <h2>Bull vs Bear</h2>
-        <div className="debate-panels">
-          <div className="debate-panel debate-panel-bull">
-            <div className="debate-panel-label">Bull case</div>
-            <ReportBody>{bull}</ReportBody>
-          </div>
-          <div className="debate-panel debate-panel-bear">
-            <div className="debate-panel-label">Bear case</div>
-            <ReportBody>{bear}</ReportBody>
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-/** 08 — Risk Council: three temperaments reviewing the same proposal. */
-function RiskCouncil({
-  aggressive,
-  neutral,
-  conservative,
-}: {
-  aggressive: string | null;
-  neutral: string | null;
-  conservative: string | null;
-}) {
-  return (
-    <section className="report-block" aria-label="Risk Council">
-      <span className="report-marker">08</span>
-      <div>
-        <h2>Risk Council</h2>
-        <div className="risk-council">
-          <div className="risk-panel">
-            <div className="risk-panel-label">Aggressive</div>
-            <ReportBody>{aggressive}</ReportBody>
-          </div>
-          <div className="risk-panel">
-            <div className="risk-panel-label">Neutral</div>
-            <ReportBody>{neutral}</ReportBody>
-          </div>
-          <div className="risk-panel">
-            <div className="risk-panel-label">Conservative</div>
-            <ReportBody>{conservative}</ReportBody>
-          </div>
-        </div>
-      </div>
-    </section>
-  );
 }
 
 /** Rich completed-report view. Pure presentation; safe to snapshot/test. */
@@ -157,102 +129,94 @@ export function CompletedReport({ run }: { run: Extract<AiAnalysisRunResponse, {
         </p>
       </header>
 
-      {/* 01 — Executive Summary */}
-      <section className="report-block" aria-label="Executive Summary">
-        <span className="report-marker">01</span>
-        <div>
-          <h2>Executive Summary</h2>
-          <ReportBody>{result.executiveSummary}</ReportBody>
-        </div>
-      </section>
+      {/* 01 — Executive Summary (open) */}
+      <CollapsibleSection id="01" title="Executive Summary" defaultOpen>
+        <ReportBody>{result.executiveSummary}</ReportBody>
+      </CollapsibleSection>
 
       {/* 02 — Investment Thesis */}
-      <section className="report-block" aria-label="Investment Thesis">
-        <span className="report-marker">02</span>
-        <div>
-          <h2>Investment Thesis</h2>
-          <ReportBody>{result.investmentThesis}</ReportBody>
-        </div>
-      </section>
+      <CollapsibleSection id="02" title="Investment Thesis">
+        <ReportBody>{result.investmentThesis}</ReportBody>
+      </CollapsibleSection>
 
       {/* 03 — Market & Technical */}
-      <section className="report-block" aria-label="Market and Technical">
-        <span className="report-marker">03</span>
-        <div>
-          <h2>Market &amp; Technical</h2>
-          <ReportBody>{result.reports.marketAndTechnical}</ReportBody>
-        </div>
-      </section>
+      <CollapsibleSection id="03" title="Market &amp; Technical">
+        <ReportBody>{result.reports.marketAndTechnical}</ReportBody>
+      </CollapsibleSection>
 
       {/* 04 — Fundamentals */}
-      <section className="report-block" aria-label="Fundamentals">
-        <span className="report-marker">04</span>
-        <div>
-          <h2>Fundamentals</h2>
-          <ReportBody>{result.reports.fundamentals}</ReportBody>
-        </div>
-      </section>
+      <CollapsibleSection id="04" title="Fundamentals">
+        <ReportBody>{result.reports.fundamentals}</ReportBody>
+      </CollapsibleSection>
 
       {/* 05 — News & Sentiment */}
-      <section className="report-block" aria-label="News and Sentiment">
-        <span className="report-marker">05</span>
-        <div>
-          <h2>News &amp; Sentiment</h2>
-          <div className="news-sentiment">
-            <div>
-              <div className="sub-section-label">News</div>
-              <ReportBody>{result.reports.news}</ReportBody>
-            </div>
-            <div>
-              <div className="sub-section-label">Sentiment</div>
-              <ReportBody>{result.reports.sentiment}</ReportBody>
-            </div>
+      <CollapsibleSection id="05" title="News &amp; Sentiment">
+        <div className="news-sentiment">
+          <div>
+            <div className="sub-section-label">News</div>
+            <ReportBody>{result.reports.news}</ReportBody>
+          </div>
+          <div>
+            <div className="sub-section-label">Sentiment</div>
+            <ReportBody>{result.reports.sentiment}</ReportBody>
           </div>
         </div>
-      </section>
+      </CollapsibleSection>
 
       {/* 06 — Bull vs Bear */}
-      <DebateSection bull={result.reports.bullCase} bear={result.reports.bearCase} />
-
-      {/* 07 — Research Manager & Trader Plan */}
-      <section className="report-block" aria-label="Research Manager and Trader Plan">
-        <span className="report-marker">07</span>
-        <div>
-          <h2>Research Manager &amp; Trader</h2>
-          <div className="research-trader">
-            <div>
-              <div className="sub-section-label">Research Manager</div>
-              <ReportBody>{result.reports.researchManager}</ReportBody>
-            </div>
-            <div>
-              <div className="sub-section-label">Trader Plan</div>
-              <ReportBody>{result.reports.traderPlan}</ReportBody>
-            </div>
+      <CollapsibleSection id="06" title="Bull vs Bear">
+        <div className="debate-panels">
+          <div className="debate-panel debate-panel-bull">
+            <div className="debate-panel-label">Bull case</div>
+            <ReportBody>{result.reports.bullCase}</ReportBody>
+          </div>
+          <div className="debate-panel debate-panel-bear">
+            <div className="debate-panel-label">Bear case</div>
+            <ReportBody>{result.reports.bearCase}</ReportBody>
           </div>
         </div>
-      </section>
+      </CollapsibleSection>
+
+      {/* 07 — Research Manager & Trader Plan */}
+      <CollapsibleSection id="07" title="Research Manager &amp; Trader">
+        <div className="research-trader">
+          <div>
+            <div className="sub-section-label">Research Manager</div>
+            <ReportBody>{result.reports.researchManager}</ReportBody>
+          </div>
+          <div>
+            <div className="sub-section-label">Trader Plan</div>
+            <ReportBody>{result.reports.traderPlan}</ReportBody>
+          </div>
+        </div>
+      </CollapsibleSection>
 
       {/* 08 — Risk Council */}
-      <RiskCouncil
-        aggressive={result.reports.risk.aggressive}
-        neutral={result.reports.risk.neutral}
-        conservative={result.reports.risk.conservative}
-      />
+      <CollapsibleSection id="08" title="Risk Council">
+        <div className="risk-council">
+          <div className="risk-panel">
+            <div className="risk-panel-label">Aggressive</div>
+            <ReportBody>{result.reports.risk.aggressive}</ReportBody>
+          </div>
+          <div className="risk-panel">
+            <div className="risk-panel-label">Neutral</div>
+            <ReportBody>{result.reports.risk.neutral}</ReportBody>
+          </div>
+          <div className="risk-panel">
+            <div className="risk-panel-label">Conservative</div>
+            <ReportBody>{result.reports.risk.conservative}</ReportBody>
+          </div>
+        </div>
+      </CollapsibleSection>
 
       {/* 09 — Portfolio Manager */}
-      <section className="report-block" aria-label="Portfolio Manager">
-        <span className="report-marker">09</span>
-        <div>
-          <h2>Portfolio Manager</h2>
-          <ReportBody>{result.reports.portfolioManager}</ReportBody>
-        </div>
-      </section>
+      <CollapsibleSection id="09" title="Portfolio Manager">
+        <ReportBody>{result.reports.portfolioManager}</ReportBody>
+      </CollapsibleSection>
 
-      {/* 10 — Final View */}
-      <section className="report-block report-final-view" aria-label="Final View">
-        <span className="report-marker">10</span>
-        <div>
-          <h2>Final View</h2>
+      {/* 10 — Final View (open) */}
+      <CollapsibleSection id="10" title="Final View" defaultOpen>
+        <div className="report-final-view">
           <dl>
             <div><dt>Recommendation</dt><dd>{result.recommendation}</dd></div>
             {result.priceTarget !== null && <div><dt>Price Target</dt><dd>${typeof result.priceTarget === "number" ? result.priceTarget.toLocaleString() : result.priceTarget}</dd></div>}
@@ -260,7 +224,7 @@ export function CompletedReport({ run }: { run: Extract<AiAnalysisRunResponse, {
             <div><dt>Generated</dt><dd>{result.generatedAt ? new Date(result.generatedAt).toLocaleString() : ""}</dd></div>
           </dl>
         </div>
-      </section>
+      </CollapsibleSection>
 
       <Link className="text-link" to="/app">Back to workspace</Link>
     </main>

@@ -135,7 +135,11 @@ test("completed reports render every normalized backend section", async () => {
   assert.match(report, /Risk Council/);
   assert.match(report, /risk-council/);
   assert.match(report, /RecommendationBadge/);
-    assert.match(report, /"report-marker">06</);
+  // Collapsible section markers carry the id dynamically: no literal hard-coded
+  // markers, but every section title must still be present.
+  assert.match(report, /title="Executive Summary"/);
+  assert.match(report, /title="Bull vs Bear"/);
+  assert.match(report, /title="Risk Council"/);
 });
 
 test("public copy contains no unsupported social proof", async () => {
