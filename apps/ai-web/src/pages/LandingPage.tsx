@@ -20,8 +20,10 @@ const agents = [
   ["06", "Bear Researcher", "Assumption stress-test and downside."],
   ["07", "Research Manager", "Judges the debate and sets the plan."],
   ["08", "Trader", "Turns research into a concrete proposal."],
-  ["09", "Risk council", "Aggressive, neutral and conservative lenses."],
-  ["10", "Portfolio Manager", "Final rating, thesis and optional target."],
+  ["09", "Aggressive Risk", "Higher-conviction risk lens."],
+  ["10", "Neutral Risk", "Balanced risk lens."],
+  ["11", "Conservative Risk", "Capital-preservation risk lens."],
+  ["12", "Portfolio Manager", "Final rating, thesis and optional target."],
 ] as const;
 
 export function LandingPage() {
@@ -164,10 +166,13 @@ export function LandingPage() {
                 {[
                   "EXECUTIVE SUMMARY",
                   "INVESTMENT THESIS",
-                  "BULL CASE",
-                  "BEAR CASE",
+                  "MARKET & TECHNICAL",
                   "FUNDAMENTALS",
+                  "NEWS & SENTIMENT",
+                  "BULL VS BEAR",
+                  "TRADER PLAN",
                   "RISK REVIEW",
+                  "PORTFOLIO MANAGER",
                   "FINAL VIEW",
                 ].map((x, i) => (
                   <span className={i === 0 ? "active" : ""} key={x}>
@@ -212,8 +217,8 @@ export function LandingPage() {
               <em>to one clear brief.</em>
             </h2>
             <p>
-              Follow one company through seven specialists. Each hand-off adds
-              evidence, challenges the thesis and keeps uncertainty visible
+              Follow one company through twelve specialist roles. Each hand-off
+              adds evidence, challenges the thesis and keeps uncertainty visible
               before the final synthesis is assembled.
             </p>
           </div>
@@ -325,17 +330,20 @@ export function LandingPage() {
                 </h3>
                 <p>
                   A structured first read across market context, fundamentals,
-                  news, opposing research and risk review.
+                  news, sentiment, opposing research and risk review.
                 </p>
               </div>
               <div className="report-columns">
                 {[
                   "Investment thesis",
-                  "Bull case",
-                  "Bear case",
+                  "Market & technical",
                   "Fundamentals",
-                  "Market context",
+                  "News & sentiment",
+                  "Bull vs Bear",
+                  "Trader plan",
                   "Risk review",
+                  "Portfolio Manager",
+                  "Final view",
                 ].map((x) => (
                   <div key={x}>
                     <span>{x}</span>
