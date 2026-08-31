@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import type { AiAnalysisRunResponse } from "@stock-autotrader/contracts";
+import type { AiAnalysisRunResponse, AiAnalysisResultV1 } from "@stock-autotrader/contracts";
 import { Shell } from "../components/layout/Shell";
 import { SafeMarkdown } from "../components/report/SafeMarkdown";
 import { AiAnalysisApiError, getAiAnalysisRun } from "../lib/api/analysis";
@@ -29,6 +29,206 @@ function ReportBody({ children }: { children: string | null | undefined }) {
     return <p className="muted">No content was returned for this section.</p>;
   }
   return <SafeMarkdown>{content}</SafeMarkdown>;
+}
+
+/**
+ * Collapsible report section. Long sections collapse so the report reads as a
+ * scannable hierarchy; the reader expands only what they need. Executive
+ * Summary and Final View pass `defaultOpen` so the verdict is always visible.
+ */
+function CollapsibleSection({
+  id,
+  title,
+  defaultOpen = false,
+  children,
+}: {
+  id: string;
+  title: string;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <details className="report-block report-section" open={defaultOpen}>
+      <summary className="report-section-summary">
+        <span className="report-marker">{id}</span>
+        <span className="report-section-title">{title}</span>
+        <span className="report-section-caret" aria-hidden="true" />
+      </summary>
+      <div className="report-section-body">{children}</div>
+    </details>
+  );
+}
+
+function RecommendationBadge({ value }: { value: AiAnalysisResultV1["recommendation"] }) {
+  const tone = value.toLowerCase().includes("buy") || value === "OVERWEIGHT"
+    ? "positive"
+    : value === "SELL" || value === "UNDERWEIGHT"
+      ? "negative"
+      : "neutral";
+  return <span className={`rec-badge rec-badge-${tone}`}>{value}</span>;
+}
+
+/** Rich completed-report view. Pure presentation; safe to snapshot/test. */
+export function CompletedReport({ run }: { run: Extract<AiAnalysisRunResponse, { status: "completed" }> }) {
+  const result = run.result;
+  const date = result.analysisDate
+    ? new Date(`${result.analysisDate}T00:00:00Z`).toLocaleDateString(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        timeZone: "UTC",
+      })
+    : "";
+
+  return (
+    <main className="report-page page">
+      {/* Header */}
+      <header className="report-hero">
+        <div className="report-hero-top">
+          <div className="section-kicker">
+            Analysis / Report / {run.symbol}
+          </div>
+          <span className="report-status">Completed</span>
+        </div>
+        <div className="report-hero-title">
+          <h1>
+            {run.symbol}
+            <span className="report-company">{run.company}</span>
+          </h1>
+          <div className="report-hero-verdict">
+            <RecommendationBadge value={result.recommendation} />
+            <span className="report-date">{date}</span>
+          </div>
+        </div>
+        <div className="report-meta-grid">
+          {result.priceTarget !== null && (
+            <div className="report-meta">
+              <span>Price target</span>
+              <b>{typeof result.priceTarget === "number" ? `$${result.priceTarget.toLocaleString()}` : result.priceTarget}</b>
+            </div>
+          )}
+          {result.timeHorizon !== null && (
+            <div className="report-meta">
+              <span>Time horizon</span>
+              <b>{result.timeHorizon}</b>
+            </div>
+          )}
+          <div className="report-meta">
+            <span>Engine</span>
+            <b>{result.engine.name} · {result.engine.version}</b>
+          </div>
+          <div className="report-meta">
+            <span>Recommendation</span>
+            <b>{result.recommendation}</b>
+          </div>
+        </div>
+        <p className="report-disclaimer">
+          AI-generated research for informational purposes only. Not financial
+          advice. Generated {result.generatedAt ? new Date(result.generatedAt).toLocaleString() : ""} by
+          {` ${result.engine.provider} (${result.engine.deepModel})`}.
+        </p>
+      </header>
+
+      {/* 01 — Executive Summary (open) */}
+      <CollapsibleSection id="01" title="Executive Summary" defaultOpen>
+        <ReportBody>{result.executiveSummary}</ReportBody>
+      </CollapsibleSection>
+
+      {/* 02 — Investment Thesis */}
+      <CollapsibleSection id="02" title="Investment Thesis">
+        <ReportBody>{result.investmentThesis}</ReportBody>
+      </CollapsibleSection>
+
+      {/* 03 — Market & Technical */}
+      <CollapsibleSection id="03" title="Market &amp; Technical">
+        <ReportBody>{result.reports.marketAndTechnical}</ReportBody>
+      </CollapsibleSection>
+
+      {/* 04 — Fundamentals */}
+      <CollapsibleSection id="04" title="Fundamentals">
+        <ReportBody>{result.reports.fundamentals}</ReportBody>
+      </CollapsibleSection>
+
+      {/* 05 — News & Sentiment */}
+      <CollapsibleSection id="05" title="News &amp; Sentiment">
+        <div className="news-sentiment">
+          <div>
+            <div className="sub-section-label">News</div>
+            <ReportBody>{result.reports.news}</ReportBody>
+          </div>
+          <div>
+            <div className="sub-section-label">Sentiment</div>
+            <ReportBody>{result.reports.sentiment}</ReportBody>
+          </div>
+        </div>
+      </CollapsibleSection>
+
+      {/* 06 — Bull vs Bear */}
+      <CollapsibleSection id="06" title="Bull vs Bear">
+        <div className="debate-panels">
+          <div className="debate-panel debate-panel-bull">
+            <div className="debate-panel-label">Bull case</div>
+            <ReportBody>{result.reports.bullCase}</ReportBody>
+          </div>
+          <div className="debate-panel debate-panel-bear">
+            <div className="debate-panel-label">Bear case</div>
+            <ReportBody>{result.reports.bearCase}</ReportBody>
+          </div>
+        </div>
+      </CollapsibleSection>
+
+      {/* 07 — Research Manager & Trader Plan */}
+      <CollapsibleSection id="07" title="Research Manager &amp; Trader">
+        <div className="research-trader">
+          <div>
+            <div className="sub-section-label">Research Manager</div>
+            <ReportBody>{result.reports.researchManager}</ReportBody>
+          </div>
+          <div>
+            <div className="sub-section-label">Trader Plan</div>
+            <ReportBody>{result.reports.traderPlan}</ReportBody>
+          </div>
+        </div>
+      </CollapsibleSection>
+
+      {/* 08 — Risk Council */}
+      <CollapsibleSection id="08" title="Risk Council">
+        <div className="risk-council">
+          <div className="risk-panel">
+            <div className="risk-panel-label">Aggressive</div>
+            <ReportBody>{result.reports.risk.aggressive}</ReportBody>
+          </div>
+          <div className="risk-panel">
+            <div className="risk-panel-label">Neutral</div>
+            <ReportBody>{result.reports.risk.neutral}</ReportBody>
+          </div>
+          <div className="risk-panel">
+            <div className="risk-panel-label">Conservative</div>
+            <ReportBody>{result.reports.risk.conservative}</ReportBody>
+          </div>
+        </div>
+      </CollapsibleSection>
+
+      {/* 09 — Portfolio Manager */}
+      <CollapsibleSection id="09" title="Portfolio Manager">
+        <ReportBody>{result.reports.portfolioManager}</ReportBody>
+      </CollapsibleSection>
+
+      {/* 10 — Final View (open) */}
+      <CollapsibleSection id="10" title="Final View" defaultOpen>
+        <div className="report-final-view">
+          <dl>
+            <div><dt>Recommendation</dt><dd>{result.recommendation}</dd></div>
+            {result.priceTarget !== null && <div><dt>Price Target</dt><dd>${typeof result.priceTarget === "number" ? result.priceTarget.toLocaleString() : result.priceTarget}</dd></div>}
+            {result.timeHorizon !== null && <div><dt>Time Horizon</dt><dd>{result.timeHorizon}</dd></div>}
+            <div><dt>Generated</dt><dd>{result.generatedAt ? new Date(result.generatedAt).toLocaleString() : ""}</dd></div>
+          </dl>
+        </div>
+      </CollapsibleSection>
+
+      <Link className="text-link" to="/app">Back to workspace</Link>
+    </main>
+  );
 }
 
 export function ReportPage() {
@@ -93,40 +293,5 @@ export function ReportPage() {
     return <Shell><main className="report-page page"><div className="section-kicker">Analysis / Invalid state</div><h1>Report <em>unavailable.</em></h1><p className="report-disclaimer">The backend returned an unexpected analysis state.</p><Link className="text-link" to="/app">Back to workspace</Link></main></Shell>;
   }
 
-  const result = run.result;
-  const sections = [
-    ["Executive Summary", result.executiveSummary],
-    ["Investment Thesis", result.investmentThesis],
-    ["Bull Case", result.reports.bullCase],
-    ["Bear Case", result.reports.bearCase],
-    ["Fundamentals", result.reports.fundamentals],
-    ["Market & Technical", result.reports.marketAndTechnical],
-    ["News", result.reports.news],
-    ["Sentiment", result.reports.sentiment],
-    ["Research Manager", result.reports.researchManager],
-    ["Trader Plan", result.reports.traderPlan],
-    ["Risk · Aggressive", result.reports.risk.aggressive],
-    ["Risk · Neutral", result.reports.risk.neutral],
-    ["Risk · Conservative", result.reports.risk.conservative],
-    ["Portfolio Manager", result.reports.portfolioManager],
-  ] as const;
-
-  return <Shell><main className="report-page page">
-    <div className="section-kicker">{run.symbol} / {run.company} / {result.analysisDate}</div>
-    <h1>{result.recommendation}<br/><em>{result.priceTarget ? `Target ${result.priceTarget}` : "Structured research"}</em></h1>
-    <p className="report-disclaimer">AI-generated research for informational purposes only. Not financial advice.{result.timeHorizon ? ` Time horizon: ${result.timeHorizon}` : ""}</p>
-    {sections.map(([title, content], index) => <section className="report-block" key={title}><span>{String(index + 1).padStart(2, "0")}</span><div><h2>{title}</h2><ReportBody>{content}</ReportBody></div></section>)}
-    <section className="report-block report-final-view">
-      <span>{String(sections.length + 1).padStart(2, "0")}</span>
-      <div>
-        <h2>Final View</h2>
-        <dl>
-          <div><dt>Recommendation</dt><dd>{result.recommendation}</dd></div>
-          {result.priceTarget !== null && <div><dt>Price Target</dt><dd>{result.priceTarget}</dd></div>}
-          {result.timeHorizon !== null && <div><dt>Time Horizon</dt><dd>{result.timeHorizon}</dd></div>}
-        </dl>
-      </div>
-    </section>
-    <Link className="text-link" to="/app">Back to workspace</Link>
-  </main></Shell>;
+  return <Shell><CompletedReport run={run} /></Shell>;
 }
