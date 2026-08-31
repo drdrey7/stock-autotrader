@@ -165,14 +165,36 @@ test("report polling retries transient failures and renders sanitized markdown",
   assert.match(markdown, /safeMarkdownUrl/);
 });
 
+test("landing mirrors the canonical twelve-stage research sequence without repetition", async () => {
+  const [landing, coverage] = await Promise.all([
+    read("src/pages/LandingPage.tsx"),
+    read("src/components/research/ResearchCoverage.tsx"),
+  ]);
+  for (const role of [
+    "Market Analyst",
+    "Sentiment Analyst",
+    "News Analyst",
+    "Fundamentals Analyst",
+    "Bull Researcher",
+    "Bear Researcher",
+    "Research Manager",
+    "Trader",
+    "Aggressive Risk",
+    "Neutral Risk",
+    "Conservative Risk",
+    "Portfolio Manager",
+  ]) {
+    assert.match(landing, new RegExp(role));
+  }
+  assert.match(landing, /twelve specialist roles/i);
+  assert.doesNotMatch(landing, /seven specialists/i);
+  assert.doesNotMatch(coverage, /research-roster|The desk|specialistRoles/);
+});
+
 test("landing explains what one analysis credit researches without overclaiming provenance", async () => {
   const coverage = await read("src/components/research/ResearchCoverage.tsx");
   assert.match(coverage, /What one credit buys/);
-  assert.match(coverage, /Twelve specialists/);
-  assert.match(coverage, /Market Analyst/);
-  assert.match(coverage, /Sentiment Analyst/);
-  assert.match(coverage, /News Analyst/);
-  assert.match(coverage, /Fundamentals Analyst/);
+  assert.match(coverage, /A full research process/);
   assert.match(coverage, /Bull Researcher/);
   assert.match(coverage, /Bear Researcher/);
   assert.match(coverage, /Research Manager/);
