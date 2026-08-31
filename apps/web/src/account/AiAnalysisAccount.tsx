@@ -7,6 +7,7 @@ import type {
   AiAnalysisViewerResponse,
 } from "@stock-autotrader/contracts";
 import { getAiAnalysisHistory, getAiAnalysisViewer } from "../ai-analysis/api";
+import { createCreditCheckout, getBillingStatus } from "./billing-api";
 
 const historyDateFormatter = new Intl.DateTimeFormat("en-US", {
   day: "numeric",
@@ -58,6 +59,9 @@ export function AiAnalysisAccount() {
   const [viewerError, setViewerError] = useState(false);
   const [history, setHistory] = useState<HistoryState>(initialHistoryState);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [buyingCredits, setBuyingCredits] = useState(false);
+  const [creditPurchaseError, setCreditPurchaseError] = useState(false);
+  const [creditsConfigured, setCreditsConfigured] = useState(false);
   const [requestVersion, setRequestVersion] = useState(0);
   const moreControllerRef = useRef<AbortController | null>(null);
   const loadingMoreRef = useRef(false);
@@ -73,6 +77,7 @@ export function AiAnalysisAccount() {
     setViewerLoading(true);
     setViewerError(false);
     setHistory(initialHistoryState);
+    setCreditsConfigured(false);
 
     void getAiAnalysisViewer(controller.signal)
       .then(setViewer)
@@ -96,6 +101,12 @@ export function AiAnalysisAccount() {
         if (!controller.signal.aborted) {
           setHistory((current) => ({ ...current, loading: false, error: true }));
         }
+      });
+
+    void getBillingStatus(controller.signal)
+      .then((status) => setCreditsConfigured(status.creditsConfigured))
+      .catch(() => {
+        if (!controller.signal.aborted) setCreditsConfigured(false);
       });
 
     return () => controller.abort();
@@ -130,6 +141,17 @@ export function AiAnalysisAccount() {
     }
   };
 
+  const buyCredits = async () => {
+    setBuyingCredits(true);
+    setCreditPurchaseError(false);
+    try {
+      window.location.assign(await createCreditCheckout());
+    } catch {
+      setBuyingCredits(false);
+      setCreditPurchaseError(true);
+    }
+  };
+
   const credits = viewer?.creditsRemaining;
   const initialLoadFailed = !history.loading && history.error && history.items.length === 0;
 
@@ -155,12 +177,21 @@ export function AiAnalysisAccount() {
           {!viewerLoading && !viewer ? <strong>Unavailable</strong> : null}
         </div>
         {credits === 0 ? <p>You have no analysis credits available.</p> : null}
+        {creditsConfigured ? <button
+          className="investor-hub-secondary-button"
+          type="button"
+          disabled={buyingCredits}
+          onClick={() => void buyCredits()}
+        >
+          {buyingCredits ? "Opening…" : "Buy credits"}
+        </button> : null}
         {viewerError ? (
           <button className="investor-hub-text-button" type="button" onClick={reload}>
             <RefreshCcw size={13} aria-hidden="true" /> Retry
           </button>
         ) : null}
       </div>
+      {creditPurchaseError ? <p className="investor-hub-error" role="alert">Credit checkout is temporarily unavailable.</p> : null}
 
       <div className="investor-ai-history-heading">
         <h3>Analysis history</h3>

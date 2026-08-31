@@ -12,6 +12,11 @@ vi.mock("../ai-analysis/api", () => ({
   getAiAnalysisHistory: apiMocks.getHistory,
 }));
 
+vi.mock("./billing-api", () => ({
+  getBillingStatus: vi.fn().mockResolvedValue({ configured: true, creditsConfigured: true, subscription: null }),
+  createCreditCheckout: vi.fn(),
+}));
+
 import { AiAnalysisAccount } from "./AiAnalysisAccount";
 
 const firstRun = "11111111-1111-4111-8111-111111111111";

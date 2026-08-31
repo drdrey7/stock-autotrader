@@ -17,8 +17,8 @@
     "db:seed:local": "node scripts/seed.mjs --local"
   },
   "dependencies": {
-    "@stock-autotrader/contracts": "*",
     "@better-auth/infra": "^0.4.3",
+    "@stock-autotrader/contracts": "*",
     "better-auth": "^1.7.1",
     "lightweight-charts": "5.2.0",
     "lucide-react": "^0.468.0",
@@ -28,6 +28,7 @@
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7.8.0",
     "remark-gfm": "^4.0.1",
+    "stripe": "^22.4.0",
     "zod": "^4.0.17"
   },
   "devDependencies": {

@@ -280,6 +280,69 @@
   margin-top: 28px;
 }
 
+.investor-billing {
+  margin-top: 28px;
+}
+
+.investor-billing-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  padding: 20px;
+}
+
+.investor-billing-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: var(--brand-blue-soft);
+  color: var(--brand-blue-strong);
+}
+
+.investor-billing-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.investor-billing-copy > span,
+.investor-billing-copy small,
+.investor-billing-note {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.investor-billing-copy strong {
+  color: var(--text);
+  font-size: 18px;
+}
+
+.investor-billing-copy small {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 3px;
+}
+
+.investor-billing-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.investor-billing-actions .investor-hub-primary-button,
+.investor-billing-actions .investor-hub-secondary-button {
+  padding: 0 15px;
+}
+
+.investor-billing-note {
+  margin: 10px 0 0;
+}
+
 .investor-ai-heading {
   display: flex;
   align-items: flex-end;
@@ -520,6 +583,21 @@
   .investor-ai-heading {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .investor-billing-card {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .investor-billing-card > .investor-hub-secondary-button,
+  .investor-billing-actions,
+  .investor-billing-card > .investor-hub-text-button {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .investor-billing-actions {
+    display: grid;
   }
 
   .investor-hub-primary-link {

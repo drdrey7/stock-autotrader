@@ -23,6 +23,10 @@ vi.mock("./AiAnalysisAccount", () => ({
   AiAnalysisAccount: () => <section aria-label="AI analysis account test section" />,
 }));
 
+vi.mock("./BillingAccount", () => ({
+  BillingAccount: () => <section aria-label="Billing account test section" />,
+}));
+
 import InvestorHubPage from "./InvestorHubPage";
 
 function renderHub() {
@@ -101,6 +105,7 @@ describe("Investor Hub", () => {
 
     expect(screen.getByRole("heading", { name: "Test User" })).toBeInTheDocument();
     expect(screen.getByText("test@example.com")).toBeInTheDocument();
+    expect(screen.getByLabelText("Billing account test section")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
 
     await waitFor(() => expect(authMocks.signOut).toHaveBeenCalledTimes(1));
