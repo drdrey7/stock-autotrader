@@ -106,41 +106,24 @@ jobs:
             echo "AI Web preview artifact must not contain symlinks" >&2
             exit 1
           fi
-          rm -rf apps/ai-web/dist
+          if find "$ASSET_DIR" ! -type f ! -type d -print -quit | grep -q .; then
+            echo "AI Web preview artifact contains unsupported filesystem entries" >&2
+            exit 1
+          fi
+          # workflow_run always executes from the default branch while holding
+          # Cloudflare credentials. Trusted Worker code + bindings come from
+          # .github/preview/ai-web on main. PR-controlled content contributes
+          # only the already-built static dist assets.
+          test -f .github/preview/ai-web/worker.js || { echo "Trusted AI Web worker missing" >&2; exit 1; }
+          test -f .github/preview/ai-web/wrangler.preview.jsonc || { echo "Trusted AI Web preview config missing" >&2; exit 1; }
+          grep -q 'AI_BACKEND' .github/preview/ai-web/wrangler.preview.jsonc
+          grep -q 'run_worker_first' .github/preview/ai-web/wrangler.preview.jsonc
+          grep -q 'cross_site_request_rejected' .github/preview/ai-web/worker.js
+          rm -rf apps/ai-web
           mkdir -p apps/ai-web/dist
           cp -R "$ASSET_DIR/." apps/ai-web/dist/
-          # This workflow intentionally checks out main because it receives
-          # Cloudflare credentials. Recreate the small, trusted deployment
-          # manifest here; the PR-controlled artifact contributes only the
-          # already-built server and client assets above.
-          cat > apps/ai-web/wrangler.preview.jsonc <<'EOF'
-          {
-            "$schema": "https://unpkg.com/wrangler@4.125.0/config-schema.json",
-            "name": "ai-web-preview",
-            "main": "./worker.js",
-            "compatibility_date": "2026-08-29",
-            "compatibility_flags": ["nodejs_compat"],
-            "workers_dev": true,
-            "preview_urls": true,
-            "assets": {
-              "directory": "./dist",
-              "binding": "ASSETS",
-              "not_found_handling": "single-page-application"
-            },
-            "observability": { "enabled": true, "head_sampling_rate": 1 }
-          }
-          EOF
-          cat > apps/ai-web/worker.js <<'EOF'
-          export default {
-            async fetch(request, env) {
-              const url = new URL(request.url);
-              if (url.pathname.startsWith('/api/')) return new Response(null, { status: 404 });
-              const response = await env.ASSETS.fetch(request);
-              if (response.status !== 404) return response;
-              return env.ASSETS.fetch(new Request(new URL('/index.html', request.url), request));
-            },
-          };
-          EOF
+          cp .github/preview/ai-web/worker.js apps/ai-web/worker.js
+          cp .github/preview/ai-web/wrangler.preview.jsonc apps/ai-web/wrangler.preview.jsonc
       - name: Publish isolated AI Web Cloudflare preview from trusted code
         working-directory: apps/ai-web
         env:
@@ -158,6 +141,10 @@ jobs:
             --preview-alias "$PREVIEW_ALIAS" \
             --message "AI Web PR #${PR_NUMBER} ${SOURCE_HEAD_SHA}"
       - name: Publish preview URL to PR
+        # The preview is already deployed at this point. Repository-level token
+        # policy can deny issue comments, so keep the URL notification useful
+        # but do not turn a successful, validated deployment into a failed run.
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           PREVIEW_URL: https://pr-${{ env.PR_NUMBER }}-stock-autotrader-preview.barroso-labs.workers.dev

@@ -33,6 +33,8 @@ export interface ShellNavItem {
    * Morning Briefing page.
    */
   paths: string[];
+  /** External AI Web destination when configured by the frontend environment. */
+  external?: boolean;
 }
 
 export interface ShellNavGroup {
@@ -48,7 +50,16 @@ export const shellNavGroups: ShellNavGroup[] = [
       { label: "Heatmap", to: "/heatmap", icon: Flame, paths: ["/heatmap"] },
       { label: "Screener", to: "/screener", icon: ListFilter, paths: ["/screener"] },
       { label: "Earnings", to: "/earnings", icon: CalendarClock, paths: ["/earnings"] },
-      { label: "AI Analysis", to: "/ai-analysis", icon: BrainCircuit, paths: ["/ai-analysis"], matchDescendants: true },
+      {
+        label: "AI Analysis",
+        to: typeof import.meta.env.VITE_AI_WEB_URL === "string" && /^https:\/\//u.test(import.meta.env.VITE_AI_WEB_URL)
+          ? import.meta.env.VITE_AI_WEB_URL
+          : "/ai-analysis",
+        icon: BrainCircuit,
+        paths: ["/ai-analysis"],
+        matchDescendants: true,
+        external: typeof import.meta.env.VITE_AI_WEB_URL === "string" && /^https:\/\//u.test(import.meta.env.VITE_AI_WEB_URL),
+      },
     ],
   },
   {

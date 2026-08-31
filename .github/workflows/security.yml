@@ -66,4 +66,8 @@ jobs:
           fi
           rm -f "$canary"
       - name: Scan Git history for secrets
-        run: gitleaks git --redact --no-banner --exit-code 1 .
+        # Limit to the checked-out commit ancestry. actions/checkout with
+        # fetch-depth: 0 also fetches other remote branches; scanning every
+        # fetched ref false-fails this job on unrelated feature-branch history.
+        run: gitleaks git --log-opts="HEAD" --redact --no-banner --exit-code 1 .
+

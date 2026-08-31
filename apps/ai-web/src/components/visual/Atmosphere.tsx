@@ -1,0 +1,5 @@
+// Decorative market constellation: only the five requested large-cap names.
+// These marks are intentionally non-interactive and never imply endorsement.
+const orbitLogos = ["nvidia", "microsoft", "apple", "amazon", "google"];
+
+export function Atmosphere(){return <div className="atmosphere" aria-hidden="true"><div className="grain"/><div className="stars stars-a"/><div className="stars stars-b"/><div className="nebula nebula-a"/><div className="nebula nebula-b"/><div className="orbit-system"><div className="orbit-ring orbit-ring-a"/><div className="orbit-ring orbit-ring-b"/><div className="orbit-ring orbit-ring-c"/>{orbitLogos.map((logo,index)=><span className={`orbit-logo orbit-logo-${index+1}`} key={logo}><img src={`/brand/${logo}.svg`} alt="" /></span>)}</div><div className="planet"><img className="earth-asset" src="/brand/earth-horizon.jpg" alt=""/><div className="planet-rim"/></div></div>}
