@@ -1,7 +1,5 @@
 import {
   BarChart3,
-  ChevronDown,
-  FileSearch,
   Landmark,
   MessageCircle,
   Newspaper,
@@ -14,42 +12,42 @@ const researchLayers = [
   {
     icon: BarChart3,
     title: "Market & technical research",
-    summary: "OHLCV history, indicator selection and a verified market snapshot before any price claim.",
+    summary: "Price action, candles, indicators and a verified market snapshot.",
     details: [
-      "Historical open / high / low / close / volume",
-      "Complementary indicators: SMA, EMA, MACD, RSI, Bollinger, ATR, VWMA",
-      "Verified market snapshot as the source of truth for exact levels",
-      "Trend, momentum, volatility and volume structure in one market brief",
+      "Historical OHLCV candles: open, high, low, close and volume",
+      "Technical indicators: SMA, EMA, MACD, RSI, Bollinger, ATR and VWMA",
+      "Trend, momentum, volatility and volume structure",
+      "Verified market snapshot before exact price-level claims",
     ],
   },
   {
     icon: MessageCircle,
     title: "Investor sentiment",
-    summary: "Three complementary narrative feeds — not a single social scrape.",
+    summary: "Multiple investor-discussion sources, read together rather than as one social signal.",
     details: [
-      "Yahoo Finance headlines for institutional framing",
-      "StockTwits messages with bullish / bearish tags",
-      "Reddit discussion from r/wallstreetbets, r/stocks and r/investing",
+      "Reddit: r/wallstreetbets, r/stocks and r/investing",
+      "StockTwits messages with bullish / bearish sentiment tags",
+      "Yahoo Finance headlines and market narrative",
       "Confidence notes when a source is thin or unavailable",
     ],
   },
   {
     icon: Newspaper,
     title: "News & macro context",
-    summary: "Company news plus broader world state that can move the name.",
+    summary: "Company-specific developments plus the broader macro environment.",
     details: [
-      "Ticker-specific news over a recent window",
-      "Global / macroeconomic news",
-      "FRED macro series when relevant: CPI, unemployment, Fed funds, 10Y, yield curve",
-      "Prediction-market odds for forward-looking events when available",
+      "Ticker-specific company news over a recent window",
+      "Global and macroeconomic news",
+      "FRED data when relevant: CPI, unemployment, Fed funds, 10Y and yield curve",
+      "Prediction-market context for forward-looking events when available",
     ],
   },
   {
     icon: Landmark,
     title: "Fundamentals & financial statements",
-    summary: "Company profile and reported statements across annual and quarterly cuts.",
+    summary: "Company fundamentals and reported financial statements across annual and quarterly views.",
     details: [
-      "Comprehensive fundamentals overview",
+      "Company profile and comprehensive fundamentals overview",
       "Income statement analysis",
       "Balance sheet analysis",
       "Cash-flow statement analysis",
@@ -57,24 +55,24 @@ const researchLayers = [
   },
   {
     icon: Scale,
-    title: "Bull vs Bear research",
-    summary: "The same evidence is argued from opposite sides, then judged.",
+    title: "Bull vs Bear challenge",
+    summary: "The same evidence is argued from opposite sides before a plan is accepted.",
     details: [
-      "Bull Researcher builds the strongest upside case from the four briefs",
-      "Bear Researcher attacks assumptions and downside paths",
-      "Research Manager evaluates the disagreement and writes the investment plan",
-      "Trader converts that plan into a concrete buy / hold / sell proposal",
+      "Bull Researcher builds the strongest evidence-backed upside case",
+      "Bear Researcher stress-tests assumptions and downside paths",
+      "Research Manager judges the disagreement and writes the investment plan",
+      "Trader converts the plan into a concrete buy / hold / sell proposal",
     ],
   },
   {
     icon: ShieldCheck,
     title: "Three-way risk review & final brief",
-    summary: "The proposed view is challenged from three risk temperaments before the final call.",
+    summary: "Three risk temperaments challenge the proposal before the Portfolio Manager synthesises the result.",
     details: [
       "Aggressive risk analysis",
       "Neutral risk analysis",
       "Conservative risk analysis",
-      "Portfolio Manager synthesises the final view: rating, thesis, optional target and horizon",
+      "Portfolio Manager final view: rating, thesis, optional target and horizon",
     ],
   },
 ] as const;
@@ -85,63 +83,31 @@ export function ResearchCoverage() {
       <div className="editorial-section-head research-coverage-head">
         <span>03 / What one credit buys</span>
         <h2 id="research-coverage-title">
-          One ticker.
+          What they actually
           <br />
-          <em>A full research process.</em>
+          <em>research for you.</em>
         </h2>
         <p>
-          One analysis credit does not buy a chatbot paragraph. It runs the
-          research process above on a single company: four evidence lanes,
-          a bull–bear debate, a trade plan, a three-way risk review, and one
-          structured brief with a final rating.
+          One analysis credit runs the twelve-specialist research process on one
+          company. The value is the evidence gathered across market data,
+          financial statements, news, investor discussion and macro context —
+          then challenged, risk-reviewed and assembled into one final brief.
         </p>
       </div>
 
-      <div className="research-value-strip" aria-label="One credit research workflow">
-        <div>
-          <span>01</span>
-          <b>Evidence</b>
-          <small>Market · sentiment · news · fundamentals</small>
-        </div>
-        <i aria-hidden="true" />
-        <div>
-          <span>02</span>
-          <b>Debate</b>
-          <small>Bull · Bear · Research Manager · Trader</small>
-        </div>
-        <i aria-hidden="true" />
-        <div>
-          <span>03</span>
-          <b>Risk council</b>
-          <small>Aggressive · Neutral · Conservative</small>
-        </div>
-        <i aria-hidden="true" />
-        <div>
-          <span>04</span>
-          <b>Final brief</b>
-          <small>Rating · thesis · optional target</small>
-        </div>
-      </div>
-
-      <div className="research-accordion">
+      <div className="research-coverage-grid" aria-label="Research included in one analysis credit">
         {researchLayers.map(({ icon: Icon, title, summary, details }, index) => (
-          <details key={title} className="research-item" open={index === 0}>
-            <summary>
+          <article className="research-source-card" key={title}>
+            <div className="research-source-card-head">
               <span className="research-item-number">{String(index + 1).padStart(2, "0")}</span>
-              <span className="research-item-icon" aria-hidden="true"><Icon size={18} /></span>
-              <span className="research-item-copy">
-                <b>{title}</b>
-                <small>{summary}</small>
-              </span>
-              <ChevronDown className="research-chevron" size={20} aria-hidden="true" />
-            </summary>
-            <div className="research-item-body">
-              <FileSearch size={17} aria-hidden="true" />
-              <ul>
-                {details.map((detail) => <li key={detail}>{detail}</li>)}
-              </ul>
+              <span className="research-item-icon" aria-hidden="true"><Icon size={19} /></span>
             </div>
-          </details>
+            <h3>{title}</h3>
+            <p>{summary}</p>
+            <ul>
+              {details.map((detail) => <li key={detail}>{detail}</li>)}
+            </ul>
+          </article>
         ))}
       </div>
 
