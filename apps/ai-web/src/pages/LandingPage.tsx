@@ -152,7 +152,7 @@ export function LandingPage() {
             <div className="artifact-bar">
               <span>● ● ●</span>
               <small>ILLUSTRATIVE REPORT</small>
-              <small>UPDATED 10:24 UTC</small>
+              <small>SAMPLE PREVIEW</small>
             </div>
             <div className="artifact-title">
               <div>

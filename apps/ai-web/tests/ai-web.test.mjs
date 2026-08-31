@@ -132,8 +132,36 @@ test("public copy contains no unsupported social proof", async () => {
   const landing = await read("src/pages/LandingPage.tsx");
   assert.doesNotMatch(landing, /99\.9|50K|users|testimonials|average analysis time/i);
   assert.doesNotMatch(landing, /Invite a friend|receive one analysis credit/i);
+  assert.doesNotMatch(landing, /UPDATED\s+\d{1,2}:\d{2}\s+UTC/i);
   assert.match(landing, /referral rewards are not available/i);
   assert.match(landing, /Multi-Agent AI Research/);
+  assert.match(landing, /ILLUSTRATIVE REPORT/);
+  assert.match(landing, /SAMPLE PREVIEW/);
+});
+
+test("auth return path rejects open redirects", async () => {
+  const [authPage, returnPath] = await Promise.all([
+    read("src/pages/AuthPage.tsx"),
+    read("src/lib/auth/return-path.ts"),
+  ]);
+  assert.match(authPage, /safeReturnPath/);
+  assert.match(returnPath, /startsWith\("\/\/"\)/);
+  assert.match(returnPath, /includes\("\\\\"\)/);
+  assert.match(returnPath, /%5c/i);
+  assert.match(returnPath, /parsed\.origin/);
+});
+
+test("landing CSS keeps current editorial surface and drops superseded generations", async () => {
+  const css = await read("src/styles/globals.css");
+  assert.match(css, /@keyframes drift\{to\{transform:translate\(3%, 2%\)\}\}/);
+  assert.doesNotMatch(css, /translate3%,\s*2%/);
+  assert.match(css, /\.editorial-page/);
+  assert.match(css, /\.agent-network/);
+  assert.match(css, /\.sponsor-rail/);
+  assert.match(css, /\.atmosphere/);
+  assert.match(css, /\.orbit-logo/);
+  assert.doesNotMatch(css, /\.film-section|\.proof-rail|\.market-constellation|\.network-svg|\.use-case-section|\.argument-card|\.hero-section\b/);
+  assert.doesNotMatch(css, /nebula-editorial\.svg/);
 });
 
 test("workspace reuses pending analysis idempotency keys", async () => {

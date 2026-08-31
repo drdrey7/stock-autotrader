@@ -3,6 +3,7 @@ import { FormEvent, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Shell } from "../components/layout/Shell";
 import { AuthApiError, signIn, signUp } from "../lib/api/auth";
+import { safeReturnPath } from "../lib/auth/return-path";
 
 function authMessage(error: unknown): string {
   if (error instanceof AuthApiError) {
@@ -12,18 +13,6 @@ function authMessage(error: unknown): string {
     return error.code.replaceAll("_", " ");
   }
   return "Could not complete authentication. Check your connection and try again.";
-}
-
-function safeReturnPath(next: string | null): string {
-  if (!next || !next.startsWith("/") || next.startsWith("//") || next.includes("\\")) return "/app";
-
-  try {
-    const parsed = new URL(next, window.location.origin);
-    if (parsed.origin !== window.location.origin) return "/app";
-    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
-  } catch {
-    return "/app";
-  }
 }
 
 export function AuthPage() {

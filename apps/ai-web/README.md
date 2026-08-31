@@ -1,8 +1,9 @@
 # AI Web
 
 `apps/ai-web` is the standalone public AI Analytics frontend. It uses React,
-TypeScript and Vite, with Motion and GSAP for interaction and scroll-driven
-motion. The private Stock AutoTrader frontend remains in `apps/web`.
+TypeScript, Vite and Tailwind, with Motion for landing motion. The private
+Stock AutoTrader frontend remains in `apps/web`.
+
 
 ## Local development
 
@@ -28,7 +29,10 @@ npx wrangler deploy --config apps/ai-web/wrangler.preview.jsonc --dry-run
 
 The preview config deploys a separate `ai-web-preview` Worker with one
 `AI_BACKEND` service binding to `stock-autotrader-web`. It has no direct D1,
-Queue, cron, secret or production-route binding.
+Queue, cron, secret or production-route binding. Binding the real backend for
+authenticated end-to-end PR testing is an accepted trust trade-off for this
+private repository; see `docs/ai-web/IMPLEMENTATION.md`.
+
 
 ```bash
 npm run deploy:preview -w @stock-autotrader/ai-web

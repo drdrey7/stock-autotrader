@@ -45,6 +45,22 @@ The workspace reads the real catalog, credits and history. Auth uses the
 existing Better Auth email/password endpoints; no second authentication system
 is introduced.
 
+## Preview trust model (accepted)
+
+PR previews intentionally bind `AI_BACKEND` to the existing `stock-autotrader-web`
+Worker so authenticated AI Analysis flows can be exercised end-to-end before
+merge. The repository is private, PR authors are controlled, and the trusted
+preview publisher checks out default-branch Worker code before applying
+credentials. PR-controlled content contributes built static assets only.
+
+This is an accepted pre-merge trust trade-off: full product validation against
+the real backend is required. Production launch still needs a public domain,
+abuse controls and commercial hardening. This PR does **not** introduce a second
+staging D1/Queue/auth backend.
+
+Do not treat preview access as a substitute for production isolation. Reviewers
+should avoid using production-only credentials in preview browsers when possible.
+
 ## Remaining launch work
 
 Stripe, credit purchases, final pricing, the production public domain, abuse
