@@ -14,6 +14,18 @@ function authMessage(error: unknown): string {
   return "Could not complete authentication. Check your connection and try again.";
 }
 
+function safeReturnPath(next: string | null): string {
+  if (!next || !next.startsWith("/") || next.startsWith("//") || next.includes("\\")) return "/app";
+
+  try {
+    const parsed = new URL(next, window.location.origin);
+    if (parsed.origin !== window.location.origin) return "/app";
+    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  } catch {
+    return "/app";
+  }
+}
+
 export function AuthPage() {
   const [signup, setSignup] = useState(false);
   const [name, setName] = useState("");
@@ -24,7 +36,7 @@ export function AuthPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const next = new URLSearchParams(location.search).get("next");
-  const destination = next?.startsWith("/") && !next.startsWith("//") ? next : "/app";
+  const destination = safeReturnPath(next);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
