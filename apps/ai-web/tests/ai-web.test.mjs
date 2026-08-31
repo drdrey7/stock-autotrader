@@ -126,6 +126,16 @@ test("completed reports render every normalized backend section", async () => {
     assert.match(report, new RegExp(field.replace(".", "\\.")));
   }
   assert.match(report, /Final View/);
+  // Production report hierarchy: hero header + numbered sections + opposing panels.
+  assert.match(report, /report-hero/);
+  assert.match(report, /report-meta-grid/);
+  assert.match(report, /Bull vs Bear/);
+  assert.match(report, /debate-panel-bull/);
+  assert.match(report, /debate-panel-bear/);
+  assert.match(report, /Risk Council/);
+  assert.match(report, /risk-council/);
+  assert.match(report, /RecommendationBadge/);
+    assert.match(report, /"report-marker">06</);
 });
 
 test("public copy contains no unsupported social proof", async () => {

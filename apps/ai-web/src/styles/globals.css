@@ -267,6 +267,47 @@ a:focus-visible,button:focus-visible,input:focus-visible,summary:focus-visible{o
 .report-disclaimer{margin:14px 0 8px;color:var(--muted);line-height:1.7;max-width:640px}
 .report-page .report-block{display:grid;grid-template-columns:42px 1fr;gap:18px}
 .report-page .report-block > span{font:11px 'DM Mono',monospace;color:var(--teal);letter-spacing:.08em}
+.report-page .report-block > div{min-width:0}
+
+/* Report hero: ticker, company, verdict, meta grid. */
+.report-hero{border:1px solid var(--line);background:linear-gradient(150deg,var(--panel),rgba(4,14,21,.55));padding:36px 38px 30px;margin-bottom:54px;position:relative;overflow:hidden}
+.report-hero:before{content:'';position:absolute;inset:-60% 40% auto -40%;height:150px;background:#42e6dd11;filter:blur(36px);pointer-events:none}
+.report-hero-top{display:flex;justify-content:space-between;align-items:center;gap:14px;font:10px 'DM Mono',monospace;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.report-status{color:var(--teal);border:1px solid var(--line);border-radius:999px;padding:5px 12px}
+.report-hero-title{display:flex;justify-content:space-between;align-items:flex-end;gap:20px;margin:26px 0 8px;flex-wrap:wrap}
+.report-hero-title h1{margin:0;font-size:clamp(3rem,6vw,5rem);line-height:.95;letter-spacing:-.07em}
+.report-company{display:block;font-size:clamp(1rem,2vw,1.4rem);font-weight:600;color:var(--muted);margin-top:10px;letter-spacing:-.02em}
+.report-hero-verdict{display:flex;flex-direction:column;align-items:flex-end;gap:10px;padding-bottom:6px}
+.report-date{font:11px 'DM Mono',monospace;color:var(--muted);letter-spacing:.06em;text-transform:uppercase}
+.rec-badge{font:600 11px 'DM Mono',monospace;letter-spacing:.12em;text-transform:uppercase;border-radius:6px;padding:7px 13px;border:1px solid var(--line)}
+.rec-badge-positive{color:#57e0b2;border-color:#57e0b255;background:#57e0b20f}
+.rec-badge-negative{color:#ff7a85;border-color:#ff7a8555;background:#ff7a850f}
+.rec-badge-neutral{color:#e7c96a;border-color:#e7c96a55;background:#e7c96a0f}
+.report-meta-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);margin-top:26px}
+.report-meta{background:#060e14;padding:15px 17px}
+.report-meta span{display:block;font:9px 'DM Mono',monospace;color:var(--muted);letter-spacing:.12em;text-transform:uppercase;margin-bottom:7px}
+.report-meta b{color:var(--ink);font-size:14px;font-weight:650;line-height:1.35}
+
+/* Sub-section labels inside combined blocks. */
+.sub-section-label{font:10px 'DM Mono',monospace;color:var(--teal);letter-spacing:.12em;text-transform:uppercase;margin:0 0 10px}
+.news-sentiment,.research-trader{display:grid;grid-template-columns:1fr 1fr;gap:26px;margin-top:6px}
+
+/* 06 — Bull vs Bear side-by-side. */
+.debate-panels{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:6px}
+.debate-panel,.risk-panel,.news-sentiment>div,.research-trader>div{min-width:0;overflow-wrap:anywhere}
+.debate-panel{border:1px solid var(--line);border-top-width:3px;padding:22px 22px 6px;background:linear-gradient(150deg,rgba(10,30,38,.5),rgba(4,12,18,.3))}
+.debate-panel-bull{border-top-color:#57e0b2}
+.debate-panel-bear{border-top-color:#ff7a85}
+.debate-panel-label{font:600 11px 'DM Mono',monospace;letter-spacing:.12em;text-transform:uppercase;margin-bottom:12px}
+.debate-panel-bull .debate-panel-label{color:#57e0b2}
+.debate-panel-bear .debate-panel-label{color:#ff7a85}
+
+/* 08 — Risk Council: three temperaments. */
+.risk-council{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);border:1px solid var(--line);margin-top:6px}
+.risk-panel{background:#060e14;padding:20px 22px 8px}
+.risk-panel-label{font:600 10px 'DM Mono',monospace;color:var(--teal);letter-spacing:.12em;text-transform:uppercase;margin-bottom:12px}
+.risk-panel:nth-child(2) .risk-panel-label{color:#e7c96a}
+.risk-panel:nth-child(3) .risk-panel-label{color:#7fa8ff}
 @media(max-width:1024px){
 .workspace.page,.report-page.page,.account-page.page{padding:105px 20px 70px}
 .workspace-head{display:block}
@@ -274,4 +315,12 @@ a:focus-visible,button:focus-visible,input:focus-visible,summary:focus-visible{o
 .workspace-form .primary-button{width:100%;margin-top:10px}
 .credit-chip{margin-top:18px}
 .report-page .report-block{grid-template-columns:28px 1fr;gap:12px}
+.report-hero{padding:26px 20px 22px}
+.report-hero-top{flex-direction:column;align-items:flex-start;gap:10px}
+.report-hero-title{flex-direction:column;align-items:flex-start;gap:16px}
+.report-hero-verdict{align-items:flex-start}
+.debate-panels,.news-sentiment,.research-trader{grid-template-columns:1fr}
+.risk-council{grid-template-columns:1fr}
+.report-meta-grid{grid-template-columns:1fr 1fr}
 }
+@media(max-width:430px){.report-meta-grid{grid-template-columns:1fr}}

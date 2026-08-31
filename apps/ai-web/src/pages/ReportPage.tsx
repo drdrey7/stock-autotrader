@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import type { AiAnalysisRunResponse } from "@stock-autotrader/contracts";
+import type { AiAnalysisRunResponse, AiAnalysisResultV1 } from "@stock-autotrader/contracts";
 import { Shell } from "../components/layout/Shell";
 import { SafeMarkdown } from "../components/report/SafeMarkdown";
 import { AiAnalysisApiError, getAiAnalysisRun } from "../lib/api/analysis";
@@ -29,6 +29,242 @@ function ReportBody({ children }: { children: string | null | undefined }) {
     return <p className="muted">No content was returned for this section.</p>;
   }
   return <SafeMarkdown>{content}</SafeMarkdown>;
+}
+
+function RecommendationBadge({ value }: { value: AiAnalysisResultV1["recommendation"] }) {
+  const tone = value.toLowerCase().includes("buy") || value === "OVERWEIGHT"
+    ? "positive"
+    : value === "SELL" || value === "UNDERWEIGHT"
+      ? "negative"
+      : "neutral";
+  return <span className={`rec-badge rec-badge-${tone}`}>{value}</span>;
+}
+
+/** 06 — Bull vs Bear shown as two opposing panels side-by-side on desktop. */
+function DebateSection({ bull, bear }: { bull: string | null; bear: string | null }) {
+  return (
+    <section className="report-block" aria-label="Bull vs Bear">
+      <span className="report-marker">06</span>
+      <div>
+        <h2>Bull vs Bear</h2>
+        <div className="debate-panels">
+          <div className="debate-panel debate-panel-bull">
+            <div className="debate-panel-label">Bull case</div>
+            <ReportBody>{bull}</ReportBody>
+          </div>
+          <div className="debate-panel debate-panel-bear">
+            <div className="debate-panel-label">Bear case</div>
+            <ReportBody>{bear}</ReportBody>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/** 08 — Risk Council: three temperaments reviewing the same proposal. */
+function RiskCouncil({
+  aggressive,
+  neutral,
+  conservative,
+}: {
+  aggressive: string | null;
+  neutral: string | null;
+  conservative: string | null;
+}) {
+  return (
+    <section className="report-block" aria-label="Risk Council">
+      <span className="report-marker">08</span>
+      <div>
+        <h2>Risk Council</h2>
+        <div className="risk-council">
+          <div className="risk-panel">
+            <div className="risk-panel-label">Aggressive</div>
+            <ReportBody>{aggressive}</ReportBody>
+          </div>
+          <div className="risk-panel">
+            <div className="risk-panel-label">Neutral</div>
+            <ReportBody>{neutral}</ReportBody>
+          </div>
+          <div className="risk-panel">
+            <div className="risk-panel-label">Conservative</div>
+            <ReportBody>{conservative}</ReportBody>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/** Rich completed-report view. Pure presentation; safe to snapshot/test. */
+export function CompletedReport({ run }: { run: Extract<AiAnalysisRunResponse, { status: "completed" }> }) {
+  const result = run.result;
+  const date = result.analysisDate
+    ? new Date(`${result.analysisDate}T00:00:00Z`).toLocaleDateString(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        timeZone: "UTC",
+      })
+    : "";
+
+  return (
+    <main className="report-page page">
+      {/* Header */}
+      <header className="report-hero">
+        <div className="report-hero-top">
+          <div className="section-kicker">
+            Analysis / Report / {run.symbol}
+          </div>
+          <span className="report-status">Completed</span>
+        </div>
+        <div className="report-hero-title">
+          <h1>
+            {run.symbol}
+            <span className="report-company">{run.company}</span>
+          </h1>
+          <div className="report-hero-verdict">
+            <RecommendationBadge value={result.recommendation} />
+            <span className="report-date">{date}</span>
+          </div>
+        </div>
+        <div className="report-meta-grid">
+          {result.priceTarget !== null && (
+            <div className="report-meta">
+              <span>Price target</span>
+              <b>{typeof result.priceTarget === "number" ? `$${result.priceTarget.toLocaleString()}` : result.priceTarget}</b>
+            </div>
+          )}
+          {result.timeHorizon !== null && (
+            <div className="report-meta">
+              <span>Time horizon</span>
+              <b>{result.timeHorizon}</b>
+            </div>
+          )}
+          <div className="report-meta">
+            <span>Engine</span>
+            <b>{result.engine.name} · {result.engine.version}</b>
+          </div>
+          <div className="report-meta">
+            <span>Recommendation</span>
+            <b>{result.recommendation}</b>
+          </div>
+        </div>
+        <p className="report-disclaimer">
+          AI-generated research for informational purposes only. Not financial
+          advice. Generated {result.generatedAt ? new Date(result.generatedAt).toLocaleString() : ""} by
+          {` ${result.engine.provider} (${result.engine.deepModel})`}.
+        </p>
+      </header>
+
+      {/* 01 — Executive Summary */}
+      <section className="report-block" aria-label="Executive Summary">
+        <span className="report-marker">01</span>
+        <div>
+          <h2>Executive Summary</h2>
+          <ReportBody>{result.executiveSummary}</ReportBody>
+        </div>
+      </section>
+
+      {/* 02 — Investment Thesis */}
+      <section className="report-block" aria-label="Investment Thesis">
+        <span className="report-marker">02</span>
+        <div>
+          <h2>Investment Thesis</h2>
+          <ReportBody>{result.investmentThesis}</ReportBody>
+        </div>
+      </section>
+
+      {/* 03 — Market & Technical */}
+      <section className="report-block" aria-label="Market and Technical">
+        <span className="report-marker">03</span>
+        <div>
+          <h2>Market &amp; Technical</h2>
+          <ReportBody>{result.reports.marketAndTechnical}</ReportBody>
+        </div>
+      </section>
+
+      {/* 04 — Fundamentals */}
+      <section className="report-block" aria-label="Fundamentals">
+        <span className="report-marker">04</span>
+        <div>
+          <h2>Fundamentals</h2>
+          <ReportBody>{result.reports.fundamentals}</ReportBody>
+        </div>
+      </section>
+
+      {/* 05 — News & Sentiment */}
+      <section className="report-block" aria-label="News and Sentiment">
+        <span className="report-marker">05</span>
+        <div>
+          <h2>News &amp; Sentiment</h2>
+          <div className="news-sentiment">
+            <div>
+              <div className="sub-section-label">News</div>
+              <ReportBody>{result.reports.news}</ReportBody>
+            </div>
+            <div>
+              <div className="sub-section-label">Sentiment</div>
+              <ReportBody>{result.reports.sentiment}</ReportBody>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* 06 — Bull vs Bear */}
+      <DebateSection bull={result.reports.bullCase} bear={result.reports.bearCase} />
+
+      {/* 07 — Research Manager & Trader Plan */}
+      <section className="report-block" aria-label="Research Manager and Trader Plan">
+        <span className="report-marker">07</span>
+        <div>
+          <h2>Research Manager &amp; Trader</h2>
+          <div className="research-trader">
+            <div>
+              <div className="sub-section-label">Research Manager</div>
+              <ReportBody>{result.reports.researchManager}</ReportBody>
+            </div>
+            <div>
+              <div className="sub-section-label">Trader Plan</div>
+              <ReportBody>{result.reports.traderPlan}</ReportBody>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* 08 — Risk Council */}
+      <RiskCouncil
+        aggressive={result.reports.risk.aggressive}
+        neutral={result.reports.risk.neutral}
+        conservative={result.reports.risk.conservative}
+      />
+
+      {/* 09 — Portfolio Manager */}
+      <section className="report-block" aria-label="Portfolio Manager">
+        <span className="report-marker">09</span>
+        <div>
+          <h2>Portfolio Manager</h2>
+          <ReportBody>{result.reports.portfolioManager}</ReportBody>
+        </div>
+      </section>
+
+      {/* 10 — Final View */}
+      <section className="report-block report-final-view" aria-label="Final View">
+        <span className="report-marker">10</span>
+        <div>
+          <h2>Final View</h2>
+          <dl>
+            <div><dt>Recommendation</dt><dd>{result.recommendation}</dd></div>
+            {result.priceTarget !== null && <div><dt>Price Target</dt><dd>${typeof result.priceTarget === "number" ? result.priceTarget.toLocaleString() : result.priceTarget}</dd></div>}
+            {result.timeHorizon !== null && <div><dt>Time Horizon</dt><dd>{result.timeHorizon}</dd></div>}
+            <div><dt>Generated</dt><dd>{result.generatedAt ? new Date(result.generatedAt).toLocaleString() : ""}</dd></div>
+          </dl>
+        </div>
+      </section>
+
+      <Link className="text-link" to="/app">Back to workspace</Link>
+    </main>
+  );
 }
 
 export function ReportPage() {
@@ -93,40 +329,5 @@ export function ReportPage() {
     return <Shell><main className="report-page page"><div className="section-kicker">Analysis / Invalid state</div><h1>Report <em>unavailable.</em></h1><p className="report-disclaimer">The backend returned an unexpected analysis state.</p><Link className="text-link" to="/app">Back to workspace</Link></main></Shell>;
   }
 
-  const result = run.result;
-  const sections = [
-    ["Executive Summary", result.executiveSummary],
-    ["Investment Thesis", result.investmentThesis],
-    ["Bull Case", result.reports.bullCase],
-    ["Bear Case", result.reports.bearCase],
-    ["Fundamentals", result.reports.fundamentals],
-    ["Market & Technical", result.reports.marketAndTechnical],
-    ["News", result.reports.news],
-    ["Sentiment", result.reports.sentiment],
-    ["Research Manager", result.reports.researchManager],
-    ["Trader Plan", result.reports.traderPlan],
-    ["Risk · Aggressive", result.reports.risk.aggressive],
-    ["Risk · Neutral", result.reports.risk.neutral],
-    ["Risk · Conservative", result.reports.risk.conservative],
-    ["Portfolio Manager", result.reports.portfolioManager],
-  ] as const;
-
-  return <Shell><main className="report-page page">
-    <div className="section-kicker">{run.symbol} / {run.company} / {result.analysisDate}</div>
-    <h1>{result.recommendation}<br/><em>{result.priceTarget ? `Target ${result.priceTarget}` : "Structured research"}</em></h1>
-    <p className="report-disclaimer">AI-generated research for informational purposes only. Not financial advice.{result.timeHorizon ? ` Time horizon: ${result.timeHorizon}` : ""}</p>
-    {sections.map(([title, content], index) => <section className="report-block" key={title}><span>{String(index + 1).padStart(2, "0")}</span><div><h2>{title}</h2><ReportBody>{content}</ReportBody></div></section>)}
-    <section className="report-block report-final-view">
-      <span>{String(sections.length + 1).padStart(2, "0")}</span>
-      <div>
-        <h2>Final View</h2>
-        <dl>
-          <div><dt>Recommendation</dt><dd>{result.recommendation}</dd></div>
-          {result.priceTarget !== null && <div><dt>Price Target</dt><dd>{result.priceTarget}</dd></div>}
-          {result.timeHorizon !== null && <div><dt>Time Horizon</dt><dd>{result.timeHorizon}</dd></div>}
-        </dl>
-      </div>
-    </section>
-    <Link className="text-link" to="/app">Back to workspace</Link>
-  </main></Shell>;
+  return <Shell><CompletedReport run={run} /></Shell>;
 }
