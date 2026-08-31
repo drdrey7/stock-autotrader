@@ -10,22 +10,6 @@ import {
 } from "lucide-react";
 import "./research-coverage.css";
 
-/** Public product labels for the real multi-agent analysis graph. */
-const specialistRoles = [
-  { stage: "01", title: "Market Analyst", focus: "Price, volume and technical structure" },
-  { stage: "02", title: "Sentiment Analyst", focus: "Retail narrative and discussion tone" },
-  { stage: "03", title: "News Analyst", focus: "Company news, macro and event odds" },
-  { stage: "04", title: "Fundamentals Analyst", focus: "Statements, quality and capital" },
-  { stage: "05", title: "Bull Researcher", focus: "Strongest evidence-backed upside case" },
-  { stage: "06", title: "Bear Researcher", focus: "Assumption stress-test and downside" },
-  { stage: "07", title: "Research Manager", focus: "Judges the debate and sets the plan" },
-  { stage: "08", title: "Trader", focus: "Turns research into a concrete plan" },
-  { stage: "09", title: "Aggressive Risk", focus: "Higher-conviction risk lens" },
-  { stage: "10", title: "Neutral Risk", focus: "Balanced risk lens" },
-  { stage: "11", title: "Conservative Risk", focus: "Capital-preservation risk lens" },
-  { stage: "12", title: "Portfolio Manager", focus: "Final rating, thesis and target" },
-] as const;
-
 const researchLayers = [
   {
     icon: BarChart3,
@@ -103,11 +87,11 @@ export function ResearchCoverage() {
         <h2 id="research-coverage-title">
           One ticker.
           <br />
-          <em>Twelve specialists.</em>
+          <em>A full research process.</em>
         </h2>
         <p>
-          One analysis credit does not buy a chatbot paragraph. It runs a full
-          multi-agent research desk on a single company: four evidence lanes,
+          One analysis credit does not buy a chatbot paragraph. It runs the
+          research process above on a single company: four evidence lanes,
           a bull–bear debate, a trade plan, a three-way risk review, and one
           structured brief with a final rating.
         </p>
@@ -137,22 +121,6 @@ export function ResearchCoverage() {
           <b>Final brief</b>
           <small>Rating · thesis · optional target</small>
         </div>
-      </div>
-
-      <div className="research-roster" aria-label="Specialist research roles">
-        <div className="research-roster-head">
-          <span>The desk</span>
-          <p>Each run sequences twelve specialist roles over the same ticker.</p>
-        </div>
-        <ol className="research-roster-grid">
-          {specialistRoles.map((role) => (
-            <li key={role.title}>
-              <span>{role.stage}</span>
-              <b>{role.title}</b>
-              <small>{role.focus}</small>
-            </li>
-          ))}
-        </ol>
       </div>
 
       <div className="research-accordion">
