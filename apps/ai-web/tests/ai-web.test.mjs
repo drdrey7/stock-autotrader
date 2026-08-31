@@ -191,35 +191,29 @@ test("landing mirrors the canonical twelve-stage research sequence without repet
   assert.doesNotMatch(coverage, /research-roster|The desk|specialistRoles/);
 });
 
-test("landing explains what one analysis credit researches without overclaiming provenance", async () => {
+test("one-credit section exposes valuable research sources without interaction", async () => {
   const coverage = await read("src/components/research/ResearchCoverage.tsx");
   assert.match(coverage, /What one credit buys/);
-  assert.match(coverage, /A full research process/);
-  assert.match(coverage, /Bull Researcher/);
-  assert.match(coverage, /Bear Researcher/);
-  assert.match(coverage, /Research Manager/);
-  assert.match(coverage, /Portfolio Manager/);
-  assert.match(coverage, /Reddit discussion from r\/wallstreetbets/);
+  assert.match(coverage, /What they actually/);
+  assert.match(coverage, /Historical OHLCV candles/);
+  assert.match(coverage, /Reddit: r\/wallstreetbets, r\/stocks and r\/investing/);
   assert.match(coverage, /StockTwits messages/);
   assert.match(coverage, /Yahoo Finance headlines/);
-  assert.match(coverage, /FRED macro series/);
+  assert.match(coverage, /FRED data when relevant/);
   assert.match(coverage, /Income statement analysis/);
   assert.match(coverage, /Balance sheet analysis/);
   assert.match(coverage, /Cash-flow statement analysis/);
+  assert.match(coverage, /Bull Researcher/);
+  assert.match(coverage, /Bear Researcher/);
+  assert.match(coverage, /Research Manager/);
   assert.match(coverage, /Aggressive risk analysis/);
-  assert.match(coverage, /Portfolio Manager synthesises the final view/);
+  assert.match(coverage, /Portfolio Manager final view/);
   assert.match(coverage, /does not claim that every source is used in every analysis/);
+  assert.doesNotMatch(coverage, /<details|<summary|research-value-strip/);
   assert.doesNotMatch(coverage, /TradingAgents|Tauric|LangGraph/i);
 });
 
-test("disclosure and sponsor-marquee controls remain keyboard accessible", async () => {
-  const [coverage, sponsors, styles] = await Promise.all([
-    read("src/components/research/ResearchCoverage.tsx"),
-    read("src/components/sponsors/SponsorRail.tsx"),
-    read("src/styles/globals.css"),
-  ]);
-  assert.match(coverage, /<details/);
-  assert.match(coverage, /<summary>/);
-  assert.match(styles, /summary:focus-visible/);
+test("sponsor marquee controls remain keyboard accessible", async () => {
+  const sponsors = await read("src/components/sponsors/SponsorRail.tsx");
   assert.match(sponsors, /tabIndex=\{decorative \? -1 : undefined\}/);
 });
