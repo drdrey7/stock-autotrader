@@ -1,4 +1,4 @@
--- 0034_stripe_billing.sql — local Stripe Billing read model.
+-- 0035_stripe_billing.sql — local Stripe Billing read model.
 -- Stripe remains the billing authority. D1 stores only the minimum mapping and
 -- subscription state required by authenticated product routes.
 

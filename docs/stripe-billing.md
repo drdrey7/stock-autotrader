@@ -72,7 +72,7 @@ Subscribe to:
 - `customer.subscription.resumed`
 - `checkout.session.completed`
 
-Apply migration `0034_stripe_billing.sql` before deploying the Worker. Configure
+Apply migration `0035_stripe_billing.sql` before deploying the Worker. Configure
 the Customer Portal in the Stripe Dashboard and enable Smart Retries plus failed
 payment emails under Billing revenue recovery.
 
