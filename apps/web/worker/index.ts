@@ -50,6 +50,11 @@ export interface Env {
   BETTER_AUTH_SECRET?: string;
   BETTER_AUTH_API_KEY?: string;
   BETTER_AUTH_URL?: string;
+  STRIPE_SECRET_KEY?: string;
+  STRIPE_WEBHOOK_SECRET?: string;
+  STRIPE_PRICE_MONTHLY?: string;
+  STRIPE_PRICE_ANNUAL?: string;
+  STRIPE_CREDIT_PACKS?: string;
 }
 
 const json = (data: unknown, status = 200, cacheControl = "public, max-age=60") =>
@@ -224,6 +229,14 @@ export default {
     if (pathname.startsWith("/api/ai-analysis/")) {
       const { handleAiAnalysisApi } = await import("./ai-analysis/api");
       return handleAiAnalysisApi(request, env);
+    }
+
+    // Billing includes authenticated mutation routes and a public,
+    // signature-verified Stripe webhook, so it must run before the generic
+    // read-only API method gate.
+    if (pathname.startsWith("/api/billing/")) {
+      const { handleBillingApi } = await import("./billing/api");
+      return handleBillingApi(request, env);
     }
 
     // Protected publication endpoint (PR #3) — accepts POST before the GET-only gate.

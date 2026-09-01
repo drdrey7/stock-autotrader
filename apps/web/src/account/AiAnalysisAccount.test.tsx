@@ -12,7 +12,18 @@ vi.mock("../ai-analysis/api", () => ({
   getAiAnalysisHistory: apiMocks.getHistory,
 }));
 
+vi.mock("./billing-api", () => ({
+  getBillingStatus: vi.fn().mockResolvedValue({
+    configured: true,
+    creditsConfigured: true,
+    creditPacks: [{ credits: 5 }, { credits: 10 }],
+    subscription: null,
+  }),
+  createCreditCheckout: vi.fn().mockResolvedValue("https://checkout.stripe.test/credits"),
+}));
+
 import { AiAnalysisAccount } from "./AiAnalysisAccount";
+import { createCreditCheckout } from "./billing-api";
 
 const firstRun = "11111111-1111-4111-8111-111111111111";
 const secondRun = "22222222-2222-4222-8222-222222222222";
@@ -75,5 +86,26 @@ describe("Investor Hub AI Analysis account section", () => {
     expect(await screen.findByText("You have no analysis credits available.")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "No completed reports yet" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /New analysis/ })).toHaveAttribute("href", "/ai-analysis");
+  });
+
+  it("offers each configured credit pack and redirects with the selected pack", async () => {
+    const locationDescriptor = Object.getOwnPropertyDescriptor(window, "location");
+    const assign = vi.fn();
+    Object.defineProperty(window, "location", { writable: true, value: { ...window.location, assign } });
+
+    try {
+      render(<MemoryRouter><AiAnalysisAccount /></MemoryRouter>);
+
+      const buy5 = await screen.findByRole("button", { name: "Buy 5 credits" });
+      const buy10 = screen.getByRole("button", { name: "Buy 10 credits" });
+      expect(buy5).toBeInTheDocument();
+      expect(buy10).toBeInTheDocument();
+
+      fireEvent.click(buy10);
+      await waitFor(() => expect(createCreditCheckout).toHaveBeenCalledWith(10));
+      await waitFor(() => expect(assign).toHaveBeenCalledWith("https://checkout.stripe.test/credits"));
+    } finally {
+      if (locationDescriptor) Object.defineProperty(window, "location", locationDescriptor);
+    }
   });
 });

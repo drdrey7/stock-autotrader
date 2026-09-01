@@ -3,6 +3,7 @@ import { CircleUserRound, LogOut, ShieldCheck } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { authClient } from "../lib/auth-client";
 import { AiAnalysisAccount } from "./AiAnalysisAccount";
+import { BillingAccount } from "./BillingAccount";
 import "./investor-hub.css";
 
 type AuthMode = "sign-in" | "sign-up";
@@ -175,6 +176,7 @@ export default function InvestorHubPage() {
           </div>
 
           {formError ? <p className="investor-hub-error" role="alert">{formError}</p> : null}
+          <BillingAccount />
           <AiAnalysisAccount />
         </div>
       </section>

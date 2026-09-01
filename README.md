@@ -224,6 +224,8 @@ npx --yes wrangler@4.122.0 deploy --dry-run
 PR preview setup and its security boundary are documented in
 [`docs/PR13_PR_PREVIEWS.md`](docs/PR13_PR_PREVIEWS.md). The public `/api/*`
 routes are documented in [`docs/api.md`](docs/api.md).
+Stripe-hosted subscription Checkout, Customer Portal, webhook, D1, and secret
+setup are documented in [`docs/stripe-billing.md`](docs/stripe-billing.md).
 
 ## Project structure
 
