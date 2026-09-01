@@ -21,13 +21,15 @@ interval variants of that plan. This initial integration expects one paid plan:
 - `STRIPE_PRICE_MONTHLY`: its monthly recurring Price ID;
 - `STRIPE_PRICE_ANNUAL`: its annual recurring Price ID.
 
-AI Analysis credits are sold through a separate one-time Price. Configure the
-Price ID and the exact number of credits it grants:
+AI Analysis credits are sold through one-time Prices. Configure a **credit-pack
+catalog**: a JSON array, one entry per pack, each pairing the Price ID with the
+exact number of credits it grants. Order the array cheapest-first — the UI
+renders one "Buy N credits" button per pack.
 
-- `STRIPE_PRICE_CREDIT_PACK`: one-time credit-pack Price ID;
-- `STRIPE_CREDIT_PACK_SIZE`: positive integer credits granted per purchase.
+- `STRIPE_CREDIT_PACKS`: JSON array of `{ "credits": number, "priceId": Price ID }`
+  e.g. `[{"credits":5,"priceId":"price_abc"},{"credits":10,"priceId":"price_def"}]`.
 
-The credit button stays hidden until this pack is fully configured. A paid
+The credit buttons stay hidden until at least one valid pack is configured. A paid
 `checkout.session.completed` webhook is verified and recorded in the
 `stripe_credit_purchases` ledger before credits are added to the user. The
 ledger makes webhook retries exactly-once and rejects unpaid, mismatched, or
@@ -48,8 +50,7 @@ npx wrangler secret put STRIPE_SECRET_KEY
 npx wrangler secret put STRIPE_WEBHOOK_SECRET
 npx wrangler secret put STRIPE_PRICE_MONTHLY
 npx wrangler secret put STRIPE_PRICE_ANNUAL
-npx wrangler secret put STRIPE_PRICE_CREDIT_PACK
-npx wrangler secret put STRIPE_CREDIT_PACK_SIZE
+npx wrangler secret put STRIPE_CREDIT_PACKS
 ```
 
 For local development, place the same names in an ignored `apps/web/.dev.vars`

@@ -23,6 +23,38 @@ const SUBSCRIPTION_EVENTS = new Set([
 const CREDIT_PURCHASE_EVENT = "checkout.session.completed";
 const ACTIVE_STATUSES = new Set(["active", "trialing"]);
 
+interface CreditPack {
+  credits: number;
+  priceId: string;
+}
+
+const MAX_CREDIT_PACK_CREDITS = 1_000_000;
+
+/**
+ * Parse the credit-pack catalog from the STRIPE_CREDIT_PACKS env secret:
+ * a JSON array of { credits, priceId }. Order is preserved so the UI can
+ * render cheapest-first. Rows that fail validation are dropped instead of
+ * failing the request, so one malformed row cannot take down billing.
+ */
+function parseCreditPacks(raw: string | undefined): CreditPack[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((entry): entry is CreditPack => {
+      if (typeof entry !== "object" || entry === null) return false;
+      const { credits, priceId } = entry as { credits?: unknown; priceId?: unknown };
+      return Number.isInteger(credits)
+        && (credits as number) > 0
+        && (credits as number) <= MAX_CREDIT_PACK_CREDITS
+        && typeof priceId === "string"
+        && priceId.length > 0;
+    });
+  } catch {
+    return [];
+  }
+}
+
 interface CustomerRow {
   stripe_customer_id: string;
 }
@@ -158,6 +190,7 @@ async function ensureCustomer(
 
 async function handleStatus(env: Env, user: AuthenticatedBillingUser): Promise<Response> {
   const subscription = await readSubscription(env.DB, user.id);
+  const creditPacks = parseCreditPacks(env.STRIPE_CREDIT_PACKS);
   return privateJson({
     configured: Boolean(
       env.STRIPE_SECRET_KEY
@@ -165,13 +198,14 @@ async function handleStatus(env: Env, user: AuthenticatedBillingUser): Promise<R
       && env.STRIPE_PRICE_MONTHLY
       && env.STRIPE_PRICE_ANNUAL,
     ),
+    // Credits are sold when at least one valid pack is configured and the
+    // webhook/ledger path is present, mirroring the subscription gate.
     creditsConfigured: Boolean(
       env.STRIPE_SECRET_KEY
       && env.STRIPE_WEBHOOK_SECRET
-      && env.STRIPE_PRICE_CREDIT_PACK
-      && Number.isInteger(Number(env.STRIPE_CREDIT_PACK_SIZE))
-      && Number(env.STRIPE_CREDIT_PACK_SIZE) > 0,
+      && creditPacks.length > 0,
     ),
+    creditPacks: creditPacks.map((pack) => ({ credits: pack.credits })),
     subscription: subscription ? {
       id: subscription.stripe_subscription_id,
       status: subscription.status,
@@ -196,19 +230,23 @@ async function handleCreditCheckout(
   const raw = await readBoundedBody(request, 2_048);
   if (raw === null) return privateJson({ error: "invalid_request" }, 400);
   let idempotencyKey: unknown;
+  let packId: unknown;
   try {
-    const body = JSON.parse(raw) as { idempotencyKey?: unknown };
+    const body = JSON.parse(raw) as { idempotencyKey?: unknown; packId?: unknown };
     idempotencyKey = body.idempotencyKey;
-    if (Object.keys(body).length !== 1 || typeof idempotencyKey !== "string" || !IDEMPOTENCY_KEY_PATTERN.test(idempotencyKey)) {
+    packId = body.packId;
+    if (typeof idempotencyKey !== "string" || !IDEMPOTENCY_KEY_PATTERN.test(idempotencyKey)) {
       return privateJson({ error: "invalid_request" }, 400);
     }
   } catch {
     return privateJson({ error: "invalid_request" }, 400);
   }
+  if (!packId) return privateJson({ error: "invalid_request" }, 400);
+
   const secretKey = env.STRIPE_SECRET_KEY;
-  const priceId = env.STRIPE_PRICE_CREDIT_PACK;
-  const credits = Number(env.STRIPE_CREDIT_PACK_SIZE);
-  if (!secretKey || !env.STRIPE_WEBHOOK_SECRET || !priceId || !Number.isInteger(credits) || credits <= 0 || credits > 1_000_000) {
+  // Select the requested pack from the configured catalog.
+  const pack = parseCreditPacks(env.STRIPE_CREDIT_PACKS).find((entry) => String(entry.credits) === String(packId));
+  if (!secretKey || !env.STRIPE_WEBHOOK_SECRET || !pack) {
     return privateJson({ error: "credit_purchase_not_configured" }, 503);
   }
   const stripe = deps.createStripe(secretKey);
@@ -216,9 +254,9 @@ async function handleCreditCheckout(
   const origin = new URL(request.url).origin;
   const checkout = await stripe.createCreditCheckout({
     customerId,
-    credits,
+    credits: pack.credits,
     idempotencyKey: `stockai-credits-${user.id}-${idempotencyKey}`,
-    priceId,
+    priceId: pack.priceId,
     userId: user.id,
     successUrl: `${origin}/account?credits=success`,
     cancelUrl: `${origin}/account?credits=canceled`,

@@ -408,6 +408,23 @@
   text-align: right;
 }
 
+.investor-ai-credit-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+@media (max-width: 720px) {
+  .investor-ai-credit-card {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .investor-ai-credit-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+}
+
 .investor-hub-text-button {
   display: inline-flex;
   align-items: center;

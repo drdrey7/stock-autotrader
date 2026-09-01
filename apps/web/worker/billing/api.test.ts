@@ -142,8 +142,10 @@ function testContext() {
     STRIPE_WEBHOOK_SECRET: "test-webhook-secret",
     STRIPE_PRICE_MONTHLY: "price_monthly",
     STRIPE_PRICE_ANNUAL: "price_annual",
-    STRIPE_PRICE_CREDIT_PACK: "price_credits",
-    STRIPE_CREDIT_PACK_SIZE: "5",
+    STRIPE_CREDIT_PACKS: JSON.stringify([
+      { credits: 5, priceId: "price_credits_5" },
+      { credits: 10, priceId: "price_credits_10" },
+    ]),
   } as Env;
   const deps: BillingApiDependencies = {
     authenticate: vi.fn(async () => ({ id: "user-1", email: "user@example.com" })),
@@ -195,7 +197,7 @@ describe("Stripe billing API", () => {
     const response = await handleBillingApi(request("/api/billing/credits", {
       method: "POST",
       headers: { origin: "https://stock.test", "content-type": "application/json" },
-      body: JSON.stringify({ idempotencyKey: "123e4567-e89b-42d3-a456-426614174000" }),
+      body: JSON.stringify({ packId: 5, idempotencyKey: "123e4567-e89b-42d3-a456-426614174000" }),
     }), env, deps);
 
     expect(response.status).toBe(200);
@@ -204,10 +206,62 @@ describe("Stripe billing API", () => {
     expect(stripe.createCreditCheckout).toHaveBeenCalledWith(expect.objectContaining({
       customerId: "cus_test",
       credits: 5,
-      priceId: "price_credits",
+      priceId: "price_credits_5",
       userId: "user-1",
       successUrl: "https://stock.test/account?credits=success",
     }));
+  });
+
+  it("selects the requested credit pack (10 credits) for checkout", async () => {
+    const { stripe, env, deps } = testContext();
+    const response = await handleBillingApi(request("/api/billing/credits", {
+      method: "POST",
+      headers: { origin: "https://stock.test", "content-type": "application/json" },
+      body: JSON.stringify({ packId: 10, idempotencyKey: "123e4567-e89b-42d3-a456-426614174000" }),
+    }), env, deps);
+
+    expect(response.status).toBe(200);
+    expect(stripe.createCreditCheckout).toHaveBeenCalledWith(expect.objectContaining({
+      credits: 10,
+      priceId: "price_credits_10",
+    }));
+  });
+
+  it("rejects a credit checkout for an unknown pack", async () => {
+    const { stripe, env, deps } = testContext();
+    const response = await handleBillingApi(request("/api/billing/credits", {
+      method: "POST",
+      headers: { origin: "https://stock.test", "content-type": "application/json" },
+      body: JSON.stringify({ packId: 99, idempotencyKey: "123e4567-e89b-42d3-a456-426614174000" }),
+    }), env, deps);
+
+    expect(response.status).toBe(503);
+    expect(stripe.createCreditCheckout).not.toHaveBeenCalled();
+  });
+
+  it("rejects a credit checkout missing a pack selection", async () => {
+    const { stripe, env, deps } = testContext();
+    const response = await handleBillingApi(request("/api/billing/credits", {
+      method: "POST",
+      headers: { origin: "https://stock.test", "content-type": "application/json" },
+      body: JSON.stringify({ idempotencyKey: "123e4567-e89b-42d3-a456-426614174000" }),
+    }), env, deps);
+
+    expect(response.status).toBe(400);
+    expect(stripe.createCreditCheckout).not.toHaveBeenCalled();
+  });
+
+  it("reports configured credit packs in billing status", async () => {
+    const { env, deps } = testContext();
+    const response = await handleBillingApi(request("/api/billing/status", {
+      method: "GET",
+      headers: { origin: "https://stock.test" },
+    }), env, deps);
+
+    expect(response.status).toBe(200);
+    const body = await response.json() as { creditsConfigured: boolean; creditPacks: Array<{ credits: number }> };
+    expect(body.creditsConfigured).toBe(true);
+    expect(body.creditPacks).toEqual([{ credits: 5 }, { credits: 10 }]);
   });
 
   it("stores a verified subscription event and ignores an older delivery", async () => {

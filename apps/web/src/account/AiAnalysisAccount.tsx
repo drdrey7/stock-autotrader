@@ -62,6 +62,7 @@ export function AiAnalysisAccount() {
   const [buyingCredits, setBuyingCredits] = useState(false);
   const [creditPurchaseError, setCreditPurchaseError] = useState(false);
   const [creditsConfigured, setCreditsConfigured] = useState(false);
+  const [creditPacks, setCreditPacks] = useState<Array<{ credits: number }>>([]);
   const [requestVersion, setRequestVersion] = useState(0);
   const moreControllerRef = useRef<AbortController | null>(null);
   const loadingMoreRef = useRef(false);
@@ -78,6 +79,7 @@ export function AiAnalysisAccount() {
     setViewerError(false);
     setHistory(initialHistoryState);
     setCreditsConfigured(false);
+    setCreditPacks([]);
 
     void getAiAnalysisViewer(controller.signal)
       .then(setViewer)
@@ -104,9 +106,15 @@ export function AiAnalysisAccount() {
       });
 
     void getBillingStatus(controller.signal)
-      .then((status) => setCreditsConfigured(status.creditsConfigured))
+      .then((status) => {
+        setCreditsConfigured(status.creditsConfigured);
+        setCreditPacks(status.creditPacks ?? []);
+      })
       .catch(() => {
-        if (!controller.signal.aborted) setCreditsConfigured(false);
+        if (!controller.signal.aborted) {
+          setCreditsConfigured(false);
+          setCreditPacks([]);
+        }
       });
 
     return () => controller.abort();
@@ -141,11 +149,11 @@ export function AiAnalysisAccount() {
     }
   };
 
-  const buyCredits = async () => {
+  const buyCredits = async (packId: number) => {
     setBuyingCredits(true);
     setCreditPurchaseError(false);
     try {
-      window.location.assign(await createCreditCheckout());
+      window.location.assign(await createCreditCheckout(packId));
     } catch {
       setBuyingCredits(false);
       setCreditPurchaseError(true);
@@ -177,14 +185,21 @@ export function AiAnalysisAccount() {
           {!viewerLoading && !viewer ? <strong>Unavailable</strong> : null}
         </div>
         {credits === 0 ? <p>You have no analysis credits available.</p> : null}
-        {creditsConfigured ? <button
-          className="investor-hub-secondary-button"
-          type="button"
-          disabled={buyingCredits}
-          onClick={() => void buyCredits()}
-        >
-          {buyingCredits ? "Opening…" : "Buy credits"}
-        </button> : null}
+        {creditsConfigured && creditPacks.length > 0 ? (
+          <div className="investor-ai-credit-actions">
+            {creditPacks.map((pack) => (
+              <button
+                key={pack.credits}
+                className="investor-hub-secondary-button"
+                type="button"
+                disabled={buyingCredits}
+                onClick={() => void buyCredits(pack.credits)}
+              >
+                {buyingCredits ? "Opening…" : `Buy ${pack.credits} credits`}
+              </button>
+            ))}
+          </div>
+        ) : null}
         {viewerError ? (
           <button className="investor-hub-text-button" type="button" onClick={reload}>
             <RefreshCcw size={13} aria-hidden="true" /> Retry

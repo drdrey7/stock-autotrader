@@ -3,6 +3,7 @@ export type BillingInterval = "monthly" | "annual";
 export interface BillingStatus {
   configured: boolean;
   creditsConfigured: boolean;
+  creditPacks?: Array<{ credits: number }>;
   subscription: {
     id: string;
     status: string;
@@ -45,12 +46,12 @@ export async function createPortal(): Promise<string> {
   return (await readJson<{ url: string }>(response)).url;
 }
 
-export async function createCreditCheckout(): Promise<string> {
+export async function createCreditCheckout(packId: number): Promise<string> {
   const response = await fetch("/api/billing/credits", {
     method: "POST",
     credentials: "same-origin",
     headers: { accept: "application/json", "content-type": "application/json" },
-    body: JSON.stringify({ idempotencyKey: crypto.randomUUID() }),
+    body: JSON.stringify({ packId, idempotencyKey: crypto.randomUUID() }),
   });
   return (await readJson<{ url: string }>(response)).url;
 }

@@ -54,8 +54,7 @@ export interface Env {
   STRIPE_WEBHOOK_SECRET?: string;
   STRIPE_PRICE_MONTHLY?: string;
   STRIPE_PRICE_ANNUAL?: string;
-  STRIPE_PRICE_CREDIT_PACK?: string;
-  STRIPE_CREDIT_PACK_SIZE?: string;
+  STRIPE_CREDIT_PACKS?: string;
 }
 
 const json = (data: unknown, status = 200, cacheControl = "public, max-age=60") =>
