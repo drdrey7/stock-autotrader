@@ -1,15 +1,16 @@
 [extend]
 useDefault = true
 
-# Narrow, documented false-positive exception.
-# Commit d3ba470c introduced apps/web/.dev.vars.example with a high-entropy
-# placeholder value for BETTER_AUTH_SECRET (generic-api-key hit). The
-# placeholder is required so the template guides local setup.
-# NOTE: Gitleaks v8.30.0 excludes an entire file if a path allowlist matches.
-# To ensure a future real credential in the same file is still detected, this
-# exception is scoped by regex ONLY — matching the exact placeholder value —
-# not by path. This allowlists the known placeholder wherever it appears, but
-# any other secret in any file (including .dev.vars.example) is still caught.
+# Narrow, documented false-positive exceptions.
+# Gitleaks v8.30.0 excludes an entire file if a path allowlist matches. To
+# ensure a future real credential in the same file is still detected, these
+# exceptions are scoped by regex ONLY — matching exact placeholder values —
+# not by path. Any other secret in any file is still caught.
 [allowlist]
-description = "Known false-positive placeholder in local-only .dev.vars.example"
-regexes = ['''^replace-with-32-char-secret$''']
+description = "Known false-positive placeholder values in local config templates and billing test fixtures"
+regexes = [
+  # apps/web/.dev.vars.example BETTER_AUTH_SECRET placeholder (commit d3ba470c)
+  '''^replace-with-32-char-secret$''',
+  # Billing idempotency-key UUID fixture in worker tests (all-zero example UUID)
+  '''^123e4567-e89b-42d3-a456-426614174000$''',
+]
