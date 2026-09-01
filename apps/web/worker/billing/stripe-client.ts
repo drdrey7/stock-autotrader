@@ -98,6 +98,11 @@ export class OfficialStripeBillingClient implements StripeBillingClient {
         billing_mode: { type: "flexible" },
         metadata: { better_auth_user_id: input.userId },
       },
+      // Stockai is the direct merchant. Disabling Managed Payments avoids the
+      // platform's product tax_code requirement (managed_payments[enabled]=true
+      // forces every line item to carry an eligible tax code). See error:
+      // "product tax code is missing ... required for Managed Payments".
+      managed_payments: { enabled: false },
     }, { idempotencyKey: input.idempotencyKey });
   }
 
@@ -123,6 +128,9 @@ export class OfficialStripeBillingClient implements StripeBillingClient {
         purchase_type: "ai_credit_pack",
         credits: String(input.credits),
       },
+      // Direct merchant — disable Managed Payments per the same product tax_code
+      // requirement documented on createCheckout.
+      managed_payments: { enabled: false },
     }, { idempotencyKey: input.idempotencyKey });
   }
 
