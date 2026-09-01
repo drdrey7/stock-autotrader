@@ -89,21 +89,23 @@ describe("Investor Hub AI Analysis account section", () => {
   });
 
   it("offers each configured credit pack and redirects with the selected pack", async () => {
+    const locationDescriptor = Object.getOwnPropertyDescriptor(window, "location");
     const assign = vi.fn();
-    const original = window.location.assign;
     Object.defineProperty(window, "location", { writable: true, value: { ...window.location, assign } });
 
-    render(<MemoryRouter><AiAnalysisAccount /></MemoryRouter>);
+    try {
+      render(<MemoryRouter><AiAnalysisAccount /></MemoryRouter>);
 
-    const buy5 = await screen.findByRole("button", { name: "Buy 5 credits" });
-    const buy10 = screen.getByRole("button", { name: "Buy 10 credits" });
-    expect(buy5).toBeInTheDocument();
-    expect(buy10).toBeInTheDocument();
+      const buy5 = await screen.findByRole("button", { name: "Buy 5 credits" });
+      const buy10 = screen.getByRole("button", { name: "Buy 10 credits" });
+      expect(buy5).toBeInTheDocument();
+      expect(buy10).toBeInTheDocument();
 
-    fireEvent.click(buy10);
-    await waitFor(() => expect(createCreditCheckout).toHaveBeenCalledWith(10));
-    await waitFor(() => expect(assign).toHaveBeenCalledWith("https://checkout.stripe.test/credits"));
-
-    window.location.assign = original;
+      fireEvent.click(buy10);
+      await waitFor(() => expect(createCreditCheckout).toHaveBeenCalledWith(10));
+      await waitFor(() => expect(assign).toHaveBeenCalledWith("https://checkout.stripe.test/credits"));
+    } finally {
+      if (locationDescriptor) Object.defineProperty(window, "location", locationDescriptor);
+    }
   });
 });

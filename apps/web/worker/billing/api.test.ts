@@ -110,7 +110,13 @@ class FakeD1 {
           const purchase = this.purchases.get(String(args[0]));
           if (purchase) purchase.credited = 1;
         } else if (sql.includes("UPDATE stripe_webhook_events")) {
-          this.events.set(String(args[1]), { processedAt: String(args[0]) });
+          // An UPDATE must NOT create an event row implicitly: the production
+          // INSERT ... ON CONFLICT path is what records first-time events. An
+          // UPDATE only marks a previously-inserted event processed.
+          const event = this.events.get(String(args[1]));
+          if (event) event.processedAt = String(args[0]);
+        } else if (sql.includes("UPDATE stripe_subscriptions")) {
+          // no-op: subscription upserts go through INSERT ... ON CONFLICT
         }
         return { success: true, meta: { changes: 1 } };
       },
@@ -125,7 +131,7 @@ class FakeD1 {
 
 class FakeStripe implements StripeBillingClient {
   readonly createCustomer = vi.fn(async () => ({ id: "cus_test" }));
-  readonly createCheckout = vi.fn(async () => ({ url: "https://checkout.stripe.test/session" }));
+  readonly createCheckout = vi.fn<StripeBillingClient["createCheckout"]>(async () => ({ url: "https://checkout.stripe.test/session" }));
   readonly createPortal = vi.fn(async () => ({ url: "https://billing.stripe.test/portal" }));
   readonly createCreditCheckout = vi.fn(async () => ({ url: "https://checkout.stripe.test/credits" }));
   nextEvent: BillingWebhookEvent = { id: "evt_unused", type: "ignored", created: 1, subscription: null, creditCheckout: null };
@@ -264,6 +270,27 @@ describe("Stripe billing API", () => {
     expect(body.creditPacks).toEqual([{ credits: 5 }, { credits: 10 }]);
   });
 
+  it("deduplicates concurrent subscription checkouts onto a single server key", async () => {
+    const { stripe, env, deps } = testContext();
+    const make = (idempotencyKey: string) => request("/api/billing/checkout", {
+      method: "POST",
+      headers: { origin: "https://stock.test", "content-type": "application/json" },
+      body: JSON.stringify({ interval: "monthly", idempotencyKey }),
+    });
+    const [a, b] = await Promise.all([
+      handleBillingApi(make("123e4567-e89b-42d3-a456-426614174000"), env, deps),
+      handleBillingApi(make("87654321-8765-4876-8876-876543210000"), env, deps),
+    ]);
+    expect(a.status).toBe(200);
+    expect(b.status).toBe(200);
+    // Different client UUIDs must still map to the same server-derived key, so
+    // Stripe cannot create two subscription checkouts for the same user.
+    const calls = stripe.createCheckout.mock.calls.map((call) => (call[0] as { idempotencyKey: string }).idempotencyKey);
+    expect(calls.length).toBe(2);
+    expect(calls[0]).toBe("stockai-checkout-user-1");
+    expect(calls[1]).toBe("stockai-checkout-user-1");
+  });
+
   it("stores a verified subscription event and ignores an older delivery", async () => {
     const { db, stripe, env, deps } = testContext();
     db.customers.set("user-1", "cus_test");
@@ -341,5 +368,8 @@ describe("Stripe billing API", () => {
     expect((await handleBillingApi(webhook(), env, deps)).status).toBe(200);
     expect(db.entitlements.get("user-1")).toEqual({ remaining: 5, granted: 5 });
     expect(db.purchases.get("cs_credit")).toEqual({ userId: "user-1", credits: 5, credited: 1 });
+    // A valid credit webhook is recorded in the audit table, not left missing
+    // by a bare UPDATE that touches zero rows on first delivery.
+    expect(db.events.get("evt_credit")?.processedAt).toBe("2026-08-30T12:00:00.000Z");
   });
 });

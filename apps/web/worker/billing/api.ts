@@ -307,7 +307,13 @@ async function handleCheckout(
   const origin = new URL(request.url).origin;
   const checkout = await stripe.createCheckout({
     customerId,
-    idempotencyKey: `stockai-checkout-${user.id}-${body.idempotencyKey}`,
+    // Server-derived idempotency key (per user, independent of the client
+    // UUID): two concurrent first checkouts for the same user resolve to the
+    // SAME Checkout Session instead of minting a second subscription checkout.
+    // Stripe deduplicates on idempotency key, so this both prevents duplicate
+    // sessions and makes a client retry idempotent. The client UUID is still
+    // validated and bound above, but is not part of the key.
+    idempotencyKey: `stockai-checkout-${user.id}`,
     priceId,
     userId: user.id,
     successUrl: `${origin}/account?checkout=success`,
@@ -437,6 +443,12 @@ async function persistCreditPurchase(
   // while credited=0, so replaying the same Checkout event cannot mint credits
   // twice, even when Stripe retries delivery.
   await db.batch([
+    db.prepare(`
+      INSERT INTO stripe_webhook_events
+        (stripe_event_id, event_type, event_created_at, received_at, processed_at)
+      VALUES (?, ?, ?, ?, NULL)
+      ON CONFLICT(stripe_event_id) DO NOTHING
+    `).bind(event.id, event.type, event.created, receivedAt),
     db.prepare(`
       INSERT INTO stripe_credit_purchases
         (checkout_session_id, user_id, credits, stripe_event_id, paid_at, credited, created_at)

@@ -87,7 +87,7 @@ export function BillingAccount() {
         <span className="investor-billing-icon" aria-hidden="true"><CreditCard size={20} /></span>
         <div className="investor-billing-copy">
           {loading && !billing ? <><span>Current plan</span><strong>Checking…</strong></> : null}
-          {!loading && !subscription ? <><span>Current plan</span><strong>Free</strong></> : null}
+          {!loading && billing && !subscription ? <><span>Current plan</span><strong>Free</strong></> : null}
           {!loading && subscription ? (
             <>
               <span>{subscription.interval ? `${statusLabel(subscription.interval)} plan` : "Paid plan"}</span>
